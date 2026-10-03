@@ -311,6 +311,9 @@ pub async fn apply_workspace(
             // On failure we return `Err` — the command reports failure,
             // `useCommunityInit` never exposes the community, and inbound replay
             // never starts against an un-superseded disk state.
+            crate::managed_agents::device_home_migration::migrate_device_homes_before_sync(
+                &restore_app,
+            )?;
             crate::event_sync::run_event_sync_blocking(
                 restore_app.clone(),
                 scope.owner_keys,

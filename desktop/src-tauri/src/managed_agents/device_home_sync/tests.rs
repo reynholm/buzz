@@ -353,3 +353,62 @@ async fn scope_change_during_fetch_and_old_live_tokens_cannot_apply_or_ready() {
         EvidenceReadiness::Pending
     );
 }
+
+#[tokio::test]
+async fn deferred_migration_failure_never_installs_ready() {
+    let state = state();
+    let session = begin_session(&state).unwrap();
+    hydrate_history(
+        &state,
+        &session.token,
+        |_| async { Ok(vec![]) },
+        |_| async { Ok(()) },
+    )
+    .await
+    .unwrap();
+    assert!(finish_session_with(&state, &session.token, |_| Err(
+        "migration save failed".into()
+    ))
+    .is_err());
+    assert_eq!(
+        readiness_locked(&state, &capture_scope(&state).unwrap()).unwrap(),
+        EvidenceReadiness::Failed
+    );
+    assert!(finish_session(&state, &session.token).is_err());
+}
+
+#[tokio::test]
+async fn deferred_migration_requires_hydrated_current_drained_token() {
+    let state = state();
+    let old = begin_session(&state).unwrap();
+    let session = begin_session(&state).unwrap();
+    assert!(finish_session_with(&state, &old.token, |_| panic!("stale migration")).is_err());
+    assert!(
+        finish_session_with(&state, &session.token, |_| panic!("unhydrated migration")).is_err()
+    );
+    hydrate_history(
+        &state,
+        &session.token,
+        |_| async { Ok(vec![]) },
+        |_| async { Ok(()) },
+    )
+    .await
+    .unwrap();
+    let lease = begin_apply(&state, Some(&session.token)).unwrap();
+    assert!(
+        finish_session_with(&state, &session.token, |_| panic!("undrained migration")).is_err()
+    );
+    lease.complete(&Ok(())).unwrap();
+    let mut calls = 0;
+    finish_session_with(&state, &session.token, |scope| {
+        assert_eq!(*scope, capture_scope(&state).unwrap());
+        calls += 1;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(calls, 1);
+    assert_eq!(
+        readiness_locked(&state, &capture_scope(&state).unwrap()).unwrap(),
+        EvidenceReadiness::Ready
+    );
+}

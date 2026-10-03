@@ -19,6 +19,7 @@
 //!   and an error is returned, never silently skipped.
 
 use std::path::Path;
+use tauri::Manager;
 
 use super::{
     agent_events::build_agent_event,
@@ -36,22 +37,42 @@ pub(crate) fn reconcile_agents_to_events(
     app: &tauri::AppHandle,
     keys: &nostr::Keys,
     db_path: &Path,
-) {
-    let Ok(base_dir) = super::managed_agents_base_dir(app) else {
-        return;
-    };
-
-    match reconcile_agents_in_dir_at(&base_dir, keys, db_path) {
-        Ok(0) => {}
-        Ok(reconciled) => {
-            eprintln!(
-                "buzz-desktop: agent-event-reconcile: {reconciled} agents reconciled to retention"
-            );
-        }
-        Err(e) => {
-            eprintln!("buzz-desktop: agent-event-reconcile: {e}");
-        }
-    }
+) -> Result<(), String> {
+    reconcile_agents_to_events_with(
+        app,
+        keys,
+        db_path,
+        super::persona_device_view::load_device_policy_context,
+    )
+}
+/// Native adapter retaining the production store/classification/error handling.
+pub(crate) fn reconcile_agents_to_events_with<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    keys: &nostr::Keys,
+    db_path: &Path,
+    context_provider: impl FnOnce(
+        &tauri::AppHandle<R>,
+        &crate::app_state::AppState,
+    )
+        -> Result<super::persona_device_view::DevicePolicyContext, String>,
+) -> Result<(), String> {
+    let base_dir = super::managed_agents_base_dir(app)?;
+    let state = app.state::<crate::app_state::AppState>();
+    let _store = state
+        .managed_agents_store_lock
+        .lock()
+        .map_err(|e| e.to_string())?;
+    let records =
+        super::persona_device_view::read_policy_records(&base_dir.join("managed-agents.json"));
+    crate::event_sync::identity_event_sync_leg(records, |private| {
+        let context = if private {
+            Some(context_provider(app, &state)?)
+        } else {
+            None
+        };
+        reconcile_agents_in_dir_with_context(&base_dir, keys, db_path, context.as_ref())?;
+        Ok(())
+    })
 }
 
 /// Core reconcile logic, decoupled from the Tauri `AppHandle` for testing.
@@ -70,10 +91,20 @@ pub(crate) fn reconcile_agents_in_dir(base_dir: &Path, keys: &nostr::Keys) -> Re
     reconcile_agents_in_dir_at(base_dir, keys, &base_dir.join("retention.db"))
 }
 
+#[cfg(test)]
 fn reconcile_agents_in_dir_at(
     base_dir: &Path,
     keys: &nostr::Keys,
     db_path: &Path,
+) -> Result<u32, String> {
+    reconcile_agents_in_dir_with_context(base_dir, keys, db_path, None)
+}
+/// Reconcile through the captured private-home publication guard.
+pub(crate) fn reconcile_agents_in_dir_with_context(
+    base_dir: &Path,
+    keys: &nostr::Keys,
+    db_path: &Path,
+    context: Option<&super::persona_device_view::DevicePolicyContext>,
 ) -> Result<u32, String> {
     let store_path = base_dir.join("managed-agents.json");
     if !store_path.exists() {
@@ -104,6 +135,14 @@ fn reconcile_agents_in_dir_at(
             continue;
         }
 
+        let definition = records
+            .iter()
+            .find(|d| d.pubkey.is_empty() && d.slug.as_deref() == record.persona_id.as_deref())
+            .and_then(ManagedAgentRecord::to_definition_view);
+        if !super::device_home_migration::publication_allowed(record, definition.as_ref(), context)?
+        {
+            continue;
+        }
         if retain_agent_record(&conn, keys, record)? {
             reconciled += 1;
         }

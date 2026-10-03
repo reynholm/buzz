@@ -18,17 +18,16 @@ pub fn run_event_sync(
     owner_keys: &nostr::Keys,
     db_path: &Path,
 ) -> Result<(), String> {
-    // Persona and agent legs stay best-effort: they log and swallow, and their
-    // failure does not undo the boot team-membership repair. The team leg is
+    // Home publication authority and persistence failures are fatal. The team leg is
     // fatal — it establishes the superseding local head (a monotonic
     // `created_at`) that lets `retain_inbound_event`'s equal/older guard reject
     // a stale relay roster. If it fails, the caller must not let the frontend
     // expose the community and start inbound replay against an un-superseded
     // disk state.
-    migrate_personas_to_events(app, owner_keys, db_path);
+    migrate_personas_to_events(app, owner_keys, db_path)?;
     migrate_teams_to_events(app, owner_keys, db_path)?;
     reconcile_team_catalog_heads(app, owner_keys, db_path);
-    crate::managed_agents::reconcile::reconcile_agents_to_events(app, owner_keys, db_path);
+    crate::managed_agents::reconcile::reconcile_agents_to_events(app, owner_keys, db_path)?;
     // Negative-side backstop: retract any retained head whose disk record is
     // gone (a deletion whose atomic tombstone failed after removing the JSON).
     // Runs LAST so the positive legs' just-retained live heads are matched and
@@ -79,24 +78,50 @@ pub async fn run_event_sync_blocking(
 /// `pending_sync = 1` for later relay publish. Migration succeeds on local
 /// write, not relay acknowledgment. Every retained row is a real signed
 /// event — there is no placeholder path.
-pub fn migrate_personas_to_events(app: &tauri::AppHandle, keys: &nostr::Keys, db_path: &Path) {
-    use crate::managed_agents::managed_agents_base_dir;
-
-    let Ok(base_dir) = managed_agents_base_dir(app) else {
-        return;
-    };
-
-    match migrate_personas_in_dir_at(&base_dir, keys, db_path) {
-        Ok(0) => {}
-        Ok(migrated) => {
-            eprintln!(
-                "buzz-desktop: persona-event-migration: {migrated} personas migrated to retention"
-            );
-        }
-        Err(e) => {
-            eprintln!("buzz-desktop: persona-event-migration: {e}");
-        }
-    }
+pub fn migrate_personas_to_events(
+    app: &tauri::AppHandle,
+    keys: &nostr::Keys,
+    db_path: &Path,
+) -> Result<(), String> {
+    migrate_personas_to_events_with(
+        app,
+        keys,
+        db_path,
+        crate::managed_agents::persona_device_view::load_device_policy_context,
+    )
+}
+/// Native adapter with only the authority provider injected.
+pub(crate) fn migrate_personas_to_events_with<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    keys: &nostr::Keys,
+    db_path: &Path,
+    context_provider: impl FnOnce(
+        &tauri::AppHandle<R>,
+        &crate::app_state::AppState,
+    ) -> Result<
+        crate::managed_agents::persona_device_view::DevicePolicyContext,
+        String,
+    >,
+) -> Result<(), String> {
+    use tauri::Manager;
+    let base_dir = crate::managed_agents::managed_agents_base_dir(app)?;
+    let state = app.state::<crate::app_state::AppState>();
+    let _store = state
+        .managed_agents_store_lock
+        .lock()
+        .map_err(|e| e.to_string())?;
+    let records = crate::managed_agents::persona_device_view::read_policy_records(
+        &base_dir.join("managed-agents.json"),
+    );
+    identity_event_sync_leg(records, |private| {
+        let context = if private {
+            Some(context_provider(app, &state)?)
+        } else {
+            None
+        };
+        migrate_personas_in_dir_with_context(&base_dir, keys, db_path, context.as_ref())?;
+        Ok(())
+    })
 }
 
 /// Core reconcile logic, decoupled from the Tauri `AppHandle` for testing.
@@ -109,10 +134,20 @@ fn migrate_personas_in_dir(base_dir: &Path, keys: &nostr::Keys) -> Result<u32, S
     migrate_personas_in_dir_at(base_dir, keys, &base_dir.join("retention.db"))
 }
 
+#[cfg(test)]
 fn migrate_personas_in_dir_at(
     base_dir: &Path,
     keys: &nostr::Keys,
     db_path: &Path,
+) -> Result<u32, String> {
+    migrate_personas_in_dir_with_context(base_dir, keys, db_path, None)
+}
+/// Reconcile definitions through the same captured instance-home proof.
+pub(crate) fn migrate_personas_in_dir_with_context(
+    base_dir: &Path,
+    keys: &nostr::Keys,
+    db_path: &Path,
+    context: Option<&crate::managed_agents::persona_device_view::DevicePolicyContext>,
 ) -> Result<u32, String> {
     use crate::managed_agents::{
         persona_events::{build_persona_event, monotonic_created_at, persona_d_tag},
@@ -140,7 +175,24 @@ fn migrate_personas_in_dir_at(
 
     let mut migrated = 0u32;
 
+    let instances = crate::managed_agents::persona_device_view::read_policy_records(
+        &base_dir.join("managed-agents.json"),
+    )?;
     for record in &records {
+        let linked_publication = instances
+            .iter()
+            .filter(|i| !i.pubkey.is_empty() && i.persona_id.as_deref() == Some(record.id.as_str()))
+            .map(|i| {
+                crate::managed_agents::device_home_migration::publication_allowed(
+                    i,
+                    Some(record),
+                    context,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if !linked_publication.is_empty() && !linked_publication.iter().any(|allowed| *allowed) {
+            continue;
+        }
         // Skip built-in personas — they're always available from code.
         if record.is_builtin {
             continue;
@@ -795,3 +847,91 @@ mod team_events_tests;
 #[cfg(test)]
 #[path = "event_sync_team_catalog_tests.rs"]
 mod team_catalog_tests;
+
+/// Preserve best-effort identity publication only after structural policy is known.
+/// Private or mixed scopes propagate failures; unknown storage is never empty.
+pub(crate) fn identity_event_sync_leg(
+    records: Result<Vec<crate::managed_agents::ManagedAgentRecord>, String>,
+    run: impl FnOnce(bool) -> Result<(), String>,
+) -> Result<(), String> {
+    let private = crate::managed_agents::device_home_migration::needs_private_authority(&records?);
+    match run(private) {
+        Err(error) if !private => {
+            eprintln!("buzz-desktop: identity event-sync: {error}");
+            Ok(())
+        }
+        result => result,
+    }
+}
+
+#[cfg(test)]
+mod home_publication_adapter_tests {
+    use super::*;
+    use crate::managed_agents::device_home_migration::tests::{app, records, write};
+    use tauri::Manager;
+    #[test]
+    fn shared_only_event_sync_needs_no_proof_and_preserves_best_effort() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app(dir.path());
+        let base = crate::managed_agents::managed_agents_base_dir(app.handle()).unwrap();
+        let (mut rs, _) = records();
+        rs[0].share_across_devices = Some(true);
+        write(&base, &rs);
+        let keys = app
+            .state::<crate::app_state::AppState>()
+            .signing_keys()
+            .unwrap();
+        let bad = dir.path().join("absent").join("retention.db");
+        migrate_personas_to_events_with(app.handle(), &keys, &bad, |_, _| {
+            panic!("shared-only requested unavailable proof")
+        })
+        .unwrap();
+        crate::managed_agents::reconcile::reconcile_agents_to_events_with(
+            app.handle(),
+            &keys,
+            &bad,
+            |_, _| panic!("shared agent requested unavailable proof"),
+        )
+        .unwrap();
+    }
+    #[test]
+    fn private_and_unknown_event_sync_errors_propagate() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app(dir.path());
+        let base = crate::managed_agents::managed_agents_base_dir(app.handle()).unwrap();
+        let (rs, _) = records();
+        write(&base, &rs);
+        let before = std::fs::read(base.join("managed-agents.json")).unwrap();
+        let keys = app
+            .state::<crate::app_state::AppState>()
+            .signing_keys()
+            .unwrap();
+        let db = dir.path().join("retention.db");
+        assert!(
+            migrate_personas_to_events_with(app.handle(), &keys, &db, |_, _| Err(
+                "proof unavailable".into()
+            ))
+            .is_err()
+        );
+        assert!(
+            crate::managed_agents::reconcile::reconcile_agents_to_events_with(
+                app.handle(),
+                &keys,
+                &db,
+                |_, _| Err("proof unavailable".into())
+            )
+            .is_err()
+        );
+        assert_eq!(
+            before,
+            std::fs::read(base.join("managed-agents.json")).unwrap()
+        );
+        std::fs::write(base.join("managed-agents.json"), b"corrupt").unwrap();
+        assert!(
+            migrate_personas_to_events_with(app.handle(), &keys, &db, |_, _| panic!(
+                "unknown store queried proof"
+            ))
+            .is_err()
+        );
+    }
+}

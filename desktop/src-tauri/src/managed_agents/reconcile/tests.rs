@@ -227,7 +227,11 @@ fn monotonic_bump_supersedes_future_dated_head() {
 fn slimming_republish_wave_is_one_time() {
     let dir = TempDir::new().unwrap();
     let keys = nostr::Keys::generate();
+    let context = crate::managed_agents::device_home_migration::tests::context(
+        crate::managed_agents::definition_home::EvidenceReadiness::Ready,
+    );
     let mut record = sample_record("e".repeat(64).as_str(), "agent-five");
+    record.device_host_binding = Some(context.proof.binding().to_string());
     record.persona_id = Some("persona-1".to_string());
     record.persona_source_version = Some("abc123".to_string());
     write_store(&dir, &[record]);
@@ -263,7 +267,16 @@ fn slimming_republish_wave_is_one_time() {
 
     // First boot after upgrade: projection content changed (fat -> slim) so
     // the agent republishes.
-    assert_eq!(reconcile_agents_in_dir(dir.path(), &keys).unwrap(), 1);
+    assert_eq!(
+        reconcile_agents_in_dir_with_context(
+            dir.path(),
+            &keys,
+            &dir.path().join("retention.db"),
+            Some(&context)
+        )
+        .unwrap(),
+        1
+    );
     let conn = open_retention_db(&dir.path().join("retention.db")).unwrap();
     let row = get_retained_event(
         &conn,
@@ -295,7 +308,13 @@ fn slimming_republish_wave_is_one_time() {
 
     // Second boot: identical projection — a true no-op, no republish loop.
     assert_eq!(
-        reconcile_agents_in_dir(dir.path(), &keys).unwrap(),
+        reconcile_agents_in_dir_with_context(
+            dir.path(),
+            &keys,
+            &dir.path().join("retention.db"),
+            Some(&context)
+        )
+        .unwrap(),
         0,
         "second boot must be a no-op (idempotence)"
     );

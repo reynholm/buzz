@@ -407,13 +407,14 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/mod.rs",
-      "responsibility": "Register the device policy compatibility test module; Register home policy, sync and projection modules",
+      "responsibility": "Register the device policy compatibility test module; Register home policy, sync and projection modules; Register device-home migration production module",
       "is_new": false,
       "required_symbols": [
         "mod device_policy_types_tests;",
         "pub(crate) mod definition_home;",
         "pub(crate) mod device_home_sync;",
-        "pub(crate) mod persona_device_view;"
+        "pub(crate) mod persona_device_view;",
+        "pub(crate) mod device_home_migration;"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -838,13 +839,14 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/device_home_sync.rs",
-      "responsibility": "Backend token/scope hydration, exhaustive authenticated paging and live-apply completion barrier",
+      "responsibility": "Backend token/scope hydration, exhaustive authenticated paging and live-apply completion barrier; Run deferred migration with prospective readiness under hydrated/drained/token/scope barrier before installing Ready",
       "is_new": true,
       "required_symbols": [
         "fn begin_session",
         "fn finish_session",
         "async fn hydrate_history",
-        "struct DeviceHomeHistory"
+        "struct DeviceHomeHistory",
+        "fn finish_session_with"
       ],
       "invocation_seams": [
         {
@@ -867,6 +869,14 @@
           "invocation": "begin_apply(state,Some(token))?",
           "behavior_test": "managed_agents::device_home_sync::tests::finish_waits_for_live_apply_and_latches_error_after_ready",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_sync::tests::finish_waits_for_live_apply_and_latches_error_after_ready -- --exact"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/device_home_sync.rs",
+          "callee_symbol": "migrate",
+          "invocation": "migrate(scope)",
+          "behavior_test": "managed_agents::device_home_sync::tests::deferred_migration_failure_never_installs_ready",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_sync::tests::deferred_migration_failure_never_installs_ready -- --exact",
+          "coverage": "behavior"
         }
       ],
       "verification_commands": [
@@ -875,7 +885,7 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/device_home_sync/tests.rs",
-      "responsibility": "Real signed pagination/dense-boundary/coalescing tests and stale/live-error state tests",
+      "responsibility": "Real signed pagination/dense-boundary/coalescing tests and stale/live-error state tests; Deferred migration error latch and token/hydration/drain regressions",
       "is_new": true,
       "required_symbols": [
         "async fn paging_is_inclusive_exhaustive_and_deduped_before_catalog_apply",
@@ -888,13 +898,14 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/persona_device_view.rs",
-      "responsibility": "Read-only structural snapshots, fresh host authority, authoritative remaining signed retained heads and explicit unavailable home",
+      "responsibility": "Read-only structural snapshots, fresh host authority, authoritative remaining signed retained heads and explicit unavailable home; Explicit prospective-readiness context loader avoids recursive sync locking",
       "is_new": true,
       "required_symbols": [
         "struct PersonaDeviceView",
         "fn read_policy_records",
         "fn load_device_policy_context",
-        "fn read_remote_evidence"
+        "fn read_remote_evidence",
+        "fn load_device_policy_context_at"
       ],
       "invocation_seams": [
         {
@@ -910,6 +921,14 @@
           "invocation": "get_retained_events_by_kind(&conn, 30177, owner)?",
           "behavior_test": "commands::personas::inbound::device_sync_tests::signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::inbound::device_sync_tests::signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation -- --exact"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/persona_device_view.rs",
+          "callee_symbol": "load_device_policy_context_at",
+          "invocation": "load_device_policy_context_at(app, scope, readiness)",
+          "behavior_test": "commands::device_home_sync::migration_tests::finish_adapter_migrates_before_ready_under_actual_barrier",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::device_home_sync::migration_tests::finish_adapter_migrates_before_ready_under_actual_barrier -- --exact",
+          "coverage": "wiring/compile; boundary-injected adapter behavior"
         }
       ],
       "verification_commands": [
@@ -918,13 +937,15 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/device_home_sync.rs",
-      "responsibility": "Native IPC adapters, captured-key history transport and reset-before-open/error-aware finalization",
+      "responsibility": "Native IPC adapters, captured-key history transport and reset-before-open/error-aware finalization; Async IPC preserves external unit result, serializes finish with workspace apply, migrates before Ready and retries fresh restore against returned verified scope; top-level Wry entry wiring is compile coverage with native acceptance outstanding",
       "is_new": true,
       "required_symbols": [
         "fn begin_device_home_sync",
         "async fn hydrate_device_home_history",
         "fn finish_device_home_sync",
-        "fn invalidate_device_home_sync"
+        "fn invalidate_device_home_sync",
+        "async fn finish_device_home_sync",
+        "async fn retry_device_home_restore_with"
       ],
       "invocation_seams": [
         {
@@ -936,10 +957,27 @@
         },
         {
           "caller_path": "desktop/src-tauri/src/commands/device_home_sync.rs",
-          "callee_symbol": "finish_session",
-          "invocation": "device_home_sync::finish_session(state, session_token)?;",
-          "behavior_test": "commands::device_home_sync::tests::ipc_session_adapters_preserve_backend_completion_and_invalidation",
-          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::device_home_sync::tests::ipc_session_adapters_preserve_backend_completion_and_invalidation -- --exact"
+          "callee_symbol": "finish_session_with",
+          "invocation": "device_home_sync::finish_session_with(state, session_token, migrate)?;",
+          "behavior_test": "commands::device_home_sync::migration_tests::finish_adapter_key_error_latches_failed_and_preserves_store",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::device_home_sync::migration_tests::finish_adapter_key_error_latches_failed_and_preserves_store -- --exact",
+          "coverage": "behavior"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/device_home_sync.rs",
+          "callee_symbol": "capture_scope",
+          "invocation": "device_home_sync::capture_scope(state)? != *expected",
+          "behavior_test": "commands::device_home_sync::migration_tests::returned_completion_scope_fences_deferred_restore",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::device_home_sync::migration_tests::returned_completion_scope_fences_deferred_restore -- --exact",
+          "coverage": "behavior"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/device_home_sync.rs",
+          "callee_symbol": "restore_managed_agents_on_launch",
+          "invocation": "crate::managed_agents::restore_managed_agents_on_launch(&app, &state.shutdown_started)",
+          "behavior_test": "commands::device_home_sync::migration_tests::returned_completion_scope_fences_deferred_restore",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::device_home_sync::migration_tests::returned_completion_scope_fences_deferred_restore -- --exact",
+          "coverage": "Wry scheduling wiring/compile; injected scheduling fence behavior; native gate outstanding"
         }
       ],
       "verification_commands": [
@@ -1028,12 +1066,21 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/workspace.rs",
-      "responsibility": "Invalidate backend home evidence on workspace apply",
+      "responsibility": "Invalidate backend home evidence on workspace apply; Migrate proven homes before scoped event sync without waiting for frontend history; top-level Wry entry wiring is compile coverage with native acceptance outstanding",
       "is_new": false,
       "required_symbols": [
         "device_home_sync::reset(&state)?;"
       ],
-      "invocation_seams": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/commands/workspace.rs",
+          "callee_symbol": "migrate_device_homes_before_sync",
+          "invocation": "crate::managed_agents::device_home_migration::migrate_device_homes_before_sync(\n                &restore_app,\n            )?;",
+          "behavior_test": "managed_agents::device_home_migration::tests::workspace_hook_defers_legacy_but_reclaims_proven_origin_before_sync",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::workspace_hook_defers_legacy_but_reclaims_proven_origin_before_sync -- --exact",
+          "coverage": "Wry workspace wiring/compile; injected production workspace adapter behavior; native gate outstanding"
+        }
+      ],
       "verification_commands": [
         "just desktop-tauri-test desktop-tauri-check"
       ]
@@ -1214,6 +1261,245 @@
       "invocation_seams": [],
       "verification_commands": [
         "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/device_home_migration.rs",
+      "responsibility": "Atomic legacy binding/origin snapshot, read-only key verification, prewrite scope fence, shared bypass and durable signed-head retry",
+      "is_new": true,
+      "required_symbols": [
+        "fn migrate_device_homes_locked",
+        "fn migrate_device_homes_in_dir",
+        "fn may_publish_local_instance",
+        "fn publication_allowed",
+        "fn needs_private_authority"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/device_home_migration.rs",
+          "callee_symbol": "resolve",
+          "invocation": "resolve(&records[i])?",
+          "behavior_test": "managed_agents::device_home_migration::tests::legacy_claim_requires_available_key",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::legacy_claim_requires_available_key -- --exact",
+          "coverage": "behavior"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/device_home_migration.rs",
+          "callee_symbol": "matches",
+          "invocation": "context.proof.matches(b)",
+          "behavior_test": "managed_agents::device_home_migration::tests::json_copy_does_not_publish",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::json_copy_does_not_publish -- --exact",
+          "coverage": "behavior"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/device_home_migration.rs",
+          "callee_symbol": "atomic_write_json_restricted",
+          "invocation": "atomic_write_json_restricted(&path, &bytes)?;",
+          "behavior_test": "managed_agents::device_home_migration::tests::legacy_claim_requires_available_key",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::legacy_claim_requires_available_key -- --exact",
+          "coverage": "behavior"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/device_home_migration.rs",
+          "callee_symbol": "migrate_device_homes_locked_with",
+          "invocation": "migrate_device_homes_locked_with(app, &context, resolve)",
+          "behavior_test": "managed_agents::device_home_migration::tests::workspace_hook_defers_legacy_but_reclaims_proven_origin_before_sync",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::workspace_hook_defers_legacy_but_reclaims_proven_origin_before_sync -- --exact",
+          "coverage": "behavior"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/device_home_migration.rs",
+          "callee_symbol": "queue_device_home_events",
+          "invocation": "queue_device_home_events(&base, &keys, &db, context)?;",
+          "behavior_test": "managed_agents::device_home_migration::tests::workspace_hook_defers_legacy_but_reclaims_proven_origin_before_sync",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::workspace_hook_defers_legacy_but_reclaims_proven_origin_before_sync -- --exact",
+          "coverage": "behavior"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/device_home_migration/tests.rs",
+      "responsibility": "Native temp-app migration/retention copy, mixed proof, recovery, idempotence, atomic failure and shared-only regressions",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/event_sync.rs",
+      "responsibility": "Suppress copied-only30175 publication, preserve proven-local-wins and shared-only best effort after successful structural read; private/unknown scopes fail closed",
+      "is_new": false,
+      "required_symbols": [
+        "fn migrate_personas_in_dir_with_context",
+        "fn identity_event_sync_leg"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/event_sync.rs",
+          "callee_symbol": "publication_allowed",
+          "invocation": "crate::managed_agents::device_home_migration::publication_allowed(\n                    i,\n                    Some(record),\n                    context,\n                )",
+          "behavior_test": "managed_agents::device_home_migration::tests::copy_suppresses_both_outbound_kinds_and_restore_candidates",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::copy_suppresses_both_outbound_kinds_and_restore_candidates -- --exact",
+          "coverage": "behavior"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/event_sync.rs",
+          "callee_symbol": "any",
+          "invocation": "linked_publication.iter().any(|allowed| *allowed)",
+          "behavior_test": "managed_agents::device_home_migration::tests::proven_home_publishes_definition_among_foreign_copies",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::proven_home_publishes_definition_among_foreign_copies -- --exact",
+          "coverage": "behavior"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/event_sync.rs",
+          "callee_symbol": "identity_event_sync_leg",
+          "invocation": "identity_event_sync_leg(records, |private| {",
+          "behavior_test": "event_sync::home_publication_adapter_tests::private_and_unknown_event_sync_errors_propagate",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml event_sync::home_publication_adapter_tests::private_and_unknown_event_sync_errors_propagate -- --exact",
+          "coverage": "behavior"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/reconcile.rs",
+      "responsibility": "Guard each30177 instance publication; proof/context failure propagates in private scopes, shared-only best effort preserved",
+      "is_new": false,
+      "required_symbols": [
+        "fn reconcile_agents_in_dir_with_context"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/reconcile.rs",
+          "callee_symbol": "publication_allowed",
+          "invocation": "super::device_home_migration::publication_allowed(record, definition.as_ref(), context)?",
+          "behavior_test": "managed_agents::device_home_migration::tests::copy_suppresses_both_outbound_kinds_and_restore_candidates",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::copy_suppresses_both_outbound_kinds_and_restore_candidates -- --exact",
+          "coverage": "behavior"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/reconcile.rs",
+          "callee_symbol": "identity_event_sync_leg",
+          "invocation": "crate::event_sync::identity_event_sync_leg(records, |private| {",
+          "behavior_test": "event_sync::home_publication_adapter_tests::private_and_unknown_event_sync_errors_propagate",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml event_sync::home_publication_adapter_tests::private_and_unknown_event_sync_errors_propagate -- --exact",
+          "coverage": "behavior"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/storage.rs",
+      "responsibility": "Read-only migration key resolver propagates backend/malformed-secret errors and verifies pubkey; expose existing hydration boundary for eligible-only auto-start work",
+      "is_new": false,
+      "required_symbols": [
+        "fn resolve_agent_key_readonly",
+        "fn resolve_agent_key_readonly_with"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/storage.rs",
+          "callee_symbol": "load_all_readonly",
+          "invocation": ".load_all_readonly()?",
+          "behavior_test": "managed_agents::storage::migration_key_tests::migration_key_resolver_validates_read_only_secrets_and_errors",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::storage::migration_key_tests::migration_key_resolver_validates_read_only_secrets_and_errors -- --exact",
+          "coverage": "behavior"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/restore.rs",
+      "responsibility": "Select proven/shared/standalone auto-start candidates before key hydration or lifecycle work, retaining existing live-pair duplicate guards; top-level Wry entry wiring is compile coverage with native acceptance outstanding; authority lookup excludes private records not selected for auto-start",
+      "is_new": false,
+      "required_symbols": [
+        "fn select_auto_start_candidates",
+        "fn needs_auto_start_authority"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/restore.rs",
+          "callee_symbol": "auto_start_allowed",
+          "invocation": "super::device_home_migration::auto_start_allowed(record, &definitions, context)?",
+          "behavior_test": "managed_agents::runtime_commands::device_home_job_tests::copied_and_deferred_auto_start_jobs_have_zero_hydration_and_probes",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::runtime_commands::device_home_job_tests::copied_and_deferred_auto_start_jobs_have_zero_hydration_and_probes -- --exact",
+          "coverage": "behavior"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/restore.rs",
+          "callee_symbol": "select_auto_start_candidates",
+          "invocation": "select_auto_start_candidates(&policy_records, context.as_ref())?;",
+          "behavior_test": "managed_agents::device_home_migration::tests::copy_suppresses_both_outbound_kinds_and_restore_candidates",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::copy_suppresses_both_outbound_kinds_and_restore_candidates -- --exact",
+          "coverage": "Wry restore wiring/compile; shared production selection behavior; native gate outstanding"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/runtime_commands.rs",
+      "responsibility": "Guard actual auto-start job selection before key hydration and bounded relay probes; preserve shared and standalone baseline; shared-only selected jobs avoid proof lookup even when unrelated disabled private rows exist",
+      "is_new": false,
+      "required_symbols": [
+        "fn auto_start_jobs_with",
+        "async fn probe_auto_start_jobs"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/runtime_commands.rs",
+          "callee_symbol": "select_auto_start_candidates",
+          "invocation": "super::restore::select_auto_start_candidates(&records, context.as_ref())?;",
+          "behavior_test": "managed_agents::runtime_commands::device_home_job_tests::copied_and_deferred_auto_start_jobs_have_zero_hydration_and_probes",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::runtime_commands::device_home_job_tests::copied_and_deferred_auto_start_jobs_have_zero_hydration_and_probes -- --exact",
+          "coverage": "behavior"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/runtime_commands.rs",
+          "callee_symbol": "needs_auto_start_authority",
+          "invocation": "super::restore::needs_auto_start_authority(&records)",
+          "behavior_test": "managed_agents::runtime_commands::device_home_job_tests::shared_jobs_ignore_unselected_private_authority",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::runtime_commands::device_home_job_tests::shared_jobs_ignore_unselected_private_authority -- --exact"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/migration.rs",
+      "responsibility": "Document owner-dependent device-home migration belongs after fold/detach in workspace apply, never preidentity boot",
+      "is_new": false,
+      "required_symbols": [
+        "Device-home migration deliberately waits for owner/workspace hydration"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/reconcile/tests.rs",
+      "responsibility": "Existing linked-instance slim event/idempotence fixture injects matching host proof through guarded production reconcile engine",
+      "is_new": false,
+      "required_symbols": [
+        "fn slimming_republish_wave_is_one_time"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
       ]
     }
   ]

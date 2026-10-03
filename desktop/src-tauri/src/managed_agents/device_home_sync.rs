@@ -102,7 +102,17 @@ pub(crate) fn begin_session(state: &AppState) -> Result<DeviceHomeSyncSession, S
     })
 }
 /// Complete only exhaustive history and successfully drained backend applications.
+#[cfg(test)]
 pub(crate) fn finish_session(state: &AppState, token: &str) -> Result<(), String> {
+    finish_session_with(state, token, |_| Ok(())).map(|_| ())
+}
+
+/// Run deferred migration under the completion barrier before exposing Ready.
+pub(crate) fn finish_session_with(
+    state: &AppState,
+    token: &str,
+    migrate: impl FnOnce(&SyncScope) -> Result<(), String>,
+) -> Result<SyncScope, String> {
     with_sync(state, |sync, scope| {
         let s = active(sync, scope, token)?;
         if s.readiness == EvidenceReadiness::Failed {
@@ -111,8 +121,15 @@ pub(crate) fn finish_session(state: &AppState, token: &str) -> Result<(), String
         if !s.hydrated || s.hydrating || s.in_flight != 0 {
             return Err("device_home_sync_pending".into());
         }
+        if let Err(error) = migrate(scope) {
+            s.readiness = EvidenceReadiness::Failed;
+            return Err(error);
+        }
+        if capture_scope(state)? != *scope {
+            return Err("device_home_sync_stale_session".into());
+        }
         s.readiness = EvidenceReadiness::Ready;
-        Ok(())
+        Ok(scope.clone())
     })
 }
 /// Invalidate only the specified session, never a replacement subscription.

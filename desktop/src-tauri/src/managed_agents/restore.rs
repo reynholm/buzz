@@ -114,7 +114,28 @@ pub async fn restore_managed_agents_on_launch(
             return Ok(());
         }
 
-        let mut records = load_managed_agents(app)?;
+        let policy_records = super::persona_device_view::read_policy_records(
+            &super::managed_agents_store_path(app)?,
+        )?;
+        let context = if needs_auto_start_authority(&policy_records) {
+            Some(super::persona_device_view::load_device_policy_context(
+                app, &state,
+            )?)
+        } else {
+            None
+        };
+        let mut selected = select_auto_start_candidates(&policy_records, context.as_ref())?;
+        super::storage::hydrate_keys(&mut selected);
+        let eligible: std::collections::HashSet<_> =
+            selected.iter().map(|r| r.pubkey.clone()).collect();
+        let mut records = policy_records;
+        records.retain(|r| !r.pubkey.is_empty());
+        // Hydrate only eligible candidates; copied records must not import keys.
+        for record in &mut records {
+            if let Some(hydrated) = selected.iter().find(|r| r.pubkey == record.pubkey) {
+                record.private_key_nsec = hydrated.private_key_nsec.clone();
+            }
+        }
         recover_pending_assignment_cleanup(&managed_agents_base_dir(app)?, |pending_pubkey| {
             records
                 .iter()
@@ -173,7 +194,7 @@ pub async fn restore_managed_agents_on_launch(
 
         let candidates: Vec<String> = records
             .iter()
-            .filter(|record| record.start_on_app_launch && record.backend == BackendKind::Local)
+            .filter(|record| eligible.contains(&record.pubkey))
             .map(|record| record.pubkey.clone())
             .collect();
 
@@ -561,6 +582,40 @@ fn persist_restore_error(
     record.updated_at = util::now_iso();
     record.last_error = Some(error);
     save_managed_agents(app, &records)
+}
+
+/// Select fresh auto-start records through the home guard before lifecycle work.
+pub(crate) fn select_auto_start_candidates(
+    records: &[super::ManagedAgentRecord],
+    context: Option<&super::persona_device_view::DevicePolicyContext>,
+) -> Result<Vec<super::ManagedAgentRecord>, String> {
+    let definitions: Vec<_> = records
+        .iter()
+        .filter(|r| r.pubkey.is_empty())
+        .filter_map(super::ManagedAgentRecord::to_definition_view)
+        .collect();
+    let mut selected = Vec::new();
+    for record in records.iter().filter(|r| {
+        !r.pubkey.is_empty() && r.start_on_app_launch && r.backend == BackendKind::Local
+    }) {
+        if super::device_home_migration::auto_start_allowed(record, &definitions, context)? {
+            selected.push(record.clone());
+        }
+    }
+    Ok(selected)
+}
+
+/// Require host authority only for records this auto-start operation selects.
+/// Structural definitions remain available for canonical sharing lookup.
+pub(crate) fn needs_auto_start_authority(records: &[super::ManagedAgentRecord]) -> bool {
+    let relevant: Vec<_> = records
+        .iter()
+        .filter(|r| {
+            r.pubkey.is_empty() || (r.start_on_app_launch && r.backend == BackendKind::Local)
+        })
+        .cloned()
+        .collect();
+    super::device_home_migration::needs_private_authority(&relevant)
 }
 
 #[cfg(test)]

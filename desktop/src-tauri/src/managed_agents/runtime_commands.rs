@@ -467,35 +467,17 @@ pub async fn reconcile_managed_agent_runtimes(
     communities: Vec<super::ManagedAgentCommunityTarget>,
     app: AppHandle,
 ) -> Result<Vec<ManagedAgentRuntimeStatus>, String> {
-    use futures_util::{stream, StreamExt};
-
-    let records = load_managed_agents(&app)?;
-    let mut jobs = Vec::new();
-    for community in communities {
-        for record in records
-            .iter()
-            .filter(|record| record.start_on_app_launch && record.backend == BackendKind::Local)
-        // The legacy per-record relay pin is deliberately ignored here — see
-        // `effective_agent_relay_url`. Every local auto-start agent fans out
-        // to every configured community.
-        {
-            jobs.push((record.clone(), community.relay_url.clone()));
-        }
-    }
-    let probes: Vec<_> = stream::iter(jobs)
-        .map(|(record, requested)| {
-            let state = app.state::<AppState>();
-            async move {
-                let fallback_record = record.clone();
-                let fallback_requested = requested.clone();
-                probe_agent_relay_access(&state, record, requested)
-                    .await
-                    .map_err(|error| (fallback_record, fallback_requested, error))
-            }
-        })
-        .buffer_unordered(6)
-        .collect()
-        .await;
+    let jobs = auto_start_jobs_with(
+        &app,
+        &communities,
+        super::persona_device_view::load_device_policy_context,
+        super::storage::hydrate_keys,
+    )?;
+    let probes = probe_auto_start_jobs(jobs, |record, requested| {
+        let state = app.state::<AppState>();
+        async move { probe_agent_relay_access(&state, record, requested).await }
+    })
+    .await;
 
     // start_pair does blocking work (std mutexes, process spawn, receipt
     // writes, and up-to-2s exit polling in terminate_untracked_pair_runtime),
@@ -730,5 +712,197 @@ mod tests {
             Some("unexpected"),
         );
         assert!(observer_lifecycle_key(&ready_with_error.pubkey, &ready_with_error).is_err());
+    }
+}
+
+/// Build the actual reconcile job set before key hydration or relay probes.
+fn auto_start_jobs_with<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    communities: &[super::ManagedAgentCommunityTarget],
+    context_provider: impl FnOnce(
+        &AppHandle<R>,
+        &AppState,
+    )
+        -> Result<super::persona_device_view::DevicePolicyContext, String>,
+    hydrate: impl FnOnce(&mut [super::ManagedAgentRecord]),
+) -> Result<Vec<(super::ManagedAgentRecord, String)>, String> {
+    let state = app.state::<AppState>();
+    let _store = state
+        .managed_agents_store_lock
+        .lock()
+        .map_err(|e| e.to_string())?;
+    let records =
+        super::persona_device_view::read_policy_records(&super::managed_agents_store_path(app)?)?;
+    let context = if super::restore::needs_auto_start_authority(&records) {
+        Some(context_provider(app, &state)?)
+    } else {
+        None
+    };
+    let mut candidates = super::restore::select_auto_start_candidates(&records, context.as_ref())?;
+    hydrate(&mut candidates);
+    Ok(communities
+        .iter()
+        .flat_map(|c| {
+            candidates
+                .iter()
+                .map(move |r| (r.clone(), c.relay_url.clone()))
+        })
+        .collect())
+}
+
+type AutoStartProbe = Result<
+    (super::ManagedAgentRecord, ManagedAgentRuntimeKey, String),
+    (super::ManagedAgentRecord, String, String),
+>;
+async fn probe_auto_start_jobs<F, Fut>(
+    jobs: Vec<(super::ManagedAgentRecord, String)>,
+    probe: F,
+) -> Vec<AutoStartProbe>
+where
+    F: Fn(super::ManagedAgentRecord, String) -> Fut,
+    Fut: std::future::Future<
+        Output = Result<(super::ManagedAgentRecord, ManagedAgentRuntimeKey, String), String>,
+    >,
+{
+    use futures_util::{stream, StreamExt};
+    stream::iter(jobs)
+        .map(|(record, requested)| {
+            let fallback = (record.clone(), requested.clone());
+            let work = probe(record, requested);
+            async move { work.await.map_err(|e| (fallback.0, fallback.1, e)) }
+        })
+        .buffer_unordered(6)
+        .collect()
+        .await
+}
+
+#[cfg(test)]
+mod device_home_job_tests {
+    use super::*;
+    use crate::managed_agents::{
+        definition_home::EvidenceReadiness,
+        device_home_migration::tests::{app, context, records, write},
+    };
+    #[tokio::test]
+    async fn copied_and_deferred_auto_start_jobs_have_zero_hydration_and_probes() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app(dir.path());
+        let base = super::super::managed_agents_base_dir(app.handle()).unwrap();
+        let (mut rs, _) = records();
+        rs[1].start_on_app_launch = true;
+        let communities = vec![super::super::ManagedAgentCommunityTarget {
+            relay_url: "wss://other-scope".into(),
+        }];
+        for copied in [false, true] {
+            rs[1].device_host_binding = copied.then(|| "foreign-marker".into());
+            write(&base, &rs);
+            let jobs = auto_start_jobs_with(
+                app.handle(),
+                &communities,
+                |_, _| Ok(context(EvidenceReadiness::Pending)),
+                |selected| assert!(selected.is_empty(), "blocked records hydrated keys"),
+            )
+            .unwrap();
+            let probes =
+                probe_auto_start_jobs(jobs, |_, _| async { panic!("blocked record probed relay") })
+                    .await;
+            assert!(probes.is_empty());
+        }
+    }
+    #[tokio::test]
+    async fn proven_fresh_jobs_retry_after_migration_and_shared_jobs_need_no_proof() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app(dir.path());
+        let base = super::super::managed_agents_base_dir(app.handle()).unwrap();
+        let (mut rs, _) = records();
+        rs[1].start_on_app_launch = true;
+        let c = context(EvidenceReadiness::Ready);
+        rs[1].device_host_binding = Some(c.proof.binding().into());
+        write(&base, &rs);
+        let communities = vec![super::super::ManagedAgentCommunityTarget {
+            relay_url: "wss://other-scope".into(),
+        }];
+        let jobs = auto_start_jobs_with(app.handle(), &communities, |_, _| Ok(c), |_| {}).unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].1, "wss://other-scope");
+        let count = std::cell::Cell::new(0);
+        let results = probe_auto_start_jobs(jobs, |r, url| {
+            count.set(count.get() + 1);
+            async move {
+                let key = ManagedAgentRuntimeKey::new(r.pubkey.clone(), &url)?;
+                Ok((r, key, url))
+            }
+        })
+        .await;
+        assert_eq!(count.get(), 1);
+        assert_eq!(results.len(), 1);
+        rs[0].share_across_devices = Some(true);
+        rs[1].device_host_binding = Some("foreign-marker".into());
+        write(&base, &rs);
+        let jobs = auto_start_jobs_with(
+            app.handle(),
+            &communities,
+            |_, _| panic!("shared-only queried proof"),
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(jobs.len(), 1);
+    }
+    #[test]
+    fn auto_start_structural_or_context_errors_propagate_before_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app(dir.path());
+        let base = super::super::managed_agents_base_dir(app.handle()).unwrap();
+        let (mut rs, _) = records();
+        rs[1].start_on_app_launch = true;
+        write(&base, &rs);
+        assert!(auto_start_jobs_with(
+            app.handle(),
+            &[],
+            |_, _| Err("proof locked".into()),
+            |_| panic!("proof error hydrated keys")
+        )
+        .is_err());
+        std::fs::write(base.join("managed-agents.json"), b"broken").unwrap();
+        assert!(auto_start_jobs_with(
+            app.handle(),
+            &[],
+            |_, _| panic!("broken structural store read context"),
+            |_| panic!("broken store hydrated keys")
+        )
+        .is_err());
+    }
+    #[test]
+    fn shared_jobs_ignore_unselected_private_authority() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app(dir.path());
+        let base = super::super::managed_agents_base_dir(app.handle()).unwrap();
+        let (mut rs, _) = records();
+        rs[1].start_on_app_launch = false;
+        let mut shared = crate::managed_agents::device_home_migration::tests::definition();
+        shared.id = "shared-one".into();
+        shared.share_across_devices = Some(true);
+        let mut instance = shared.clone().into_agent_record();
+        instance.pubkey = nostr::Keys::generate().public_key().to_hex();
+        instance.persona_id = Some(shared.id.clone());
+        instance.start_on_app_launch = true;
+        rs.push(shared.into_agent_record());
+        rs.push(instance);
+        write(&base, &rs);
+        let communities = vec![super::super::ManagedAgentCommunityTarget {
+            relay_url: "wss://test".into(),
+        }];
+        let jobs = auto_start_jobs_with(
+            app.handle(),
+            &communities,
+            |_, _| panic!("unselected private row requested proof for shared jobs"),
+            |selected| {
+                assert_eq!(selected.len(), 1);
+                assert_eq!(selected[0].persona_id.as_deref(), Some("shared-one"));
+            },
+        )
+        .unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].0.persona_id.as_deref(), Some("shared-one"));
     }
 }

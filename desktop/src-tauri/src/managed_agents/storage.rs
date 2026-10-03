@@ -310,7 +310,7 @@ pub(crate) fn backup_invalid_store(path: &Path) {
 ///   writes clean JSON and plaintext stops lingering on disk; if still
 ///   unreachable, leave it inline. This makes the strip deterministic on the
 ///   next reachable boot rather than waiting for a non-deterministic save.
-fn hydrate_keys(records: &mut [ManagedAgentRecord]) {
+pub(crate) fn hydrate_keys(records: &mut [ManagedAgentRecord]) {
     let Some(store) = agent_secret_store() else {
         return;
     };
@@ -992,3 +992,77 @@ pub fn meaningful_agent_error_from_log(path: &Path) -> Option<AgentLogError> {
 #[cfg(test)]
 #[path = "storage_tests.rs"]
 mod tests;
+
+/// Resolve a migration key without importing inline keys or swallowing outages.
+pub(crate) fn resolve_agent_key_readonly(
+    record: &ManagedAgentRecord,
+) -> Result<Option<nostr::Keys>, String> {
+    resolve_agent_key_readonly_with(record, agent_secret_store())
+}
+
+/// Same resolver with an injected read-only secret store boundary.
+pub(crate) fn resolve_agent_key_readonly_with(
+    record: &ManagedAgentRecord,
+    store: Option<&SecretStore>,
+) -> Result<Option<nostr::Keys>, String> {
+    let secret = if record.private_key_nsec.is_empty() {
+        match store {
+            Some(store) => store
+                .load_all_readonly()?
+                .and_then(|entries| entries.get(&agent_keyring_name(&record.pubkey)).cloned()),
+            None => None,
+        }
+    } else {
+        Some(record.private_key_nsec.clone())
+    };
+    let Some(secret) = secret else {
+        return Ok(None);
+    };
+    let keys =
+        nostr::Keys::parse(secret.trim()).map_err(|e| format!("invalid managed-agent key: {e}"))?;
+    if keys.public_key().to_hex() != record.pubkey {
+        return Err("device home agent key does not match pubkey".into());
+    }
+    Ok(Some(keys))
+}
+
+#[cfg(test)]
+mod migration_key_tests {
+    use super::*;
+    use crate::secret_store::TestBlobBackend;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    struct ReadOnlyBlob {
+        value: Result<Option<Vec<u8>>, String>,
+        reads: AtomicUsize,
+    }
+    impl TestBlobBackend for ReadOnlyBlob {
+        fn read(&self) -> Result<Option<Vec<u8>>, String> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            self.value.clone()
+        }
+        fn write(&self, _: &[u8]) -> Result<(), String> {
+            panic!("migration resolver wrote keychain")
+        }
+    }
+    #[test]
+    fn migration_key_resolver_validates_read_only_secrets_and_errors() {
+        let (records, key) = crate::managed_agents::device_home_migration::tests::records();
+        let record = &records[1];
+        for (value, valid, missing) in [
+            (Err("locked".into()),false,false),
+            (Ok(None),false,true),
+            (Ok(Some(serde_json::to_vec(&serde_json::json!({format!("agent:{}",record.pubkey):"bad-secret"})).unwrap())),false,false),
+            (Ok(Some(serde_json::to_vec(&serde_json::json!({format!("agent:{}",record.pubkey):nostr::Keys::generate().secret_key().to_secret_hex()})).unwrap())),false,false),
+            (Ok(Some(serde_json::to_vec(&serde_json::json!({format!("agent:{}",record.pubkey):key.secret_key().to_secret_hex()})).unwrap())),true,false),
+        ] {
+            let backend=Arc::new(ReadOnlyBlob {value, reads:AtomicUsize::new(0)});let mut store=SecretStore::keyring(format!("task4-key-{}",uuid::Uuid::new_v4()));store.test_backend=Some(backend.clone());
+            let result=resolve_agent_key_readonly_with(record,Some(&store));
+            if valid {assert_eq!(result.unwrap().unwrap().public_key().to_hex(),record.pubkey);}
+            else if missing {assert!(result.unwrap().is_none());} else {assert!(result.is_err());}
+            assert_eq!(backend.reads.load(Ordering::SeqCst),1);
+        }
+    }
+}

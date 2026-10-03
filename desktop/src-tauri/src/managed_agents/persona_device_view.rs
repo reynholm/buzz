@@ -101,6 +101,15 @@ pub(crate) fn load_device_policy_context<R: tauri::Runtime>(
     state: &AppState,
 ) -> Result<DevicePolicyContext, String> {
     let scope = device_home_sync::capture_scope(state)?;
+    let readiness = device_home_sync::readiness_locked(state, &scope)?;
+    load_device_policy_context_at(app, scope, readiness)
+}
+/// Load authority inside the finish barrier without re-locking its sync mutex.
+pub(crate) fn load_device_policy_context_at<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    scope: device_home_sync::SyncScope,
+    readiness: EvidenceReadiness,
+) -> Result<DevicePolicyContext, String> {
     let directory = app
         .path()
         .app_data_dir()
@@ -115,7 +124,6 @@ pub(crate) fn load_device_policy_context<R: tauri::Runtime>(
         &scope.owner_pubkey,
     );
     let evidence = read_remote_evidence(&path, &scope.owner_pubkey)?;
-    let readiness = device_home_sync::readiness_locked(state, &scope)?;
     Ok(DevicePolicyContext {
         scope,
         device,

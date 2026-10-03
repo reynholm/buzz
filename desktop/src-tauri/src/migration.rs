@@ -119,6 +119,8 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
 /// keys, no `retention.db`), so it runs pre-identity here ahead of all
 /// readers — reader-first loses a launch (stale harness/`mcp_command` until
 /// the next boot).
+// Device-home migration deliberately waits for owner/workspace hydration in
+// commands::workspace; this preidentity phase must not claim or publish homes.
 pub fn run_boot_migrations(app: &tauri::AppHandle) {
     run_boot_migrations_inner(app, false);
 }
