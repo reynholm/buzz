@@ -1492,6 +1492,11 @@ mod tests {
         );
         // Minimal record: only the fields resolve_effective_agent_env reads.
         let record = crate::managed_agents::types::ManagedAgentRecord {
+            share_across_devices: None,
+            origin_device_id: None,
+            origin_device_label: None,
+            origin_released: None,
+            device_host_binding: None,
             session_policy: Default::default(),
             description: None,
             pubkey: "test-pubkey".to_string(),

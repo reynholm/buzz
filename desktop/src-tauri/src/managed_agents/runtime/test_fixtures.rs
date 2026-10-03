@@ -36,6 +36,11 @@ pub(super) fn fixture(
     auth_tag: Option<String>,
 ) -> ManagedAgentRecord {
     ManagedAgentRecord {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
+        device_host_binding: None,
         session_policy: Default::default(),
         description: None,
         pubkey: "p".into(),

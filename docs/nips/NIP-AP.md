@@ -72,7 +72,11 @@ The `content` field is a **plaintext** (unencrypted) JSON object:
   "respond_to": "<string | null>",
   "respond_to_allowlist": ["<64-hex pubkey>", ...],
   "parallelism": "<integer | null>",
-  "session_policy": "<channel | thread>"
+  "session_policy": "<channel | thread>",
+  "share_across_devices": "<boolean | null>",
+  "origin_device_id": "<string | null>",
+  "origin_device_label": "<string | null>",
+  "origin_released": "<boolean | null>"
 }
 ```
 
@@ -97,12 +101,38 @@ The `content` field is a **plaintext** (unencrypted) JSON object:
 | `respond_to_allowlist` | string[] | `[]` | **Reserved.** Allowlisted author pubkeys (64-char lowercase hex) when `respond_to` is `"allowlist"`. Ignored otherwise. |
 | `parallelism` | integer \| null | `null` | **Reserved.** Default max concurrent turns for spawned instances. `null` defers to the client default. |
 | `session_policy` | string | `"channel"` | ACP conversation boundary for instances launched from this definition. `"channel"` shares context across a channel; `"thread"` isolates context per channel thread. Direct messages remain conversation-scoped. |
+| `share_across_devices` | boolean \| null | `false` | Only explicit true permits execution across the owner's devices. |
+| `origin_device_id` | string \| null | `null` | UUID of the definition's home Desktop. |
+| `origin_device_label` | string \| null | `null` | Public display label for the home Desktop. |
+| `origin_released` | boolean \| null | `false` | Explicit home release after deletion of the last instance. |
 
 The behavioral fields are definition-level defaults. `respond_to`, its
 allowlist, and `parallelism` are copied when an instance is created.
 `session_policy` remains definition-authoritative: changing it marks running
 linked instances for restart, and the next restart launches with the current
 definition value without rewriting an already-deployed instance in place.
+
+### Device execution policy
+
+Optional device metadata follows `session_policy` in this order:
+`share_across_devices`, `origin_device_id`, `origin_device_label`,
+`origin_released`. Writers omit absent values to preserve historical content
+bytes and reference vectors. All four fields are excluded from
+`persona_content_hash`; changing execution policy or a home label does not
+change the running process configuration or require a restart.
+
+Only explicit `share_across_devices: true` permits unrestricted execution on
+the owner's devices. False, null, and absence mean private to a device home.
+This is independent of the `shared` community catalog tag. The permission is
+creation-only in Desktop v1. Origin metadata describes the home; a release
+indicates deletion of its last instance, not stopping or going offline.
+
+Policy-aware clients enforce this locally. Older clients ignore the optional
+fields and cannot enforce this restriction; the relay does not enforce device
+execution policy. Device metadata is public, so labels must contain no secrets.
+The local `device_host_binding` evidence MUST NOT appear in public events,
+catalog exports, or portable snapshots. Portable snapshots also omit all four
+public device fields so an imported copy establishes its own home and policy.
 
 Unknown fields MUST be ignored by readers (forward compatibility).
 

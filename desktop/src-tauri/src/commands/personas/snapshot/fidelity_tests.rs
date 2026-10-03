@@ -11,6 +11,11 @@ use std::collections::BTreeMap;
 
 fn make_definition(slug: &str) -> ManagedAgentRecord {
     ManagedAgentRecord {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
+        device_host_binding: None,
         session_policy: Default::default(),
         description: None,
         pubkey: String::new(),

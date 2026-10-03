@@ -64,6 +64,11 @@ mod tests {
 
     fn record_with(runtime: Option<&str>, parallelism: u32) -> ManagedAgentRecord {
         ManagedAgentRecord {
+            share_across_devices: None,
+            origin_device_id: None,
+            origin_device_label: None,
+            origin_released: None,
+            device_host_binding: None,
             session_policy: Default::default(),
             description: None,
             pubkey: String::new(),
@@ -131,6 +136,10 @@ mod tests {
     ) -> crate::managed_agents::types::AgentDefinition {
         use crate::managed_agents::types::AgentDefinition;
         AgentDefinition {
+            share_across_devices: None,
+            origin_device_id: None,
+            origin_device_label: None,
+            origin_released: None,
             session_policy: Default::default(),
             description: None,
             id: id.to_string(),

@@ -121,6 +121,10 @@ fn built_in_persona_records(now: &str) -> Vec<AgentDefinition> {
     BUILT_IN_PERSONAS
         .iter()
         .map(|persona| AgentDefinition {
+            share_across_devices: None,
+            origin_device_id: None,
+            origin_device_label: None,
+            origin_released: None,
             id: persona.id.to_string(),
             display_name: persona.display_name.to_string(),
             avatar_url: persona.avatar_url.map(|s| s.to_string()),

@@ -18,6 +18,8 @@
 //! - `private_key_nsec` — the agent's secret key.
 //! - `auth_tag` — the NIP-OA owner attestation.
 //! - `env_vars` — may hold API keys / credentials.
+//! - device policy/origin metadata and `device_host_binding` — definition policy
+//!   and local host evidence are not instance wire state.
 //! - `backend` — `Provider { config }` is an opaque blob that may hold secrets.
 //! - any runtime field (`runtime_pid`, `last_*`, `backend_agent_id`, …) — these
 //!   mutate on every start/stop and describe transient process state.
@@ -164,6 +166,11 @@ mod tests {
 
     fn sample_agent() -> ManagedAgentRecord {
         ManagedAgentRecord {
+            share_across_devices: None,
+            origin_device_id: None,
+            origin_device_label: None,
+            origin_released: None,
+            device_host_binding: None,
             session_policy: Default::default(),
             description: None,
             pubkey: "agentpubkeyhex".to_string(),

@@ -79,6 +79,9 @@ pub fn apply_persona_behavior(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreatePersonaRequest {
+    /// Creation-only permission to run on the owner's other devices.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share_across_devices: Option<bool>,
     pub display_name: String,
     pub avatar_url: Option<String>,
     /// Optional short, PUBLIC description (max 280 chars).
@@ -295,6 +298,10 @@ mod tests {
 
     fn record_without_quad() -> AgentDefinition {
         AgentDefinition {
+            share_across_devices: None,
+            origin_device_id: None,
+            origin_device_label: None,
+            origin_released: None,
             session_policy: Default::default(),
             description: None,
             id: "p-1".to_string(),

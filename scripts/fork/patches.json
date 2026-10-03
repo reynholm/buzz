@@ -92,6 +92,534 @@
       "verification_commands": [
         "python3 scripts/fork/sync.py validate"
       ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/agent_config_tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/agents.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/agents_tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/create.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/delete_cascade_tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/inbound/catalog_reconcile_tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/inbound/inbound_tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/pending.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/sharing.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/snapshot/fidelity_tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/snapshot/import.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/snapshot/tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/update/name_propagation_tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/team_snapshot.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/team_snapshot/tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/teams/adopt/apply.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/teams/adopt/tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/teams/pending/tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/teams/sharing/tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/event_sync_team_catalog_tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/agent_events.rs",
+      "responsibility": "Preserve explicit instance-event allowlist and repair legacy fixture",
+      "is_new": false,
+      "required_symbols": [
+        "pub fn agent_event_content"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/agent_snapshot.rs",
+      "responsibility": "Document intentional omission of device metadata from portable snapshots",
+      "is_new": false,
+      "required_symbols": [
+        "pub fn build_snapshot"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/agent_snapshot_envelope.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/agent_snapshot_tests.rs",
+      "responsibility": "Legacy snapshot fixture repair and metadata-independent portable bytes coverage",
+      "is_new": false,
+      "required_symbols": [
+        "fn device_metadata_does_not_change_portable_snapshot_bytes"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/config_bridge/effort_tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/config_bridge/reader_tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/device_policy_types_tests.rs",
+      "responsibility": "Behavior coverage for legacy bytes, unified policy projections, IPC and portable export exclusions",
+      "is_new": true,
+      "required_symbols": [
+        "fn legacy_policy_bytes_and_hash_stay_identical",
+        "fn policy_roundtrip_survives_unified_projection",
+        "fn portable_exports_exclude_device_metadata"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/discovery/tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/effective_config/tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/global_config/tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/mod.rs",
+      "responsibility": "Register the device policy compatibility test module",
+      "is_new": false,
+      "required_symbols": [
+        "mod device_policy_types_tests;"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/nest/render_tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/parallelism.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/persona_events.rs",
+      "responsibility": "Append optional device metadata to persona wire content and exclude it from drift hash",
+      "is_new": false,
+      "required_symbols": [
+        "pub fn persona_content_hash",
+        "pub fn persona_event_content",
+        "pub fn persona_from_event"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/persona_events/tests.rs",
+      "responsibility": "Legacy persona literal repair and independent device-field hash invariance coverage",
+      "is_new": false,
+      "required_symbols": [
+        "fn each_device_metadata_field_is_excluded_from_content_hash"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/personas.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/personas/tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/readiness.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/runtime/test_fixtures.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/runtime/tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/spawn_snapshot/tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/team_catalog/tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/team_snapshot.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/teams_tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/types.rs",
+      "responsibility": "Optional public device metadata and local binding records; preserve unified projections",
+      "is_new": false,
+      "required_symbols": [
+        "pub share_across_devices: Option<bool>",
+        "pub origin_device_id: Option<String>",
+        "pub origin_device_label: Option<String>",
+        "pub origin_released: Option<bool>",
+        "pub device_host_binding: Option<String>",
+        "pub fn into_agent_record",
+        "pub fn to_definition_view"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/types/requests.rs",
+      "responsibility": "Creation-only camelCase device sharing IPC input",
+      "is_new": false,
+      "required_symbols": [
+        "pub share_across_devices: Option<bool>"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/types/tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/mesh_llm/recovery.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/migration_avatar_tests.rs",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "docs/nips/NIP-AP.md",
+      "responsibility": "Document optional device execution metadata and old-client enforcement limitations",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
     }
   ]
 }

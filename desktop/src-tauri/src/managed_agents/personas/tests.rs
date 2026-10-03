@@ -8,6 +8,10 @@ use crate::managed_agents::AgentDefinition;
 
 fn custom_persona(id: &str, display_name: &str) -> AgentDefinition {
     AgentDefinition {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
         session_policy: Default::default(),
         description: None,
         id: id.to_string(),

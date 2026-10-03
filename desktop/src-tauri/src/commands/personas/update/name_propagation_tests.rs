@@ -5,6 +5,11 @@ use super::*;
 
 fn agent(persona_id: &str, name: &str, display_name: Option<&str>) -> ManagedAgentRecord {
     ManagedAgentRecord {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
+        device_host_binding: None,
         session_policy: Default::default(),
         description: None,
         pubkey: format!("pubkey-{name}"),

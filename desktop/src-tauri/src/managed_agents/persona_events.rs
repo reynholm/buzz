@@ -106,6 +106,18 @@ pub struct PersonaEventContent {
     /// order and omitted for the default channel behavior.
     #[serde(default, skip_serializing_if = "super::AcpSessionPolicy::is_channel")]
     pub session_policy: super::AcpSessionPolicy,
+    /// Only explicit true permits execution across the owner's devices.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share_across_devices: Option<bool>,
+    /// Public UUID of the definition's home Desktop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_device_id: Option<String>,
+    /// Public display label of the definition's home Desktop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_device_label: Option<String>,
+    /// Explicit home release after the last instance is deleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_released: Option<bool>,
 }
 
 /// Derive the d-tag (persona slug) from a `AgentDefinition`.
@@ -251,6 +263,10 @@ pub fn persona_from_event(event: &nostr::Event) -> Result<AgentDefinition, Strin
     let created_at = event.created_at.to_human_datetime();
 
     Ok(AgentDefinition {
+        share_across_devices: content.share_across_devices,
+        origin_device_id: content.origin_device_id,
+        origin_device_label: content.origin_device_label,
+        origin_released: content.origin_released,
         id: d_tag.clone(),
         display_name: content.display_name,
         avatar_url: content.avatar_url,
@@ -521,13 +537,18 @@ fn redate_tombstone(
 /// is fixed by the struct definition, so `serde_json` produces a stable
 /// canonical encoding.
 ///
-/// `description` is deliberately EXCLUDED from the hashed projection: it is
-/// public display metadata, not spawn-relevant config, so a description-only
-/// edit must not flip the "restart required" drift badge on linked instances.
-/// Guarded by `description_change_does_not_change_content_hash`.
+/// Device policy/origin metadata and `description` are deliberately EXCLUDED
+/// from the hashed projection: they do not change spawn configuration, so
+/// metadata-only edits must not flip the "restart required" drift badge.
+/// Guarded by `description_change_does_not_change_content_hash` and
+/// `each_device_metadata_field_is_excluded_from_content_hash`.
 pub fn persona_content_hash(content: &PersonaEventContent) -> String {
     use sha2::{Digest, Sha256};
     let hashed = PersonaEventContent {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
         description: None,
         ..content.clone()
     };
@@ -541,6 +562,10 @@ pub fn persona_content_hash(content: &PersonaEventContent) -> String {
 /// added in exactly one place.
 pub fn persona_event_content(record: &AgentDefinition) -> PersonaEventContent {
     PersonaEventContent {
+        share_across_devices: record.share_across_devices,
+        origin_device_id: record.origin_device_id.clone(),
+        origin_device_label: record.origin_device_label.clone(),
+        origin_released: record.origin_released,
         display_name: record.display_name.clone(),
         avatar_url: record.avatar_url.clone(),
         // Always Some — including for an empty prompt — so pre-revision

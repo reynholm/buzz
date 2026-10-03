@@ -501,6 +501,10 @@ fn sample_agent_record() -> ManagedAgentRecord {
 
 fn sample_persona() -> AgentDefinition {
     AgentDefinition {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
         session_policy: Default::default(),
         description: None,
         id: "custom:helper".to_string(),

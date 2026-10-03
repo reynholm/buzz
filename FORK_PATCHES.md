@@ -71,3 +71,422 @@ Owner update policy and reproducible baseline evidence
 New module: `true`.
 
 - Verify: `python3 scripts/fork/sync.py validate`
+
+## `desktop/src-tauri/src/commands/agent_config_tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/agents.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/agents_tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/personas/create.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/personas/delete_cascade_tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/personas/inbound/catalog_reconcile_tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/personas/inbound/inbound_tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/personas/pending.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/personas/sharing.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/personas/snapshot/fidelity_tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/personas/snapshot/import.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/personas/snapshot/tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/personas/update/name_propagation_tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/team_snapshot.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/team_snapshot/tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/teams/adopt/apply.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/teams/adopt/tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/teams/pending/tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/teams/sharing/tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/event_sync_team_catalog_tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/agent_events.rs`
+
+Preserve explicit instance-event allowlist and repair legacy fixture
+
+New module: `false`.
+
+- Required symbol: `pub fn agent_event_content`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/agent_snapshot.rs`
+
+Document intentional omission of device metadata from portable snapshots
+
+New module: `false`.
+
+- Required symbol: `pub fn build_snapshot`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/agent_snapshot_envelope.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/agent_snapshot_tests.rs`
+
+Legacy snapshot fixture repair and metadata-independent portable bytes coverage
+
+New module: `false`.
+
+- Required symbol: `fn device_metadata_does_not_change_portable_snapshot_bytes`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/config_bridge/effort_tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/config_bridge/reader_tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/device_policy_types_tests.rs`
+
+Behavior coverage for legacy bytes, unified policy projections, IPC and portable export exclusions
+
+New module: `true`.
+
+- Required symbol: `fn legacy_policy_bytes_and_hash_stay_identical`
+- Required symbol: `fn policy_roundtrip_survives_unified_projection`
+- Required symbol: `fn portable_exports_exclude_device_metadata`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/discovery/tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/effective_config/tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/global_config/tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/mod.rs`
+
+Register the device policy compatibility test module
+
+New module: `false`.
+
+- Required symbol: `mod device_policy_types_tests;`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/nest/render_tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/parallelism.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/persona_events.rs`
+
+Append optional device metadata to persona wire content and exclude it from drift hash
+
+New module: `false`.
+
+- Required symbol: `pub fn persona_content_hash`
+- Required symbol: `pub fn persona_event_content`
+- Required symbol: `pub fn persona_from_event`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/persona_events/tests.rs`
+
+Legacy persona literal repair and independent device-field hash invariance coverage
+
+New module: `false`.
+
+- Required symbol: `fn each_device_metadata_field_is_excluded_from_content_hash`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/personas.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/personas/tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/readiness.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/runtime/test_fixtures.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/runtime/tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/spawn_snapshot/tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/team_catalog/tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/team_snapshot.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/teams_tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/types.rs`
+
+Optional public device metadata and local binding records; preserve unified projections
+
+New module: `false`.
+
+- Required symbol: `pub share_across_devices: Option<bool>`
+- Required symbol: `pub origin_device_id: Option<String>`
+- Required symbol: `pub origin_device_label: Option<String>`
+- Required symbol: `pub origin_released: Option<bool>`
+- Required symbol: `pub device_host_binding: Option<String>`
+- Required symbol: `pub fn into_agent_record`
+- Required symbol: `pub fn to_definition_view`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/types/requests.rs`
+
+Creation-only camelCase device sharing IPC input
+
+New module: `false`.
+
+- Required symbol: `pub share_across_devices: Option<bool>`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/types/tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/mesh_llm/recovery.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/migration_avatar_tests.rs`
+
+Mechanical struct-literal compatibility repair: new device fields default to None
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `docs/nips/NIP-AP.md`
+
+Document optional device execution metadata and old-client enforcement limitations
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`

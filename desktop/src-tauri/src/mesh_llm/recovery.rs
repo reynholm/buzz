@@ -440,6 +440,10 @@ mod tests {
         runtime_pid: Option<u32>,
     ) -> crate::managed_agents::ManagedAgentRecord {
         let mut record = crate::managed_agents::AgentDefinition {
+            share_across_devices: None,
+            origin_device_id: None,
+            origin_device_label: None,
+            origin_released: None,
             id: pubkey.to_string(),
             display_name: pubkey.to_string(),
             avatar_url: None,

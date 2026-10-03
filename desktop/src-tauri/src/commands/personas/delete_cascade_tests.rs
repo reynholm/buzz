@@ -17,6 +17,11 @@ fn make_agent(
     runtime_pid: Option<u32>,
 ) -> ManagedAgentRecord {
     ManagedAgentRecord {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
+        device_host_binding: None,
         session_policy: Default::default(),
         description: None,
         pubkey: pubkey.to_string(),

@@ -12,6 +12,10 @@ const KIND_DELETE: u32 = 5;
 
 fn member(id: &str, display_name: &str) -> AgentDefinition {
     AgentDefinition {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
         session_policy: Default::default(),
         id: id.to_string(),
         display_name: display_name.to_string(),

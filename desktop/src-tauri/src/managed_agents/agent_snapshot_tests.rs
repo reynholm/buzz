@@ -11,6 +11,11 @@ use std::collections::BTreeMap;
 /// relevant to snapshot export are filled; the rest use defaults.
 fn minimal_record() -> ManagedAgentRecord {
     ManagedAgentRecord {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
+        device_host_binding: None,
         session_policy: Default::default(),
         description: None,
         pubkey: "deadbeef".to_string(),
@@ -720,4 +725,19 @@ fn foreign_snapshot_rejects_nonportable_acp_commands() {
             .unwrap_err()
             .contains("ACP command"));
     }
+}
+
+#[test]
+fn device_metadata_does_not_change_portable_snapshot_bytes() {
+    let mut record = minimal_record();
+    let before =
+        encode_snapshot_json(&build_snapshot(&record, MemoryLevel::None, vec![], None)).unwrap();
+    record.share_across_devices = Some(true);
+    record.origin_device_id = Some("device-a".into());
+    record.origin_device_label = Some("Laptop".into());
+    record.origin_released = Some(true);
+    record.device_host_binding = Some("local-marker".into());
+    let after =
+        encode_snapshot_json(&build_snapshot(&record, MemoryLevel::None, vec![], None)).unwrap();
+    assert_eq!(before, after);
 }

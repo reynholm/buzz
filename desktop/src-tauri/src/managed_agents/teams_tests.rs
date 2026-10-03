@@ -167,6 +167,11 @@ fn validate_team_deletion_rejects_built_ins() {
 
 fn managed_agent(name: &str) -> ManagedAgentRecord {
     ManagedAgentRecord {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
+        device_host_binding: None,
         session_policy: Default::default(),
         description: None,
         pubkey: name.to_string(),
@@ -455,6 +460,10 @@ const D_TAG: &str = "my-team";
 
 fn catalog_copy(id: &str, owner: &str, d_tag: &str) -> AgentDefinition {
     AgentDefinition {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
         session_policy: Default::default(),
         id: id.to_string(),
         display_name: id.to_string(),
@@ -697,6 +706,10 @@ fn test_ref_check_preserves_copy_used_by_a_standalone_managed_agent() {
 
 fn catalog_persona(id: &str, owner: &str, d_tag: &str) -> AgentDefinition {
     AgentDefinition {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
         session_policy: Default::default(),
         id: id.to_string(),
         display_name: id.to_string(),

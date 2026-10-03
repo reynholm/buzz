@@ -69,6 +69,11 @@ fn goose_runtime() -> &'static KnownAcpRuntime {
 
 fn agent_record() -> ManagedAgentRecord {
     ManagedAgentRecord {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
+        device_host_binding: None,
         session_policy: Default::default(),
         description: None,
         pubkey: "agent".to_string(),
@@ -132,6 +137,10 @@ fn agent_record() -> ManagedAgentRecord {
 
 fn persona_with_model(model: &str) -> AgentDefinition {
     AgentDefinition {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
         session_policy: Default::default(),
         description: None,
         id: "persona-1".to_string(),

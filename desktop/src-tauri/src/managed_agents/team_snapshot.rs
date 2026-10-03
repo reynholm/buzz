@@ -254,6 +254,11 @@ mod tests {
     /// Build a minimal `ManagedAgentRecord` for use as a team member.
     fn agent_record(name: &str) -> ManagedAgentRecord {
         ManagedAgentRecord {
+            share_across_devices: None,
+            origin_device_id: None,
+            origin_device_label: None,
+            origin_released: None,
+            device_host_binding: None,
             session_policy: Default::default(),
             description: None,
             pubkey: format!("{name}-pubkey"),

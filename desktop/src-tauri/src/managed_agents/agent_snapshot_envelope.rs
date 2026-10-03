@@ -368,6 +368,11 @@ mod tests {
     /// pubkey/nsec pair matters here.
     fn record_with_keys(pubkey: String, private_key_nsec: String) -> ManagedAgentRecord {
         ManagedAgentRecord {
+            share_across_devices: None,
+            origin_device_id: None,
+            origin_device_label: None,
+            origin_released: None,
+            device_host_binding: None,
             session_policy: Default::default(),
             description: None,
             pubkey,

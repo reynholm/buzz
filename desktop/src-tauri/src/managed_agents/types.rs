@@ -14,6 +14,18 @@ pub enum BackendKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentDefinition {
+    /// Only explicit true permits execution across the owner's devices.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share_across_devices: Option<bool>,
+    /// Public UUID of the definition's home Desktop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_device_id: Option<String>,
+    /// Public display label of the definition's home Desktop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_device_label: Option<String>,
+    /// Explicit home release after the last instance is deleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_released: Option<bool>,
     pub id: String,
     pub display_name: String,
     pub avatar_url: Option<String>,
@@ -120,6 +132,11 @@ impl AgentDefinition {
     /// event coordinate (`d_tag = slug`) across the fold.
     pub fn into_agent_record(self) -> ManagedAgentRecord {
         ManagedAgentRecord {
+            share_across_devices: self.share_across_devices,
+            origin_device_id: self.origin_device_id,
+            origin_device_label: self.origin_device_label,
+            origin_released: self.origin_released,
+            device_host_binding: None,
             pubkey: String::new(),
             name: self.display_name.clone(),
             persona_id: None,
@@ -193,6 +210,10 @@ impl ManagedAgentRecord {
     pub fn to_definition_view(&self) -> Option<AgentDefinition> {
         let slug = self.slug.clone()?;
         Some(AgentDefinition {
+            share_across_devices: self.share_across_devices,
+            origin_device_id: self.origin_device_id.clone(),
+            origin_device_label: self.origin_device_label.clone(),
+            origin_released: self.origin_released,
             id: slug,
             display_name: self
                 .display_name
@@ -245,6 +266,21 @@ pub struct RelayAgentInfo {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ManagedAgentRecord {
+    /// Only explicit true permits execution across the owner's devices.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share_across_devices: Option<bool>,
+    /// Public UUID of the definition's home Desktop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_device_id: Option<String>,
+    /// Public display label of the definition's home Desktop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_device_label: Option<String>,
+    /// Explicit home release after the last instance is deleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_released: Option<bool>,
+    /// Local host-marker evidence. Never published or included in portable exports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_host_binding: Option<String>,
     pub pubkey: String,
     pub name: String,
     #[serde(default)]

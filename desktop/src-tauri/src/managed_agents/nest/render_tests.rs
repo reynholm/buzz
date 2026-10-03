@@ -11,6 +11,10 @@ const TEST_RELAY: &str = "ws://example.com:3000";
 
 fn make_persona(id: &str, display_name: &str) -> AgentDefinition {
     AgentDefinition {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
         session_policy: Default::default(),
         description: None,
         id: id.to_string(),
@@ -40,6 +44,11 @@ fn make_persona(id: &str, display_name: &str) -> AgentDefinition {
 
 fn make_agent(name: &str, persona_id: Option<&str>) -> ManagedAgentRecord {
     ManagedAgentRecord {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
+        device_host_binding: None,
         session_policy: Default::default(),
         description: None,
         pubkey: String::new(),

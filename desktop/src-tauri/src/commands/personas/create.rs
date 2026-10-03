@@ -57,6 +57,10 @@ pub async fn create_persona(
             .collect();
         crate::managed_agents::validate_user_env_keys(&input.env_vars)?;
         let mut persona = AgentDefinition {
+            share_across_devices: None,
+            origin_device_id: None,
+            origin_device_label: None,
+            origin_released: None,
             id: Uuid::new_v4().to_string(),
             display_name,
             avatar_url,

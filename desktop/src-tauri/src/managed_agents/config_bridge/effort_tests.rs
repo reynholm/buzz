@@ -28,6 +28,11 @@ fn buzz_agent() -> &'static KnownAcpRuntime {
 
 pub(super) fn record() -> ManagedAgentRecord {
     ManagedAgentRecord {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
+        device_host_binding: None,
         session_policy: Default::default(),
         pubkey: "test".to_string(),
         name: "Test Agent".to_string(),
@@ -98,6 +103,10 @@ fn env(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
 
 fn persona(id: &str, env_vars: BTreeMap<String, String>) -> AgentDefinition {
     AgentDefinition {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
         acp_command: None,
         session_policy: Default::default(),
         id: id.to_string(),

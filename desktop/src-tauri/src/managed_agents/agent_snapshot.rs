@@ -203,6 +203,8 @@ pub fn build_snapshot(
     memory_entries: Vec<AgentSnapshotMemoryEntry>,
     avatar_bytes: Option<&[u8]>,
 ) -> AgentSnapshot {
+    // Portable exports deliberately omit device policy/origin metadata and
+    // device_host_binding: adoption establishes a new local home.
     // ── Definition ─────────────────────────────────────────────────────
     // Use definition-level fields (respond_to, allowlist, parallelism) for
     // portability — instance-level equivalents are spawn-time snapshots and

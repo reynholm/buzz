@@ -57,6 +57,10 @@ fn snapshot(members: Vec<AgentSnapshot>) -> TeamSnapshot {
 fn team_export_round_trip_preserves_team_and_excludes_member_memory() {
     let definitions = vec![
         AgentDefinition {
+            share_across_devices: None,
+            origin_device_id: None,
+            origin_device_label: None,
+            origin_released: None,
             session_policy: Default::default(),
             description: Some("A careful reviewer.".to_string()),
             id: "alice".to_string(),
@@ -83,6 +87,10 @@ fn team_export_round_trip_preserves_team_and_excludes_member_memory() {
             updated_at: "now".to_string(),
         },
         AgentDefinition {
+            share_across_devices: None,
+            origin_device_id: None,
+            origin_device_label: None,
+            origin_released: None,
             session_policy: Default::default(),
             description: None,
             id: "bob".to_string(),
@@ -163,6 +171,10 @@ fn team_export_round_trip_preserves_team_and_excludes_member_memory() {
 #[test]
 fn team_export_with_instance_and_memory_level_uses_supplied_entries() {
     let definitions = vec![AgentDefinition {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
         session_policy: Default::default(),
         description: None,
         id: "alice".to_string(),
@@ -207,6 +219,11 @@ fn team_export_with_instance_and_memory_level_uses_supplied_entries() {
 
     // Build a fake instance record tied to this team+persona.
     let instance = ManagedAgentRecord {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
+        device_host_binding: None,
         session_policy: Default::default(),
         description: None,
         pubkey: "a".repeat(64),

@@ -146,6 +146,10 @@ mod tests {
 
     fn persona() -> AgentDefinition {
         AgentDefinition {
+            share_across_devices: None,
+            origin_device_id: None,
+            origin_device_label: None,
+            origin_released: None,
             session_policy: Default::default(),
             description: None,
             id: "catalog-reviewer".to_string(),

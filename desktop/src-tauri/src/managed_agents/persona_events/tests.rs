@@ -5,6 +5,11 @@ use crate::managed_agents::{BackendKind, ManagedAgentRecord, RespondTo};
 /// state right after creation, before any snapshot apply.
 pub(super) fn sample_record() -> ManagedAgentRecord {
     ManagedAgentRecord {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
+        device_host_binding: None,
         session_policy: Default::default(),
         description: None,
         pubkey: "p".repeat(64),
@@ -146,6 +151,10 @@ fn preview_passes_through_unchanged_when_persona_missing() {
 
 pub(super) fn sample_persona() -> AgentDefinition {
     AgentDefinition {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
         session_policy: Default::default(),
         description: None,
         id: "test-persona".to_string(),
@@ -326,6 +335,10 @@ fn content_matches_nip_ap_vector() {
     const VECTOR: &str = r#"{"display_name":"Test Agent","system_prompt":"You are a test assistant.","avatar_url":"https://example.com/avatar.png","runtime":"goose","model":"claude-opus-4","provider":"anthropic","name_pool":["Alpha","Beta"]}"#;
 
     let content = PersonaEventContent {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
         session_policy: Default::default(),
         description: None,
         display_name: "Test Agent".to_string(),
@@ -392,6 +405,10 @@ fn content_matches_nip_ap_vector() {
     // signed content, so a second implementer following the spec computes
     // the same NIP-01 id.
     let record = AgentDefinition {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
         session_policy: Default::default(),
         description: None,
         id: "test-agent".to_string(),
@@ -427,6 +444,10 @@ fn content_matches_nip_ap_vector() {
 #[test]
 fn round_trip_minimal_persona() {
     let record = AgentDefinition {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
         session_policy: Default::default(),
         description: None,
         id: "minimal".to_string(),
@@ -528,6 +549,10 @@ fn behavioral_defaults_survive_record_round_trip() {
 #[test]
 fn quad_absent_definition_hash_stable_across_activation() {
     let record = AgentDefinition {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
         session_policy: Default::default(),
         description: None,
         id: "quad-absent".to_string(),
@@ -577,6 +602,10 @@ fn quad_absent_definition_hash_stable_across_activation() {
 /// way `persona_from_event` maps fields, without needing a signed event.
 fn persona_from_event_content_for_test(content: PersonaEventContent) -> AgentDefinition {
     AgentDefinition {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
         session_policy: content.session_policy,
         description: content.description,
         id: "staged".to_string(),
@@ -607,6 +636,10 @@ fn persona_from_event_content_for_test(content: PersonaEventContent) -> AgentDef
 #[test]
 fn persona_content_hash_is_deterministic() {
     let content = PersonaEventContent {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
         session_policy: Default::default(),
         description: None,
         display_name: "Test".to_string(),
@@ -630,6 +663,10 @@ fn persona_content_hash_is_deterministic() {
 #[test]
 fn persona_content_hash_changes_on_edit() {
     let content1 = PersonaEventContent {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
         session_policy: Default::default(),
         description: None,
         display_name: "Test".to_string(),
@@ -708,6 +745,10 @@ fn channel_policy_stays_wire_compatible_when_absent() {
 #[test]
 fn description_change_does_not_change_content_hash() {
     let without = PersonaEventContent {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
         session_policy: Default::default(),
         description: None,
         display_name: "Test".to_string(),
@@ -1097,6 +1138,30 @@ mod flush_barrier {
         assert!(
             !row(KIND_PERSONA, "unrelated").pending_sync,
             "unrelated row marked synced"
+        );
+    }
+}
+
+/// Each independent metadata edit must leave the spawn drift basis unchanged.
+#[test]
+fn each_device_metadata_field_is_excluded_from_content_hash() {
+    let before = persona_event_content(&sample_persona());
+    for (field, value) in [
+        ("share_across_devices", serde_json::json!(true)),
+        ("share_across_devices", serde_json::json!(false)),
+        ("origin_device_id", serde_json::json!("another-device")),
+        ("origin_device_label", serde_json::json!("Renamed laptop")),
+        ("origin_released", serde_json::json!(true)),
+        ("origin_released", serde_json::json!(false)),
+    ] {
+        let mut json = serde_json::to_value(&before).unwrap();
+        json[field] = value.clone();
+        let after: PersonaEventContent = serde_json::from_value(json).unwrap();
+        assert_eq!(serde_json::to_value(&after).unwrap()[field], value);
+        assert_eq!(
+            persona_content_hash(&before),
+            persona_content_hash(&after),
+            "{field} changed drift hash"
         );
     }
 }

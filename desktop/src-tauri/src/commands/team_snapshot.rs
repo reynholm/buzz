@@ -119,6 +119,10 @@ fn definition_from_snapshot(
         .then(|| behavior.respond_to.as_str().to_string());
 
     Ok(AgentDefinition {
+        share_across_devices: None,
+        origin_device_id: None,
+        origin_device_label: None,
+        origin_released: None,
         id: Uuid::new_v4().to_string(),
         display_name: member.profile.display_name.trim().to_string(),
         avatar_url: effective_avatar(member),
@@ -561,6 +565,11 @@ pub async fn confirm_team_snapshot_import(
 
         // Build the ManagedAgentRecord for this member.
         let record = ManagedAgentRecord {
+            share_across_devices: None,
+            origin_device_id: None,
+            origin_device_label: None,
+            origin_released: None,
+            device_host_binding: None,
             pubkey: pubkey.clone(),
             name: display_name.clone(),
             display_name: None,

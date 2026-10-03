@@ -147,3 +147,6 @@ pub fn default_agent_workdir() -> Option<std::path::PathBuf> {
 fn is_real_dir(path: &std::path::Path) -> bool {
     path.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false)
 }
+
+#[cfg(test)]
+mod device_policy_types_tests;
