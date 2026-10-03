@@ -888,7 +888,7 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/persona_device_view.rs",
-      "responsibility": "Read-only structural snapshots, fresh host authority, signed evidence and explicit per-definition unavailable home",
+      "responsibility": "Read-only structural snapshots, fresh host authority, authoritative remaining signed retained heads and explicit unavailable home",
       "is_new": true,
       "required_symbols": [
         "struct PersonaDeviceView",
@@ -903,6 +903,13 @@
           "invocation": "definition_capabilities(&definition, &home, self.readiness, proven)",
           "behavior_test": "managed_agents::definition_home::tests::home_matrix",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::definition_home::tests::home_matrix -- --exact"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/persona_device_view.rs",
+          "callee_symbol": "get_retained_events_by_kind",
+          "invocation": "get_retained_events_by_kind(&conn, 30177, owner)?",
+          "behavior_test": "commands::personas::inbound::device_sync_tests::signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::inbound::device_sync_tests::signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation -- --exact"
         }
       ],
       "verification_commands": [
@@ -945,7 +952,8 @@
       "is_new": true,
       "required_symbols": [
         "fn list_context_errors_are_explicit_and_preserve_only_shared_capabilities",
-        "list_projects_retained_catalog_sharing_without_writing_or_requiring_host_proof"
+        "list_projects_retained_catalog_sharing_without_writing_or_requiring_host_proof",
+        "identity_recovery_preserves_visible_list_without_scope_or_signing"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -957,7 +965,8 @@
       "responsibility": "Signed hydration through actual blocking inbound dispatcher with isolated app paths",
       "is_new": true,
       "required_symbols": [
-        "async fn hydration_applies_signed_catalog_through_production_dispatcher_and_propagates_failure"
+        "async fn hydration_applies_signed_catalog_through_production_dispatcher_and_propagates_failure",
+        "signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -982,7 +991,7 @@
         {
           "caller_path": "desktop/src-tauri/src/commands/personas/mod.rs",
           "callee_symbol": "project_persona_sharing_read_only",
-          "invocation": "pending::project_persona_sharing_read_only(\n        &retention_path,\n        &scope.owner_pubkey,\n        &mut personas,\n    );",
+          "invocation": "pending::project_persona_sharing_read_only(\n            &retention_path,\n            &scope.owner_pubkey,\n            &mut personas,\n        )?;",
           "behavior_test": "commands::personas::device_view_tests::list_projects_retained_catalog_sharing_without_writing_or_requiring_host_proof",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::device_view_tests::list_projects_retained_catalog_sharing_without_writing_or_requiring_host_proof -- --exact"
         },
@@ -992,6 +1001,13 @@
           "invocation": "PersonaDeviceView::unavailable(definition, error.clone())",
           "behavior_test": "commands::personas::device_view_tests::list_context_errors_are_explicit_and_preserve_only_shared_capabilities",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::device_view_tests::list_context_errors_are_explicit_and_preserve_only_shared_capabilities -- --exact"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/personas/mod.rs",
+          "callee_symbol": "capture_scope",
+          "invocation": "device_home_sync::capture_scope(&state).and_then(|scope| {",
+          "behavior_test": "commands::personas::device_view_tests::identity_recovery_preserves_visible_list_without_scope_or_signing",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::device_view_tests::identity_recovery_preserves_visible_list_without_scope_or_signing -- --exact"
         }
       ],
       "verification_commands": [
@@ -1028,9 +1044,18 @@
       "is_new": false,
       "required_symbols": [
         "session_token: Option<String>",
-        "lease.complete(&result)?;"
+        "lease.complete(&result)?;",
+        "fn reconcile_inbound_tombstone_with_refresh"
       ],
-      "invocation_seams": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/commands/personas/inbound.rs",
+          "callee_symbol": "reconcile_inbound_tombstone_with_refresh",
+          "invocation": "reconcile_inbound_tombstone_with_refresh(event, arrival_relay_url, app, state, || {\n        try_regenerate_nest(app);\n    })",
+          "behavior_test": "commands::personas::inbound::device_sync_tests::signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::inbound::device_sync_tests::signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation -- --exact"
+        }
+      ],
       "verification_commands": [
         "just desktop-tauri-test desktop-tauri-check"
       ]
@@ -1043,7 +1068,11 @@
         "export function startPersonaSync",
         "hydrateDeviceHomeHistory(sessionRun.token)",
         "subscribeToConnectionState",
-        "subscribeToReconnects"
+        "subscribeToReconnects",
+        "sessionRun.controller.signal",
+        "liveConfirmed && !degraded && !failed",
+        "const queueRestart",
+        "clearTimeout(restartDelay.timer);"
       ],
       "invocation_seams": [
         {
@@ -1059,6 +1088,13 @@
           "invocation": "invalidateDeviceHomeSync(run.token)",
           "behavior_test": "connection loss invalidates readiness and reconnect starts a fresh complete session",
           "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern=\"connection loss invalidates\" src/features/agents/lib/usePersonaSync.test.mjs"
+        },
+        {
+          "caller_path": "desktop/src/features/agents/lib/usePersonaSync.ts",
+          "callee_symbol": "abort",
+          "invocation": "run.controller.abort();",
+          "behavior_test": "terminal CLOSED after Ready immediately invalidates and replacement exhaustively hydrates",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern=\"terminal CLOSED after Ready\" src/features/agents/lib/usePersonaSyncRelayHealth.test.mjs"
         }
       ],
       "verification_commands": [
@@ -1096,6 +1132,86 @@
           "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern=\"backend sync waits for buffered\" src/features/agents/lib/usePersonaSync.test.mjs"
         }
       ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/api/relayClientShared.ts",
+      "responsibility": "Optional sustained live subscription health while preserving initial readiness API",
+      "is_new": false,
+      "required_symbols": [
+        "type LiveSubscriptionHealth",
+        "onHealth?: (health: LiveSubscriptionHealth) => void;"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/api/relayClientSession.ts",
+      "responsibility": "Backward-compatible health observer for live readiness timeout and one-shot removal cleanup",
+      "is_new": false,
+      "required_symbols": [
+        "type LiveSubscriptionHealth",
+        "onHealth?.(\"removed\")",
+        "subscription.onHealth?.(\"timeout\")"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/shared/api/relayClientSession.ts",
+          "callee_symbol": "subscribe",
+          "invocation": "return this.subscribe(\n      filter,\n      onEvent,\n      onReady,\n      readinessTimeoutMs,\n      signal,\n      undefined,\n      onHealth,\n    );",
+          "behavior_test": "unconfirmed timeout cannot hydrate or finish and confirmed retry starts a fresh session",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern=\"unconfirmed timeout\" src/features/agents/lib/usePersonaSyncRelayHealth.test.mjs"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/api/relayClosedRecovery.ts",
+      "responsibility": "Persistent CLOSED health and ownership guard stop detached retries; shared quota gate survives owner retirement",
+      "is_new": false,
+      "required_symbols": [
+        "subscription.onHealth?.(\"closed\")",
+        "subscription.onHealth?.(\"eose\")",
+        "if (subscriptions.get(subId) !== subscription) return;"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/shared/api/relayClosedRecovery.ts",
+          "callee_symbol": "onHealth",
+          "invocation": "subscription.onHealth?.(\"closed\");",
+          "behavior_test": "retryable CLOSED after Ready retires the degraded subscription before fresh recovery",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern=\"retryable CLOSED after Ready\" src/features/agents/lib/usePersonaSyncRelayHealth.test.mjs"
+        },
+        {
+          "caller_path": "desktop/src/shared/api/relayClosedRecovery.ts",
+          "callee_symbol": "activateRateLimit",
+          "invocation": "if (closedClass === \"rate-limited\") activateRateLimit(hintSeconds);",
+          "behavior_test": "rate-limited CLOSED retires readiness and preserves shared admission cooldown",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern=\"rate-limited CLOSED retires readiness\" src/features/agents/lib/usePersonaSyncRelayHealth.test.mjs"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/lib/usePersonaSyncRelayHealth.test.mjs",
+      "responsibility": "Actual hook plus real RelayClient CLOSED/EOSE/timeout recovery and immediate timer disposal tests",
+      "is_new": true,
+      "required_symbols": [
+        "terminal CLOSED before confirmation",
+        "terminal CLOSED after Ready",
+        "unconfirmed timeout",
+        "disposal after retryable CLOSED",
+        "rate-limited CLOSED retires readiness"
+      ],
+      "invocation_seams": [],
       "verification_commands": [
         "just desktop-test desktop-typecheck"
       ]

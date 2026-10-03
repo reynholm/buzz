@@ -176,12 +176,26 @@ export function startPersonaSync(
   type Run = {
     generation: number;
     token: string;
+    controller: AbortController;
     dispose: (() => Promise<void>) | null;
   };
   let generation = 0;
   let disposed = false;
   let active: Run | null = null;
-  let restartQueued = false;
+  let restartQueued: number | null = null;
+  let restartDelay: {
+    timer: ReturnType<typeof setTimeout>;
+    resolve: () => void;
+  } | null = null;
+  let subscriptionFailures = 0;
+  const cancelRestart = () => {
+    restartQueued = null;
+    if (restartDelay) {
+      clearTimeout(restartDelay.timer);
+      restartDelay.resolve();
+      restartDelay = null;
+    }
+  };
   const cancelled = () => disposed || onCancelled();
   const current = (run: Run) =>
     !cancelled() && active === run && run.generation === generation;
@@ -190,6 +204,7 @@ export function startPersonaSync(
     const invalidation = invalidateDeviceHomeSync(run.token).catch((error) => {
       console.warn("[usePersonaSync] session invalidation failed:", error);
     });
+    run.controller.abort();
     await Promise.all([invalidation, run.dispose?.()]);
   };
   const retire = () => {
@@ -205,7 +220,12 @@ export function startPersonaSync(
     let run: Run | null = null;
     try {
       const session = await beginDeviceHomeSync();
-      run = { generation: epoch, token: session.token, dispose: null };
+      run = {
+        generation: epoch,
+        token: session.token,
+        controller: new AbortController(),
+        dispose: null,
+      };
       if (
         cancelled() ||
         epoch !== generation ||
@@ -218,6 +238,21 @@ export function startPersonaSync(
       active = run;
       const sessionRun = run;
       let hydrated = false;
+      let liveConfirmed = false;
+      const unavailable = (health: string) => {
+        if (!current(sessionRun)) return;
+        console.warn("[usePersonaSync] live subscription unavailable:", health);
+        subscriptionFailures += 1;
+        if (subscriptionFailures < BACKFILL_MAX_ATTEMPTS)
+          queueRestart(subscriptionFailures - 1);
+        else
+          void retire().catch((error) =>
+            console.warn(
+              "[usePersonaSync] subscription teardown failed:",
+              error,
+            ),
+          );
+      };
       let degraded = false;
       let failed = false;
       let chain = Promise.resolve();
@@ -258,6 +293,15 @@ export function startPersonaSync(
             if (hydrated) reconcile(event);
             else buffer.push(event);
           },
+          (readiness) => {
+            if (readiness === "eose") liveConfirmed = true;
+            else unavailable(readiness);
+          },
+          undefined,
+          sessionRun.controller.signal,
+          (health) => {
+            if (health !== "eose") unavailable(health);
+          },
         );
         if (!current(sessionRun)) {
           await dispose();
@@ -285,8 +329,10 @@ export function startPersonaSync(
             if (!current(sessionRun)) return;
             if (tail === chain) break;
           }
-          if (!degraded && !failed)
+          if (liveConfirmed && !degraded && !failed) {
             await finishDeviceHomeSync(sessionRun.token);
+            if (current(sessionRun)) subscriptionFailures = 0;
+          }
           return;
         } catch (error) {
           if (!current(sessionRun)) return;
@@ -323,19 +369,39 @@ export function startPersonaSync(
       if (run && current(run)) await retire();
     }
   };
-  const restart = () => {
-    if (cancelled() || restartQueued) return;
-    restartQueued = true;
+  const queueRestart = (delayAttempt?: number) => {
+    if (cancelled() || restartQueued !== null) return;
     const retirement = retire();
+    const epoch = generation;
+    restartQueued = epoch;
     void retirement
-      .then(() => {
-        restartQueued = false;
-        if (!cancelled()) void launch();
+      .then(async () => {
+        if (restartQueued !== epoch) return;
+        if (delayAttempt !== undefined) {
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(
+              () => {
+                restartDelay = null;
+                resolve();
+              },
+              BACKFILL_RETRY_BASE_DELAY_MS * 2 ** delayAttempt,
+            );
+            restartDelay = { timer, resolve };
+          });
+        }
+        if (restartQueued !== epoch) return;
+        restartQueued = null;
+        if (!cancelled() && generation === epoch) void launch();
       })
       .catch((error) => {
-        restartQueued = false;
+        if (restartQueued === epoch) restartQueued = null;
         console.warn("[usePersonaSync] subscription teardown failed:", error);
       });
+  };
+  const restart = () => {
+    if (restartQueued !== null) return;
+    subscriptionFailures = 0;
+    queueRestart();
   };
   let seeded = false;
   let lost = false;
@@ -346,6 +412,7 @@ export function startPersonaSync(
     }
     if (state !== "connected") {
       lost = true;
+      cancelRestart();
       void retire().catch((error) =>
         console.warn(
           "[usePersonaSync] connection-loss teardown failed:",
@@ -361,6 +428,7 @@ export function startPersonaSync(
   void launch();
   return async () => {
     disposed = true;
+    cancelRestart();
     unsubscribeState();
     unsubscribeReconnect();
     await retire();

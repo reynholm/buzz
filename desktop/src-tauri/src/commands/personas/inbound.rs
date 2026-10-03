@@ -543,6 +543,20 @@ fn reconcile_inbound_tombstone<R: tauri::Runtime>(
     app: &AppHandle<R>,
     state: &AppState,
 ) -> Result<(), String> {
+    reconcile_inbound_tombstone_with_refresh(event, arrival_relay_url, app, state, || {
+        try_regenerate_nest(app);
+    })
+}
+
+/// The post-commit nest refresh is injectable so isolated deletion tests never
+/// write the user's workspace. Coordinate routing/store/retention are unchanged.
+fn reconcile_inbound_tombstone_with_refresh<R: tauri::Runtime>(
+    event: &nostr::Event,
+    arrival_relay_url: &str,
+    app: &AppHandle<R>,
+    state: &AppState,
+    refresh_nest: impl FnOnce(),
+) -> Result<(), String> {
     use crate::managed_agents::{
         load_managed_agents, load_teams,
         retention::{
@@ -666,7 +680,7 @@ fn reconcile_inbound_tombstone<R: tauri::Runtime>(
         _ => {}
     }
 
-    try_regenerate_nest(app);
+    refresh_nest();
 
     // Refresh the live UI on inbound deletion — a removal is as user-visible as
     // an upsert and the Agents tab must drop the tombstoned record without restart.

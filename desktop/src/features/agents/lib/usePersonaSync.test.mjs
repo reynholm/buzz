@@ -64,10 +64,18 @@ function nativeSync(
   let live;
   let connection;
   let reconnect;
-  mock.method(relayClient, "subscribeLive", async (filter, listener) => {
-    live = listener;
-    return subscribe ? subscribe(filter, listener) : async () => {};
-  });
+  mock.method(
+    relayClient,
+    "subscribeLive",
+    async (filter, listener, onReady) => {
+      live = listener;
+      const dispose = subscribe
+        ? await subscribe(filter, listener)
+        : async () => {};
+      onReady?.("eose");
+      return dispose;
+    },
+  );
   mock.method(relayClient, "fetchEvents", async () => []);
   mock.method(relayClient, "subscribeToConnectionState", (listener) => {
     connection = listener;

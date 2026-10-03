@@ -69,6 +69,8 @@ type FirstEventSubscription = {
 };
 
 export type LiveSubscriptionReadiness = "eose" | "closed" | "timeout";
+/** Sustained delivery health, including failures after initial readiness. */
+export type LiveSubscriptionHealth = LiveSubscriptionReadiness | "removed";
 
 type LiveSubscription = {
   mode: "live";
@@ -77,6 +79,7 @@ type LiveSubscription = {
   priority?: "interactive";
   onEvent: (event: RelayEvent) => void;
   resolveReady?: (readiness: LiveSubscriptionReadiness) => void;
+  onHealth?: (health: LiveSubscriptionHealth) => void;
   /** Release readiness/cancellation listeners when this entry is retired. */
   onRemoved?: () => void;
   lastSeenCreatedAt?: number;

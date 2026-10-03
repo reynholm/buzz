@@ -17,6 +17,7 @@ import {
   toRelayFrames,
   type ConnectionState,
   type LiveSubscriptionReadiness,
+  type LiveSubscriptionHealth,
   type PendingEvent,
   type RelaySubscription,
   type RelaySubscriptionFilter,
@@ -420,8 +421,17 @@ export class RelayClient {
     onReady?: (readiness: LiveSubscriptionReadiness) => void,
     readinessTimeoutMs?: number,
     signal?: AbortSignal,
+    onHealth?: (health: LiveSubscriptionHealth) => void,
   ) {
-    return this.subscribe(filter, onEvent, onReady, readinessTimeoutMs, signal);
+    return this.subscribe(
+      filter,
+      onEvent,
+      onReady,
+      readinessTimeoutMs,
+      signal,
+      undefined,
+      onHealth,
+    );
   }
   /** Prioritize an interactive live consumer without changing its replay filter or pacing. */
   async subscribeInteractive(
@@ -622,6 +632,7 @@ export class RelayClient {
     readinessTimeoutMs = 250,
     signal?: AbortSignal,
     priority?: "interactive",
+    onHealth?: (health: LiveSubscriptionHealth) => void,
   ) {
     const epoch = this.sessionEpoch;
     const sessionSignal = this.liveSessionAbort.signal;
@@ -629,10 +640,14 @@ export class RelayClient {
     const subId = `live-${crypto.randomUUID()}`;
     let fallbackTimeout: number | undefined;
     let settleReady = () => {};
+    let removed = false;
     const onRemoved = () => {
+      if (removed) return;
+      removed = true;
       signal?.removeEventListener("abort", abort);
       sessionSignal.removeEventListener("abort", abort);
       window.clearTimeout(fallbackTimeout);
+      onHealth?.("removed");
       settleReady();
     };
     const subscription: Extract<RelaySubscription, { mode: "live" }> = {
@@ -641,6 +656,7 @@ export class RelayClient {
       priority,
       onEvent,
       onRemoved,
+      onHealth,
     };
     const dispose = async () => {
       if (this.subscriptions.get(subId) !== subscription) return;
@@ -687,10 +703,10 @@ export class RelayClient {
           () => {
             if (readySettled) return;
             window.clearTimeout(fallbackTimeout);
-            fallbackTimeout = window.setTimeout(
-              () => subscription.resolveReady?.("timeout"),
-              readinessTimeoutMs,
-            );
+            fallbackTimeout = window.setTimeout(() => {
+              subscription.onHealth?.("timeout");
+              subscription.resolveReady?.("timeout");
+            }, readinessTimeoutMs);
           },
         ),
         cancelled,

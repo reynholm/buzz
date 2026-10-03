@@ -649,7 +649,7 @@ New module: `true`.
 
 ## `desktop/src-tauri/src/managed_agents/persona_device_view.rs`
 
-Read-only structural snapshots, fresh host authority, signed evidence and explicit per-definition unavailable home
+Read-only structural snapshots, fresh host authority, authoritative remaining signed retained heads and explicit unavailable home
 
 New module: `true`.
 
@@ -658,6 +658,7 @@ New module: `true`.
 - Required symbol: `fn load_device_policy_context`
 - Required symbol: `fn read_remote_evidence`
 - Invocation: `desktop/src-tauri/src/managed_agents/persona_device_view.rs` → `definition_capabilities`; exact call `definition_capabilities(&definition, &home, self.readiness, proven)`; behavior test `managed_agents::definition_home::tests::home_matrix`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::definition_home::tests::home_matrix -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/persona_device_view.rs` → `get_retained_events_by_kind`; exact call `get_retained_events_by_kind(&conn, 30177, owner)?`; behavior test `commands::personas::inbound::device_sync_tests::signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::inbound::device_sync_tests::signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/commands/device_home_sync.rs`
@@ -682,6 +683,7 @@ New module: `true`.
 
 - Required symbol: `fn list_context_errors_are_explicit_and_preserve_only_shared_capabilities`
 - Required symbol: `list_projects_retained_catalog_sharing_without_writing_or_requiring_host_proof`
+- Required symbol: `identity_recovery_preserves_visible_list_without_scope_or_signing`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/commands/personas/inbound/device_sync_tests.rs`
@@ -691,6 +693,7 @@ Signed hydration through actual blocking inbound dispatcher with isolated app pa
 New module: `true`.
 
 - Required symbol: `async fn hydration_applies_signed_catalog_through_production_dispatcher_and_propagates_failure`
+- Required symbol: `signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/commands/personas/mod.rs`
@@ -702,11 +705,12 @@ New module: `false`.
 - Required symbol: `fn list_personas_inner`
 - Invocation: `desktop/src-tauri/src/commands/personas/mod.rs` → `persona_definitions_for_policy`; exact call `persona_definitions_for_policy(&records)`; behavior test `commands::personas::device_view_tests::list_context_errors_are_explicit_and_preserve_only_shared_capabilities`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::device_view_tests::list_context_errors_are_explicit_and_preserve_only_shared_capabilities -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/personas/mod.rs` → `project_persona_sharing_read_only`; exact call `pending::project_persona_sharing_read_only(
-        &retention_path,
-        &scope.owner_pubkey,
-        &mut personas,
-    );`; behavior test `commands::personas::device_view_tests::list_projects_retained_catalog_sharing_without_writing_or_requiring_host_proof`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::device_view_tests::list_projects_retained_catalog_sharing_without_writing_or_requiring_host_proof -- --exact`
+            &retention_path,
+            &scope.owner_pubkey,
+            &mut personas,
+        )?;`; behavior test `commands::personas::device_view_tests::list_projects_retained_catalog_sharing_without_writing_or_requiring_host_proof`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::device_view_tests::list_projects_retained_catalog_sharing_without_writing_or_requiring_host_proof -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/personas/mod.rs` → `unavailable`; exact call `PersonaDeviceView::unavailable(definition, error.clone())`; behavior test `commands::personas::device_view_tests::list_context_errors_are_explicit_and_preserve_only_shared_capabilities`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::device_view_tests::list_context_errors_are_explicit_and_preserve_only_shared_capabilities -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/personas/mod.rs` → `capture_scope`; exact call `device_home_sync::capture_scope(&state).and_then(|scope| {`; behavior test `commands::personas::device_view_tests::identity_recovery_preserves_visible_list_without_scope_or_signing`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::device_view_tests::identity_recovery_preserves_visible_list_without_scope_or_signing -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/app_state.rs`
@@ -735,6 +739,10 @@ New module: `false`.
 
 - Required symbol: `session_token: Option<String>`
 - Required symbol: `lease.complete(&result)?;`
+- Required symbol: `fn reconcile_inbound_tombstone_with_refresh`
+- Invocation: `desktop/src-tauri/src/commands/personas/inbound.rs` → `reconcile_inbound_tombstone_with_refresh`; exact call `reconcile_inbound_tombstone_with_refresh(event, arrival_relay_url, app, state, || {
+        try_regenerate_nest(app);
+    })`; behavior test `commands::personas::inbound::device_sync_tests::signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::inbound::device_sync_tests::signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src/features/agents/lib/usePersonaSync.ts`
@@ -747,8 +755,13 @@ New module: `false`.
 - Required symbol: `hydrateDeviceHomeHistory(sessionRun.token)`
 - Required symbol: `subscribeToConnectionState`
 - Required symbol: `subscribeToReconnects`
+- Required symbol: `sessionRun.controller.signal`
+- Required symbol: `liveConfirmed && !degraded && !failed`
+- Required symbol: `const queueRestart`
+- Required symbol: `clearTimeout(restartDelay.timer);`
 - Invocation: `desktop/src/features/agents/lib/usePersonaSync.ts` → `finishDeviceHomeSync`; exact call `await finishDeviceHomeSync(sessionRun.token);`; behavior test `backend sync waits for buffered live applies before finish and carries its token`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern="backend sync waits for buffered" src/features/agents/lib/usePersonaSync.test.mjs`
 - Invocation: `desktop/src/features/agents/lib/usePersonaSync.ts` → `invalidateDeviceHomeSync`; exact call `invalidateDeviceHomeSync(run.token)`; behavior test `connection loss invalidates readiness and reconnect starts a fresh complete session`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern="connection loss invalidates" src/features/agents/lib/usePersonaSync.test.mjs`
+- Invocation: `desktop/src/features/agents/lib/usePersonaSync.ts` → `abort`; exact call `run.controller.abort();`; behavior test `terminal CLOSED after Ready immediately invalidates and replacement exhaustively hydrates`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern="terminal CLOSED after Ready" src/features/agents/lib/usePersonaSyncRelayHealth.test.mjs`
 - Verify: `just desktop-test desktop-typecheck`
 
 ## `desktop/src/features/agents/lib/usePersonaSync.test.mjs`
@@ -775,4 +788,60 @@ New module: `false`.
     arrivalRelayUrl,
     sessionToken,
   });`; behavior test `backend sync waits for buffered live applies before finish and carries its token`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern="backend sync waits for buffered" src/features/agents/lib/usePersonaSync.test.mjs`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/shared/api/relayClientShared.ts`
+
+Optional sustained live subscription health while preserving initial readiness API
+
+New module: `false`.
+
+- Required symbol: `type LiveSubscriptionHealth`
+- Required symbol: `onHealth?: (health: LiveSubscriptionHealth) => void;`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/shared/api/relayClientSession.ts`
+
+Backward-compatible health observer for live readiness timeout and one-shot removal cleanup
+
+New module: `false`.
+
+- Required symbol: `type LiveSubscriptionHealth`
+- Required symbol: `onHealth?.("removed")`
+- Required symbol: `subscription.onHealth?.("timeout")`
+- Invocation: `desktop/src/shared/api/relayClientSession.ts` → `subscribe`; exact call `return this.subscribe(
+      filter,
+      onEvent,
+      onReady,
+      readinessTimeoutMs,
+      signal,
+      undefined,
+      onHealth,
+    );`; behavior test `unconfirmed timeout cannot hydrate or finish and confirmed retry starts a fresh session`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern="unconfirmed timeout" src/features/agents/lib/usePersonaSyncRelayHealth.test.mjs`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/shared/api/relayClosedRecovery.ts`
+
+Persistent CLOSED health and ownership guard stop detached retries; shared quota gate survives owner retirement
+
+New module: `false`.
+
+- Required symbol: `subscription.onHealth?.("closed")`
+- Required symbol: `subscription.onHealth?.("eose")`
+- Required symbol: `if (subscriptions.get(subId) !== subscription) return;`
+- Invocation: `desktop/src/shared/api/relayClosedRecovery.ts` → `onHealth`; exact call `subscription.onHealth?.("closed");`; behavior test `retryable CLOSED after Ready retires the degraded subscription before fresh recovery`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern="retryable CLOSED after Ready" src/features/agents/lib/usePersonaSyncRelayHealth.test.mjs`
+- Invocation: `desktop/src/shared/api/relayClosedRecovery.ts` → `activateRateLimit`; exact call `if (closedClass === "rate-limited") activateRateLimit(hintSeconds);`; behavior test `rate-limited CLOSED retires readiness and preserves shared admission cooldown`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern="rate-limited CLOSED retires readiness" src/features/agents/lib/usePersonaSyncRelayHealth.test.mjs`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/lib/usePersonaSyncRelayHealth.test.mjs`
+
+Actual hook plus real RelayClient CLOSED/EOSE/timeout recovery and immediate timer disposal tests
+
+New module: `true`.
+
+- Required symbol: `terminal CLOSED before confirmation`
+- Required symbol: `terminal CLOSED after Ready`
+- Required symbol: `unconfirmed timeout`
+- Required symbol: `disposal after retryable CLOSED`
+- Required symbol: `rate-limited CLOSED retires readiness`
 - Verify: `just desktop-test desktop-typecheck`

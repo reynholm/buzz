@@ -130,9 +130,6 @@ function recoverLiveSubscriptionFromClosed({
   message: string;
   sendReq: (subId: string, filter: RelaySubscriptionFilter) => Promise<void>;
 }) {
-  subscription.resolveReady?.("closed");
-  subscription.resolveReady = undefined;
-
   // A deadline on a live sub is treated as retryable: resubscribe with the
   // same filter under the 1-30s backoff, which can keep retrying at the cap.
   // `since` is deliberately not advanced to now; that could skip events
@@ -140,6 +137,16 @@ function recoverLiveSubscriptionFromClosed({
   const closedClass = isQueryDeadlineError(message)
     ? "retryable"
     : classifyRelayClosed(message);
+  const hintSeconds =
+    closedClass === "rate-limited" ? parseRateLimitHint(message) : null;
+  // Quota applies to other operations even if this owner immediately retires.
+  if (closedClass === "rate-limited") activateRateLimit(hintSeconds);
+  subscription.onHealth?.("closed");
+  // An owner may retire the degraded subscription synchronously (for example,
+  // a policy hydration barrier). Never schedule a retry after that retirement.
+  if (subscriptions.get(subId) !== subscription) return;
+  subscription.resolveReady?.("closed");
+  subscription.resolveReady = undefined;
 
   if (closedClass === "terminal") {
     // Auth/access/filter failure — permanently remove the subscription so it
@@ -161,9 +168,6 @@ function recoverLiveSubscriptionFromClosed({
   let delayMs = backoffMs;
 
   if (closedClass === "rate-limited") {
-    // Activate the gate so concurrent operations back off too.
-    const hintSeconds = parseRateLimitHint(message);
-    activateRateLimit(hintSeconds);
     // Use the gate's actual remaining time so a shorter hint arriving under a
     // longer active gate does not schedule a premature retry that just gets
     // another CLOSED. The fallback covers the gate-inactive edge case
@@ -288,6 +292,7 @@ export function handleSubscriptionEose({
   if (subscription.mode === "live") {
     if (generation !== undefined)
       markReconnectLiveEose(subscription, generation);
+    subscription.onHealth?.("eose");
     subscription.resolveReady?.("eose");
     subscription.resolveReady = undefined;
     subscription.closedRetryAttempt = 0;

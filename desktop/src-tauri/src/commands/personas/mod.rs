@@ -98,7 +98,6 @@ fn list_personas_inner<R: tauri::Runtime>(
         persona_device_view::{self, PersonaDeviceView},
         retention::scoped_retention_db_path,
     };
-    let scope = device_home_sync::capture_scope(&state)?;
     let directory = app
         .path()
         .app_data_dir()
@@ -106,24 +105,25 @@ fn list_personas_inner<R: tauri::Runtime>(
     let records =
         persona_device_view::read_policy_records(&directory.join("agents/managed-agents.json"))?;
     let mut personas = persona_definitions_for_policy(&records);
-    let retention_path = scoped_retention_db_path(
-        &directory.join("agents"),
-        &scope.relay_url,
-        &scope.owner_pubkey,
-    );
-    let catalog_result = pending::project_persona_sharing_read_only(
-        &retention_path,
-        &scope.owner_pubkey,
-        &mut personas,
-    );
-    let context = catalog_result
-        .and_then(|()| persona_device_view::load_device_policy_context(app, &state))
-        .and_then(|context| {
-            if context.scope != scope || scope != device_home_sync::capture_scope(&state)? {
-                return Err("device_home_sync_stale_scope".into());
-            }
-            Ok(context)
-        });
+    // Definitions stay visible even when owner/device authority cannot be read.
+    // Scope/catalog errors remain explicit and never authorize signing.
+    let context = device_home_sync::capture_scope(&state).and_then(|scope| {
+        let retention_path = scoped_retention_db_path(
+            &directory.join("agents"),
+            &scope.relay_url,
+            &scope.owner_pubkey,
+        );
+        pending::project_persona_sharing_read_only(
+            &retention_path,
+            &scope.owner_pubkey,
+            &mut personas,
+        )?;
+        let context = persona_device_view::load_device_policy_context(app, &state)?;
+        if context.scope != scope || scope != device_home_sync::capture_scope(&state)? {
+            return Err("device_home_sync_stale_scope".into());
+        }
+        Ok(context)
+    });
     let instances: Vec<_> = records
         .into_iter()
         .filter(|record| !record.pubkey.is_empty())

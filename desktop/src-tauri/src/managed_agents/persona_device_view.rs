@@ -132,35 +132,9 @@ pub(crate) fn read_remote_evidence(
     let conn =
         rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|e| format!("device home evidence read: {e}"))?;
-    let tombstones = get_retained_events_by_kind(&conn, 5, owner)?;
-    let mut deleted = std::collections::HashMap::new();
-    for row in tombstones {
-        let event = nostr::Event::from_json(&row.raw_event)
-            .map_err(|e| format!("device home tombstone: {e}"))?;
-        event
-            .verify()
-            .map_err(|e| format!("device home tombstone signature: {e}"))?;
-        if event.pubkey.to_hex() != owner || event.kind.as_u16() != 5 {
-            continue;
-        }
-        for tag in event.tags.iter() {
-            let values = tag.as_slice();
-            if values.first().map(String::as_str) != Some("a") {
-                continue;
-            }
-            if let Some(coordinate) = values.get(1) {
-                let prefix = format!("30177:{owner}:");
-                if let Some(pubkey) = coordinate.strip_prefix(&prefix) {
-                    deleted
-                        .entry(pubkey.to_string())
-                        .and_modify(|time: &mut u64| {
-                            *time = (*time).max(event.created_at.as_secs())
-                        })
-                        .or_insert(event.created_at.as_secs());
-                }
-            }
-        }
-    }
+    // Retention atomically purges only the routed covered head when committing
+    // a deletion. Its remaining heads are authoritative, including recreations
+    // newer than a tombstone. Do not reinterpret additional raw a-tags here.
     let mut evidence = Vec::new();
     for row in get_retained_events_by_kind(&conn, 30177, owner)? {
         let event = nostr::Event::from_json(&row.raw_event)
@@ -190,12 +164,6 @@ pub(crate) fn read_remote_evidence(
             return Err("device home retained head does not match signed event".into());
         }
         nostr::PublicKey::from_hex(d).map_err(|e| format!("device home instance pubkey: {e}"))?;
-        if deleted
-            .get(d)
-            .is_some_and(|time| *time >= event.created_at.as_secs())
-        {
-            continue;
-        }
         let content = managed_agent_content_from_event(&event)?;
         if let Some(persona_id) = content
             .persona_id

@@ -139,3 +139,54 @@ fn list_projects_retained_catalog_sharing_without_writing_or_requiring_host_proo
     assert_eq!(std::fs::read(&path).unwrap(), before_db);
     assert!(!dir.path().join("device.json").exists());
 }
+
+#[test]
+fn identity_recovery_preserves_visible_list_without_scope_or_signing() {
+    use std::sync::atomic::Ordering;
+    for lost in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().identifier = dir.path().to_str().unwrap().into();
+        let state = crate::app_state::build_app_state();
+        state.identity_lost.store(lost, Ordering::Release);
+        state.keyring_locked.store(!lost, Ordering::Release);
+        let app = tauri::test::mock_builder()
+            .manage(state)
+            .build(context)
+            .unwrap();
+        assert_eq!(app.path().app_data_dir().unwrap(), dir.path());
+        let definitions: Vec<AgentDefinition> = [Some(true), None, Some(false)].into_iter().enumerate().map(|(i,policy)| serde_json::from_value(serde_json::json!({"id":format!("definition-{i}"),"display_name":"One","system_prompt":"Test","created_at":"now","updated_at":"now","share_across_devices":policy})).unwrap()).collect();
+        save_personas(app.handle(), &definitions).unwrap();
+        let store_path = dir.path().join("agents/managed-agents.json");
+        let before = std::fs::read(&store_path).unwrap();
+        let views = list_personas_inner(app.handle())
+            .expect("identity recovery must keep definitions visible");
+        let views: Vec<_> = views
+            .into_iter()
+            .filter(|view| !view.definition.is_builtin)
+            .collect();
+        assert_eq!(views.len(), definitions.len());
+        for (view, definition) in views.iter().zip(&definitions) {
+            assert!(view.home.is_none());
+            assert!(view.home_error.as_ref().unwrap().contains("recovery mode"));
+            assert_eq!(
+                view.capabilities.can_create_instance,
+                definition.share_across_devices == Some(true)
+            );
+            assert_eq!(
+                view.capabilities.can_delete_definition,
+                definition.share_across_devices == Some(true)
+            );
+            if definition.share_across_devices != Some(true) {
+                assert_eq!(
+                    view.capabilities.blocked_reason.as_deref(),
+                    Some("device_home_sync_failed")
+                );
+            }
+        }
+        assert!(app.state::<AppState>().signing_keys().is_err());
+        assert_eq!(std::fs::read(&store_path).unwrap(), before);
+        assert!(!dir.path().join("device.json").exists());
+        assert!(!dir.path().join("agents/retention").exists());
+    }
+}
