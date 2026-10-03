@@ -377,9 +377,12 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/discovery/tests.rs",
-      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "responsibility": "Keep existing discovery tests and module topology; move explicit device-compatible resolution fixtures to tests/fixtures.rs to restore the inherited size ratchet",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "mod fixtures;",
+        "use fixtures::{persona_with_runtime, record_with};"
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "just desktop-tauri-test desktop-tauri-check"
@@ -492,9 +495,12 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/readiness.rs",
-      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "responsibility": "Keep readiness production code and tests unchanged; extract explicit env-resolution record fixture under the existing cfg(test) module to restore the inherited size ratchet",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "mod fixtures;",
+        "fixtures::record_with_env(env_vars)"
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "just desktop-tauri-test desktop-tauri-check"
@@ -1219,18 +1225,24 @@
     },
     {
       "path": "desktop/src/shared/api/relayClientSession.ts",
-      "responsibility": "Backward-compatible health observer for live readiness timeout and one-shot removal cleanup",
+      "responsibility": "Backward-compatible health observer for live readiness timeout and one-shot removal cleanup; delegate unchanged live setup to relayLiveSubscription.ts with explicit session-owned dependencies to restore the inherited size ratchet",
       "is_new": false,
       "required_symbols": [
         "type LiveSubscriptionHealth",
-        "onHealth?.(\"removed\")",
-        "subscription.onHealth?.(\"timeout\")"
+        "return subscribeLiveSession("
       ],
       "invocation_seams": [
         {
           "caller_path": "desktop/src/shared/api/relayClientSession.ts",
           "callee_symbol": "subscribe",
           "invocation": "return this.subscribe(\n      filter,\n      onEvent,\n      onReady,\n      readinessTimeoutMs,\n      signal,\n      undefined,\n      onHealth,\n    );",
+          "behavior_test": "unconfirmed timeout cannot hydrate or finish and confirmed retry starts a fresh session",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern=\"unconfirmed timeout\" src/features/agents/lib/usePersonaSyncRelayHealth.test.mjs"
+        },
+        {
+          "caller_path": "desktop/src/shared/api/relayClientSession.ts",
+          "callee_symbol": "subscribeLiveSession",
+          "invocation": "return subscribeLiveSession(",
           "behavior_test": "unconfirmed timeout cannot hydrate or finish and confirmed retry starts a fresh session",
           "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern=\"unconfirmed timeout\" src/features/agents/lib/usePersonaSyncRelayHealth.test.mjs"
         }
@@ -1746,6 +1758,61 @@
       ],
       "verification_commands": [
         "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/discovery/tests/fixtures.rs",
+      "responsibility": "Explicit unchanged discovery persona/record constructors; preserve original field values including device None defaults",
+      "is_new": true,
+      "required_symbols": [
+        "pub(super) fn persona_with_runtime",
+        "pub(super) fn record_with"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::discovery::tests"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/readiness/tests/fixtures.rs",
+      "responsibility": "Explicit unchanged readiness env-resolution record fixture; preserve test-pubkey, test-agent, buzz-acp, buzz-agent, timeout320 and every other original field",
+      "is_new": true,
+      "required_symbols": [
+        "pub(super) fn record_with_env"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::readiness::tests::resolve_effective_agent_env_user_env_wins_over_structured_fields -- --exact"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/api/relayLiveSubscription.ts",
+      "responsibility": "Own unchanged live subscription registration/readiness/cancellation lifetime, health callbacks, priority and session-fenced removal; transport pacing and quota remain in the session",
+      "is_new": true,
+      "required_symbols": [
+        "export async function subscribeLiveSession",
+        "onHealth?.(\"removed\")",
+        "subscription.onHealth?.(\"timeout\")",
+        "epoch === session.currentEpoch()"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/shared/api/relayLiveSubscription.ts",
+          "callee_symbol": "sendRawWithReconnectRetry",
+          "invocation": "session.sendRawWithReconnectRetry(",
+          "behavior_test": "cold setup drains at most one live REQ per 250ms, prioritizes visible channel and preserves every filter",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/shared/api/relayClientBurstDrain.test.mjs"
+        },
+        {
+          "caller_path": "desktop/src/shared/api/relayLiveSubscription.ts",
+          "callee_symbol": "closeSubscription",
+          "invocation": "if (epoch === session.currentEpoch())\n      await session.closeSubscription(subId);",
+          "behavior_test": "workspace switch during in-flight setup cannot close or reset the new socket",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/shared/api/relayClientLiveCancellation.test.mjs"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
       ]
     }
   ]

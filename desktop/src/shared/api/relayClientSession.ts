@@ -39,6 +39,7 @@ import {
 import { getChannelReconnectRepairEvents } from "@/shared/api/channelReconnectRepair";
 import { replayLiveSubscriptions } from "@/shared/api/relayReconnectReplay";
 import { RelayLiveReqDrain } from "./relayLiveReqDrain";
+import { subscribeLiveSession } from "@/shared/api/relayLiveSubscription";
 import { RelayChannelAccessRevocations } from "./relayChannelAccessRevocations";
 import { publishSessionEvent } from "@/shared/api/relayEventPublisher";
 import { activateRateLimitIfSignalled } from "@/shared/api/relayRateLimitGate";
@@ -634,90 +635,26 @@ export class RelayClient {
     priority?: "interactive",
     onHealth?: (health: LiveSubscriptionHealth) => void,
   ) {
-    const epoch = this.sessionEpoch;
-    const sessionSignal = this.liveSessionAbort.signal;
-    signal?.throwIfAborted();
-    const subId = `live-${crypto.randomUUID()}`;
-    let fallbackTimeout: number | undefined;
-    let settleReady = () => {};
-    let removed = false;
-    const onRemoved = () => {
-      if (removed) return;
-      removed = true;
-      signal?.removeEventListener("abort", abort);
-      sessionSignal.removeEventListener("abort", abort);
-      window.clearTimeout(fallbackTimeout);
-      onHealth?.("removed");
-      settleReady();
-    };
-    const subscription: Extract<RelaySubscription, { mode: "live" }> = {
-      mode: "live",
+    return subscribeLiveSession(
+      {
+        epoch: this.sessionEpoch,
+        signal: this.liveSessionAbort.signal,
+        currentEpoch: () => this.sessionEpoch,
+        subscriptions: this.subscriptions,
+        liveReqDrain: this.liveReqDrain,
+        ensureConnected: () => this.ensureConnected(),
+        closeSubscription: (subId) => this.closeSubscription(subId),
+        sendRawWithReconnectRetry: (payload, message, onDispatch) =>
+          this.sendRawWithReconnectRetry(payload, message, onDispatch),
+      },
       filter,
-      priority,
       onEvent,
-      onRemoved,
+      onReady,
+      readinessTimeoutMs,
+      signal,
+      priority,
       onHealth,
-    };
-    const dispose = async () => {
-      if (this.subscriptions.get(subId) !== subscription) return;
-      this.subscriptions.delete(subId);
-      this.liveReqDrain.cancel(subId);
-      clearClosedRetry(subscription);
-      onRemoved();
-      // Workspace teardown closes its socket; never send on its replacement.
-      if (epoch === this.sessionEpoch) await this.closeSubscription(subId);
-    };
-    let rejectCancelled = (_error: Error) => {};
-    const cancelled = new Promise<never>((_resolve, reject) => {
-      rejectCancelled = reject;
-    });
-    const abort = () => {
-      rejectCancelled(
-        new DOMException("Live subscription cancelled.", "AbortError"),
-      );
-      void dispose().catch(() => {});
-      onRemoved();
-    };
-    signal?.addEventListener("abort", abort, { once: true });
-    sessionSignal.addEventListener("abort", abort, { once: true });
-    try {
-      await Promise.race([this.ensureConnected(), cancelled]);
-      signal?.throwIfAborted();
-      sessionSignal.throwIfAborted();
-      const ready = new Promise<void>((resolve) => {
-        settleReady = resolve;
-      });
-      let readySettled = false;
-      subscription.resolveReady = (readiness) => {
-        if (readySettled) return;
-        readySettled = true;
-        window.clearTimeout(fallbackTimeout);
-        onReady?.(readiness);
-        settleReady();
-      };
-      this.subscriptions.set(subId, subscription);
-      await Promise.race([
-        this.sendRawWithReconnectRetry(
-          ["REQ", subId, filter],
-          "Failed to restore relay subscription.",
-          () => {
-            if (readySettled) return;
-            window.clearTimeout(fallbackTimeout);
-            fallbackTimeout = window.setTimeout(() => {
-              subscription.onHealth?.("timeout");
-              subscription.resolveReady?.("timeout");
-            }, readinessTimeoutMs);
-          },
-        ),
-        cancelled,
-      ]);
-      await Promise.race([ready, cancelled]);
-      return dispose;
-    } catch (error) {
-      await dispose().catch(() => {});
-      onRemoved();
-      throw error;
-    }
+    );
   }
 
   private async sendRaw(payload: unknown[]) {

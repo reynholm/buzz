@@ -297,10 +297,12 @@ New module: `true`.
 
 ## `desktop/src-tauri/src/managed_agents/discovery/tests.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None
+Keep existing discovery tests and module topology; move explicit device-compatible resolution fixtures to tests/fixtures.rs to restore the inherited size ratchet
 
 New module: `false`.
 
+- Required symbol: `mod fixtures;`
+- Required symbol: `use fixtures::{persona_with_runtime, record_with};`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/managed_agents/effective_config/tests.rs`
@@ -388,10 +390,12 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/managed_agents/readiness.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None
+Keep readiness production code and tests unchanged; extract explicit env-resolution record fixture under the existing cfg(test) module to restore the inherited size ratchet
 
 New module: `false`.
 
+- Required symbol: `mod fixtures;`
+- Required symbol: `fixtures::record_with_env(env_vars)`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/managed_agents/runtime/test_fixtures.rs`
@@ -819,13 +823,12 @@ New module: `false`.
 
 ## `desktop/src/shared/api/relayClientSession.ts`
 
-Backward-compatible health observer for live readiness timeout and one-shot removal cleanup
+Backward-compatible health observer for live readiness timeout and one-shot removal cleanup; delegate unchanged live setup to relayLiveSubscription.ts with explicit session-owned dependencies to restore the inherited size ratchet
 
 New module: `false`.
 
 - Required symbol: `type LiveSubscriptionHealth`
-- Required symbol: `onHealth?.("removed")`
-- Required symbol: `subscription.onHealth?.("timeout")`
+- Required symbol: `return subscribeLiveSession(`
 - Invocation: `desktop/src/shared/api/relayClientSession.ts` → `subscribe`; exact call `return this.subscribe(
       filter,
       onEvent,
@@ -835,6 +838,7 @@ New module: `false`.
       undefined,
       onHealth,
     );`; behavior test `unconfirmed timeout cannot hydrate or finish and confirmed retry starts a fresh session`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern="unconfirmed timeout" src/features/agents/lib/usePersonaSyncRelayHealth.test.mjs`
+- Invocation: `desktop/src/shared/api/relayClientSession.ts` → `subscribeLiveSession`; exact call `return subscribeLiveSession(`; behavior test `unconfirmed timeout cannot hydrate or finish and confirmed retry starts a fresh session`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern="unconfirmed timeout" src/features/agents/lib/usePersonaSyncRelayHealth.test.mjs`
 - Verify: `just desktop-test desktop-typecheck`
 
 ## `desktop/src/shared/api/relayClosedRecovery.ts`
@@ -1060,3 +1064,37 @@ New module: `false`.
 - Required symbol: `match restore_cleanup_error`
 - Invocation: `desktop/src-tauri/src/shutdown.rs` → `retry_restore_cleanup`; exact call `managed_agents::retry_restore_cleanup(app).err();`; behavior test `managed_agents::restore::device_home_restore_tests::failed_child_cleanup_propagates_and_retains_retry_ownership`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::failed_child_cleanup_propagates_and_retains_retry_ownership -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/discovery/tests/fixtures.rs`
+
+Explicit unchanged discovery persona/record constructors; preserve original field values including device None defaults
+
+New module: `true`.
+
+- Required symbol: `pub(super) fn persona_with_runtime`
+- Required symbol: `pub(super) fn record_with`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::discovery::tests`
+
+## `desktop/src-tauri/src/managed_agents/readiness/tests/fixtures.rs`
+
+Explicit unchanged readiness env-resolution record fixture; preserve test-pubkey, test-agent, buzz-acp, buzz-agent, timeout320 and every other original field
+
+New module: `true`.
+
+- Required symbol: `pub(super) fn record_with_env`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::readiness::tests::resolve_effective_agent_env_user_env_wins_over_structured_fields -- --exact`
+
+## `desktop/src/shared/api/relayLiveSubscription.ts`
+
+Own unchanged live subscription registration/readiness/cancellation lifetime, health callbacks, priority and session-fenced removal; transport pacing and quota remain in the session
+
+New module: `true`.
+
+- Required symbol: `export async function subscribeLiveSession`
+- Required symbol: `onHealth?.("removed")`
+- Required symbol: `subscription.onHealth?.("timeout")`
+- Required symbol: `epoch === session.currentEpoch()`
+- Invocation: `desktop/src/shared/api/relayLiveSubscription.ts` → `sendRawWithReconnectRetry`; exact call `session.sendRawWithReconnectRetry(`; behavior test `cold setup drains at most one live REQ per 250ms, prioritizes visible channel and preserves every filter`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/shared/api/relayClientBurstDrain.test.mjs`
+- Invocation: `desktop/src/shared/api/relayLiveSubscription.ts` → `closeSubscription`; exact call `if (epoch === session.currentEpoch())
+      await session.closeSubscription(subId);`; behavior test `workspace switch during in-flight setup cannot close or reset the new socket`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/shared/api/relayClientLiveCancellation.test.mjs`
+- Verify: `just desktop-test desktop-typecheck`
