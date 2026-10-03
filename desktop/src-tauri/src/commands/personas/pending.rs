@@ -113,6 +113,35 @@ pub(super) fn project_active_persona_sharing(
     project_scoped_persona_sharing(scope, personas);
 }
 
+/// Read-only catalog projection for list queries; absence creates no database.
+pub(super) fn project_persona_sharing_read_only(
+    path: &std::path::Path,
+    owner: &str,
+    personas: &mut [AgentDefinition],
+) -> Result<(), String> {
+    use crate::managed_agents::{persona_events::persona_d_tag, retention::get_retained_event};
+    let conn = if path.exists() {
+        Some(
+            rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .map_err(|e| format!("persona catalog read: {e}"))?,
+        )
+    } else {
+        None
+    };
+    for persona in personas {
+        let retained = if persona.is_builtin {
+            None
+        } else {
+            conn.as_ref()
+                .map(|conn| get_retained_event(conn, 30175, owner, &persona_d_tag(persona)))
+                .transpose()?
+                .flatten()
+        };
+        persona.shared = retained_persona_is_shared(retained.as_ref());
+    }
+    Ok(())
+}
+
 fn project_scoped_persona_sharing(
     scope: Result<RetentionScope, String>,
     personas: &mut [AgentDefinition],

@@ -76,21 +76,69 @@ pub use inbound::reconcile_inbound_persona_event;
 pub(crate) use inbound::retain_inbound_catalog_witness;
 
 #[tauri::command]
-pub async fn list_personas(app: AppHandle) -> Result<Vec<AgentDefinition>, String> {
-    use tauri::Manager;
-    tokio::task::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let _store_guard = state
-            .managed_agents_store_lock
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let mut personas = load_personas(&app)?;
-        pending::project_active_persona_sharing(&app, &state, &mut personas);
-        Ok(personas)
-    })
-    .await
-    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+pub async fn list_personas(
+    app: AppHandle,
+) -> Result<Vec<crate::managed_agents::persona_device_view::PersonaDeviceView>, String> {
+    tokio::task::spawn_blocking(move || list_personas_inner(&app))
+        .await
+        .map_err(|e| format!("spawn_blocking failed: {e}"))?
 }
+
+fn list_personas_inner<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+) -> Result<Vec<crate::managed_agents::persona_device_view::PersonaDeviceView>, String> {
+    use tauri::Manager;
+    let state = app.state::<AppState>();
+    let _store_guard = state
+        .managed_agents_store_lock
+        .lock()
+        .map_err(|error| error.to_string())?;
+    use crate::managed_agents::{
+        device_home_sync, persona_definitions_for_policy,
+        persona_device_view::{self, PersonaDeviceView},
+        retention::scoped_retention_db_path,
+    };
+    let scope = device_home_sync::capture_scope(&state)?;
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("device data directory: {e}"))?;
+    let records =
+        persona_device_view::read_policy_records(&directory.join("agents/managed-agents.json"))?;
+    let mut personas = persona_definitions_for_policy(&records);
+    let retention_path = scoped_retention_db_path(
+        &directory.join("agents"),
+        &scope.relay_url,
+        &scope.owner_pubkey,
+    );
+    let catalog_result = pending::project_persona_sharing_read_only(
+        &retention_path,
+        &scope.owner_pubkey,
+        &mut personas,
+    );
+    let context = catalog_result
+        .and_then(|()| persona_device_view::load_device_policy_context(app, &state))
+        .and_then(|context| {
+            if context.scope != scope || scope != device_home_sync::capture_scope(&state)? {
+                return Err("device_home_sync_stale_scope".into());
+            }
+            Ok(context)
+        });
+    let instances: Vec<_> = records
+        .into_iter()
+        .filter(|record| !record.pubkey.is_empty())
+        .collect();
+    Ok(personas
+        .into_iter()
+        .map(|definition| match &context {
+            Ok(context) => context.project(definition, &instances),
+            Err(error) => PersonaDeviceView::unavailable(definition, error.clone()),
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod device_view_tests;
 
 #[cfg(test)]
 mod delete_cascade_tests;

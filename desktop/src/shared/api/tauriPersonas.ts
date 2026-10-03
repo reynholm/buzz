@@ -478,9 +478,41 @@ export async function confirmAgentSnapshotImport(
 export async function reconcileInboundPersonaEvent(
   eventJson: string,
   arrivalRelayUrl: string,
+  sessionToken?: string,
 ): Promise<void> {
   await invokeTauri("reconcile_inbound_persona_event", {
     eventJson,
     arrivalRelayUrl,
+    sessionToken,
   });
+}
+
+export type DeviceHomeSyncSession = {
+  token: string;
+  ownerPubkey: string;
+  relayUrl: string;
+  workspaceGeneration: number;
+};
+
+export async function beginDeviceHomeSync(): Promise<DeviceHomeSyncSession> {
+  return invokeTauri("begin_device_home_sync");
+}
+
+/** IDs covered by successful exhaustive history, including superseded heads. */
+export async function hydrateDeviceHomeHistory(
+  sessionToken: string,
+): Promise<{ coveredEventIds: string[] }> {
+  return invokeTauri("hydrate_device_home_history", { sessionToken });
+}
+
+export async function finishDeviceHomeSync(
+  sessionToken: string,
+): Promise<void> {
+  await invokeTauri("finish_device_home_sync", { sessionToken });
+}
+
+export async function invalidateDeviceHomeSync(
+  sessionToken: string,
+): Promise<void> {
+  await invokeTauri("invalidate_device_home_sync", { sessionToken });
 }

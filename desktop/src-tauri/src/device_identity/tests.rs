@@ -247,3 +247,28 @@ fn concurrent_host_proof_initialization_generates_once() {
     assert_eq!(generated.load(std::sync::atomic::Ordering::SeqCst), 1);
     assert!(values.iter().all(|value| value == &values[0]));
 }
+
+#[test]
+fn existing_proof_is_fresh_read_only_and_missing_fails() {
+    let store = store("");
+    assert!(load_existing_host_proof(&store).is_err());
+    let proof = load_or_create_host_proof(&store).unwrap();
+    assert!(load_existing_host_proof(&store)
+        .unwrap()
+        .matches(proof.binding()));
+    // Removing the backing blob after warming the cache must revoke the proof.
+    store.test_backend.as_ref().unwrap().write(b"{}").unwrap();
+    assert!(load_existing_host_proof(&store).is_err());
+}
+#[test]
+fn existing_identity_never_creates_or_repairs() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("device.json");
+    assert!(load_existing_device_identity(&path).is_err());
+    assert!(!path.exists());
+    let initial = load_or_create_device_identity(&path, "Host").unwrap();
+    assert_eq!(load_existing_device_identity(&path).unwrap(), initial);
+    std::fs::write(&path, b"invalid").unwrap();
+    assert!(load_existing_device_identity(&path).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), b"invalid");
+}

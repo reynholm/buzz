@@ -165,9 +165,11 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/personas/pending.rs",
-      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None; Read-only catalog projection for list without creating retained databases",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "fn project_persona_sharing_read_only"
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "just desktop-tauri-test desktop-tauri-check"
@@ -405,10 +407,13 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/mod.rs",
-      "responsibility": "Register the device policy compatibility test module",
+      "responsibility": "Register the device policy compatibility test module; Register home policy, sync and projection modules",
       "is_new": false,
       "required_symbols": [
-        "mod device_policy_types_tests;"
+        "mod device_policy_types_tests;",
+        "pub(crate) mod definition_home;",
+        "pub(crate) mod device_home_sync;",
+        "pub(crate) mod persona_device_view;"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -463,9 +468,11 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/personas.rs",
-      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None; Use existing pure built-in merge for policy list visibility without saving",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "fn persona_definitions_for_policy"
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "just desktop-tauri-test desktop-tauri-check"
@@ -647,7 +654,10 @@
       "is_new": true,
       "required_symbols": [
         "pub fn load_or_create_device_identity",
-        "pub(crate) fn load_or_create_host_proof"
+        "pub(crate) fn load_or_create_host_proof",
+        "fn load_existing_device_identity",
+        "fn load_existing_host_proof",
+        "fn initialize_device_authority"
       ],
       "invocation_seams": [
         {
@@ -670,6 +680,13 @@
           "invocation": "lock.lock()",
           "behavior_test": "concurrent_identity_initialization_has_one_uuid",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::concurrent_identity_initialization_has_one_uuid -- --exact"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/device_identity.rs",
+          "callee_symbol": "read_existing_verified",
+          "invocation": "store.read_existing_verified(\"host\")?",
+          "behavior_test": "device_identity::tests::existing_proof_is_fresh_read_only_and_missing_fails",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::existing_proof_is_fresh_read_only_and_missing_fails -- --exact"
         }
       ],
       "verification_commands": [
@@ -710,7 +727,8 @@
       "responsibility": "Register device identity IPC command",
       "is_new": false,
       "required_symbols": [
-        "pub use device_identity::*;"
+        "pub use device_identity::*;",
+        "pub use device_home_sync::*;"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -723,7 +741,12 @@
       "is_new": false,
       "required_symbols": [
         "mod device_identity;",
-        "commands::get_device_identity,"
+        "commands::get_device_identity,",
+        "commands::begin_device_home_sync,",
+        "commands::hydrate_device_home_history,",
+        "commands::finish_device_home_sync,",
+        "commands::invalidate_device_home_sync,",
+        "device_identity::initialize_device_authority(&app_handle)"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -748,7 +771,8 @@
       "is_new": false,
       "required_symbols": [
         "pub fn get_or_create_verified",
-        "fn mutate_blob_verified"
+        "fn mutate_blob_verified",
+        "fn read_existing_verified"
       ],
       "invocation_seams": [
         {
@@ -775,6 +799,305 @@
       ],
       "verification_commands": [
         "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/definition_home.rs",
+      "responsibility": "Pure proof-first home classification and readiness-dependent capabilities",
+      "is_new": true,
+      "required_symbols": [
+        "enum HomeKind",
+        "fn classify_definition_home",
+        "fn definition_capabilities"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/definition_home.rs",
+          "callee_symbol": "matches",
+          "invocation": "proof.matches(b)",
+          "behavior_test": "managed_agents::definition_home::tests::home_matrix",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::definition_home::tests::home_matrix -- --exact"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/definition_home/tests.rs",
+      "responsibility": "Literal home matrix, canonical links, flattened wire compatibility and signed scoped retained evidence",
+      "is_new": true,
+      "required_symbols": [
+        "fn home_matrix",
+        "fn flattened_device_view_is_compatible_and_contains_no_host_authority"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/device_home_sync.rs",
+      "responsibility": "Backend token/scope hydration, exhaustive authenticated paging and live-apply completion barrier",
+      "is_new": true,
+      "required_symbols": [
+        "fn begin_session",
+        "fn finish_session",
+        "async fn hydrate_history",
+        "struct DeviceHomeHistory"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/device_home_sync.rs",
+          "callee_symbol": "active",
+          "invocation": "let s = active(sync, scope, token)?;",
+          "behavior_test": "managed_agents::device_home_sync::tests::stale_sync_session_cannot_ready_new_scope",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_sync::tests::stale_sync_session_cannot_ready_new_scope -- --exact"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/device_home_sync.rs",
+          "callee_symbol": "ordered_heads",
+          "invocation": "ordered_heads(collected)",
+          "behavior_test": "managed_agents::device_home_sync::tests::exhaustive_history_applies_catalog_last_and_coalesces",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_sync::tests::exhaustive_history_applies_catalog_last_and_coalesces -- --exact"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/device_home_sync.rs",
+          "callee_symbol": "begin_apply",
+          "invocation": "begin_apply(state,Some(token))?",
+          "behavior_test": "managed_agents::device_home_sync::tests::finish_waits_for_live_apply_and_latches_error_after_ready",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_sync::tests::finish_waits_for_live_apply_and_latches_error_after_ready -- --exact"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/device_home_sync/tests.rs",
+      "responsibility": "Real signed pagination/dense-boundary/coalescing tests and stale/live-error state tests",
+      "is_new": true,
+      "required_symbols": [
+        "async fn paging_is_inclusive_exhaustive_and_deduped_before_catalog_apply",
+        "async fn finish_waits_for_live_apply_and_latches_error_after_ready"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/persona_device_view.rs",
+      "responsibility": "Read-only structural snapshots, fresh host authority, signed evidence and explicit per-definition unavailable home",
+      "is_new": true,
+      "required_symbols": [
+        "struct PersonaDeviceView",
+        "fn read_policy_records",
+        "fn load_device_policy_context",
+        "fn read_remote_evidence"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/persona_device_view.rs",
+          "callee_symbol": "definition_capabilities",
+          "invocation": "definition_capabilities(&definition, &home, self.readiness, proven)",
+          "behavior_test": "managed_agents::definition_home::tests::home_matrix",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::definition_home::tests::home_matrix -- --exact"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/device_home_sync.rs",
+      "responsibility": "Native IPC adapters, captured-key history transport and reset-before-open/error-aware finalization",
+      "is_new": true,
+      "required_symbols": [
+        "fn begin_device_home_sync",
+        "async fn hydrate_device_home_history",
+        "fn finish_device_home_sync",
+        "fn invalidate_device_home_sync"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/commands/device_home_sync.rs",
+          "callee_symbol": "reset",
+          "invocation": "device_home_sync::reset(state)?;",
+          "behavior_test": "commands::device_home_sync::tests::begin_retention_error_revokes_previous_readiness",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::device_home_sync::tests::begin_retention_error_revokes_previous_readiness -- --exact"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/device_home_sync.rs",
+          "callee_symbol": "finish_session",
+          "invocation": "device_home_sync::finish_session(state, session_token)?;",
+          "behavior_test": "commands::device_home_sync::tests::ipc_session_adapters_preserve_backend_completion_and_invalidation",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::device_home_sync::tests::ipc_session_adapters_preserve_backend_completion_and_invalidation -- --exact"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/device_view_tests.rs",
+      "responsibility": "Isolated actual list projection for mixed/shared/private context failures without writes",
+      "is_new": true,
+      "required_symbols": [
+        "fn list_context_errors_are_explicit_and_preserve_only_shared_capabilities",
+        "list_projects_retained_catalog_sharing_without_writing_or_requiring_host_proof"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/inbound/device_sync_tests.rs",
+      "responsibility": "Signed hydration through actual blocking inbound dispatcher with isolated app paths",
+      "is_new": true,
+      "required_symbols": [
+        "async fn hydration_applies_signed_catalog_through_production_dispatcher_and_propagates_failure"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/mod.rs",
+      "responsibility": "Read-only flattened list views with shared capability fast path on explicit unavailable context",
+      "is_new": false,
+      "required_symbols": [
+        "fn list_personas_inner"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/commands/personas/mod.rs",
+          "callee_symbol": "persona_definitions_for_policy",
+          "invocation": "persona_definitions_for_policy(&records)",
+          "behavior_test": "commands::personas::device_view_tests::list_context_errors_are_explicit_and_preserve_only_shared_capabilities",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::device_view_tests::list_context_errors_are_explicit_and_preserve_only_shared_capabilities -- --exact"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/personas/mod.rs",
+          "callee_symbol": "project_persona_sharing_read_only",
+          "invocation": "pending::project_persona_sharing_read_only(\n        &retention_path,\n        &scope.owner_pubkey,\n        &mut personas,\n    );",
+          "behavior_test": "commands::personas::device_view_tests::list_projects_retained_catalog_sharing_without_writing_or_requiring_host_proof",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::device_view_tests::list_projects_retained_catalog_sharing_without_writing_or_requiring_host_proof -- --exact"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/personas/mod.rs",
+          "callee_symbol": "unavailable",
+          "invocation": "PersonaDeviceView::unavailable(definition, error.clone())",
+          "behavior_test": "commands::personas::device_view_tests::list_context_errors_are_explicit_and_preserve_only_shared_capabilities",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::device_view_tests::list_context_errors_are_explicit_and_preserve_only_shared_capabilities -- --exact"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/app_state.rs",
+      "responsibility": "In-memory scoped backend device home sync state",
+      "is_new": false,
+      "required_symbols": [
+        "device_home_sync:"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/workspace.rs",
+      "responsibility": "Invalidate backend home evidence on workspace apply",
+      "is_new": false,
+      "required_symbols": [
+        "device_home_sync::reset(&state)?;"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/inbound.rs",
+      "responsibility": "Token-scoped live apply leases fence async reconciliation and record failures",
+      "is_new": false,
+      "required_symbols": [
+        "session_token: Option<String>",
+        "lease.complete(&result)?;"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/lib/usePersonaSync.ts",
+      "responsibility": "Live-first backend hydration, rejection-aware drain, bounded fresh-session retry and connection invalidation",
+      "is_new": false,
+      "required_symbols": [
+        "export function startPersonaSync",
+        "hydrateDeviceHomeHistory(sessionRun.token)",
+        "subscribeToConnectionState",
+        "subscribeToReconnects"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/agents/lib/usePersonaSync.ts",
+          "callee_symbol": "finishDeviceHomeSync",
+          "invocation": "await finishDeviceHomeSync(sessionRun.token);",
+          "behavior_test": "backend sync waits for buffered live applies before finish and carries its token",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern=\"backend sync waits for buffered\" src/features/agents/lib/usePersonaSync.test.mjs"
+        },
+        {
+          "caller_path": "desktop/src/features/agents/lib/usePersonaSync.ts",
+          "callee_symbol": "invalidateDeviceHomeSync",
+          "invocation": "invalidateDeviceHomeSync(run.token)",
+          "behavior_test": "connection loss invalidates readiness and reconnect starts a fresh complete session",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern=\"connection loss invalidates\" src/features/agents/lib/usePersonaSync.test.mjs"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/lib/usePersonaSync.test.mjs",
+      "responsibility": "Preserved coalescing/catalog/gap/degraded/retry behavior plus IPC token, completion, cancellation and reconnect tests",
+      "is_new": false,
+      "required_symbols": [
+        "backend sync waits for buffered live applies",
+        "late previous hydration cannot finalize a replacement session"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/api/tauriPersonas.ts",
+      "responsibility": "Backend sync IPC client and optional live reconciliation token",
+      "is_new": false,
+      "required_symbols": [
+        "export async function beginDeviceHomeSync",
+        "export async function hydrateDeviceHomeHistory",
+        "sessionToken?: string"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/shared/api/tauriPersonas.ts",
+          "callee_symbol": "invokeTauri",
+          "invocation": "await invokeTauri(\"reconcile_inbound_persona_event\", {\n    eventJson,\n    arrivalRelayUrl,\n    sessionToken,\n  });",
+          "behavior_test": "backend sync waits for buffered live applies before finish and carries its token",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern=\"backend sync waits for buffered\" src/features/agents/lib/usePersonaSync.test.mjs"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
       ]
     }
   ]

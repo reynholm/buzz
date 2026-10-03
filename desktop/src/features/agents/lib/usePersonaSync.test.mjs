@@ -24,6 +24,308 @@ const EXPECTED_KINDS = [
   KIND_DELETION,
 ];
 
+// These tests exercise the actual hook/API through the native IPC boundary.
+// History paging/application is covered by Rust hydrate_history tests.
+function nativeSync(
+  t,
+  {
+    hydrate = async () => ({ coveredEventIds: [] }),
+    reconcile = async () => {},
+    relayUrl = "wss://relay.example",
+    subscribe,
+    begin,
+  } = {},
+) {
+  const calls = [];
+  const warnings = [];
+  mock.method(console, "warn", (...args) => {
+    warnings.push(args);
+  });
+  let sequence = 0;
+  globalThis.window = {
+    __TAURI_INTERNALS__: {
+      invoke: async (cmd, args) => {
+        calls.push({ cmd, args });
+        if (cmd === "begin_device_home_sync") {
+          const session = {
+            token: `token-${++sequence}`,
+            ownerPubkey: "owner-pubkey",
+            relayUrl,
+            workspaceGeneration: 1,
+          };
+          return begin ? begin(session) : session;
+        }
+        if (cmd === "hydrate_device_home_history") return hydrate(args);
+        if (cmd === "reconcile_inbound_persona_event") return reconcile(args);
+        return undefined;
+      },
+    },
+  };
+  let live;
+  let connection;
+  let reconnect;
+  mock.method(relayClient, "subscribeLive", async (filter, listener) => {
+    live = listener;
+    return subscribe ? subscribe(filter, listener) : async () => {};
+  });
+  mock.method(relayClient, "fetchEvents", async () => []);
+  mock.method(relayClient, "subscribeToConnectionState", (listener) => {
+    connection = listener;
+    listener("connected");
+    return () => {};
+  });
+  mock.method(relayClient, "subscribeToReconnects", (listener) => {
+    reconnect = listener;
+    return () => {};
+  });
+  t.after(() => {
+    mock.reset();
+    delete globalThis.window;
+  });
+  return {
+    calls,
+    warnings,
+    live: (e) => live(e),
+    connection: (s) => connection(s),
+    reconnect: () => reconnect(),
+  };
+}
+
+async function settleSync() {
+  for (let i = 0; i < 6; i++)
+    await new Promise((resolve) => setImmediate(resolve));
+}
+
+test("backend sync waits for buffered live applies before finish and carries its token", async (t) => {
+  let releaseHistory;
+  let releaseApply;
+  const history = new Promise((resolve) => {
+    releaseHistory = resolve;
+  });
+  const apply = new Promise((resolve) => {
+    releaseApply = resolve;
+  });
+  const native = nativeSync(t, {
+    hydrate: () => history,
+    reconcile: () => apply,
+  });
+  const dispose = startPersonaSync(
+    "owner-pubkey",
+    "wss://relay.example",
+    () => false,
+  );
+  await settleSync();
+  native.live(event({ id: "live", createdAt: 1 }));
+  assert.equal(
+    native.calls.filter((c) => c.cmd === "reconcile_inbound_persona_event")
+      .length,
+    0,
+  );
+  releaseHistory({ coveredEventIds: [] });
+  await settleSync();
+  assert.equal(
+    native.calls.filter((c) => c.cmd === "finish_device_home_sync").length,
+    0,
+  );
+  const call = native.calls.find(
+    (c) => c.cmd === "reconcile_inbound_persona_event",
+  );
+  assert.equal(call.args.sessionToken, "token-1");
+  releaseApply();
+  await settleSync();
+  assert.deepEqual(
+    native.calls
+      .filter((c) => c.cmd === "finish_device_home_sync")
+      .map((c) => c.args),
+    [{ sessionToken: "token-1" }],
+  );
+  await dispose();
+});
+
+test("reconcile rejection is latched and cannot finish despite a later successful apply", async (t) => {
+  let releaseHistory;
+  const native = nativeSync(t, {
+    hydrate: () =>
+      new Promise((resolve) => {
+        releaseHistory = resolve;
+      }),
+    reconcile: async (args) => {
+      if (JSON.parse(args.eventJson).id === "bad")
+        throw new Error("apply failed");
+    },
+  });
+  const dispose = startPersonaSync(
+    "owner-pubkey",
+    "wss://relay.example",
+    () => false,
+  );
+  await settleSync();
+  native.live(event({ id: "bad", createdAt: 1 }));
+  native.live(event({ id: "good", createdAt: 2, dTag: "other" }));
+  releaseHistory({ coveredEventIds: [] });
+  await settleSync();
+  assert.equal(
+    native.calls.filter((c) => c.cmd === "finish_device_home_sync").length,
+    0,
+  );
+  assert.equal(
+    native.calls.filter((c) => c.cmd === "reconcile_inbound_persona_event")
+      .length,
+    2,
+  );
+  assert.equal(
+    native.warnings.filter((w) => w[0].includes("reconcile failed")).length,
+    1,
+  );
+  await dispose();
+});
+
+test("connection loss invalidates readiness and reconnect starts a fresh complete session", async (t) => {
+  const native = nativeSync(t);
+  const dispose = startPersonaSync(
+    "owner-pubkey",
+    "wss://relay.example",
+    () => false,
+  );
+  await settleSync();
+  native.connection("reconnecting");
+  await settleSync();
+  assert.deepEqual(
+    native.calls
+      .filter((c) => c.cmd === "invalidate_device_home_sync")
+      .map((c) => c.args),
+    [{ sessionToken: "token-1" }],
+  );
+  native.connection("connected");
+  native.reconnect();
+  await settleSync();
+  assert.equal(
+    native.calls.filter((c) => c.cmd === "begin_device_home_sync").length,
+    2,
+  );
+  assert.deepEqual(
+    native.calls
+      .filter((c) => c.cmd === "finish_device_home_sync")
+      .map((c) => c.args.sessionToken),
+    ["token-1", "token-2"],
+  );
+  await dispose();
+});
+
+test("disposal during hydration cannot finish or dispatch buffered events", async (t) => {
+  let releaseHistory;
+  const native = nativeSync(t, {
+    hydrate: () =>
+      new Promise((resolve) => {
+        releaseHistory = resolve;
+      }),
+  });
+  const dispose = startPersonaSync(
+    "owner-pubkey",
+    "wss://relay.example",
+    () => false,
+  );
+  await settleSync();
+  native.live(event({ id: "old", createdAt: 1 }));
+  await dispose();
+  releaseHistory({ coveredEventIds: [] });
+  await settleSync();
+  assert.equal(
+    native.calls.filter((c) => c.cmd === "finish_device_home_sync").length,
+    0,
+  );
+  assert.equal(
+    native.calls.filter((c) => c.cmd === "reconcile_inbound_persona_event")
+      .length,
+    0,
+  );
+  assert.equal(
+    native.calls.filter((c) => c.cmd === "invalidate_device_home_sync").length,
+    1,
+  );
+});
+
+test("disposal before begin returns invalidates its late token without subscribing", async (t) => {
+  let release;
+  const native = nativeSync(t, {
+    begin: (session) =>
+      new Promise((resolve) => {
+        release = () => resolve(session);
+      }),
+  });
+  const dispose = startPersonaSync(
+    "owner-pubkey",
+    "wss://relay.example",
+    () => false,
+  );
+  await settleSync();
+  await dispose();
+  release();
+  await settleSync();
+  assert.equal(relayClient.subscribeLive.mock.callCount(), 0);
+  assert.equal(
+    native.calls.filter((c) => c.cmd === "hydrate_device_home_history").length,
+    0,
+  );
+  assert.deepEqual(
+    native.calls
+      .filter((c) => c.cmd === "invalidate_device_home_sync")
+      .map((c) => c.args.sessionToken),
+    ["token-1"],
+  );
+});
+
+test("late previous hydration cannot finalize a replacement session", async (t) => {
+  let releaseOld;
+  let attempts = 0;
+  const native = nativeSync(t, {
+    hydrate: () =>
+      ++attempts === 1
+        ? new Promise((resolve) => {
+            releaseOld = resolve;
+          })
+        : Promise.resolve({ coveredEventIds: [] }),
+  });
+  const dispose = startPersonaSync(
+    "owner-pubkey",
+    "wss://relay.example",
+    () => false,
+  );
+  await settleSync();
+  native.connection("reconnecting");
+  native.connection("connected");
+  await settleSync();
+  releaseOld({ coveredEventIds: [] });
+  await settleSync();
+  assert.deepEqual(
+    native.calls
+      .filter((c) => c.cmd === "finish_device_home_sync")
+      .map((c) => c.args.sessionToken),
+    ["token-2"],
+  );
+  await dispose();
+});
+
+test("backend session for another scope is invalidated without history or live registration", async (t) => {
+  const native = nativeSync(t, { relayUrl: "wss://other.example" });
+  const dispose = startPersonaSync(
+    "owner-pubkey",
+    "wss://relay.example",
+    () => false,
+  );
+  await settleSync();
+  assert.equal(relayClient.subscribeLive.mock.callCount(), 0);
+  assert.equal(
+    native.calls.filter((c) => c.cmd === "hydrate_device_home_history").length,
+    0,
+  );
+  assert.equal(
+    native.calls.filter((c) => c.cmd === "invalidate_device_home_sync").length,
+    1,
+  );
+  await dispose();
+});
+
 function event({
   id,
   kind = KIND_MANAGED_AGENT,
@@ -113,45 +415,33 @@ test("orderCatalogHeadsLast preserves relay order within each group", () => {
 // first live event. `startPersonaSync` MUST do a one-shot history fetch up
 // front, and both the backfill and the live sub MUST carry the deletion kind
 // so tombstones catch up too.
-test("startPersonaSync backfills history including the deletion kind", async () => {
-  const fetchCalls = [];
+test("startPersonaSync backfills history including the deletion kind", async (t) => {
   const liveCalls = [];
-  mock.method(relayClient, "fetchEvents", (filter) => {
-    fetchCalls.push(filter);
-    return Promise.resolve([]);
+  const native = nativeSync(t, {
+    subscribe: async (filter) => {
+      liveCalls.push(filter);
+      return async () => {};
+    },
   });
-  mock.method(relayClient, "subscribeLive", (filter) => {
-    liveCalls.push(filter);
-    return Promise.resolve(() => Promise.resolve());
-  });
-
-  startPersonaSync("owner-pubkey", "wss://relay.example", () => false);
-  // Backfill runs only after the live subscription is established, so let the
-  // subscribe promise resolve before asserting the fetch fired.
-  for (let i = 0; i < 3; i += 1)
-    await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(fetchCalls.length, 1, "empty first page exhausts in one fetch");
-  assert.deepEqual(
-    fetchCalls[0].kinds,
-    EXPECTED_KINDS,
-    "backfill must cover persona/team/agent + deletion",
+  const dispose = startPersonaSync(
+    "owner-pubkey",
+    "wss://relay.example",
+    () => false,
   );
-  assert.ok(
-    fetchCalls[0].limit > 0,
-    "backfill must request a positive limit — limit:0 returns no history",
+  await settleSync();
+  assert.equal(
+    native.calls.filter((c) => c.cmd === "hydrate_device_home_history").length,
+    1,
   );
-  assert.deepEqual(fetchCalls[0].authors, ["owner-pubkey"]);
-  assert.equal(fetchCalls[0].until, undefined, "first page carries no cursor");
-
-  assert.equal(liveCalls.length, 1);
-  assert.deepEqual(
-    liveCalls[0].kinds,
-    EXPECTED_KINDS,
-    "live sub must also carry the deletion kind",
+  assert.deepEqual(liveCalls[0].kinds, EXPECTED_KINDS);
+  assert.deepEqual(liveCalls[0].authors, ["owner-pubkey"]);
+  assert.equal(liveCalls[0].limit, 0);
+  assert.equal(
+    relayClient.fetchEvents.mock.callCount(),
+    0,
+    "history must be backend-owned",
   );
-
-  mock.reset();
+  await dispose();
 });
 
 // Regression guard for Thufir r10 P2 finding 2 (hydration boundary). The history
@@ -162,49 +452,40 @@ test("startPersonaSync backfills history including the deletion kind", async () 
 // witness is purged plus falsely tombstoned. `startPersonaSync` MUST buffer live
 // events until the ordered backfill is dispatched, then drain them. Removing the
 // buffer dispatches the live head first and turns this RED.
-test("startPersonaSync buffers live catalog heads until the backfill hydrates constituents", async () => {
-  const invokedIds = [];
-  globalThis.window = {
-    __TAURI_INTERNALS__: {
-      invoke: (_cmd, args) => {
-        invokedIds.push(JSON.parse(args.eventJson).id);
-        return Promise.resolve();
-      },
-    },
-  };
-
-  let resolveBackfill;
-  const backfill = new Promise((resolve) => {
-    resolveBackfill = resolve;
+test("startPersonaSync buffers live catalog heads until the backfill hydrates constituents", async (t) => {
+  let resolveHistory;
+  const native = nativeSync(t, {
+    hydrate: () =>
+      new Promise((resolve) => {
+        resolveHistory = resolve;
+      }),
   });
-  mock.method(relayClient, "fetchEvents", () => backfill);
-  let onEvent;
-  mock.method(relayClient, "subscribeLive", (_filter, listener) => {
-    onEvent = listener;
-    return Promise.resolve(() => Promise.resolve());
-  });
-
-  startPersonaSync("owner-pubkey", "wss://relay.example", () => false);
-  await new Promise((resolve) => setImmediate(resolve));
-
-  // A freshly shared catalog head arrives live before the history resolves.
-  onEvent(event({ id: "cat-live", kind: KIND_TEAM_CATALOG, createdAt: 100 }));
-  // The delayed backfill returns the constituents (relay newest-first).
-  resolveBackfill([
-    event({ id: "team", kind: KIND_TEAM, createdAt: 90 }),
-    event({ id: "persona", kind: KIND_PERSONA, createdAt: 80 }),
-  ]);
-  await new Promise((resolve) => setImmediate(resolve));
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.deepEqual(
-    invokedIds,
-    ["team", "persona", "cat-live"],
-    "constituents hydrate first; the buffered live catalog head drains last",
+  const dispose = startPersonaSync(
+    "owner-pubkey",
+    "wss://relay.example",
+    () => false,
   );
-
-  mock.reset();
-  delete globalThis.window;
+  await settleSync();
+  native.live(
+    event({ id: "cat-live", kind: KIND_TEAM_CATALOG, createdAt: 100 }),
+  );
+  assert.equal(
+    native.calls.filter((c) => c.cmd === "reconcile_inbound_persona_event")
+      .length,
+    0,
+  );
+  resolveHistory({ coveredEventIds: [] });
+  await settleSync();
+  const calls = native.calls.map((c) => c.cmd);
+  assert.ok(
+    calls.indexOf("hydrate_device_home_history") <
+      calls.indexOf("reconcile_inbound_persona_event"),
+  );
+  assert.ok(
+    calls.indexOf("reconcile_inbound_persona_event") <
+      calls.indexOf("finish_device_home_sync"),
+  );
+  await dispose();
 });
 
 // Regression guard for Thufir r10 P2 finding 3 (capped page). The relay clamps a
@@ -213,90 +494,43 @@ test("startPersonaSync buffers live catalog heads until the backfill hydrates co
 // required 30175 constituent falls beyond it. `startPersonaSync` MUST page to
 // exhaustion via the `until` cursor so every constituent hydrates before the
 // catalog head. Removing pagination leaves the required persona unfetched.
-test("startPersonaSync pages history to exhaustion so an out-of-page constituent hydrates before the catalog head", async () => {
-  const invokedIds = [];
-  globalThis.window = {
-    __TAURI_INTERNALS__: {
-      invoke: (_cmd, args) => {
-        invokedIds.push(JSON.parse(args.eventJson).id);
-        return Promise.resolve();
-      },
-    },
-  };
-
-  // Page 1 (newest-first): the catalog head, the team, and 498 filler personas —
-  // a full page whose oldest event is created_at 501.
-  const page1 = [
-    event({ id: "cat", kind: KIND_TEAM_CATALOG, createdAt: 1000 }),
-    event({ id: "team", kind: KIND_TEAM, createdAt: 999 }),
-  ];
-  for (let i = 0; i < 498; i += 1) {
-    page1.push(
-      event({
-        id: `filler-${i}`,
-        kind: KIND_PERSONA,
-        createdAt: 998 - i,
-        dTag: `filler-${i}`,
+test("startPersonaSync delegates history to backend and orders buffered constituents before catalog heads", async (t) => {
+  // Real signed inclusive paging and catalog-last application now bind Rust hydrate_history.
+  let resolveHistory;
+  const native = nativeSync(t, {
+    hydrate: () =>
+      new Promise((resolve) => {
+        resolveHistory = resolve;
       }),
-    );
-  }
-  // Page 2: the boundary event re-returned by the inclusive `until`, plus the
-  // required older persona that fell outside page 1.
-  const boundary = page1[page1.length - 1];
-  const page2 = [
-    boundary,
+  });
+  const dispose = startPersonaSync(
+    "owner-pubkey",
+    "wss://relay.example",
+    () => false,
+  );
+  await settleSync();
+  native.live(event({ id: "cat", kind: KIND_TEAM_CATALOG, createdAt: 1000 }));
+  native.live(
     event({
-      id: "req-persona",
+      id: "required",
       kind: KIND_PERSONA,
       createdAt: 100,
-      dTag: "req-persona",
+      dTag: "required",
     }),
-  ];
-
-  const fetchCalls = [];
-  mock.method(relayClient, "fetchEvents", (filter) => {
-    fetchCalls.push(filter);
-    return Promise.resolve(filter.until === undefined ? page1 : page2);
-  });
-  mock.method(relayClient, "subscribeLive", () =>
-    Promise.resolve(() => Promise.resolve()),
   );
-
-  startPersonaSync("owner-pubkey", "wss://relay.example", () => false);
-  for (let i = 0; i < 5; i += 1)
-    await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(
-    fetchCalls.length,
-    2,
-    "a full first page triggers a second page",
+  resolveHistory({ coveredEventIds: [] });
+  await settleSync();
+  assert.deepEqual(
+    native.calls
+      .filter((c) => c.cmd === "reconcile_inbound_persona_event")
+      .map((c) => JSON.parse(c.args.eventJson).id),
+    ["required", "cat"],
   );
   assert.equal(
-    fetchCalls[1].until,
-    501,
-    "the second page is cursored on the oldest event",
-  );
-  assert.ok(
-    invokedIds.includes("req-persona"),
-    "the out-of-page constituent must be fetched and reconciled",
-  );
-  assert.ok(
-    invokedIds.indexOf("req-persona") < invokedIds.indexOf("cat"),
-    "the required persona hydrates before the catalog head",
-  );
-  assert.equal(
-    invokedIds[invokedIds.length - 1],
-    "cat",
-    "the catalog head reconciles last, after every constituent",
-  );
-  assert.equal(
-    invokedIds.filter((id) => id === boundary.id).length,
+    native.calls.filter((c) => c.cmd === "finish_device_home_sync").length,
     1,
-    "the inclusive-cursor boundary event is deduped, not reconciled twice",
   );
-
-  mock.reset();
-  delete globalThis.window;
+  await dispose();
 });
 
 // Regression guard for the arrival-scope fix (F6): the reconcile must carry the
@@ -304,49 +538,24 @@ test("startPersonaSync pages history to exhaustion so an out-of-page constituent
 // active when the reconcile runs. Without the forwarded URL the backend falls
 // back to the active workspace and an in-flight event lands in the wrong
 // community's scoped retention store on a mid-flight switch.
-test("startPersonaSync forwards its own relay as the event arrival relay", async () => {
-  const invokes = [];
-  // @tauri-apps/api/core reads `window.__TAURI_INTERNALS__.invoke`.
-  globalThis.window = {
-    __TAURI_INTERNALS__: {
-      invoke: (cmd, args) => {
-        invokes.push({ cmd, args });
-        return Promise.resolve();
-      },
-    },
-  };
-
-  const ownEvent = { id: "e1", pubkey: "owner-pubkey", kind: KIND_PERSONA };
-  const foreignEvent = { id: "e2", pubkey: "someone-else", kind: KIND_PERSONA };
-
-  mock.method(relayClient, "fetchEvents", () =>
-    Promise.resolve([ownEvent, foreignEvent]),
-  );
-  mock.method(relayClient, "subscribeLive", () =>
-    Promise.resolve(() => Promise.resolve()),
-  );
-
-  startPersonaSync("owner-pubkey", "wss://community-a.example", () => false);
-  // Let the backfill promise chain and the reconcile invoke settle.
-  await new Promise((resolve) => setImmediate(resolve));
-
-  const reconciles = invokes.filter(
-    (call) => call.cmd === "reconcile_inbound_persona_event",
-  );
-  assert.equal(
-    reconciles.length,
-    1,
-    "only the subscribed author's event reconciles",
-  );
-  assert.equal(
-    reconciles[0].args.arrivalRelayUrl,
+test("startPersonaSync forwards its own relay as the event arrival relay", async (t) => {
+  const native = nativeSync(t, { relayUrl: "wss://community-a.example" });
+  const dispose = startPersonaSync(
+    "owner-pubkey",
     "wss://community-a.example",
-    "reconcile must carry the subscription's relay as the arrival relay",
+    () => false,
   );
-  assert.equal(JSON.parse(reconciles[0].args.eventJson).id, "e1");
-
-  mock.reset();
-  delete globalThis.window;
+  await settleSync();
+  native.live(event({ id: "own", createdAt: 1 }));
+  native.live(event({ id: "foreign", createdAt: 1, pubkey: "someone-else" }));
+  await settleSync();
+  const reconciles = native.calls.filter(
+    (c) => c.cmd === "reconcile_inbound_persona_event",
+  );
+  assert.equal(reconciles.length, 1);
+  assert.equal(reconciles[0].args.arrivalRelayUrl, "wss://community-a.example");
+  assert.equal(reconciles[0].args.sessionToken, "token-1");
+  await dispose();
 });
 
 // Regression guard for Carl r12 P1 finding 1 (startup gap between backfill and
@@ -358,52 +567,35 @@ test("startPersonaSync forwards its own relay as the event arrival relay", async
 // window is delivered live (buffered) and still reconciles. Restoring
 // backfill-before-subscribe order fires `fetchEvents` before the listener
 // exists, so the gap event is never delivered: reconciled zero times, RED.
-test("startPersonaSync subscribes live before backfilling so a gap event still reconciles once", async () => {
-  const invokedIds = [];
-  globalThis.window = {
-    __TAURI_INTERNALS__: {
-      invoke: (_cmd, args) => {
-        invokedIds.push(JSON.parse(args.eventJson).id);
-        return Promise.resolve();
-      },
+test("startPersonaSync subscribes live before backfilling so a gap event still reconciles once", async (t) => {
+  const order = [];
+  let listener;
+  const native = nativeSync(t, {
+    subscribe: async (_filter, onEvent) => {
+      order.push("subscribe");
+      listener = onEvent;
+      return async () => {};
     },
-  };
-
-  const callOrder = [];
-  let onEvent;
-  mock.method(relayClient, "subscribeLive", (_filter, listener) => {
-    callOrder.push("subscribe");
-    onEvent = listener;
-    return Promise.resolve(() => Promise.resolve());
+    hydrate: async () => {
+      order.push("hydrate");
+      listener(event({ id: "gap-event", kind: KIND_PERSONA, createdAt: 500 }));
+      return { coveredEventIds: [] };
+    },
   });
-  // The backfill returns empty history (the gap event was published after its
-  // EOSE). When the query runs, the event arrives live — deliverable ONLY
-  // because the subscription already registered.
-  mock.method(relayClient, "fetchEvents", () => {
-    callOrder.push("fetch");
-    onEvent?.(
-      event({ id: "gap-event", kind: KIND_PERSONA, createdAt: 500, dTag: "g" }),
-    );
-    return Promise.resolve([]);
-  });
-
-  startPersonaSync("owner-pubkey", "wss://relay.example", () => false);
-  for (let i = 0; i < 5; i += 1)
-    await new Promise((resolve) => setImmediate(resolve));
-
-  assert.deepEqual(
-    callOrder,
-    ["subscribe", "fetch"],
-    "the live subscription registers before the backfill queries history",
+  const dispose = startPersonaSync(
+    "owner-pubkey",
+    "wss://relay.example",
+    () => false,
   );
+  await settleSync();
+  assert.deepEqual(order, ["subscribe", "hydrate"]);
   assert.deepEqual(
-    invokedIds.filter((id) => id === "gap-event"),
+    native.calls
+      .filter((c) => c.cmd === "reconcile_inbound_persona_event")
+      .map((c) => JSON.parse(c.args.eventJson).id),
     ["gap-event"],
-    "the gap event is delivered live, buffered, and reconciled exactly once",
   );
-
-  mock.reset();
-  delete globalThis.window;
+  await dispose();
 });
 
 // Regression guard for Carl r12 P1 finding 1 (dedupe). Because the live sub now
@@ -412,47 +604,32 @@ test("startPersonaSync subscribes live before backfilling so a gap event still r
 // `reconcileInboundPersonaEvent` is not idempotent, so the drain MUST skip any
 // buffered event the backfill already reconciled. Removing the dedupe skip
 // dispatches the buffered duplicate too, reconciling it twice — RED.
-test("startPersonaSync reconciles an event only once when it appears both live-buffered and in the backfill", async () => {
-  const invokedIds = [];
-  globalThis.window = {
-    __TAURI_INTERNALS__: {
-      invoke: (_cmd, args) => {
-        invokedIds.push(JSON.parse(args.eventJson).id);
-        return Promise.resolve();
-      },
-    },
-  };
-
-  const overlap = event({
-    id: "overlap",
-    kind: KIND_PERSONA,
-    createdAt: 400,
-    dTag: "o",
+test("startPersonaSync reconciles an event only once when it appears both live-buffered and in the backfill", async (t) => {
+  let resolveHistory;
+  const native = nativeSync(t, {
+    hydrate: () =>
+      new Promise((resolve) => {
+        resolveHistory = resolve;
+      }),
   });
-  let onEvent;
-  mock.method(relayClient, "subscribeLive", (_filter, listener) => {
-    onEvent = listener;
-    return Promise.resolve(() => Promise.resolve());
-  });
-  // The overlap event arrives live during the query (buffered) and is also
-  // returned by the backfill history — the double-delivery window.
-  mock.method(relayClient, "fetchEvents", () => {
-    onEvent?.(overlap);
-    return Promise.resolve([overlap]);
-  });
-
-  startPersonaSync("owner-pubkey", "wss://relay.example", () => false);
-  for (let i = 0; i < 5; i += 1)
-    await new Promise((resolve) => setImmediate(resolve));
-
-  assert.deepEqual(
-    invokedIds.filter((id) => id === "overlap"),
-    ["overlap"],
-    "the backfill reconciles it once; the buffered duplicate is deduped on drain",
+  const dispose = startPersonaSync(
+    "owner-pubkey",
+    "wss://relay.example",
+    () => false,
   );
-
-  mock.reset();
-  delete globalThis.window;
+  await settleSync();
+  native.live(event({ id: "overlap", createdAt: 400 }));
+  native.live(event({ id: "superseded", createdAt: 300, dTag: "old" }));
+  native.live(event({ id: "new-live", createdAt: 500 }));
+  resolveHistory({ coveredEventIds: ["overlap", "superseded"] });
+  await settleSync();
+  assert.deepEqual(
+    native.calls
+      .filter((c) => c.cmd === "reconcile_inbound_persona_event")
+      .map((c) => JSON.parse(c.args.eventJson).id),
+    ["new-live"],
+  );
+  await dispose();
 });
 
 // Regression guard for Carl r12 P2 finding 1 (initial subscription rejection
@@ -465,62 +642,28 @@ test("startPersonaSync reconciles an event only once when it appears both live-b
 // The `.catch()` MUST consume the rejection and still backfill. Restoring the
 // bare `.then()` (dropping the catch) fires no `fetchEvents` and leaks an
 // unhandled rejection — RED.
-test("startPersonaSync still backfills history when the live subscription rejects", async () => {
-  const invokedIds = [];
-  globalThis.window = {
-    __TAURI_INTERNALS__: {
-      invoke: (_cmd, args) => {
-        invokedIds.push(JSON.parse(args.eventJson).id);
-        return Promise.resolve();
-      },
+test("startPersonaSync still backfills history when the live subscription rejects", async (t) => {
+  const native = nativeSync(t, {
+    subscribe: async () => {
+      throw new Error("initial subscription failed");
     },
-  };
-
-  const unhandled = [];
-  const onUnhandled = (reason) => unhandled.push(reason);
-  process.on("unhandledRejection", onUnhandled);
-
-  mock.method(relayClient, "subscribeLive", () =>
-    Promise.reject(new Error("initial subscription failed")),
+  });
+  const dispose = startPersonaSync(
+    "owner-pubkey",
+    "wss://relay.example",
+    () => false,
   );
-  // Backfill history returns one persona head; it must still reconcile even
-  // though the live subscription never registered.
-  const head = event({
-    id: "history-head",
-    kind: KIND_PERSONA,
-    createdAt: 300,
-    dTag: "h",
-  });
-  let fetchCalls = 0;
-  mock.method(relayClient, "fetchEvents", () => {
-    fetchCalls += 1;
-    return Promise.resolve([head]);
-  });
-
-  startPersonaSync("owner-pubkey", "wss://relay.example", () => false);
-  for (let i = 0; i < 6; i += 1)
-    await new Promise((resolve) => setImmediate(resolve));
-
-  process.removeListener("unhandledRejection", onUnhandled);
-
-  assert.deepEqual(
-    unhandled,
-    [],
-    "the subscription rejection is consumed, not leaked as unhandled",
+  await settleSync();
+  assert.equal(
+    native.calls.filter((c) => c.cmd === "hydrate_device_home_history").length,
+    1,
   );
   assert.equal(
-    fetchCalls,
-    1,
-    "backfill still queries history after live fails",
+    native.calls.filter((c) => c.cmd === "finish_device_home_sync").length,
+    0,
+    "live-blind hydration cannot install Ready",
   );
-  assert.deepEqual(
-    invokedIds,
-    ["history-head"],
-    "the backfilled head is reconciled despite the failed live subscription",
-  );
-
-  mock.reset();
-  delete globalThis.window;
+  await dispose();
 });
 
 // Regression guard for Will r10 P3 finding 1 (dense-boundary pagination). The WS
@@ -533,90 +676,32 @@ test("startPersonaSync still backfills history when the live subscription reject
 // hydrated). Reverting to time-only `added === 0` termination silently completes
 // backfill as if exhaustive: the live catalog head is reconciled (the purge
 // path) instead of dropped, turning this RED.
-test("startPersonaSync fails loudly on a dense boundary and degrades to catalog-dropping live sync", async () => {
-  const invokedIds = [];
-  globalThis.window = {
-    __TAURI_INTERNALS__: {
-      invoke: (_cmd, args) => {
-        invokedIds.push(JSON.parse(args.eventJson).id);
-        return Promise.resolve();
-      },
+test("startPersonaSync fails loudly on a dense boundary and degrades to catalog-dropping live sync", async (t) => {
+  const native = nativeSync(t, {
+    hydrate: async () => {
+      throw "device_home_sync_dense_history_boundary";
     },
-  };
-
-  // 500 events all sharing created_at 100 — a full page whose oldest cannot
-  // advance the cursor. The required older persona at 50 is unreachable behind
-  // the dense second. The relay re-returns the same slice for `until: 100`.
-  const densePage = [];
-  for (let i = 0; i < 500; i += 1)
-    densePage.push(
-      event({
-        id: `dense-${i}`,
-        kind: KIND_PERSONA,
-        createdAt: 100,
-        dTag: `d-${i}`,
-      }),
-    );
-
-  const fetchCalls = [];
-  mock.method(relayClient, "fetchEvents", (filter) => {
-    fetchCalls.push(filter);
-    return Promise.resolve(densePage);
   });
-  let onEvent;
-  mock.method(relayClient, "subscribeLive", (_filter, listener) => {
-    onEvent = listener;
-    return Promise.resolve(() => Promise.resolve());
-  });
-
-  startPersonaSync("owner-pubkey", "wss://relay.example", () => false);
-  for (let i = 0; i < 5; i += 1)
-    await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(
-    fetchCalls.length,
-    2,
-    "a full first page pages once more, then the dense second aborts fetching",
+  const dispose = startPersonaSync(
+    "owner-pubkey",
+    "wss://relay.example",
+    () => false,
+  );
+  await settleSync();
+  native.live(event({ id: "catalog", kind: KIND_TEAM_CATALOG, createdAt: 1 }));
+  native.live(event({ id: "runtime", createdAt: 2 }));
+  await settleSync();
+  assert.deepEqual(
+    native.calls
+      .filter((c) => c.cmd === "reconcile_inbound_persona_event")
+      .map((c) => JSON.parse(c.args.eventJson).id),
+    ["runtime"],
   );
   assert.equal(
-    fetchCalls[1].until,
-    100,
-    "the second page is cursored on the dense second",
+    native.calls.filter((c) => c.cmd === "finish_device_home_sync").length,
+    0,
   );
-
-  // Degraded-live: the whole catalog dependency set is dropped (30178 head and
-  // its 30175/30176 constituents), but a 30177 runtime-policy event still
-  // reconciles — the subscription is not inert.
-  onEvent(event({ id: "live-cat", kind: KIND_TEAM_CATALOG, createdAt: 200 }));
-  onEvent(
-    event({ id: "live-team", kind: KIND_TEAM, createdAt: 201, dTag: "t1" }),
-  );
-  onEvent(
-    event({
-      id: "live-agent",
-      kind: KIND_MANAGED_AGENT,
-      createdAt: 202,
-      dTag: "a1",
-    }),
-  );
-  for (let i = 0; i < 3; i += 1)
-    await new Promise((resolve) => setImmediate(resolve));
-
-  assert.ok(
-    !invokedIds.includes("live-cat"),
-    "the live catalog head is dropped in degraded mode, not reconciled",
-  );
-  assert.ok(
-    !invokedIds.includes("live-team"),
-    "a live team edit is dropped in degraded mode — it could drive a refresh against an unhydrated store",
-  );
-  assert.ok(
-    invokedIds.includes("live-agent"),
-    "a live 30177 runtime-policy event still reconciles — degraded sync is not inert",
-  );
-
-  mock.reset();
-  delete globalThis.window;
+  await dispose();
 });
 
 // Regression guard for Thufir r10-delta finding (degraded-live false unshare).
@@ -630,65 +715,29 @@ test("startPersonaSync fails loudly on a dense boundary and degrades to catalog-
 // set (30175/30176 + kind-5 deletions targeting them), not just 30178, so the
 // backend never sees the un-hydrated edit. Narrowing the gate back to 30178-only
 // dispatches the 30176 to the backend and turns this RED.
-test("degraded-live drops a team edit adding a new persona so a witness is not falsely tombstoned", async () => {
-  const invokedIds = [];
-  globalThis.window = {
-    __TAURI_INTERNALS__: {
-      invoke: (_cmd, args) => {
-        invokedIds.push(JSON.parse(args.eventJson).id);
-        return Promise.resolve();
-      },
+test("degraded-live drops a team edit adding a new persona so a witness is not falsely tombstoned", async (t) => {
+  const native = nativeSync(t, {
+    hydrate: async () => {
+      throw "device_home_sync_dense_history_boundary";
     },
-  };
-
-  // Dense history forces degraded-live on a device that already holds a witness.
-  const densePage = [];
-  for (let i = 0; i < 500; i += 1)
-    densePage.push(
-      event({
-        id: `dense-${i}`,
-        kind: KIND_PERSONA,
-        createdAt: 100,
-        dTag: `d-${i}`,
-      }),
-    );
-  mock.method(relayClient, "fetchEvents", () => Promise.resolve(densePage));
-  let onEvent;
-  mock.method(relayClient, "subscribeLive", (_filter, listener) => {
-    onEvent = listener;
-    return Promise.resolve(() => Promise.resolve());
   });
-
-  startPersonaSync("owner-pubkey", "wss://relay.example", () => false);
-  for (let i = 0; i < 5; i += 1)
-    await new Promise((resolve) => setImmediate(resolve));
-
-  // Newest-first: the team edit adding P2 arrives before P2's own persona event.
-  onEvent(
-    event({ id: "team-adds-p2", kind: KIND_TEAM, createdAt: 201, dTag: "t1" }),
+  const dispose = startPersonaSync(
+    "owner-pubkey",
+    "wss://relay.example",
+    () => false,
   );
-  onEvent(
-    event({
-      id: "new-persona-p2",
-      kind: KIND_PERSONA,
-      createdAt: 200,
-      dTag: "p2",
-    }),
+  await settleSync();
+  native.live(event({ id: "new-team", kind: KIND_TEAM, createdAt: 10 }));
+  native.live(event({ id: "new-persona", kind: KIND_PERSONA, createdAt: 9 }));
+  native.live(event({ id: "runtime", createdAt: 8 }));
+  await settleSync();
+  assert.deepEqual(
+    native.calls
+      .filter((c) => c.cmd === "reconcile_inbound_persona_event")
+      .map((c) => JSON.parse(c.args.eventJson).id),
+    ["runtime"],
   );
-  for (let i = 0; i < 3; i += 1)
-    await new Promise((resolve) => setImmediate(resolve));
-
-  assert.ok(
-    !invokedIds.includes("team-adds-p2"),
-    "the team edit is dropped — the backend never refreshes against an unresolvable new member, so the witness survives",
-  );
-  assert.ok(
-    !invokedIds.includes("new-persona-p2"),
-    "the new persona is dropped too — a lone 30175 cannot complete the dependency set in degraded mode",
-  );
-
-  mock.reset();
-  delete globalThis.window;
+  await dispose();
 });
 
 // Regression guard for Thufir r11 finding (degraded gate vs Rust router). A
@@ -701,61 +750,33 @@ test("degraded-live drops a team edit adding a new persona so a witness is not f
 // refresh this gate exists to suppress. Degraded mode MUST hold the deletion
 // whenever ANY parseable `a` tag names a dependency kind. Narrowing the
 // classifier back to the first `a` tag dispatches this deletion and turns RED.
-test("degraded-live drops a kind-5 whose owned dependency `a` tag is not first", async () => {
-  const invokedIds = [];
-  globalThis.window = {
-    __TAURI_INTERNALS__: {
-      invoke: (_cmd, args) => {
-        invokedIds.push(JSON.parse(args.eventJson).id);
-        return Promise.resolve();
-      },
+test("degraded-live drops a kind-5 whose owned dependency `a` tag is not first", async (t) => {
+  const native = nativeSync(t, {
+    hydrate: async () => {
+      throw "device_home_sync_dense_history_boundary";
     },
-  };
-
-  const densePage = [];
-  for (let i = 0; i < 500; i += 1)
-    densePage.push(
-      event({
-        id: `dense-${i}`,
-        kind: KIND_PERSONA,
-        createdAt: 100,
-        dTag: `d-${i}`,
-      }),
-    );
-  mock.method(relayClient, "fetchEvents", () => Promise.resolve(densePage));
-  let onEvent;
-  mock.method(relayClient, "subscribeLive", (_filter, listener) => {
-    onEvent = listener;
-    return Promise.resolve(() => Promise.resolve());
   });
-
-  startPersonaSync("owner-pubkey", "wss://relay.example", () => false);
-  for (let i = 0; i < 5; i += 1)
-    await new Promise((resolve) => setImmediate(resolve));
-
-  // Malformed first `a` tag, then an owned 30176 team coordinate — exactly what
-  // Rust routes past the bad first tag into a destructive team deletion.
-  const deletion = event({
-    id: "del-team-second-tag",
-    kind: KIND_DELETION,
-    createdAt: 201,
-    dTag: null,
-  });
-  deletion.tags = [
-    ["a", "not-a-coordinate"],
-    ["a", `${KIND_TEAM}:owner-pubkey:t1`],
-  ];
-  onEvent(deletion);
-  for (let i = 0; i < 3; i += 1)
-    await new Promise((resolve) => setImmediate(resolve));
-
-  assert.ok(
-    !invokedIds.includes("del-team-second-tag"),
-    "the deletion is dropped — Rust would route its owned 30176 tag into a destructive refresh, so degraded mode must hold it",
+  const dispose = startPersonaSync(
+    "owner-pubkey",
+    "wss://relay.example",
+    () => false,
   );
-
-  mock.reset();
-  delete globalThis.window;
+  await settleSync();
+  const deletion = event({ id: "deletion", kind: KIND_DELETION, createdAt: 1 });
+  deletion.tags = [
+    ["a", "30177:someone-else:instance"],
+    ["a", "30176:owner-pubkey:team"],
+  ];
+  native.live(deletion);
+  native.live(event({ id: "runtime", createdAt: 2 }));
+  await settleSync();
+  assert.deepEqual(
+    native.calls
+      .filter((c) => c.cmd === "reconcile_inbound_persona_event")
+      .map((c) => JSON.parse(c.args.eventJson).id),
+    ["runtime"],
+  );
+  await dispose();
 });
 
 // Regression guard for Will r10 P3 finding 2 (backfill rejection stranding live
@@ -764,103 +785,70 @@ test("degraded-live drops a kind-5 whose owned dependency `a` tag is not first",
 // MUST retry with bounded backoff; on success the buffer drains and live events
 // reconcile. Restoring a log-only `.catch` (no retry, `hydrated` never set)
 // leaves the buffered live event unreconciled, turning this RED.
-test("startPersonaSync retries a transient backfill rejection so a buffered live event still reconciles", async () => {
+test("startPersonaSync retries a transient backfill rejection so a buffered live event still reconciles", async (t) => {
   mock.timers.enable({ apis: ["setTimeout"] });
-  const invokedIds = [];
-  globalThis.window = {
-    __TAURI_INTERNALS__: {
-      invoke: (_cmd, args) => {
-        invokedIds.push(JSON.parse(args.eventJson).id);
-        return Promise.resolve();
-      },
-    },
-  };
-
+  t.after(() => mock.timers.reset());
   let attempts = 0;
-  mock.method(relayClient, "fetchEvents", () => {
-    attempts += 1;
-    // Fail the first two attempts transiently, then succeed with empty history.
-    return attempts < 3
-      ? Promise.reject(new Error("relay unreachable"))
-      : Promise.resolve([]);
+  const native = nativeSync(t, {
+    hydrate: async () => {
+      if (++attempts === 1) throw new Error("transport failed");
+      return { coveredEventIds: [] };
+    },
   });
-  let onEvent;
-  mock.method(relayClient, "subscribeLive", (_filter, listener) => {
-    onEvent = listener;
-    return Promise.resolve(() => Promise.resolve());
-  });
-
-  startPersonaSync("owner-pubkey", "wss://relay.example", () => false);
-  await new Promise((resolve) => setImmediate(resolve));
-
-  // A live event arrives while backfill is still failing — it must buffer, not
-  // be lost.
-  onEvent(
-    event({
-      id: "live-persona",
-      kind: KIND_PERSONA,
-      createdAt: 300,
-      dTag: "p1",
-    }),
+  const dispose = startPersonaSync(
+    "owner-pubkey",
+    "wss://relay.example",
+    () => false,
   );
-
-  // Drive the bounded backoff timers (500ms, then 1000ms) to the retry that
-  // succeeds, flushing the promise chain between ticks.
-  for (let i = 0; i < 6; i += 1) {
-    mock.timers.tick(2_000);
-    await new Promise((resolve) => setImmediate(resolve));
-  }
-
-  assert.equal(attempts, 3, "backfill retried until it succeeded");
-  assert.ok(
-    invokedIds.includes("live-persona"),
-    "the buffered live event reconciles after the retry hydrates — not stranded",
+  await settleSync();
+  native.live(event({ id: "buffered", createdAt: 1 }));
+  mock.timers.tick(500);
+  await settleSync();
+  assert.equal(attempts, 2);
+  assert.deepEqual(
+    native.calls
+      .filter((c) => c.cmd === "hydrate_device_home_history")
+      .map((c) => c.args.sessionToken),
+    ["token-1", "token-2"],
   );
-
-  mock.reset();
-  mock.timers.reset();
-  delete globalThis.window;
+  assert.deepEqual(
+    native.calls
+      .filter((c) => c.cmd === "reconcile_inbound_persona_event")
+      .map((c) => JSON.parse(c.args.eventJson).id),
+    ["buffered"],
+  );
+  assert.equal(
+    native.calls.filter((c) => c.cmd === "finish_device_home_sync").length,
+    1,
+  );
+  await dispose();
 });
 
 // `PersonaHistoryDenseBoundaryError` is deterministic (a dense second cannot
 // clear on retry), so the pipeline must NOT retry it — it goes straight to
 // degraded-live. Guards against a future refactor that lumps it in with
 // transient rejections and burns three fetch attempts on an unrecoverable state.
-test("startPersonaSync does not retry a dense-boundary error", async () => {
-  globalThis.window = {
-    __TAURI_INTERNALS__: { invoke: () => Promise.resolve() },
-  };
-  const densePage = [];
-  for (let i = 0; i < 500; i += 1)
-    densePage.push(
-      event({
-        id: `d-${i}`,
-        kind: KIND_PERSONA,
-        createdAt: 100,
-        dTag: `x-${i}`,
-      }),
-    );
-  const fetchCalls = [];
-  mock.method(relayClient, "fetchEvents", (filter) => {
-    fetchCalls.push(filter);
-    return Promise.resolve(densePage);
+test("startPersonaSync does not retry a dense-boundary error", async (t) => {
+  const native = nativeSync(t, {
+    hydrate: async () => {
+      throw "device_home_sync_dense_history_boundary";
+    },
   });
-  mock.method(relayClient, "subscribeLive", () =>
-    Promise.resolve(() => Promise.resolve()),
+  const dispose = startPersonaSync(
+    "owner-pubkey",
+    "wss://relay.example",
+    () => false,
   );
-
-  startPersonaSync("owner-pubkey", "wss://relay.example", () => false);
-  for (let i = 0; i < 5; i += 1)
-    await new Promise((resolve) => setImmediate(resolve));
-
+  await settleSync();
   assert.equal(
-    fetchCalls.length,
-    2,
-    "page 1 (full) + page 2 (dense) then abort — no retry attempts",
+    native.calls.filter((c) => c.cmd === "hydrate_device_home_history").length,
+    1,
   );
-
-  mock.reset();
-  delete globalThis.window;
+  assert.equal(
+    native.calls.filter((c) => c.cmd === "finish_device_home_sync").length,
+    0,
+  );
+  await dispose();
 });
 
 test("PersonaHistoryDenseBoundaryError names the boundary second", () => {
@@ -870,45 +858,31 @@ test("PersonaHistoryDenseBoundaryError names the boundary second", () => {
   assert.match(error.message, /42/);
 });
 
-test("startPersonaSync serializes inbound reconciliation in relay order", async () => {
-  const resolvers = [];
-  const invokedIds = [];
-  globalThis.window = {
-    __TAURI_INTERNALS__: {
-      invoke: (_cmd, args) => {
-        invokedIds.push(JSON.parse(args.eventJson).id);
-        return new Promise((resolve) => resolvers.push(resolve));
-      },
+test("startPersonaSync serializes inbound reconciliation in relay order", async (t) => {
+  let release;
+  const first = new Promise((resolve) => {
+    release = resolve;
+  });
+  const ids = [];
+  const native = nativeSync(t, {
+    reconcile: async (args) => {
+      const id = JSON.parse(args.eventJson).id;
+      ids.push(id);
+      if (id === "first") await first;
     },
-  };
-
-  let onEvent;
-  mock.method(relayClient, "fetchEvents", () => Promise.resolve([]));
-  mock.method(relayClient, "subscribeLive", (_filter, listener) => {
-    onEvent = listener;
-    return Promise.resolve(() => Promise.resolve());
   });
-
-  startPersonaSync("owner-pubkey", "wss://community.example", () => false);
-  await new Promise((resolve) => setImmediate(resolve));
-  onEvent({ id: "broad", pubkey: "owner-pubkey", kind: KIND_MANAGED_AGENT });
-  onEvent({
-    id: "restricted",
-    pubkey: "owner-pubkey",
-    kind: KIND_MANAGED_AGENT,
-  });
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.deepEqual(
-    invokedIds,
-    ["broad"],
-    "newer event waits for prior deployment",
+  const dispose = startPersonaSync(
+    "owner-pubkey",
+    "wss://relay.example",
+    () => false,
   );
-  resolvers.shift()();
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(invokedIds, ["broad", "restricted"]);
-  resolvers.shift()();
-
-  mock.reset();
-  delete globalThis.window;
+  await settleSync();
+  native.live(event({ id: "first", createdAt: 1 }));
+  native.live(event({ id: "second", createdAt: 2 }));
+  await settleSync();
+  assert.deepEqual(ids, ["first"]);
+  release();
+  await settleSync();
+  assert.deepEqual(ids, ["first", "second"]);
+  await dispose();
 });

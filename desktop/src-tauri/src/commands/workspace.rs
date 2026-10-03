@@ -182,6 +182,8 @@ pub async fn apply_workspace(
     )
     .await;
 
+    crate::managed_agents::device_home_sync::reset(&state)?;
+
     let restore_app = app.clone();
     let apply_app = app.clone();
     // Capture the caller's relay before the blocking apply. Reading shared

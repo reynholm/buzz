@@ -285,6 +285,12 @@ pub fn run() {
                 migration::run_boot_migrations(&app_handle);
             }
 
+            // Initialize local device authority before exposing policy commands.
+            // Read-only policy queries propagate any missing/unreadable authority.
+            if let Err(error) = device_identity::initialize_device_authority(&app_handle) {
+                eprintln!("buzz-desktop: device authority initialization failed: {error}");
+            }
+
             // Resolve persisted identity key (env var → file → generate+save).
             // This is fatal — the app should not start with an ephemeral identity
             // that will be lost on restart, as that silently breaks channel
@@ -529,6 +535,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_device_identity,
+            commands::begin_device_home_sync,
+            commands::hydrate_device_home_history,
+            commands::finish_device_home_sync,
+            commands::invalidate_device_home_sync,
             terminal_runtime::terminal_attach,
             terminal_runtime::terminal_detach,
             terminal_runtime::terminal_close,

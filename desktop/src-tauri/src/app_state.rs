@@ -17,6 +17,8 @@ use crate::managed_agents::config_bridge::SessionConfigCache;
 use crate::managed_agents::{ManagedAgentPairRuntime, ManagedAgentRuntimeKey};
 
 pub struct AppState {
+    pub(crate) device_home_sync:
+        Mutex<crate::managed_agents::device_home_sync::DeviceHomeSyncState>,
     pub keys: Mutex<Keys>,
     /// Durable backend holding `keys`. Updated after the key write and before
     /// recovery flags are cleared so `get_identity` reports a consistent state.
@@ -202,6 +204,7 @@ pub fn build_app_state() -> AppState {
     };
 
     AppState {
+        device_home_sync: Mutex::new(Default::default()),
         keys: Mutex::new(keys),
         identity_storage: AtomicU8::new(identity_storage as u8),
         http_client: reqwest::Client::builder()

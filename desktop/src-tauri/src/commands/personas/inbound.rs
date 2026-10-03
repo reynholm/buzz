@@ -15,6 +15,8 @@ use crate::{
 };
 
 #[cfg(test)]
+mod device_sync_tests;
+#[cfg(test)]
 mod inbound_tests;
 // Gated off Windows: the F1 seam test builds a real `AppState` via
 // `build_app_state()`, which pulls native DLLs unavailable on the Windows CI
@@ -73,6 +75,24 @@ enum InboundRuntimeRefresh {
 /// reconcile refetches it.
 #[tauri::command]
 pub async fn reconcile_inbound_persona_event(
+    event_json: String,
+    arrival_relay_url: String,
+    session_token: Option<String>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    // Fence the complete async refresh against workspace switches. This async
+    // mutex may cross awaits; the standard store mutex never does.
+    let _workspace = state.workspace_apply_lock.lock().await;
+    let lease =
+        crate::managed_agents::device_home_sync::begin_apply(&state, session_token.as_deref())?;
+    let result =
+        reconcile_inbound_persona_event_inner(event_json, arrival_relay_url, app.clone()).await;
+    lease.complete(&result)?;
+    result
+}
+
+async fn reconcile_inbound_persona_event_inner(
     event_json: String,
     arrival_relay_url: String,
     app: AppHandle,

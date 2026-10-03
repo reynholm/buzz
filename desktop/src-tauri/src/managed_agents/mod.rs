@@ -1,8 +1,12 @@
+pub(crate) mod persona_device_view;
+pub(crate) use personas::persona_definitions_for_policy;
 pub(crate) mod access_policy;
 mod agent_env;
 pub(crate) mod agent_events;
 pub(crate) mod agent_snapshot;
 pub(crate) mod agent_snapshot_envelope;
+pub(crate) mod definition_home;
+pub(crate) mod device_home_sync;
 pub(crate) mod team_snapshot;
 pub(crate) use access_policy::{owner_only, owner_only_access_build, projected_access_with_policy};
 pub(crate) use agent_env::{

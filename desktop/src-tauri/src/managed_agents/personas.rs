@@ -365,6 +365,17 @@ pub fn load_personas<R: tauri::Runtime>(
     Ok(records)
 }
 
+/// Project built-in visibility without persisting a list query's merge.
+pub(crate) fn persona_definitions_for_policy(
+    records: &[super::ManagedAgentRecord],
+) -> Vec<AgentDefinition> {
+    let definitions = records
+        .iter()
+        .filter_map(|record| record.to_definition_view())
+        .collect();
+    merge_personas(definitions, &now_iso()).0
+}
+
 /// Read the raw persona records at `path` — no built-in merge, no write-back.
 /// The single disk-read seam for persona definitions: `load_personas` layers
 /// the built-in merge on top, and the boot-time readers that need raw records

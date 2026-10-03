@@ -266,6 +266,28 @@ impl SecretStore {
         }
     }
 
+    /// Fresh read of an existing blob entry under the interprocess lock.
+    /// Never migrates, generates or writes missing authority.
+    pub(crate) fn read_existing_verified(&self, key: &str) -> Result<String, String> {
+        #[cfg(feature = "system-keyring")]
+        {
+            let _lock = acquire_blob_lock(&self.service)?;
+            let bytes = self
+                .read_blob_raw()?
+                .ok_or_else(|| "host authority missing".to_string())?;
+            let map: HashMap<String, String> =
+                serde_json::from_slice(&bytes).map_err(|e| format!("host authority blob: {e}"))?;
+            map.get(key)
+                .cloned()
+                .ok_or_else(|| "host authority missing".to_string())
+        }
+        #[cfg(not(feature = "system-keyring"))]
+        {
+            let _ = key;
+            Err("system-keyring feature disabled".into())
+        }
+    }
+
     /// Return a process-global `SecretStore` for `service`. All callers with
     /// the same service name share one instance — and therefore one in-memory
     /// cache and one mutex — so concurrent blob read-modify-write operations

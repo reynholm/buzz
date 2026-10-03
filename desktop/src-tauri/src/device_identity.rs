@@ -21,7 +21,7 @@ pub(crate) struct HostProof(String);
 impl HostProof {
     /// Compare a local instance binding against the verified host marker.
     pub(crate) fn matches(&self, binding: &str) -> bool {
-        self.0 == binding
+        self.binding() == binding
     }
     /// Marker to persist only in local instance binding records.
     pub(crate) fn binding(&self) -> &str {
@@ -114,3 +114,41 @@ pub(crate) fn load_or_create_host_proof(store: &SecretStore) -> Result<HostProof
 
 #[cfg(test)]
 mod tests;
+
+/// Read existing metadata without creating or repairing installation state.
+pub(crate) fn load_existing_device_identity(path: &Path) -> Result<DeviceIdentity, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("device identity read: {e}"))?;
+    let identity =
+        serde_json::from_slice(&bytes).map_err(|e| format!("device identity JSON: {e}"))?;
+    validate_identity(&identity)?;
+    Ok(identity)
+}
+/// Read existing host authority freshly without generating a missing marker.
+pub(crate) fn load_existing_host_proof(store: &SecretStore) -> Result<HostProof, String> {
+    let marker = store.read_existing_verified("host")?;
+    let id = uuid::Uuid::parse_str(&marker).map_err(|e| format!("host proof UUID: {e}"))?;
+    if id.get_version_num() != 4 {
+        return Err("host proof must use UUID v4".into());
+    }
+    Ok(HostProof(marker))
+}
+/// Initialize installation authority in startup, outside read-only policy queries.
+pub(crate) fn initialize_device_authority<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<(), String> {
+    use tauri::Manager;
+    let path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("device data directory: {e}"))?
+        .join("device.json");
+    let hostname = gethostname::gethostname();
+    let label = hostname
+        .to_str()
+        .ok_or_else(|| "device hostname is not UTF-8".to_string())?;
+    load_or_create_device_identity(&path, label)?;
+    load_or_create_host_proof(&SecretStore::keyring(
+        crate::build_identity::device_host_service(),
+    ))?;
+    Ok(())
+}

@@ -130,10 +130,11 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/personas/pending.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None
+Mechanical struct-literal compatibility repair: new device fields default to None; Read-only catalog projection for list without creating retained databases
 
 New module: `false`.
 
+- Required symbol: `fn project_persona_sharing_read_only`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/commands/personas/sharing.rs`
@@ -320,11 +321,14 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/managed_agents/mod.rs`
 
-Register the device policy compatibility test module
+Register the device policy compatibility test module; Register home policy, sync and projection modules
 
 New module: `false`.
 
 - Required symbol: `mod device_policy_types_tests;`
+- Required symbol: `pub(crate) mod definition_home;`
+- Required symbol: `pub(crate) mod device_home_sync;`
+- Required symbol: `pub(crate) mod persona_device_view;`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/managed_agents/nest/render_tests.rs`
@@ -365,10 +369,11 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/managed_agents/personas.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None
+Mechanical struct-literal compatibility repair: new device fields default to None; Use existing pure built-in merge for policy list visibility without saving
 
 New module: `false`.
 
+- Required symbol: `fn persona_definitions_for_policy`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/managed_agents/personas/tests.rs`
@@ -515,9 +520,13 @@ New module: `true`.
 
 - Required symbol: `pub fn load_or_create_device_identity`
 - Required symbol: `pub(crate) fn load_or_create_host_proof`
+- Required symbol: `fn load_existing_device_identity`
+- Required symbol: `fn load_existing_host_proof`
+- Required symbol: `fn initialize_device_authority`
 - Invocation: `desktop/src-tauri/src/device_identity.rs` → `validate_identity`; exact call `validate_identity(&identity)?;`; behavior test `malformed_identity_is_preserved_and_reported`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::malformed_identity_is_preserved_and_reported -- --exact`
 - Invocation: `desktop/src-tauri/src/device_identity.rs` → `get_or_create_verified`; exact call `store.get_or_create_verified("host", || uuid::Uuid::new_v4().to_string())?`; behavior test `unavailable_keychain_does_not_rebind`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::unavailable_keychain_does_not_rebind -- --exact`
 - Invocation: `desktop/src-tauri/src/device_identity.rs` → `lock`; exact call `lock.lock()`; behavior test `concurrent_identity_initialization_has_one_uuid`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::concurrent_identity_initialization_has_one_uuid -- --exact`
+- Invocation: `desktop/src-tauri/src/device_identity.rs` → `read_existing_verified`; exact call `store.read_existing_verified("host")?`; behavior test `device_identity::tests::existing_proof_is_fresh_read_only_and_missing_fails`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::existing_proof_is_fresh_read_only_and_missing_fails -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/device_identity/tests.rs`
@@ -550,6 +559,7 @@ Register device identity IPC command
 New module: `false`.
 
 - Required symbol: `pub use device_identity::*;`
+- Required symbol: `pub use device_home_sync::*;`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/lib.rs`
@@ -560,6 +570,11 @@ New module: `false`.
 
 - Required symbol: `mod device_identity;`
 - Required symbol: `commands::get_device_identity,`
+- Required symbol: `commands::begin_device_home_sync,`
+- Required symbol: `commands::hydrate_device_home_history,`
+- Required symbol: `commands::finish_device_home_sync,`
+- Required symbol: `commands::invalidate_device_home_sync,`
+- Required symbol: `device_identity::initialize_device_authority(&app_handle)`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/build_identity.rs`
@@ -579,7 +594,185 @@ New module: `false`.
 
 - Required symbol: `pub fn get_or_create_verified`
 - Required symbol: `fn mutate_blob_verified`
+- Required symbol: `fn read_existing_verified`
 - Invocation: `desktop/src-tauri/src/secret_store.rs` → `acquire_blob_lock`; exact call `let _lock = acquire_blob_lock(&self.service)?;`; behavior test `concurrent_host_proof_initialization_generates_once`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::concurrent_host_proof_initialization_generates_once -- --exact`
 - Invocation: `desktop/src-tauri/src/secret_store.rs` → `read_blob_raw`; exact call `let raw = self.read_blob_raw()?;`; behavior test `verified_value_uses_fresh_storage_and_generates_once`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::verified_value_uses_fresh_storage_and_generates_once -- --exact`
 - Invocation: `desktop/src-tauri/src/secret_store.rs` → `read_blob_raw`; exact call `if verify && self.read_blob_raw()?.as_deref() != Some(json.as_bytes())`; behavior test `unavailable_keychain_does_not_rebind`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::unavailable_keychain_does_not_rebind -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/definition_home.rs`
+
+Pure proof-first home classification and readiness-dependent capabilities
+
+New module: `true`.
+
+- Required symbol: `enum HomeKind`
+- Required symbol: `fn classify_definition_home`
+- Required symbol: `fn definition_capabilities`
+- Invocation: `desktop/src-tauri/src/managed_agents/definition_home.rs` → `matches`; exact call `proof.matches(b)`; behavior test `managed_agents::definition_home::tests::home_matrix`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::definition_home::tests::home_matrix -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/definition_home/tests.rs`
+
+Literal home matrix, canonical links, flattened wire compatibility and signed scoped retained evidence
+
+New module: `true`.
+
+- Required symbol: `fn home_matrix`
+- Required symbol: `fn flattened_device_view_is_compatible_and_contains_no_host_authority`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/device_home_sync.rs`
+
+Backend token/scope hydration, exhaustive authenticated paging and live-apply completion barrier
+
+New module: `true`.
+
+- Required symbol: `fn begin_session`
+- Required symbol: `fn finish_session`
+- Required symbol: `async fn hydrate_history`
+- Required symbol: `struct DeviceHomeHistory`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_home_sync.rs` → `active`; exact call `let s = active(sync, scope, token)?;`; behavior test `managed_agents::device_home_sync::tests::stale_sync_session_cannot_ready_new_scope`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_sync::tests::stale_sync_session_cannot_ready_new_scope -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_home_sync.rs` → `ordered_heads`; exact call `ordered_heads(collected)`; behavior test `managed_agents::device_home_sync::tests::exhaustive_history_applies_catalog_last_and_coalesces`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_sync::tests::exhaustive_history_applies_catalog_last_and_coalesces -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_home_sync.rs` → `begin_apply`; exact call `begin_apply(state,Some(token))?`; behavior test `managed_agents::device_home_sync::tests::finish_waits_for_live_apply_and_latches_error_after_ready`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_sync::tests::finish_waits_for_live_apply_and_latches_error_after_ready -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/device_home_sync/tests.rs`
+
+Real signed pagination/dense-boundary/coalescing tests and stale/live-error state tests
+
+New module: `true`.
+
+- Required symbol: `async fn paging_is_inclusive_exhaustive_and_deduped_before_catalog_apply`
+- Required symbol: `async fn finish_waits_for_live_apply_and_latches_error_after_ready`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/persona_device_view.rs`
+
+Read-only structural snapshots, fresh host authority, signed evidence and explicit per-definition unavailable home
+
+New module: `true`.
+
+- Required symbol: `struct PersonaDeviceView`
+- Required symbol: `fn read_policy_records`
+- Required symbol: `fn load_device_policy_context`
+- Required symbol: `fn read_remote_evidence`
+- Invocation: `desktop/src-tauri/src/managed_agents/persona_device_view.rs` → `definition_capabilities`; exact call `definition_capabilities(&definition, &home, self.readiness, proven)`; behavior test `managed_agents::definition_home::tests::home_matrix`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::definition_home::tests::home_matrix -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/device_home_sync.rs`
+
+Native IPC adapters, captured-key history transport and reset-before-open/error-aware finalization
+
+New module: `true`.
+
+- Required symbol: `fn begin_device_home_sync`
+- Required symbol: `async fn hydrate_device_home_history`
+- Required symbol: `fn finish_device_home_sync`
+- Required symbol: `fn invalidate_device_home_sync`
+- Invocation: `desktop/src-tauri/src/commands/device_home_sync.rs` → `reset`; exact call `device_home_sync::reset(state)?;`; behavior test `commands::device_home_sync::tests::begin_retention_error_revokes_previous_readiness`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::device_home_sync::tests::begin_retention_error_revokes_previous_readiness -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/device_home_sync.rs` → `finish_session`; exact call `device_home_sync::finish_session(state, session_token)?;`; behavior test `commands::device_home_sync::tests::ipc_session_adapters_preserve_backend_completion_and_invalidation`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::device_home_sync::tests::ipc_session_adapters_preserve_backend_completion_and_invalidation -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/personas/device_view_tests.rs`
+
+Isolated actual list projection for mixed/shared/private context failures without writes
+
+New module: `true`.
+
+- Required symbol: `fn list_context_errors_are_explicit_and_preserve_only_shared_capabilities`
+- Required symbol: `list_projects_retained_catalog_sharing_without_writing_or_requiring_host_proof`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/personas/inbound/device_sync_tests.rs`
+
+Signed hydration through actual blocking inbound dispatcher with isolated app paths
+
+New module: `true`.
+
+- Required symbol: `async fn hydration_applies_signed_catalog_through_production_dispatcher_and_propagates_failure`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/personas/mod.rs`
+
+Read-only flattened list views with shared capability fast path on explicit unavailable context
+
+New module: `false`.
+
+- Required symbol: `fn list_personas_inner`
+- Invocation: `desktop/src-tauri/src/commands/personas/mod.rs` → `persona_definitions_for_policy`; exact call `persona_definitions_for_policy(&records)`; behavior test `commands::personas::device_view_tests::list_context_errors_are_explicit_and_preserve_only_shared_capabilities`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::device_view_tests::list_context_errors_are_explicit_and_preserve_only_shared_capabilities -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/personas/mod.rs` → `project_persona_sharing_read_only`; exact call `pending::project_persona_sharing_read_only(
+        &retention_path,
+        &scope.owner_pubkey,
+        &mut personas,
+    );`; behavior test `commands::personas::device_view_tests::list_projects_retained_catalog_sharing_without_writing_or_requiring_host_proof`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::device_view_tests::list_projects_retained_catalog_sharing_without_writing_or_requiring_host_proof -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/personas/mod.rs` → `unavailable`; exact call `PersonaDeviceView::unavailable(definition, error.clone())`; behavior test `commands::personas::device_view_tests::list_context_errors_are_explicit_and_preserve_only_shared_capabilities`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::device_view_tests::list_context_errors_are_explicit_and_preserve_only_shared_capabilities -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/app_state.rs`
+
+In-memory scoped backend device home sync state
+
+New module: `false`.
+
+- Required symbol: `device_home_sync:`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/workspace.rs`
+
+Invalidate backend home evidence on workspace apply
+
+New module: `false`.
+
+- Required symbol: `device_home_sync::reset(&state)?;`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/personas/inbound.rs`
+
+Token-scoped live apply leases fence async reconciliation and record failures
+
+New module: `false`.
+
+- Required symbol: `session_token: Option<String>`
+- Required symbol: `lease.complete(&result)?;`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src/features/agents/lib/usePersonaSync.ts`
+
+Live-first backend hydration, rejection-aware drain, bounded fresh-session retry and connection invalidation
+
+New module: `false`.
+
+- Required symbol: `export function startPersonaSync`
+- Required symbol: `hydrateDeviceHomeHistory(sessionRun.token)`
+- Required symbol: `subscribeToConnectionState`
+- Required symbol: `subscribeToReconnects`
+- Invocation: `desktop/src/features/agents/lib/usePersonaSync.ts` → `finishDeviceHomeSync`; exact call `await finishDeviceHomeSync(sessionRun.token);`; behavior test `backend sync waits for buffered live applies before finish and carries its token`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern="backend sync waits for buffered" src/features/agents/lib/usePersonaSync.test.mjs`
+- Invocation: `desktop/src/features/agents/lib/usePersonaSync.ts` → `invalidateDeviceHomeSync`; exact call `invalidateDeviceHomeSync(run.token)`; behavior test `connection loss invalidates readiness and reconnect starts a fresh complete session`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern="connection loss invalidates" src/features/agents/lib/usePersonaSync.test.mjs`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/lib/usePersonaSync.test.mjs`
+
+Preserved coalescing/catalog/gap/degraded/retry behavior plus IPC token, completion, cancellation and reconnect tests
+
+New module: `false`.
+
+- Required symbol: `backend sync waits for buffered live applies`
+- Required symbol: `late previous hydration cannot finalize a replacement session`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/shared/api/tauriPersonas.ts`
+
+Backend sync IPC client and optional live reconciliation token
+
+New module: `false`.
+
+- Required symbol: `export async function beginDeviceHomeSync`
+- Required symbol: `export async function hydrateDeviceHomeHistory`
+- Required symbol: `sessionToken?: string`
+- Invocation: `desktop/src/shared/api/tauriPersonas.ts` → `invokeTauri`; exact call `await invokeTauri("reconcile_inbound_persona_event", {
+    eventJson,
+    arrivalRelayUrl,
+    sessionToken,
+  });`; behavior test `backend sync waits for buffered live applies before finish and carries its token`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern="backend sync waits for buffered" src/features/agents/lib/usePersonaSync.test.mjs`
+- Verify: `just desktop-test desktop-typecheck`
