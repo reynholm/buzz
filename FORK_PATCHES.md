@@ -160,6 +160,10 @@ Mechanical struct-literal compatibility repair: new device fields default to Non
 
 New module: `false`.
 
+- Required symbol: `materialize_import_avatar_scoped`
+- Required symbol: `import_upload_authority`
+- Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `materialize_import_avatar_scoped`; exact call `let effective_avatar = materialize_import_avatar_scoped(`; behavior test `commands::personas::snapshot::import::import_avatar_tests::avatar_import_refuses_changed_backend_scope_before_upload_and_after_await`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::import::import_avatar_tests::avatar_import_refuses_changed_backend_scope_before_upload_and_after_await -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `import_upload_authority`; exact call `let authority = import_upload_authority(&state, &context.scope)?;`; behavior test `commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/commands/personas/snapshot/tests.rs`
@@ -1211,3 +1215,26 @@ New module: `true`.
 
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 - Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/commands/personas/snapshot/import_avatar_tests.rs`
+
+Task5 scope refusal before avatar upload and after await; bound relay/signing authority exercised through actual upload on isolated loopback fixture
+
+New module: `false`.
+
+- Required symbol: `avatar_import_refuses_changed_backend_scope_before_upload_and_after_await`
+- Required symbol: `avatar_upload_uses_bound_relay_and_signer_after_backend_switch`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/media.rs`
+
+Task5 snapshot avatar upload consumes captured authority without mutable workspace rereads; ordinary media uploads preserve existing authority capture
+
+New module: `false`.
+
+- Required symbol: `UploadAuthority`
+- Required symbol: `do_upload_with_authority`
+- Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `upload_image_bytes`; exact call `crate::commands::media::upload_image_bytes(avatar_bytes, &state, &authority)`; behavior test `commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/media.rs` → `do_upload_with_authority`; exact call `do_upload_with_authority(body, &mime, state, None, None, authority).await`; behavior test `commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/media.rs` → `sign_blossom_upload_auth`; exact call `sign_blossom_upload_auth(&authority.keys, &sha256, expiry_secs, base_url)?;`; behavior test `commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`

@@ -355,9 +355,16 @@ fn manufactured_definition_defaults_private_and_identity_errors_preserve_store()
     let identity_path = agents.parent().unwrap().join("device.json");
     std::fs::write(&identity_path, b"broken").unwrap();
     let before = std::fs::read(&path).unwrap();
+    let backup = agents.join("managed-agents.json.pre-backfill.bak");
     assert!(backfill_standalone_agents_in_dir(&agents).is_err());
     assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert!(!backup.exists());
     std::fs::remove_file(&identity_path).unwrap();
+    std::fs::create_dir(&identity_path).unwrap();
+    assert!(backfill_standalone_agents_in_dir(&agents).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert!(!backup.exists());
+    std::fs::remove_dir(&identity_path).unwrap();
     backfill_standalone_agents_in_dir(&agents).unwrap();
     let device = crate::managed_agents::device_creation::public_device_at(&identity_path).unwrap();
     let raw: Vec<ManagedAgentRecord> =
@@ -369,4 +376,8 @@ fn manufactured_definition_defaults_private_and_identity_errors_preserve_store()
         Some(device.device_id.as_str())
     );
     assert_eq!(d.origin_released, Some(false));
+    assert_eq!(
+        d.origin_device_label.as_deref(),
+        Some(device.label.as_str())
+    );
 }

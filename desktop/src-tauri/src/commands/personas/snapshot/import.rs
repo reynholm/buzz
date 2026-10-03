@@ -349,6 +349,47 @@ where
     upload(avatar_bytes).await.map(Some)
 }
 
+async fn materialize_import_avatar_scoped<F, Fut>(
+    avatar_data_url: Option<&str>,
+    avatar_url: Option<&str>,
+    check_scope: impl Fn() -> Result<(), String>,
+    upload: F,
+) -> Result<Option<String>, String>
+where
+    F: FnOnce(Vec<u8>) -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
+    check_scope()?;
+    let avatar = materialize_import_avatar(avatar_data_url, avatar_url, upload).await?;
+    check_scope()?;
+    Ok(avatar)
+}
+
+fn import_upload_authority(
+    state: &AppState,
+    scope: &crate::managed_agents::device_home_sync::SyncScope,
+) -> Result<crate::commands::media::UploadAuthority, String> {
+    let workspace_override = crate::relay::workspace_relay_override(state);
+    let relay = crate::relay::bind_expected_relay_scope(
+        Some(&scope.relay_url),
+        workspace_override
+            .clone()
+            .unwrap_or_else(crate::relay::relay_ws_url),
+    )?;
+    let base_url = if workspace_override.is_some() {
+        crate::relay::relay_http_base_url(relay.as_str())
+    } else {
+        crate::relay::relay_api_base_url()
+    };
+    let keys = state.signing_keys()?;
+    crate::relay::assert_expected_signer(Some(&scope.owner_pubkey), &keys.public_key().to_hex())?;
+    crate::managed_agents::device_creation::assert_creation_scope(
+        &crate::managed_agents::device_home_sync::capture_scope(state)?,
+        scope,
+    )?;
+    Ok(crate::commands::media::UploadAuthority { keys, base_url })
+}
+
 // ── `preview_agent_snapshot_import` ──────────────────────────────────────────
 
 /// Decode and validate a snapshot file, returning a preview for the
@@ -513,11 +554,18 @@ pub async fn confirm_agent_snapshot_import(
     // larger than the relay's kind:0 content limit, so upload imported pixels
     // before minting or persisting the new agent. Failing here keeps import
     // atomic instead of creating an agent whose profile can never publish.
-    let effective_avatar = materialize_import_avatar(
+    let effective_avatar = materialize_import_avatar_scoped(
         snapshot.profile.avatar_data_url.as_deref(),
         snapshot.profile.avatar_url.as_deref(),
+        || {
+            crate::managed_agents::device_creation::assert_creation_scope(
+                &crate::managed_agents::device_home_sync::capture_scope(&state)?,
+                &context.scope,
+            )
+        },
         |avatar_bytes| async {
-            crate::commands::media::upload_image_bytes(avatar_bytes, &state)
+            let authority = import_upload_authority(&state, &context.scope)?;
+            crate::commands::media::upload_image_bytes(avatar_bytes, &state, &authority)
                 .await
                 .map(|descriptor| descriptor.url)
                 .map_err(|error| format!("Could not upload the imported avatar: {error}"))

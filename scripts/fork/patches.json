@@ -208,8 +208,28 @@
       "path": "desktop/src-tauri/src/commands/personas/snapshot/import.rs",
       "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery",
       "is_new": false,
-      "required_symbols": [],
-      "invocation_seams": [],
+      "required_symbols": [
+        "materialize_import_avatar_scoped",
+        "import_upload_authority"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/commands/personas/snapshot/import.rs",
+          "callee_symbol": "materialize_import_avatar_scoped",
+          "invocation": "let effective_avatar = materialize_import_avatar_scoped(",
+          "behavior_test": "commands::personas::snapshot::import::import_avatar_tests::avatar_import_refuses_changed_backend_scope_before_upload_and_after_await",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::import::import_avatar_tests::avatar_import_refuses_changed_backend_scope_before_upload_and_after_await -- --exact",
+          "coverage": "Wry owning invocation wiring; scoped production avatar adapter behavior using real backend scope"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/personas/snapshot/import.rs",
+          "callee_symbol": "import_upload_authority",
+          "invocation": "let authority = import_upload_authority(&state, &context.scope)?;",
+          "behavior_test": "commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch -- --exact",
+          "coverage": "Wry authority capture owning wiring; captured authority used by actual isolated media transport"
+        }
+      ],
       "verification_commands": [
         "just desktop-tauri-test desktop-tauri-check"
       ]
@@ -2091,6 +2111,57 @@
       "verification_commands": [
         "just desktop-tauri-test desktop-tauri-check",
         "just desktop-tauri-clippy"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/snapshot/import_avatar_tests.rs",
+      "responsibility": "Task5 scope refusal before avatar upload and after await; bound relay/signing authority exercised through actual upload on isolated loopback fixture",
+      "is_new": false,
+      "required_symbols": [
+        "avatar_import_refuses_changed_backend_scope_before_upload_and_after_await",
+        "avatar_upload_uses_bound_relay_and_signer_after_backend_switch"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/media.rs",
+      "responsibility": "Task5 snapshot avatar upload consumes captured authority without mutable workspace rereads; ordinary media uploads preserve existing authority capture",
+      "is_new": false,
+      "required_symbols": [
+        "UploadAuthority",
+        "do_upload_with_authority"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/commands/personas/snapshot/import.rs",
+          "callee_symbol": "upload_image_bytes",
+          "invocation": "crate::commands::media::upload_image_bytes(avatar_bytes, &state, &authority)",
+          "behavior_test": "commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch -- --exact",
+          "coverage": "Wry owning upload wiring; actual media transport uses captured original relay and signer in loopback regression"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/media.rs",
+          "callee_symbol": "do_upload_with_authority",
+          "invocation": "do_upload_with_authority(body, &mime, state, None, None, authority).await",
+          "behavior_test": "commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch -- --exact",
+          "coverage": "Actual isolated media transport consumes captured relay/signer; cfg(test)-only owning invocation and authority mutations fail the request path/signer assertions"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/media.rs",
+          "callee_symbol": "sign_blossom_upload_auth",
+          "invocation": "sign_blossom_upload_auth(&authority.keys, &sha256, expiry_secs, base_url)?;",
+          "behavior_test": "commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch -- --exact",
+          "coverage": "Actual isolated media transport consumes captured relay/signer; cfg(test)-only owning invocation and authority mutations fail the request path/signer assertions"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
       ]
     }
   ]

@@ -394,16 +394,22 @@ fn should_retry_legacy_upload(status: reqwest::StatusCode) -> bool {
     )
 }
 
+pub(crate) struct UploadAuthority {
+    pub(crate) keys: Keys,
+    pub(crate) base_url: String,
+}
+
 pub(crate) async fn upload_image_bytes(
     body: Vec<u8>,
     state: &AppState,
+    authority: &UploadAuthority,
 ) -> Result<BlobDescriptor, String> {
     let mime = detect_and_validate_mime(&body)?;
     if !mime.starts_with("image/") {
         return Err("profile avatar must be an image".to_string());
     }
     let body = sanitize_image_for_upload(body, &mime)?;
-    do_upload(body, &mime, state, None, None).await
+    do_upload_with_authority(body, &mime, state, None, None, authority).await
 }
 
 async fn do_upload(
@@ -413,6 +419,21 @@ async fn do_upload(
     progress: Option<(tauri::AppHandle, String)>,
     cancellation: Option<&CancellationToken>,
 ) -> Result<BlobDescriptor, String> {
+    let authority = UploadAuthority {
+        base_url: relay_api_base_url_with_override(state),
+        keys: state.signing_keys()?,
+    };
+    do_upload_with_authority(body, mime, state, progress, cancellation, &authority).await
+}
+
+async fn do_upload_with_authority(
+    body: Vec<u8>,
+    mime: &str,
+    state: &AppState,
+    progress: Option<(tauri::AppHandle, String)>,
+    cancellation: Option<&CancellationToken>,
+    authority: &UploadAuthority,
+) -> Result<BlobDescriptor, String> {
     let sha256 = hex::encode(Sha256::digest(&body));
 
     // All upload tokens use a 60-second expiry window per NIP-FI §Freshness:
@@ -421,11 +442,8 @@ async fn do_upload(
     // reasonable connection (the body is already hashed and ready to send).
     // The server-side window is also 60s in Strict mode, matching this value.
     let expiry_secs = 60u64;
-    let base_url = relay_api_base_url_with_override(state);
-    let auth_event = {
-        let keys = state.signing_keys()?;
-        sign_blossom_upload_auth(&keys, &sha256, expiry_secs, &base_url)?
-    };
+    let base_url = &authority.base_url;
+    let auth_event = sign_blossom_upload_auth(&authority.keys, &sha256, expiry_secs, base_url)?;
 
     let auth_header = format!(
         "Nostr {}",
