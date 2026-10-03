@@ -1633,7 +1633,9 @@
         "fn failed_child_cleanup_propagates_and_retains_retry_ownership",
         "fn receipt_failure_settles_unregistered_child_and_preserves_error",
         "fn new_child_collision_never_replaces_previously_tracked_child",
-        "fn restore_child_exit_confirmation_is_bounded_and_tree_is_reaped"
+        "fn restore_child_exit_confirmation_is_bounded_and_tree_is_reaped",
+        "fn confirmed_exited_owner_allows_replacement_receipt_and_reconcile",
+        "fn owner_inspection_error_preserves_handle_settles_incoming_and_propagates"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -1643,14 +1645,15 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/restore/child_ownership.rs",
-      "responsibility": "Own spawned restore children through authorized registration or bounded terminate/reap; retain failed cleanup handles in an app-owned queue reached by restore retry and shutdown without replacing existing tracked children",
+      "responsibility": "Own spawned restore children through authorized registration or target-verified bounded terminate/reap; retain failed cleanup handles for restore retry and shutdown; preserve live/uninspectable pair owners while permitting confirmed-exited replacements",
       "is_new": true,
       "required_symbols": [
         "fn complete_restore_spawn_results_with",
         "fn settle_restore_child",
         "fn retry_restore_cleanup",
         "fn wait_for_restore_child_exit",
-        "struct RestoreCleanup"
+        "struct RestoreCleanup",
+        "fn complete_restore_spawn_results_with_inspection"
       ],
       "invocation_seams": [
         {
@@ -1691,6 +1694,30 @@
           "invocation": "super::super::write_agent_runtime_receipt(app, &receipt)",
           "behavior_test": "managed_agents::restore::device_home_restore_tests::receipt_failure_settles_unregistered_child_and_preserves_error",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::receipt_failure_settles_unregistered_child_and_preserves_error -- --exact",
+          "coverage": "native production behavior with injected lifecycle/key boundaries"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/restore/child_ownership.rs",
+          "callee_symbol": "complete_restore_spawn_results_with_inspection",
+          "invocation": "complete_restore_spawn_results_with_inspection(",
+          "behavior_test": "managed_agents::restore::device_home_restore_tests::new_child_collision_never_replaces_previously_tracked_child",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::new_child_collision_never_replaces_previously_tracked_child -- --exact",
+          "coverage": "native production behavior with injected lifecycle/key boundaries"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/restore/child_ownership.rs",
+          "callee_symbol": "try_wait",
+          "invocation": "process\n                .child\n                .try_wait()",
+          "behavior_test": "managed_agents::restore::device_home_restore_tests::confirmed_exited_owner_allows_replacement_receipt_and_reconcile",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::confirmed_exited_owner_allows_replacement_receipt_and_reconcile -- --exact",
+          "coverage": "native production behavior with injected lifecycle/key boundaries"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/restore/child_ownership.rs",
+          "callee_symbol": "inspect_exit",
+          "invocation": "inspect_exit(&mut existing.process)",
+          "behavior_test": "managed_agents::restore::device_home_restore_tests::owner_inspection_error_preserves_handle_settles_incoming_and_propagates",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::owner_inspection_error_preserves_handle_settles_incoming_and_propagates -- --exact",
           "coverage": "native production behavior with injected lifecycle/key boundaries"
         }
       ],

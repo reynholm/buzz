@@ -15,6 +15,37 @@ pub(crate) struct RestoreCleanup(
 
 pub(super) fn complete_restore_spawn_results_with<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
+    spawn_results: Vec<AgentSpawnResult>,
+    context_provider: impl FnOnce(
+        &tauri::AppHandle<R>,
+        &AppState,
+    ) -> Result<
+        super::super::persona_device_view::DevicePolicyContext,
+        String,
+    >,
+    hydrate: impl FnOnce(&mut [super::super::ManagedAgentRecord]),
+    persist: impl FnOnce(&mut [super::super::ManagedAgentRecord]),
+    cleanup: impl FnMut(&mut ManagedAgentProcess) -> Result<(), String>,
+) -> Result<Vec<(String, crate::commands::ProfileReconcileData)>, String> {
+    complete_restore_spawn_results_with_inspection(
+        app,
+        spawn_results,
+        context_provider,
+        hydrate,
+        persist,
+        cleanup,
+        |process| {
+            process
+                .child
+                .try_wait()
+                .map(|status| status.is_some())
+                .map_err(|error| format!("failed to inspect existing restore runtime: {error}"))
+        },
+    )
+}
+
+pub(super) fn complete_restore_spawn_results_with_inspection<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     mut spawn_results: Vec<AgentSpawnResult>,
     context_provider: impl FnOnce(
         &tauri::AppHandle<R>,
@@ -26,13 +57,14 @@ pub(super) fn complete_restore_spawn_results_with<R: tauri::Runtime>(
     hydrate: impl FnOnce(&mut [super::super::ManagedAgentRecord]),
     persist: impl FnOnce(&mut [super::super::ManagedAgentRecord]),
     mut cleanup: impl FnMut(&mut ManagedAgentProcess) -> Result<(), String>,
+    mut inspect_exit: impl FnMut(&mut ManagedAgentProcess) -> Result<bool, String>,
 ) -> Result<Vec<(String, crate::commands::ProfileReconcileData)>, String> {
     let state = app.state::<AppState>();
     let started_pubkeys = spawn_results
         .iter()
         .map(|(pubkey, _)| pubkey.clone())
         .collect();
-    let mut cleanup_errors = Vec::new();
+    let mut completion_errors = Vec::new();
     let result = complete_restore_phase_c_with(
         app,
         &started_pubkeys,
@@ -57,17 +89,31 @@ pub(super) fn complete_restore_spawn_results_with<R: tauri::Runtime>(
                             if let Err(error) =
                                 settle_restore_child(app, key, process, &mut cleanup)
                             {
-                                cleanup_errors.push(error);
+                                completion_errors.push(error);
                             }
                             continue;
                         };
-                        // Never replace an existing tracked child, including a
-                        // concurrent owner whose result was not marked Skipped.
-                        if runtimes.contains_key(&key) {
+                        // A key may remain after Phase A/B observed its exit. Inspect
+                        // under this lock before choosing which child owns the pair.
+                        let keep_existing = match runtimes.get_mut(&key) {
+                            None => false,
+                            Some(existing) => match inspect_exit(&mut existing.process) {
+                                Ok(true) => {
+                                    runtimes.remove(&key);
+                                    false
+                                }
+                                Ok(false) => true,
+                                Err(error) => {
+                                    completion_errors.push(error);
+                                    true
+                                }
+                            },
+                        };
+                        if keep_existing {
                             if let Err(error) =
                                 settle_restore_child(app, key, process, &mut cleanup)
                             {
-                                cleanup_errors.push(error);
+                                completion_errors.push(error);
                             }
                             continue;
                         }
@@ -83,7 +129,7 @@ pub(super) fn complete_restore_spawn_results_with<R: tauri::Runtime>(
                             if let Err(cleanup_error) =
                                 settle_restore_child(app, key, process, &mut cleanup)
                             {
-                                cleanup_errors.push(cleanup_error);
+                                completion_errors.push(cleanup_error);
                             }
                             record.updated_at = now;
                             record.last_error = Some(error);
@@ -165,11 +211,11 @@ pub(super) fn complete_restore_spawn_results_with<R: tauri::Runtime>(
     for (_, outcome) in spawn_results {
         if let SpawnOutcome::Spawned(key, process) = outcome {
             if let Err(error) = settle_restore_child(app, key, process, &mut cleanup) {
-                cleanup_errors.push(error);
+                completion_errors.push(error);
             }
         }
     }
-    if cleanup_errors.is_empty() {
+    if completion_errors.is_empty() {
         result
     } else {
         let cause = result
@@ -177,8 +223,8 @@ pub(super) fn complete_restore_spawn_results_with<R: tauri::Runtime>(
             .map(|error| format!("{error}; "))
             .unwrap_or_default();
         Err(format!(
-            "{cause}restore child cleanup failed: {}",
-            cleanup_errors.join("; ")
+            "{cause}restore child completion failed: {}",
+            completion_errors.join("; ")
         ))
     }
 }

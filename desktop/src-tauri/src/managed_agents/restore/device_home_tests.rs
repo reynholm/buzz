@@ -590,22 +590,73 @@ fn receipt_failure_settles_unregistered_child_and_preserves_error() {
         .contains("agent-pids"));
 }
 
+// Settle fixture handles before assertions and during assertion unwinding.
+struct CollisionChildren<'a>(&'a tauri::AppHandle<tauri::test::MockRuntime>);
+impl CollisionChildren<'_> {
+    fn settle(&self) -> Result<(), String> {
+        let state = self.0.state::<AppState>();
+        let mut runtimes = state
+            .managed_agent_processes
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let mut errors = Vec::new();
+        for runtime in runtimes.values_mut() {
+            if runtime.child.try_wait().ok().flatten().is_none()
+                && child_ownership::terminate_restore_child(&mut runtime.process).is_err()
+            {
+                // These fixtures have no descendants. Bound fallback cleanup too.
+                let _ = runtime.child.kill();
+                if let Err(error) = child_ownership::wait_for_restore_child_exit(
+                    &mut runtime.process,
+                    std::time::Duration::from_secs(1),
+                ) {
+                    errors.push(error);
+                }
+            }
+        }
+        drop(runtimes);
+        if let Err(error) = child_ownership::retry_restore_cleanup(self.0) {
+            errors.push(error);
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
+    }
+}
+impl Drop for CollisionChildren<'_> {
+    fn drop(&mut self) {
+        let _ = self.settle();
+    }
+}
+
+#[cfg(unix)]
 #[test]
 fn new_child_collision_never_replaces_previously_tracked_child() {
+    use std::os::unix::process::CommandExt;
     let dir = tempfile::tempdir().unwrap();
     let app = app(dir.path());
     let base = super::super::managed_agents_base_dir(app.handle()).unwrap();
     let (raw, _) = mixed_records();
     write(&base, &raw);
-    let (_, SpawnOutcome::Spawned(key, tracked)) = spawned_result(&raw[3]) else {
+    let (_, SpawnOutcome::Spawned(key, mut tracked)) = spawned_result(&raw[3]) else {
         unreachable!()
     };
+    tracked.child.wait().unwrap();
+    tracked.child = std::process::Command::new("/bin/sleep")
+        .arg("60")
+        .process_group(0)
+        .spawn()
+        .unwrap();
     let tracked_pid = tracked.child.id();
+    let initially_live = tracked.child.try_wait().unwrap().is_none();
     let state = app.state::<AppState>();
     state.managed_agent_processes.lock().unwrap().insert(
         key.clone(),
         super::super::ManagedAgentPairRuntime::starting(*tracked),
     );
+    let fixtures = CollisionChildren(app.handle());
     let new = spawned_result(&raw[3]);
     let SpawnOutcome::Spawned(_, child) = &new.1 else {
         unreachable!()
@@ -613,7 +664,7 @@ fn new_child_collision_never_replaces_previously_tracked_child() {
     let new_pid = child.child.id();
     let cleaned = RefCell::new(Vec::new());
     let secrets = Secrets::default();
-    let items = child_ownership::complete_restore_spawn_results_with(
+    let result = child_ownership::complete_restore_spawn_results_with(
         app.handle(),
         vec![new],
         |_, _| panic!("shared target requested authority"),
@@ -621,18 +672,185 @@ fn new_child_collision_never_replaces_previously_tracked_child() {
         |rs| persist_agent_keys_with(&secrets, rs),
         |process| {
             cleaned.borrow_mut().push(process.child.id());
-            process.child.wait().unwrap();
+            process.child.wait().map_err(|error| error.to_string())?;
             Ok(())
         },
-    )
-    .unwrap();
-    assert!(items.is_empty());
+    );
+    let (count, owner_pid, owner_live) = {
+        let mut runtimes = state.managed_agent_processes.lock().unwrap();
+        let count = runtimes.len();
+        let runtime = runtimes.get_mut(&key).unwrap();
+        (
+            count,
+            runtime.child.id(),
+            runtime.child.try_wait().unwrap().is_none(),
+        )
+    };
+    let receipt_exists = base
+        .join("agent-pids")
+        .join(format!("{}.json", key.runtime_id()))
+        .exists();
+    let fixture_cleanup = fixtures.settle();
+    drop(fixtures);
+    fixture_cleanup.unwrap();
+    assert!(initially_live, "fixture did not establish a live owner");
+    assert!(result.unwrap().is_empty());
     assert_eq!(*cleaned.borrow(), vec![new_pid]);
-    let mut runtimes = state.managed_agent_processes.lock().unwrap();
-    assert_eq!(runtimes.len(), 1);
-    let tracked = runtimes.get_mut(&key).unwrap();
-    assert_eq!(tracked.child.id(), tracked_pid);
-    tracked.child.wait().unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(owner_pid, tracked_pid, "live owner was replaced");
+    assert!(owner_live, "live owner was terminated");
+    assert!(!receipt_exists, "collision wrote a replacement receipt");
+    assert_preserved(&base, &raw, &secrets);
+}
+
+#[test]
+fn confirmed_exited_owner_allows_replacement_receipt_and_reconcile() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let base = super::super::managed_agents_base_dir(app.handle()).unwrap();
+    let (raw, allowed) = mixed_records();
+    write(&base, &raw);
+    let (_, SpawnOutcome::Spawned(key, mut exited)) = spawned_result(&raw[3]) else {
+        unreachable!()
+    };
+    exited.child.wait().unwrap(); // Model Phase A/B's cached confirmed exit.
+    let old_pid = exited.child.id();
+    let state = app.state::<AppState>();
+    state.managed_agent_processes.lock().unwrap().insert(
+        key.clone(),
+        super::super::ManagedAgentPairRuntime::starting(*exited),
+    );
+    let fixtures = CollisionChildren(app.handle());
+    let new = spawned_result(&raw[3]);
+    let SpawnOutcome::Spawned(_, child) = &new.1 else {
+        unreachable!()
+    };
+    let new_pid = child.child.id();
+    let cleaned = RefCell::new(Vec::new());
+    let secrets = Secrets::default();
+    let result = child_ownership::complete_restore_spawn_results_with(
+        app.handle(),
+        vec![new],
+        |_, _| panic!("shared target requested authority"),
+        |rs| hydrate_keys_with(&secrets, rs),
+        |rs| persist_agent_keys_with(&secrets, rs),
+        |process| {
+            cleaned.borrow_mut().push(process.child.id());
+            process.child.wait().map_err(|error| error.to_string())?;
+            Ok(())
+        },
+    );
+    let owner_pid = state
+        .managed_agent_processes
+        .lock()
+        .unwrap()
+        .get(&key)
+        .unwrap()
+        .child
+        .id();
+    let receipt: Option<super::super::ManagedAgentRuntimeReceipt> = std::fs::read(
+        base.join("agent-pids")
+            .join(format!("{}.json", key.runtime_id())),
+    )
+    .ok()
+    .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+    drop(fixtures);
+    assert_ne!(old_pid, new_pid);
+    assert_eq!(
+        owner_pid, new_pid,
+        "confirmed-exited owner blocked replacement"
+    );
+    assert!(
+        cleaned.borrow().is_empty(),
+        "permitted replacement was settled"
+    );
+    let items = result.unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].0, allowed);
+    assert_eq!(
+        items[0].1.target_relay_url.as_deref(),
+        Some(key.relay_url.as_str())
+    );
+    let receipt = receipt.expect("replacement receipt missing");
+    assert_eq!(receipt.pid, new_pid);
+    assert_eq!(receipt.key, key);
+    assert_preserved(&base, &raw, &secrets);
+}
+
+#[test]
+fn owner_inspection_error_preserves_handle_settles_incoming_and_propagates() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let base = super::super::managed_agents_base_dir(app.handle()).unwrap();
+    let (raw, _) = mixed_records();
+    write(&base, &raw);
+    let (_, SpawnOutcome::Spawned(key, mut tracked)) = spawned_result(&raw[3]) else {
+        unreachable!()
+    };
+    tracked.child.wait().unwrap(); // Isolated handle; injected inspection error is authoritative.
+    let tracked_pid = tracked.child.id();
+    let state = app.state::<AppState>();
+    state.managed_agent_processes.lock().unwrap().insert(
+        key.clone(),
+        super::super::ManagedAgentPairRuntime::starting(*tracked),
+    );
+    let fixtures = CollisionChildren(app.handle());
+    let new = spawned_result(&raw[3]);
+    let SpawnOutcome::Spawned(_, child) = &new.1 else {
+        unreachable!()
+    };
+    let new_pid = child.child.id();
+    let rejected = spawned_result(&raw[1]);
+    let SpawnOutcome::Spawned(_, rejected_child) = &rejected.1 else {
+        unreachable!()
+    };
+    let rejected_pid = rejected_child.child.id();
+    let cleaned = RefCell::new(Vec::new());
+    let inspected = RefCell::new(Vec::new());
+    let secrets = Secrets::default();
+    let result = child_ownership::complete_restore_spawn_results_with_inspection(
+        app.handle(),
+        vec![new, rejected],
+        |_, _| Ok(context(EvidenceReadiness::Ready)),
+        |rs| hydrate_keys_with(&secrets, rs),
+        |rs| persist_agent_keys_with(&secrets, rs),
+        |process| {
+            cleaned.borrow_mut().push(process.child.id());
+            process.child.wait().map_err(|error| error.to_string())?;
+            Ok(())
+        },
+        |process| {
+            inspected.borrow_mut().push(process.child.id());
+            Err("injected owner inspection failure".into())
+        },
+    );
+    let owner_pid = state
+        .managed_agent_processes
+        .lock()
+        .unwrap()
+        .get(&key)
+        .unwrap()
+        .child
+        .id();
+    let receipt_exists = base
+        .join("agent-pids")
+        .join(format!("{}.json", key.runtime_id()))
+        .exists();
+    let fixture_cleanup = fixtures.settle();
+    drop(fixtures);
+    fixture_cleanup.unwrap();
+    assert_eq!(*inspected.borrow(), vec![tracked_pid]);
+    assert_eq!(owner_pid, tracked_pid, "uninspectable owner was replaced");
+    assert_eq!(
+        *cleaned.borrow(),
+        vec![new_pid, rejected_pid],
+        "inspection failure discarded later owned child"
+    );
+    assert!(!receipt_exists);
+    assert!(result
+        .err()
+        .expect("inspection failure reported success")
+        .contains("injected owner inspection failure"));
     assert_preserved(&base, &raw, &secrets);
 }
 

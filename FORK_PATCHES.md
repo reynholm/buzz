@@ -1020,12 +1020,14 @@ New module: `true`.
 - Required symbol: `fn receipt_failure_settles_unregistered_child_and_preserves_error`
 - Required symbol: `fn new_child_collision_never_replaces_previously_tracked_child`
 - Required symbol: `fn restore_child_exit_confirmation_is_bounded_and_tree_is_reaped`
+- Required symbol: `fn confirmed_exited_owner_allows_replacement_receipt_and_reconcile`
+- Required symbol: `fn owner_inspection_error_preserves_handle_settles_incoming_and_propagates`
 - Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml device_home_restore_tests`
 - Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --features mesh-llm device_home_restore_tests`
 
 ## `desktop/src-tauri/src/managed_agents/restore/child_ownership.rs`
 
-Own spawned restore children through authorized registration or bounded terminate/reap; retain failed cleanup handles in an app-owned queue reached by restore retry and shutdown without replacing existing tracked children
+Own spawned restore children through authorized registration or target-verified bounded terminate/reap; retain failed cleanup handles for restore retry and shutdown; preserve live/uninspectable pair owners while permitting confirmed-exited replacements
 
 New module: `true`.
 
@@ -1034,11 +1036,17 @@ New module: `true`.
 - Required symbol: `fn retry_restore_cleanup`
 - Required symbol: `fn wait_for_restore_child_exit`
 - Required symbol: `struct RestoreCleanup`
+- Required symbol: `fn complete_restore_spawn_results_with_inspection`
 - Invocation: `desktop/src-tauri/src/managed_agents/restore/child_ownership.rs` → `settle_restore_child`; exact call `settle_restore_child(app, key, process, &mut cleanup)`; behavior test `managed_agents::restore::device_home_restore_tests::post_spawn_authority_error_settles_all_owned_children`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::post_spawn_authority_error_settles_all_owned_children -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/restore/child_ownership.rs` → `retry_restore_cleanup_with`; exact call `retry_restore_cleanup_with(app, terminate_restore_child)`; behavior test `managed_agents::restore::device_home_restore_tests::failed_child_cleanup_propagates_and_retains_retry_ownership`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::failed_child_cleanup_propagates_and_retains_retry_ownership -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/restore/child_ownership.rs` → `terminate_process`; exact call `super::super::terminate_process(process.child.id())?;`; behavior test `managed_agents::restore::device_home_restore_tests::restore_child_exit_confirmation_is_bounded_and_tree_is_reaped`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::restore_child_exit_confirmation_is_bounded_and_tree_is_reaped -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/restore/child_ownership.rs` → `wait_for_restore_child_exit`; exact call `wait_for_restore_child_exit(process, std::time::Duration::from_secs(1))`; behavior test `managed_agents::restore::device_home_restore_tests::restore_child_exit_confirmation_is_bounded_and_tree_is_reaped`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::restore_child_exit_confirmation_is_bounded_and_tree_is_reaped -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/restore/child_ownership.rs` → `write_agent_runtime_receipt`; exact call `super::super::write_agent_runtime_receipt(app, &receipt)`; behavior test `managed_agents::restore::device_home_restore_tests::receipt_failure_settles_unregistered_child_and_preserves_error`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::receipt_failure_settles_unregistered_child_and_preserves_error -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore/child_ownership.rs` → `complete_restore_spawn_results_with_inspection`; exact call `complete_restore_spawn_results_with_inspection(`; behavior test `managed_agents::restore::device_home_restore_tests::new_child_collision_never_replaces_previously_tracked_child`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::new_child_collision_never_replaces_previously_tracked_child -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore/child_ownership.rs` → `try_wait`; exact call `process
+                .child
+                .try_wait()`; behavior test `managed_agents::restore::device_home_restore_tests::confirmed_exited_owner_allows_replacement_receipt_and_reconcile`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::confirmed_exited_owner_allows_replacement_receipt_and_reconcile -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore/child_ownership.rs` → `inspect_exit`; exact call `inspect_exit(&mut existing.process)`; behavior test `managed_agents::restore::device_home_restore_tests::owner_inspection_error_preserves_handle_settles_incoming_and_propagates`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::owner_inspection_error_preserves_handle_settles_incoming_and_propagates -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 - Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace --features mesh-llm`
 
