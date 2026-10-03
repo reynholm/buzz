@@ -210,7 +210,8 @@
       "is_new": false,
       "required_symbols": [
         "materialize_import_avatar_scoped",
-        "import_upload_authority"
+        "import_upload_authority",
+        "decode_snapshot_for_import_readonly"
       ],
       "invocation_seams": [
         {
@@ -228,6 +229,38 @@
           "behavior_test": "commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch -- --exact",
           "coverage": "Wry authority capture owning wiring; captured authority used by actual isolated media transport"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/personas/snapshot/import.rs",
+          "callee_symbol": "decode_snapshot_for_import_readonly",
+          "invocation": "decode_snapshot_for_import_readonly(\n            &input.file_bytes,\n            owner_keys.as_ref(),\n            &crate::managed_agents::managed_agents_store_path(&app)?,\n            &context.proof,\n            crate::managed_agents::storage::resolve_agent_key_readonly,",
+          "behavior_test": "commands::personas::snapshot::tests::locked_import::confirm_readonly_shared_unbound_endpoint_unlocks_under_another_owner",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::tests::locked_import::confirm_readonly_shared_unbound_endpoint_unlocks_under_another_owner -- --exact",
+          "coverage": "R1 command owning wiring/compile plus production readonly selection/hydration/decode seam; real locked-envelope decryption and injected readonly vault/temp files"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/personas/snapshot/import.rs",
+          "callee_symbol": "resolve_key",
+          "invocation": "let keys = resolve_key(record)?.ok_or_else(|| LOCKED_CARD_REFUSAL.to_string())?;",
+          "behavior_test": "commands::personas::snapshot::tests::locked_import::confirm_readonly_proven_local_endpoint_reads_only_exact_recipient",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::tests::locked_import::confirm_readonly_proven_local_endpoint_reads_only_exact_recipient -- --exact",
+          "coverage": "R1 command owning wiring/compile plus production readonly selection/hydration/decode seam; real locked-envelope decryption and injected readonly vault/temp files"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/personas/snapshot/import.rs",
+          "callee_symbol": "decode_snapshot_for_import",
+          "invocation": "decode_snapshot_for_import(file_bytes, owner_keys, &[recipient])",
+          "behavior_test": "commands::personas::snapshot::tests::locked_import::confirm_readonly_definitionless_legacy_endpoint_unlocks",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::tests::locked_import::confirm_readonly_definitionless_legacy_endpoint_unlocks -- --exact",
+          "coverage": "R1 command owning wiring/compile plus production readonly selection/hydration/decode seam; real locked-envelope decryption and injected readonly vault/temp files"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/personas/snapshot/import.rs",
+          "callee_symbol": "read_policy_records",
+          "invocation": "crate::managed_agents::persona_device_view::read_policy_records(store_path)?;",
+          "behavior_test": "commands::personas::snapshot::tests::locked_import::confirm_readonly_structural_and_key_errors_fail_closed",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::tests::locked_import::confirm_readonly_structural_and_key_errors_fail_closed -- --exact",
+          "coverage": "R1 command owning wiring/compile plus production readonly selection/hydration/decode seam; real locked-envelope decryption and injected readonly vault/temp files"
         }
       ],
       "verification_commands": [
@@ -2160,6 +2193,24 @@
           "coverage": "Actual isolated media transport consumes captured relay/signer; cfg(test)-only owning invocation and authority mutations fail the request path/signer assertions"
         }
       ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/snapshot/tests_locked.rs",
+      "responsibility": "R1 owning confirm readonly-selection regression: shared/legacy/local exact recipient unlock, foreign private refusal, no unrelated reads/writes, structural/key failures and owner/plain fast paths",
+      "is_new": false,
+      "required_symbols": [
+        "confirm_readonly_shared_unbound_endpoint_unlocks_under_another_owner",
+        "confirm_readonly_definitionless_legacy_endpoint_unlocks",
+        "confirm_readonly_foreign_private_endpoint_never_reads_keys",
+        "confirm_readonly_proven_local_endpoint_reads_only_exact_recipient",
+        "confirm_readonly_owner_endpoint_skips_all_agent_secret_lookups",
+        "confirm_readonly_plain_snapshot_skips_all_agent_secret_lookups",
+        "confirm_readonly_structural_and_key_errors_fail_closed"
+      ],
+      "invocation_seams": [],
       "verification_commands": [
         "just desktop-tauri-test desktop-tauri-check"
       ]

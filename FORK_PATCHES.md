@@ -162,8 +162,18 @@ New module: `false`.
 
 - Required symbol: `materialize_import_avatar_scoped`
 - Required symbol: `import_upload_authority`
+- Required symbol: `decode_snapshot_for_import_readonly`
 - Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `materialize_import_avatar_scoped`; exact call `let effective_avatar = materialize_import_avatar_scoped(`; behavior test `commands::personas::snapshot::import::import_avatar_tests::avatar_import_refuses_changed_backend_scope_before_upload_and_after_await`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::import::import_avatar_tests::avatar_import_refuses_changed_backend_scope_before_upload_and_after_await -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `import_upload_authority`; exact call `let authority = import_upload_authority(&state, &context.scope)?;`; behavior test `commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `decode_snapshot_for_import_readonly`; exact call `decode_snapshot_for_import_readonly(
+            &input.file_bytes,
+            owner_keys.as_ref(),
+            &crate::managed_agents::managed_agents_store_path(&app)?,
+            &context.proof,
+            crate::managed_agents::storage::resolve_agent_key_readonly,`; behavior test `commands::personas::snapshot::tests::locked_import::confirm_readonly_shared_unbound_endpoint_unlocks_under_another_owner`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::tests::locked_import::confirm_readonly_shared_unbound_endpoint_unlocks_under_another_owner -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `resolve_key`; exact call `let keys = resolve_key(record)?.ok_or_else(|| LOCKED_CARD_REFUSAL.to_string())?;`; behavior test `commands::personas::snapshot::tests::locked_import::confirm_readonly_proven_local_endpoint_reads_only_exact_recipient`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::tests::locked_import::confirm_readonly_proven_local_endpoint_reads_only_exact_recipient -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `decode_snapshot_for_import`; exact call `decode_snapshot_for_import(file_bytes, owner_keys, &[recipient])`; behavior test `commands::personas::snapshot::tests::locked_import::confirm_readonly_definitionless_legacy_endpoint_unlocks`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::tests::locked_import::confirm_readonly_definitionless_legacy_endpoint_unlocks -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `read_policy_records`; exact call `crate::managed_agents::persona_device_view::read_policy_records(store_path)?;`; behavior test `commands::personas::snapshot::tests::locked_import::confirm_readonly_structural_and_key_errors_fail_closed`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::tests::locked_import::confirm_readonly_structural_and_key_errors_fail_closed -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/commands/personas/snapshot/tests.rs`
@@ -1237,4 +1247,19 @@ New module: `false`.
 - Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `upload_image_bytes`; exact call `crate::commands::media::upload_image_bytes(avatar_bytes, &state, &authority)`; behavior test `commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/media.rs` → `do_upload_with_authority`; exact call `do_upload_with_authority(body, &mime, state, None, None, authority).await`; behavior test `commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/media.rs` → `sign_blossom_upload_auth`; exact call `sign_blossom_upload_auth(&authority.keys, &sha256, expiry_secs, base_url)?;`; behavior test `commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/personas/snapshot/tests_locked.rs`
+
+R1 owning confirm readonly-selection regression: shared/legacy/local exact recipient unlock, foreign private refusal, no unrelated reads/writes, structural/key failures and owner/plain fast paths
+
+New module: `false`.
+
+- Required symbol: `confirm_readonly_shared_unbound_endpoint_unlocks_under_another_owner`
+- Required symbol: `confirm_readonly_definitionless_legacy_endpoint_unlocks`
+- Required symbol: `confirm_readonly_foreign_private_endpoint_never_reads_keys`
+- Required symbol: `confirm_readonly_proven_local_endpoint_reads_only_exact_recipient`
+- Required symbol: `confirm_readonly_owner_endpoint_skips_all_agent_secret_lookups`
+- Required symbol: `confirm_readonly_plain_snapshot_skips_all_agent_secret_lookups`
+- Required symbol: `confirm_readonly_structural_and_key_errors_fail_closed`
 - Verify: `just desktop-tauri-test desktop-tauri-check`

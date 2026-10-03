@@ -331,6 +331,52 @@ pub(crate) fn decode_snapshot_for_import(
     }
 }
 
+/// Confirm through structural policy and only the envelope's exact local key.
+/// No store repair, unrelated hydration or secret writes occur on this path.
+pub(crate) fn decode_snapshot_for_import_readonly(
+    file_bytes: &[u8],
+    owner_keys: Option<&nostr::Keys>,
+    store_path: &std::path::Path,
+    proof: &crate::device_identity::HostProof,
+    resolve_key: impl FnOnce(&ManagedAgentRecord) -> Result<Option<nostr::Keys>, String>,
+) -> Result<(AgentSnapshot, bool), String> {
+    let records = crate::managed_agents::persona_device_view::read_policy_records(store_path)?;
+    let ChunkPayload::Locked(envelope) = parse_snapshot_payload_from_bytes(file_bytes)? else {
+        return decode_snapshot_for_import(file_bytes, owner_keys, &[]);
+    };
+    if resolve_unlock_secret(&envelope, owner_keys, &[]).is_some() {
+        return decode_snapshot_for_import(file_bytes, owner_keys, &[]);
+    }
+    let record = records
+        .iter()
+        .find(|record| record.pubkey == envelope.encryption.agent_pubkey)
+        .ok_or_else(|| LOCKED_CARD_REFUSAL.to_string())?;
+    // Shared definitions and the definition-less legacy API preserve exact-key
+    // unlock. Linked private endpoints additionally require this host's proof.
+    let allowed = if let Some(id) = record.persona_id.as_deref() {
+        records
+            .iter()
+            .find(|r| r.pubkey.is_empty() && r.slug.as_deref() == Some(id))
+            .and_then(ManagedAgentRecord::to_definition_view)
+            .is_some_and(|definition| {
+                definition.share_across_devices == Some(true)
+                    || record
+                        .device_host_binding
+                        .as_deref()
+                        .is_some_and(|binding| proof.matches(binding))
+            })
+    } else {
+        true
+    };
+    if !allowed {
+        return Err(LOCKED_CARD_REFUSAL.to_string());
+    }
+    let keys = resolve_key(record)?.ok_or_else(|| LOCKED_CARD_REFUSAL.to_string())?;
+    let mut recipient = record.clone();
+    recipient.private_key_nsec = keys.secret_key().to_bech32().map_err(|e| e.to_string())?;
+    decode_snapshot_for_import(file_bytes, owner_keys, &[recipient])
+}
+
 async fn materialize_import_avatar<F, Fut>(
     avatar_data_url: Option<&str>,
     avatar_url: Option<&str>,
@@ -510,30 +556,18 @@ pub async fn confirm_agent_snapshot_import(
     // anything else fails closed here, before key generation.
     let snapshot = {
         let owner_keys = state.signing_keys().ok();
-        let records = {
-            let _store_guard = state
-                .managed_agents_store_lock
-                .lock()
-                .map_err(|e| e.to_string())?;
-            let mut records = crate::managed_agents::persona_device_view::read_policy_records(
-                &crate::managed_agents::managed_agents_store_path(&app)?,
-            )?;
-            records.retain(|r| {
-                r.device_host_binding
-                    .as_deref()
-                    .is_some_and(|b| context.proof.matches(b))
-            });
-            for record in &mut records {
-                if let Some(keys) =
-                    crate::managed_agents::storage::resolve_agent_key_readonly(record)?
-                {
-                    record.private_key_nsec =
-                        keys.secret_key().to_bech32().map_err(|e| e.to_string())?;
-                }
-            }
-            records
-        };
-        decode_snapshot_for_import(&input.file_bytes, owner_keys.as_ref(), &records)?.0
+        let _store_guard = state
+            .managed_agents_store_lock
+            .lock()
+            .map_err(|e| e.to_string())?;
+        decode_snapshot_for_import_readonly(
+            &input.file_bytes,
+            owner_keys.as_ref(),
+            &crate::managed_agents::managed_agents_store_path(&app)?,
+            &context.proof,
+            crate::managed_agents::storage::resolve_agent_key_readonly,
+        )?
+        .0
     };
 
     let display_name = snapshot.profile.display_name.trim().to_string();
