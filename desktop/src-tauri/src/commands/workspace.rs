@@ -76,10 +76,32 @@ fn prepare_workspace_event_sync_with<R: tauri::Runtime>(
     scope: &crate::managed_agents::retention::RetentionScope,
     migrate: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
+    prepare_workspace_event_sync_with_recovery(
+        app,
+        scope,
+        || {
+            let state = app.state::<AppState>();
+            let _guard = state
+                .managed_agents_store_lock
+                .lock()
+                .map_err(|e| e.to_string())?;
+            crate::managed_agents::device_home_operations::recover_home_operations_locked(app)
+        },
+        migrate,
+    )
+}
+/// Recovery completes original-scope committed claims before migration or restore can publish.
+fn prepare_workspace_event_sync_with_recovery<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    scope: &crate::managed_agents::retention::RetentionScope,
+    recover: impl FnOnce() -> Result<(), String>,
+    migrate: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
     migrate_legacy_retention_into(app, scope);
     // Scope adoption can be a no-op when there is no legacy DB. Establish the
     // schema before the policy reader opens this captured path read-only.
     crate::managed_agents::retention::open_retention_db(&scope.db_path)?;
+    recover()?;
     migrate()
 }
 

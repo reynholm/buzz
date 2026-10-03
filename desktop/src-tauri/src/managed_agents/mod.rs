@@ -1,3 +1,5 @@
+pub(crate) mod device_creation;
+pub(crate) mod device_home_operations;
 pub(crate) mod persona_device_view;
 pub(crate) use personas::persona_definitions_for_policy;
 pub(crate) mod access_policy;

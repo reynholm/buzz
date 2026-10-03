@@ -335,3 +335,38 @@ fn backfill_creates_the_backup_owner_only() {
         "the fixture really did carry an inline key"
     );
 }
+
+#[test]
+fn manufactured_definition_defaults_private_and_identity_errors_preserve_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let agents = base(dir.path());
+    std::fs::create_dir_all(&agents).unwrap();
+    let path = agents.join("managed-agents.json");
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&vec![standalone_agent_json(
+            "Solo",
+            &"a".repeat(64),
+            Some("P"),
+        )])
+        .unwrap(),
+    )
+    .unwrap();
+    let identity_path = agents.parent().unwrap().join("device.json");
+    std::fs::write(&identity_path, b"broken").unwrap();
+    let before = std::fs::read(&path).unwrap();
+    assert!(backfill_standalone_agents_in_dir(&agents).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    std::fs::remove_file(&identity_path).unwrap();
+    backfill_standalone_agents_in_dir(&agents).unwrap();
+    let device = crate::managed_agents::device_creation::public_device_at(&identity_path).unwrap();
+    let raw: Vec<ManagedAgentRecord> =
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let d = raw.iter().find(|r| r.pubkey.is_empty()).unwrap();
+    assert_eq!(d.share_across_devices, Some(false));
+    assert_eq!(
+        d.origin_device_id.as_deref(),
+        Some(device.device_id.as_str())
+    );
+    assert_eq!(d.origin_released, Some(false));
+}

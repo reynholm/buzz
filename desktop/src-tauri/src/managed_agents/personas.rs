@@ -352,13 +352,22 @@ pub fn load_personas<R: tauri::Runtime>(
     // the legacy shape. Pre-fold stores are converted by
     // `fold_personas_into_agent_store` in boot migrations before any caller
     // reaches this shim.
-    let records = crate::managed_agents::storage::load_agent_definitions(app)?
-        .iter()
-        .filter_map(|record| record.to_definition_view())
-        .collect();
+    let records: Vec<AgentDefinition> =
+        crate::managed_agents::storage::load_agent_definitions(app)?
+            .iter()
+            .filter_map(|record| record.to_definition_view())
+            .collect();
 
-    let (records, changed) = merge_personas(records, &now);
+    let existing_ids: std::collections::HashSet<String> = records
+        .iter()
+        .map(|d: &AgentDefinition| d.id.clone())
+        .collect();
+    let (mut records, changed) = merge_personas(records, &now);
     if changed {
+        let device = super::device_creation::local_device(app)?;
+        for definition in records.iter_mut().filter(|d| !existing_ids.contains(&d.id)) {
+            super::device_creation::stamp_new_definition(definition, None, &device);
+        }
         save_personas(app, &records)?;
     }
 

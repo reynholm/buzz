@@ -947,3 +947,23 @@ mod commit_stores_tests {
         assert!(msg2.contains("could not be restored"), "{msg2}");
     }
 }
+#[test]
+fn catalog_team_copy_defaults_private_on_adopting_device() {
+    let device = crate::managed_agents::device_home_migration::tests::context(
+        crate::managed_agents::definition_home::EvidenceReadiness::Ready,
+    )
+    .device;
+    let body = content(vec![member("one", "Test")]);
+    let src = source(&"a".repeat(64));
+    let plan = super::apply::plan_add_on_device(&[], &[], &src, &body, NOW, &device).unwrap();
+    assert_eq!(plan.retain_personas.len(), 1);
+    let d = &plan.retain_personas[0];
+    assert_eq!(d.share_across_devices, Some(false));
+    assert_eq!(
+        d.origin_device_id.as_deref(),
+        Some(device.device_id.as_str())
+    );
+    assert_eq!(d.origin_released, Some(false));
+    let ds = &plan.stores.unwrap().0;
+    assert_eq!(ds[0].origin_device_id, d.origin_device_id);
+}

@@ -82,7 +82,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/agents.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None
+Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery
 
 New module: `false`.
 
@@ -98,10 +98,11 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/personas/create.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None
+Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery
 
 New module: `false`.
 
+- Invocation: `desktop/src-tauri/src/commands/personas/create.rs` → `definition_from_request`; exact call `let persona = definition_from_request(input, &device, &now_iso())?;`; behavior test `commands::personas::create::tests::dialog_draft_and_catalog_default_private_with_own_origin`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::create::tests::dialog_draft_and_catalog_default_private_with_own_origin -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/commands/personas/delete_cascade_tests.rs`
@@ -155,7 +156,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/personas/snapshot/import.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None
+Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery
 
 New module: `false`.
 
@@ -163,7 +164,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/personas/snapshot/tests.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None
+Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery
 
 New module: `false`.
 
@@ -179,15 +180,16 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/team_snapshot.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None
+Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery
 
 New module: `false`.
 
+- Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `definition_from_snapshot`; exact call `crate::commands::team_snapshot::definition_from_snapshot(`; behavior test `commands::personas::snapshot::tests::imported_snapshot_constructor_defaults_private_with_own_origin`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::tests::imported_snapshot_constructor_defaults_private_with_own_origin -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/commands/team_snapshot/tests.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None
+Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery
 
 New module: `false`.
 
@@ -195,15 +197,16 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/teams/adopt/apply.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None
+Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery
 
 New module: `false`.
 
+- Invocation: `desktop/src-tauri/src/commands/teams/adopt/apply.rs` → `plan_add_on_device`; exact call `let plan = plan_add_on_device(`; behavior test `commands::teams::adopt::tests::catalog_team_copy_defaults_private_on_adopting_device`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::teams::adopt::tests::catalog_team_copy_defaults_private_on_adopting_device -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/commands/teams/adopt/tests.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None
+Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery
 
 New module: `false`.
 
@@ -323,7 +326,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/managed_agents/mod.rs`
 
-Register the device policy compatibility test module; Register home policy, sync and projection modules; Register device-home migration production module
+Register the device policy compatibility test module; Register home policy, sync and projection modules; Register device-home migration production module; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery
 
 New module: `false`.
 
@@ -373,7 +376,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/managed_agents/personas.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None; Use existing pure built-in merge for policy list visibility without saving
+Mechanical struct-literal compatibility repair: new device fields default to None; Use existing pure built-in merge for policy list visibility without saving; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery
 
 New module: `false`.
 
@@ -740,16 +743,19 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/workspace.rs`
 
-Invalidate backend home evidence on workspace apply; Migrate proven homes before scoped event sync without waiting for frontend history; top-level Wry entry wiring is compile coverage with native acceptance outstanding; initialize captured scoped retention schema before read-only policy, propagating open/schema errors while retaining Pending
+Invalidate backend home evidence on workspace apply; Migrate proven homes before scoped event sync without waiting for frontend history; top-level Wry entry wiring is compile coverage with native acceptance outstanding; initialize captured scoped retention schema before read-only policy, propagating open/schema errors while retaining Pending; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery
 
 New module: `false`.
 
 - Required symbol: `device_home_sync::reset(&state)?;`
 - Required symbol: `fn prepare_workspace_event_sync`
 - Required symbol: `fn prepare_workspace_event_sync_with`
+- Required symbol: `recover`
 - Invocation: `desktop/src-tauri/src/commands/workspace.rs` → `prepare_workspace_event_sync`; exact call `prepare_workspace_event_sync(&restore_app, &scope)?;`; behavior test `commands::workspace::device_home_preparation_tests::fresh_workspace_preparation_initializes_scope_without_authorizing_absence`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::workspace::device_home_preparation_tests::fresh_workspace_preparation_initializes_scope_without_authorizing_absence -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/workspace.rs` → `open_retention_db`; exact call `crate::managed_agents::retention::open_retention_db(&scope.db_path)?;`; behavior test `commands::workspace::device_home_preparation_tests::fresh_workspace_preparation_initializes_scope_without_authorizing_absence`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::workspace::device_home_preparation_tests::fresh_workspace_preparation_initializes_scope_without_authorizing_absence -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/workspace.rs` → `migrate_device_homes_before_sync`; exact call `crate::managed_agents::device_home_migration::migrate_device_homes_before_sync(app)`; behavior test `commands::workspace::device_home_preparation_tests::fresh_workspace_preparation_initializes_scope_without_authorizing_absence`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::workspace::device_home_preparation_tests::fresh_workspace_preparation_initializes_scope_without_authorizing_absence -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/workspace.rs` → `recover`; exact call `recover()?;
+    migrate()`; behavior test `commands::workspace::device_home_preparation_tests::recovery_failure_blocks_migration_without_rewriting_intent`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::workspace::device_home_preparation_tests::recovery_failure_blocks_migration_without_rewriting_intent -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/commands/personas/inbound.rs`
@@ -998,7 +1004,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/workspace_device_home_tests.rs`
 
-Task4 fix1 regression tests bind production owning orchestration with temporary app storage and injected existing authority/process/KeyStore boundaries
+Task4 fix1 regression tests bind production owning orchestration with temporary app storage and injected existing authority/process/KeyStore boundaries; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery
 
 New module: `true`.
 
@@ -1098,3 +1104,110 @@ New module: `true`.
 - Invocation: `desktop/src/shared/api/relayLiveSubscription.ts` → `closeSubscription`; exact call `if (epoch === session.currentEpoch())
       await session.closeSubscription(subId);`; behavior test `workspace switch during in-flight setup cannot close or reset the new socket`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/shared/api/relayClientLiveCancellation.test.mjs`
 - Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src-tauri/src/migration/backfill.rs`
+
+Device creation policy, default-private sources, atomic claim and durable recovery regression coverage
+
+New module: `false`.
+
+- Invocation: `desktop/src-tauri/src/migration/backfill.rs` → `public_device_at`; exact call `crate::managed_agents::device_creation::public_device_at(&identity_path)?;`; behavior test `migration::backfill::tests::manufactured_definition_defaults_private_and_identity_errors_preserve_store`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace migration::backfill::tests::manufactured_definition_defaults_private_and_identity_errors_preserve_store -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/migration/backfill_tests.rs`
+
+Device creation policy, default-private sources, atomic claim and durable recovery regression coverage
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/managed_agents/device_creation.rs`
+
+Device creation policy, default-private sources, atomic claim and durable recovery regression coverage
+
+New module: `true`.
+
+- Required symbol: `creation_phase_locked`
+- Required symbol: `authorize_definition_action`
+- Required symbol: `creation_phase`
+- Required symbol: `stamp_new_definition`
+- Invocation: `desktop/src-tauri/src/commands/agents.rs` → `creation_phase_locked`; exact call `crate::managed_agents::device_creation::creation_phase_locked(
+            &app,
+            &state,
+            requested_persona_id.as_deref(),
+            Some(&create_scope),
+            crate::managed_agents::persona_device_view::load_device_policy_context,
+            |_| {`; behavior test `managed_agents::device_creation::tests::remote_create_has_no_mint_publish_or_save`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_creation::tests::remote_create_has_no_mint_publish_or_save -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/agents.rs` → `creation_phase_locked`; exact call `crate::managed_agents::device_creation::creation_phase_locked(
+            &app,
+            &state,
+            requested_persona_id.as_deref(),
+            Some(&create_scope),
+            crate::managed_agents::persona_device_view::load_device_policy_context,
+            |context| {`; behavior test `managed_agents::device_creation::tests::native_creation_adapter_rechecks_real_readiness_and_scope_after_await`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_creation::tests::native_creation_adapter_rechecks_real_readiness_and_scope_after_await -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_creation.rs` → `authorize_definition_action`; exact call `authorize_definition_action(&context, d, records, DefinitionAction::CreateInstance)?;`; behavior test `managed_agents::device_creation::tests::remote_create_has_no_mint_publish_or_save`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_creation::tests::remote_create_has_no_mint_publish_or_save -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_creation.rs` → `creation_phase`; exact call `creation_phase(
+        &scope,`; behavior test `managed_agents::device_creation::tests::native_creation_adapter_refuses_before_all_effects_and_preserves_structural_bytes`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_creation::tests::native_creation_adapter_refuses_before_all_effects_and_preserves_structural_bytes -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/personas/create.rs` → `stamp_new_definition`; exact call `crate::managed_agents::device_creation::stamp_new_definition(
+        &mut persona,
+        requested_share,
+        device,
+    );`; behavior test `commands::personas::create::tests::dialog_draft_and_catalog_default_private_with_own_origin`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::create::tests::dialog_draft_and_catalog_default_private_with_own_origin -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/team_snapshot.rs` → `stamp_new_definition`; exact call `crate::managed_agents::device_creation::stamp_new_definition(&mut definition, None, device);`; behavior test `commands::team_snapshot::tests::imported_team_definitions_default_private_with_own_origin`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::team_snapshot::tests::imported_team_definitions_default_private_with_own_origin -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/teams/adopt/apply.rs` → `stamp_new_definition`; exact call `crate::managed_agents::device_creation::stamp_new_definition(d, None, device);`; behavior test `commands::teams::adopt::tests::catalog_team_copy_defaults_private_on_adopting_device`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::teams::adopt::tests::catalog_team_copy_defaults_private_on_adopting_device -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/personas.rs` → `stamp_new_definition`; exact call `super::device_creation::stamp_new_definition(definition, None, &device);`; behavior test `managed_agents::device_creation::tests::builtin_materialization_defaults_private_on_current_device`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_creation::tests::builtin_materialization_defaults_private_on_current_device -- --exact`
+- Invocation: `desktop/src-tauri/src/migration/backfill.rs` → `stamp_new_definition`; exact call `crate::managed_agents::device_creation::stamp_new_definition(
+            &mut persona_view,
+            None,
+            &device,
+        );`; behavior test `migration::backfill::tests::manufactured_definition_defaults_private_and_identity_errors_preserve_store`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace migration::backfill::tests::manufactured_definition_defaults_private_and_identity_errors_preserve_store -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `assert_creation_scope`; exact call `crate::managed_agents::device_creation::assert_creation_scope(`; behavior test `managed_agents::device_creation::tests::create_scope_is_pinned`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_creation::tests::create_scope_is_pinned -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/team_snapshot.rs` → `assert_creation_scope`; exact call `crate::managed_agents::device_creation::assert_creation_scope(`; behavior test `managed_agents::device_creation::tests::create_scope_is_pinned`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_creation::tests::create_scope_is_pinned -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/managed_agents/device_creation/tests.rs`
+
+Device creation policy, default-private sources, atomic claim and durable recovery regression coverage
+
+New module: `true`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/managed_agents/device_home_operations.rs`
+
+Device creation policy, default-private sources, atomic claim and durable recovery regression coverage
+
+New module: `true`.
+
+- Required symbol: `commit_home_claim_locked`
+- Required symbol: `save_journal`
+- Required symbol: `enqueue_home_events`
+- Required symbol: `recover_in_dir`
+- Required symbol: `load_existing_host_proof`
+- Required symbol: `recover_home_operations_locked`
+- Required symbol: `commit_new_pairs_locked`
+- Invocation: `desktop/src-tauri/src/commands/agents.rs` → `commit_home_claim_locked`; exact call `crate::managed_agents::device_home_operations::commit_home_claim_locked(`; behavior test `managed_agents::device_home_operations::tests::released_definition_is_claimed_without_restart`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_home_operations::tests::released_definition_is_claimed_without_restart -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `save_journal`; exact call `save_journal(dir, &operations)?;
+    save(&raw)?;`; behavior test `managed_agents::device_home_operations::tests::failed_claim_save_never_publishes_uncommitted_intent`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_home_operations::tests::failed_claim_save_never_publishes_uncommitted_intent -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `enqueue_home_events`; exact call `enqueue_home_events(&mut conn, operation)`; behavior test `managed_agents::device_home_operations::tests::claim_transaction_failure_retains_intent_and_never_half_enqueues`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_home_operations::tests::claim_transaction_failure_retains_intent_and_never_half_enqueues -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `recover_in_dir`; exact call `recover_in_dir(&dir, verify_binding, |operation| {`; behavior test `commands::workspace::device_home_preparation_tests::recovery_precedes_migration_and_replays_original_scope_after_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::workspace::device_home_preparation_tests::recovery_precedes_migration_and_replays_original_scope_after_switch -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `load_existing_host_proof`; exact call `crate::device_identity::load_existing_host_proof(`; behavior test `managed_agents::device_home_operations::tests::copied_or_unavailable_proof_never_recovers_claim_and_preserves_intent_bytes`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_home_operations::tests::copied_or_unavailable_proof_never_recovers_claim_and_preserves_intent_bytes -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/workspace.rs` → `recover_home_operations_locked`; exact call `crate::managed_agents::device_home_operations::recover_home_operations_locked(app)`; behavior test `commands::workspace::device_home_preparation_tests::recovery_precedes_migration_and_replays_original_scope_after_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::workspace::device_home_preparation_tests::recovery_precedes_migration_and_replays_original_scope_after_switch -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `commit_new_pairs_locked`; exact call `crate::managed_agents::device_home_operations::commit_new_pairs_locked(`; behavior test `managed_agents::device_home_operations::tests::new_import_pair_preserves_foreign_records_and_persists_only_new_keys`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_home_operations::tests::new_import_pair_preserves_foreign_records_and_persists_only_new_keys -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/team_snapshot.rs` → `commit_new_pairs_locked`; exact call `crate::managed_agents::device_home_operations::commit_new_pairs_locked(`; behavior test `managed_agents::device_home_operations::tests::new_import_pair_preserves_foreign_records_and_persists_only_new_keys`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_home_operations::tests::new_import_pair_preserves_foreign_records_and_persists_only_new_keys -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/managed_agents/device_home_operations/tests.rs`
+
+Device creation policy, default-private sources, atomic claim and durable recovery regression coverage
+
+New module: `true`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `just desktop-tauri-clippy`

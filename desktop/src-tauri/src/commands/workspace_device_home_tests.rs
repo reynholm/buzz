@@ -116,3 +116,78 @@ fn workspace_preparation_database_open_and_schema_errors_are_fatal() {
         );
     }
 }
+#[test]
+fn recovery_precedes_migration_and_replays_original_scope_after_switch() {
+    use crate::managed_agents::{
+        device_home_operations::{commit_claim_in_dir, recover_home_operations_locked_with},
+        retention::{get_pending_sync, open_retention_db, scoped_retention_db_path},
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let state = app.state::<AppState>();
+    let base = crate::managed_agents::managed_agents_base_dir(app.handle()).unwrap();
+    let scope = active_retention_scope(app.handle(), &state).unwrap();
+    let (mut rs, _) = records();
+    let i = rs.pop().unwrap();
+    rs[0].origin_released = Some(true);
+    write(&base, &rs);
+    let owner = nostr::Keys::generate();
+    let mut c = context(EvidenceReadiness::Ready);
+    c.scope.owner_pubkey = owner.public_key().to_hex();
+    c.scope.relay_url = "wss://original".into();
+    assert!(commit_claim_in_dir(
+        dir.path(),
+        &c,
+        "one",
+        i,
+        &owner,
+        |raw| crate::managed_agents::atomic_write_json_restricted(
+            &base.join("managed-agents.json"),
+            &serde_json::to_vec_pretty(raw).unwrap()
+        ),
+        |_| Err("retention failure".into())
+    )
+    .is_err());
+    prepare_workspace_event_sync_with_recovery(
+        app.handle(),
+        &scope,
+        || {
+            recover_home_operations_locked_with(app.handle(), |binding| {
+                Ok(c.proof.matches(binding))
+            })
+        },
+        || {
+            assert_eq!(
+                std::fs::read(dir.path().join("device-home-operations.json")).unwrap(),
+                b"[]"
+            );
+            Ok(())
+        },
+    )
+    .unwrap();
+    let original = scoped_retention_db_path(&base, &c.scope.relay_url, &c.scope.owner_pubkey);
+    let conn = open_retention_db(&original).unwrap();
+    assert_eq!(get_pending_sync(&conn).unwrap().len(), 2);
+    let current = open_retention_db(&scope.db_path).unwrap();
+    assert!(get_pending_sync(&current).unwrap().is_empty());
+}
+#[test]
+fn recovery_failure_blocks_migration_without_rewriting_intent() {
+    use std::cell::Cell;
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let state = app.state::<AppState>();
+    let scope = active_retention_scope(app.handle(), &state).unwrap();
+    let called = Cell::new(false);
+    assert!(prepare_workspace_event_sync_with_recovery(
+        app.handle(),
+        &scope,
+        || Err("proof unavailable".into()),
+        || {
+            called.set(true);
+            Ok(())
+        }
+    )
+    .is_err());
+    assert!(!called.get());
+}

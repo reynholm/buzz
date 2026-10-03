@@ -157,7 +157,16 @@ fn team_export_round_trip_preserves_team_and_excludes_member_memory() {
         Some("A careful reviewer.")
     );
     assert_eq!(decoded.members[1].profile.about, None);
-    let imported = build_import_definitions(&decoded, false, "now").unwrap();
+    let imported = build_import_definitions(
+        &decoded,
+        false,
+        "now",
+        &crate::managed_agents::device_home_migration::tests::context(
+            crate::managed_agents::definition_home::EvidenceReadiness::Ready,
+        )
+        .device,
+    )
+    .unwrap();
     assert_eq!(imported[0].acp_command.as_deref(), Some("buzz-janet-acp"));
     assert_eq!(
         imported[0].clone().into_agent_record().acp_command,
@@ -351,7 +360,16 @@ fn team_import_definitions_are_built_for_all_members() {
         &encode_team_snapshot_json(&snapshot(vec![memory_bearing, member("Bob")])).unwrap(),
     )
     .unwrap();
-    let definitions = build_import_definitions(&decoded, false, "now").unwrap();
+    let definitions = build_import_definitions(
+        &decoded,
+        false,
+        "now",
+        &crate::managed_agents::device_home_migration::tests::context(
+            crate::managed_agents::definition_home::EvidenceReadiness::Ready,
+        )
+        .device,
+    )
+    .unwrap();
     let team = build_import_team(
         &decoded,
         definitions
@@ -389,8 +407,26 @@ fn team_import_definitions_are_built_for_all_members() {
 #[test]
 fn team_import_keeps_or_clears_every_member_allowlist_with_one_toggle() {
     let source = snapshot(vec![member("Alice"), member("Bob")]);
-    let kept = build_import_definitions(&source, true, "now").unwrap();
-    let cleared = build_import_definitions(&source, false, "now").unwrap();
+    let kept = build_import_definitions(
+        &source,
+        true,
+        "now",
+        &crate::managed_agents::device_home_migration::tests::context(
+            crate::managed_agents::definition_home::EvidenceReadiness::Ready,
+        )
+        .device,
+    )
+    .unwrap();
+    let cleared = build_import_definitions(
+        &source,
+        false,
+        "now",
+        &crate::managed_agents::device_home_migration::tests::context(
+            crate::managed_agents::definition_home::EvidenceReadiness::Ready,
+        )
+        .device,
+    )
+    .unwrap();
 
     assert!(kept.iter().all(|definition| {
         definition.respond_to.as_deref() == Some("allowlist")
@@ -819,4 +855,19 @@ mod egress_guard_boundary {
         .unwrap_err();
         assert!(err.contains("key-backup material"), "{err}");
     }
+}
+
+#[test]
+fn imported_team_definitions_default_private_with_own_origin() {
+    let c = crate::managed_agents::device_home_migration::tests::context(
+        crate::managed_agents::definition_home::EvidenceReadiness::Ready,
+    );
+    let ds =
+        build_import_definitions(&snapshot(vec![member("One")]), true, "now", &c.device).unwrap();
+    assert_eq!(ds[0].share_across_devices, Some(false));
+    assert_eq!(
+        ds[0].origin_device_id.as_deref(),
+        Some(c.device.device_id.as_str())
+    );
+    assert_eq!(ds[0].origin_released, Some(false));
 }

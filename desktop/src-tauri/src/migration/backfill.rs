@@ -64,9 +64,13 @@ fn backfill_standalone_agents_in_dir(base_dir: &Path) -> Result<usize, String> {
         return Ok(0);
     }
 
-    // Pre-migration backup, taken ONCE: a re-run after a partial failure must
-    // not overwrite the pristine backup with a half-migrated snapshot. Owner-only
-    // from the initial open, and sited next to the resolved store — see
+    let identity_path = base_dir
+        .parent()
+        .ok_or_else(|| "agent directory has no app-data parent".to_string())?
+        .join("device.json");
+    let device = crate::managed_agents::device_creation::public_device_at(&identity_path)?;
+    // Pre-migration backup, taken ONCE: a partial re-run preserves the pristine
+    // snapshot. Owner-only from the initial open, next to the resolved store — see
     // `create_restricted_backup_once` and `resolved_backup_path`.
     let bak_path =
         crate::util::resolved_backup_path(&agents_path, "managed-agents.json.pre-backfill.bak");
@@ -107,13 +111,19 @@ fn backfill_standalone_agents_in_dir(base_dir: &Path) -> Result<usize, String> {
         view_source.definition_respond_to = Some(record.respond_to.as_str().to_string());
         view_source.definition_respond_to_allowlist = record.respond_to_allowlist.clone();
         view_source.definition_parallelism = Some(record.parallelism);
-        let Some(persona_view) = view_source.to_definition_view() else {
+        let Some(mut persona_view) = view_source.to_definition_view() else {
             eprintln!(
                 "buzz-desktop: standalone-backfill: agent {} produced no persona view — skipped",
                 record.pubkey
             );
             continue;
         };
+
+        crate::managed_agents::device_creation::stamp_new_definition(
+            &mut persona_view,
+            None,
+            &device,
+        );
 
         // Link the record BEFORE computing the version so the hash covers the
         // definition exactly as manufactured.

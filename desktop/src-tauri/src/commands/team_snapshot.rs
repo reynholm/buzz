@@ -17,8 +17,8 @@ use crate::{
     },
     managed_agents::{
         agent_snapshot::{build_snapshot, AgentSnapshot, AgentSnapshotMemoryEntry, MemoryLevel},
-        load_managed_agents, load_personas, load_teams, load_teams_readonly, save_managed_agents,
-        save_personas, save_teams, AgentDefinition, ManagedAgentRecord, TeamRecord,
+        load_managed_agents, load_personas, load_teams, load_teams_readonly, save_teams,
+        AgentDefinition, ManagedAgentRecord, TeamRecord,
     },
     relay::{effective_agent_relay_url, relay_ws_url_with_override, sync_managed_agent_profile},
     util::now_iso,
@@ -104,10 +104,11 @@ fn effective_avatar(member: &AgentSnapshot) -> Option<String> {
 }
 
 /// Build a definition from a team member snapshot without consuming its memory.
-fn definition_from_snapshot(
+pub(crate) fn definition_from_snapshot(
     member: &AgentSnapshot,
     keep_allowlist: bool,
     now: &str,
+    device: &crate::device_identity::DeviceIdentity,
 ) -> Result<AgentDefinition, String> {
     let behavior = resolve_snapshot_import_behavior(
         member.definition.respond_to.as_deref(),
@@ -118,7 +119,7 @@ fn definition_from_snapshot(
     let respond_to = (behavior.respond_to != crate::managed_agents::RespondTo::default())
         .then(|| behavior.respond_to.as_str().to_string());
 
-    Ok(AgentDefinition {
+    let mut definition = AgentDefinition {
         share_across_devices: None,
         origin_device_id: None,
         origin_device_label: None,
@@ -149,18 +150,21 @@ fn definition_from_snapshot(
         session_policy: member.definition.session_policy,
         created_at: now.to_string(),
         updated_at: now.to_string(),
-    })
+    };
+    crate::managed_agents::device_creation::stamp_new_definition(&mut definition, None, device);
+    Ok(definition)
 }
 
 pub(crate) fn build_import_definitions(
     snapshot: &TeamSnapshot,
     keep_allowlist: bool,
     now: &str,
+    device: &crate::device_identity::DeviceIdentity,
 ) -> Result<Vec<AgentDefinition>, String> {
     snapshot
         .members
         .iter()
-        .map(|member| definition_from_snapshot(member, keep_allowlist, now))
+        .map(|member| definition_from_snapshot(member, keep_allowlist, now, device))
         .collect()
 }
 
@@ -522,7 +526,15 @@ pub async fn confirm_team_snapshot_import(
     let now = now_iso();
 
     // Resolve behavioral defaults for every member before any key generation.
-    let definitions = build_import_definitions(&snapshot, input.keep_allowlist, &now)?;
+    let context = {
+        let _guard = state
+            .managed_agents_store_lock
+            .lock()
+            .map_err(|e| e.to_string())?;
+        crate::managed_agents::persona_device_view::load_device_policy_context(&app, &state)?
+    };
+    let definitions =
+        build_import_definitions(&snapshot, input.keep_allowlist, &now, &context.device)?;
     let persona_ids: Vec<String> = definitions.iter().map(|d| d.id.clone()).collect();
     let imported_team = build_import_team(&snapshot, persona_ids.clone(), &now)?;
 
@@ -564,7 +576,7 @@ pub async fn confirm_team_snapshot_import(
         };
 
         // Build the ManagedAgentRecord for this member.
-        let record = ManagedAgentRecord {
+        let mut record = ManagedAgentRecord {
             share_across_devices: None,
             origin_device_id: None,
             origin_device_label: None,
@@ -641,6 +653,7 @@ pub async fn confirm_team_snapshot_import(
             name_pool: member.definition.name_pool.clone(),
         };
 
+        crate::managed_agents::device_creation::bind_new_instance(&mut record, &context.proof);
         minted.push(MintedMember {
             definition,
             record,
@@ -660,7 +673,13 @@ pub async fn confirm_team_snapshot_import(
             .map_err(|e| e.to_string())?;
 
         // Guard against duplicate pubkeys (astronomically unlikely).
-        let existing_records = load_managed_agents(&app)?;
+        crate::managed_agents::device_creation::assert_creation_scope(
+            &crate::managed_agents::device_home_sync::capture_scope(&state)?,
+            &context.scope,
+        )?;
+        let existing_records = crate::managed_agents::persona_device_view::read_policy_records(
+            &crate::managed_agents::managed_agents_store_path(&app)?,
+        )?;
         for m in &minted {
             if existing_records.iter().any(|r| r.pubkey == m.pubkey) {
                 return Err(format!(
@@ -727,21 +746,13 @@ pub async fn confirm_team_snapshot_import(
             }
         };
 
-        // Write all definitions.
-        let mut personas = load_personas(&app)?;
-        for m in &minted {
-            personas.push(m.definition.clone());
-        }
-        if let Err(e) = save_personas(&app, &personas) {
-            return Err(rollback_agents(e));
-        }
-
-        // Write all managed-agent records.
-        let mut records = existing_records;
-        for m in &minted {
-            records.push(m.record.clone());
-        }
-        if let Err(e) = save_managed_agents(&app, &records) {
+        let definitions = minted.iter().map(|m| m.definition.clone()).collect();
+        let instances = minted.iter().map(|m| m.record.clone()).collect();
+        if let Err(e) = crate::managed_agents::device_home_operations::commit_new_pairs_locked(
+            &app,
+            definitions,
+            instances,
+        ) {
             return Err(rollback_agents(e));
         }
 

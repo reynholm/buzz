@@ -135,7 +135,15 @@ pub(super) fn add_verified_team(
 
     let personas_before = load_personas(app)?;
     let teams_before = load_teams(app)?;
-    let plan = plan_add(&personas_before, &teams_before, source, content, &now_iso())?;
+    let device = crate::managed_agents::device_creation::local_device(app)?;
+    let plan = plan_add_on_device(
+        &personas_before,
+        &teams_before,
+        source,
+        content,
+        &now_iso(),
+        &device,
+    )?;
 
     // The seam owns the durable commit and the retention enqueue as one unit,
     // so there is no route to an adoption commit that skips retention: the
@@ -244,6 +252,35 @@ pub(super) fn enqueue_adoption_retention(
     }
 }
 
+/// Stamp only newly copied catalog members; reused local definitions retain their policy.
+pub(super) fn plan_add_on_device(
+    personas_before: &[AgentDefinition],
+    teams_before: &[TeamRecord],
+    source: &TeamCatalogSource,
+    content: &TeamCatalogContent,
+    now: &str,
+    device: &crate::device_identity::DeviceIdentity,
+) -> Result<AddPlan, String> {
+    let mut plan = plan_add(personas_before, teams_before, source, content, now)?;
+    let existing_ids: std::collections::HashSet<_> =
+        personas_before.iter().map(|d| d.id.as_str()).collect();
+    for d in plan
+        .retain_personas
+        .iter_mut()
+        .filter(|d| !existing_ids.contains(d.id.as_str()))
+    {
+        crate::managed_agents::device_creation::stamp_new_definition(d, None, device);
+    }
+    if let Some((personas, _)) = plan.stores.as_mut() {
+        for d in personas
+            .iter_mut()
+            .filter(|d| !existing_ids.contains(d.id.as_str()))
+        {
+            crate::managed_agents::device_creation::stamp_new_definition(d, None, device);
+        }
+    }
+    Ok(plan)
+}
 /// Compute both stores as they will be after the add. Pure — no I/O, so every
 /// resolution rule below is testable without a Tauri app or a relay.
 pub(super) fn plan_add(

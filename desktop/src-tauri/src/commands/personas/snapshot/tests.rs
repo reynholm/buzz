@@ -984,3 +984,20 @@ mod encode_size;
 
 #[path = "tests_locked.rs"]
 mod locked_import;
+#[test]
+fn imported_snapshot_constructor_defaults_private_with_own_origin() {
+    let device = crate::managed_agents::device_home_migration::tests::context(
+        crate::managed_agents::definition_home::EvidenceReadiness::Ready,
+    )
+    .device;
+    let snapshot = make_snapshot(MemoryLevel::None, vec![]);
+    let d =
+        crate::commands::team_snapshot::definition_from_snapshot(&snapshot, false, "now", &device)
+            .unwrap();
+    assert_eq!(d.share_across_devices, Some(false));
+    assert_eq!(
+        d.origin_device_id.as_deref(),
+        Some(device.device_id.as_str())
+    );
+    assert_eq!(d.origin_released, Some(false));
+}

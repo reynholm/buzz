@@ -18,8 +18,7 @@ use crate::{
             decrypt_envelope, parse_chunk_payload, resolve_unlock_secret, ChunkPayload,
             LOCKED_CARD_REFUSAL,
         },
-        load_managed_agents, load_personas, save_managed_agents, save_personas, AgentDefinition,
-        ManagedAgentRecord, RespondTo,
+        load_managed_agents, ManagedAgentRecord, RespondTo,
     },
     relay::{effective_agent_relay_url, relay_ws_url_with_override},
     util::now_iso,
@@ -458,6 +457,13 @@ pub async fn confirm_agent_snapshot_import(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AgentSnapshotImportResult, String> {
+    let context = {
+        let _guard = state
+            .managed_agents_store_lock
+            .lock()
+            .map_err(|e| e.to_string())?;
+        crate::managed_agents::persona_device_view::load_device_policy_context(&app, &state)?
+    };
     // ── Phase 1: validate (no writes) ────────────────────────────────────────
     // Locked cards unlock only via this machine's exact key endpoints;
     // anything else fails closed here, before key generation.
@@ -468,7 +474,23 @@ pub async fn confirm_agent_snapshot_import(
                 .managed_agents_store_lock
                 .lock()
                 .map_err(|e| e.to_string())?;
-            load_managed_agents(&app)?
+            let mut records = crate::managed_agents::persona_device_view::read_policy_records(
+                &crate::managed_agents::managed_agents_store_path(&app)?,
+            )?;
+            records.retain(|r| {
+                r.device_host_binding
+                    .as_deref()
+                    .is_some_and(|b| context.proof.matches(b))
+            });
+            for record in &mut records {
+                if let Some(keys) =
+                    crate::managed_agents::storage::resolve_agent_key_readonly(record)?
+                {
+                    record.private_key_nsec =
+                        keys.secret_key().to_bech32().map_err(|e| e.to_string())?;
+                }
+            }
+            records
         };
         decode_snapshot_for_import(&input.file_bytes, owner_keys.as_ref(), &records)?.0
     };
@@ -512,6 +534,10 @@ pub async fn confirm_agent_snapshot_import(
     };
 
     // ── Phase 2: mint keys + auth tag (sync, outside lock) ───────────────────
+    crate::managed_agents::device_creation::assert_creation_scope(
+        &crate::managed_agents::device_home_sync::capture_scope(&state)?,
+        &context.scope,
+    )?;
     let (agent_keys, private_key_nsec, pubkey, auth_tag, owner_pubkey_hex) = {
         let owner_keys = state.signing_keys()?;
         let agent_keys = nostr::Keys::generate();
@@ -547,8 +573,13 @@ pub async fn confirm_agent_snapshot_import(
             .lock()
             .map_err(|e| e.to_string())?;
 
-        let mut personas = load_personas(&app)?;
-        let mut records = load_managed_agents(&app)?;
+        crate::managed_agents::device_creation::assert_creation_scope(
+            &crate::managed_agents::device_home_sync::capture_scope(&state)?,
+            &context.scope,
+        )?;
+        let records = crate::managed_agents::persona_device_view::read_policy_records(
+            &crate::managed_agents::managed_agents_store_path(&app)?,
+        )?;
 
         // Guard against duplicate pubkey (astronomically unlikely but safe).
         if records.iter().any(|r| r.pubkey == pubkey) {
@@ -558,51 +589,16 @@ pub async fn confirm_agent_snapshot_import(
         let now = now_iso();
         let persona_id = uuid::Uuid::new_v4().to_string();
         // Build persona from snapshot definition.
-        let persona = AgentDefinition {
-            share_across_devices: None,
-            origin_device_id: None,
-            origin_device_label: None,
-            origin_released: None,
-            id: persona_id.clone(),
-            display_name: display_name.clone(),
-            avatar_url: effective_avatar.clone(),
-            description: crate::managed_agents::effective_agent_description(
-                snapshot.profile.about.as_deref(),
-            ),
-            system_prompt: snapshot
-                .definition
-                .system_prompt
-                .clone()
-                .unwrap_or_default(),
-            acp_command: snapshot.definition.acp_command.clone(),
-            runtime: snapshot.definition.runtime.clone(),
-            model: snapshot.definition.model.clone(),
-            provider: snapshot.definition.provider.clone(),
-            name_pool: snapshot.definition.name_pool.clone(),
-            is_builtin: false,
-            is_active: true,
-            shared: false,
-            source_team: None,
-            source_team_persona_slug: None,
-            catalog_source: None,
-            team_catalog_source: None,
-            env_vars: std::collections::BTreeMap::new(),
-            respond_to: respond_to_wire.clone(),
-            respond_to_allowlist: minted.respond_to_allowlist.clone(),
-            parallelism: minted_parallelism,
-            session_policy: snapshot.definition.session_policy,
-            created_at: now.clone(),
-            updated_at: now.clone(),
-        };
+        let mut persona = crate::commands::team_snapshot::definition_from_snapshot(
+            &snapshot,
+            input.keep_allowlist,
+            &now,
+            &context.device,
+        )?;
+        persona.id = persona_id.clone();
+        persona.avatar_url = effective_avatar.clone();
 
-        personas.push(persona.clone());
-        save_personas(&app, &personas)?;
-
-        // Enqueue the kind:30175 persona event via the retention path.
-        super::super::pending::retain_persona_pending(&app, &state, &persona);
-        // Build the managed agent record — no machine-local commands, no
-        // secrets, no lineage from the snapshot.
-        let record = ManagedAgentRecord {
+        let mut record = ManagedAgentRecord {
             share_across_devices: None,
             origin_device_id: None,
             origin_device_label: None,
@@ -681,8 +677,13 @@ pub async fn confirm_agent_snapshot_import(
             name_pool: snapshot.definition.name_pool.clone(),
         };
 
-        records.push(record.clone());
-        save_managed_agents(&app, &records)?;
+        crate::managed_agents::device_creation::bind_new_instance(&mut record, &context.proof);
+        crate::managed_agents::device_home_operations::commit_new_pairs_locked(
+            &app,
+            vec![persona.clone()],
+            vec![record.clone()],
+        )?;
+        super::super::retain_persona_pending(&app, &state, &persona);
 
         // Enqueue the kind:30177 managed-agent event via retention.
         // (Uses the same pattern as agents.rs::retain_managed_agent_pending
