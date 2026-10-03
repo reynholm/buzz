@@ -1,3 +1,4 @@
+pub(crate) mod child_ownership;
 use super::{
     bestie_assignment::recover_pending_assignment_cleanup, find_managed_agent_mut,
     kill_stale_tracked_processes, load_managed_agents, load_personas, managed_agents_base_dir,
@@ -101,6 +102,14 @@ pub async fn restore_managed_agents_on_launch(
     }
 
     let state = app.state::<AppState>();
+
+    {
+        let _cleanup_transition = state
+            .managed_agent_runtime_transition
+            .lock()
+            .map_err(|error| error.to_string())?;
+        child_ownership::retry_restore_cleanup(app)?;
+    }
 
     let agents_to_start = prepare_restore_phase_a_with(
         app,
@@ -248,117 +257,13 @@ pub async fn restore_managed_agents_on_launch(
         return Ok(());
     }
 
-    let started_pubkeys = spawn_results
-        .iter()
-        .map(|(pubkey, _)| pubkey.clone())
-        .collect();
-    let reconcile_items = complete_restore_phase_c_with(
+    let reconcile_items = child_ownership::complete_restore_spawn_results_with(
         app,
-        &started_pubkeys,
+        spawn_results,
         super::persona_device_view::load_device_policy_context,
         super::storage::hydrate_keys,
         super::storage::persist_agent_keys,
-        |records| {
-            let mut runtimes = state
-                .managed_agent_processes
-                .lock()
-                .map_err(|error| error.to_string())?;
-
-            let mut successfully_spawned: Vec<(String, String)> = Vec::new();
-
-            for (pubkey, outcome) in spawn_results {
-                match outcome {
-                    // Skipped means a concurrent reconcile already owns a live child for
-                    // this pair; leave its runtime and record state untouched.
-                    SpawnOutcome::Skipped => continue,
-                    SpawnOutcome::Spawned(key, mut process) => {
-                        let Ok(record) = find_managed_agent_mut(records, &pubkey) else {
-                            continue;
-                        };
-                        let now = util::now_iso();
-                        let receipt = super::ManagedAgentRuntimeReceipt {
-                            key: key.clone(),
-                            pid: process.child.id(),
-                            desktop_instance_id: super::current_instance_id(app),
-                            started_at: now.clone(),
-                        };
-                        if let Err(error) = super::write_agent_runtime_receipt(app, &receipt) {
-                            let _ = super::terminate_process(process.child.id());
-                            let _ = process.child.wait();
-                            record.updated_at = now;
-                            record.last_error = Some(error);
-                            continue;
-                        }
-                        record.updated_at = now.clone();
-                        record.runtime_pid = None;
-                        record.last_started_at = Some(now);
-                        record.last_stopped_at = None;
-                        record.last_exit_code = None;
-                        record.last_error = None;
-                        runtimes.insert(
-                            key.clone(),
-                            super::ManagedAgentPairRuntime::starting(*process),
-                        );
-                        // Carry the spawn key's relay into profile reconciliation so
-                        // the background task queries/publishes on the relay this
-                        // spawn was actually keyed to — not whatever workspace is
-                        // active when the task eventually executes.
-                        successfully_spawned.push((pubkey, key.relay_url.clone()));
-                    }
-                    SpawnOutcome::Failed(error) => {
-                        let Ok(record) = find_managed_agent_mut(records, &pubkey) else {
-                            continue;
-                        };
-                        record.updated_at = util::now_iso();
-                        record.last_error = Some(error);
-                    }
-                }
-            }
-
-            // Collect profile reconciliation data for successfully spawned agents before
-            // releasing the lock. This mirrors the fire-and-forget pattern in
-            // start_managed_agent — ensuring boot-restored agents get the same profile
-            // self-healing as UI-started agents.
-            let reconcile_personas = super::load_personas(app).unwrap_or_default();
-            let reconcile_items: Vec<(String, crate::commands::ProfileReconcileData)> =
-                successfully_spawned
-                    .iter()
-                    .filter_map(|(pubkey, spawn_relay)| {
-                        let record = records.iter().find(|r| r.pubkey == *pubkey)?;
-                        // Resolve the effective harness for the avatar-fallback
-                        // derivation (the snapshot may be empty/stale for an inherited
-                        // harness). Mirrors the UI start path.
-                        let effective_command = crate::managed_agents::record_agent_command(
-                            record,
-                            &reconcile_personas,
-                        );
-                        Some((
-                            pubkey.clone(),
-                            crate::commands::ProfileReconcileData {
-                                private_key_nsec: record.private_key_nsec.clone(),
-                                name: record.name.clone(),
-                                relay_url: record.relay_url.clone(),
-                                // Pin the relay this spawn was keyed to (see the
-                                // successfully_spawned push above) so the deferred
-                                // task cannot resolve a post-switch workspace.
-                                target_relay_url: Some(spawn_relay.clone()),
-                                avatar_url: record.avatar_url.clone(),
-                                auth_tag: record.auth_tag.clone(),
-                                pubkey: record.pubkey.clone(),
-                                agent_command: effective_command,
-                                persona_id: record.persona_id.clone(),
-                                about: crate::managed_agents::record_effective_description(
-                                    record,
-                                    &reconcile_personas,
-                                ),
-                            },
-                        ))
-                    })
-                    .collect();
-
-            drop(runtimes);
-            Ok(reconcile_items)
-        },
+        child_ownership::terminate_restore_child,
     )?;
     drop(restore_transition);
 

@@ -330,6 +330,7 @@ New module: `false`.
 - Required symbol: `pub(crate) mod device_home_sync;`
 - Required symbol: `pub(crate) mod persona_device_view;`
 - Required symbol: `pub(crate) mod device_home_migration;`
+- Required symbol: `pub(crate) use restore::child_ownership::{retry_restore_cleanup, RestoreCleanup};`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/managed_agents/nest/render_tests.rs`
@@ -724,11 +725,13 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/app_state.rs`
 
-In-memory scoped backend device home sync state
+In-memory scoped backend device home sync state; retain failed restore child cleanup handles separately from authorized runtime pairs
 
 New module: `false`.
 
 - Required symbol: `device_home_sync:`
+- Required symbol: `managed_agent_restore_cleanup: crate::managed_agents::RestoreCleanup`
+- Required symbol: `managed_agent_restore_cleanup: Default::default()`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/commands/workspace.rs`
@@ -924,6 +927,7 @@ New module: `false`.
 - Required symbol: `fn resolve_agent_key_readonly_with`
 - Required symbol: `fn save_restore_records_with`
 - Required symbol: `pub(crate) trait KeyStore`
+- Required symbol: `pub fn write_agent_runtime_receipt<R: tauri::Runtime>`
 - Invocation: `desktop/src-tauri/src/managed_agents/storage.rs` → `load_all_readonly`; exact call `.load_all_readonly()?`; behavior test `managed_agents::storage::migration_key_tests::migration_key_resolver_validates_read_only_secrets_and_errors`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::storage::migration_key_tests::migration_key_resolver_validates_read_only_secrets_and_errors -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/storage.rs` → `load_agent_store`; exact call `let mut raw = load_agent_store(app)?;`; behavior test `managed_agents::restore::device_home_restore_tests::phase_c_fresh_authority_blocks_changed_target_and_preserves_concurrent_rows`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::phase_c_fresh_authority_blocks_changed_target_and_preserves_concurrent_rows -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/storage.rs` → `atomic_write_json_restricted`; exact call `atomic_write_json_restricted(&managed_agents_store_path(app)?, &bytes)`; behavior test `managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy -- --exact`
@@ -931,7 +935,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/managed_agents/restore.rs`
 
-Select proven/shared/standalone auto-start candidates before key hydration or lifecycle work, retaining existing live-pair duplicate guards; top-level Wry entry wiring is compile coverage with native acceptance outstanding; authority lookup excludes private records not selected for auto-start; PhaseA and fresh PhaseC protected raw-store merge preserves excluded rows/definitions, keys restricted to actual authorized targets, baseline safe disabled housekeeping remains structural-only; mesh preflight error uses same protected writeback
+Select proven/shared/standalone auto-start candidates before key hydration or lifecycle work, retaining existing live-pair duplicate guards; top-level Wry entry wiring is compile coverage with native acceptance outstanding; authority lookup excludes private records not selected for auto-start; PhaseA and fresh PhaseC protected raw-store merge preserves excluded rows/definitions, keys restricted to actual authorized targets, baseline safe disabled housekeeping remains structural-only; mesh preflight error uses same protected writeback; retain spawned-child ownership across fresh authority failures and delegate bounded settlement/retry to child_ownership
 
 New module: `false`.
 
@@ -941,6 +945,8 @@ New module: `false`.
 - Required symbol: `fn complete_restore_phase_c_with`
 - Required symbol: `fn authorized_restore_updates`
 - Required symbol: `fn persist_restore_error_with`
+- Required symbol: `child_ownership::complete_restore_spawn_results_with`
+- Required symbol: `child_ownership::retry_restore_cleanup`
 - Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `auto_start_allowed`; exact call `super::device_home_migration::auto_start_allowed(record, &definitions, context)?`; behavior test `managed_agents::runtime_commands::device_home_job_tests::copied_and_deferred_auto_start_jobs_have_zero_hydration_and_probes`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::runtime_commands::device_home_job_tests::copied_and_deferred_auto_start_jobs_have_zero_hydration_and_probes -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `select_auto_start_candidates`; exact call `select_auto_start_candidates(&policy_records, context.as_ref())?;`; behavior test `managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `save_restore_records_with`; exact call `super::storage::save_restore_records_with(app, &records, &eligible, persist)?;`; behavior test `managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy -- --exact`
@@ -950,6 +956,10 @@ New module: `false`.
 - Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `complete_restore_phase_c_with`; exact call `complete_restore_phase_c_with(
         app,
         &[pubkey.to_string()].into_iter().collect(),`; behavior test `managed_agents::restore::device_home_restore_tests::mesh_preflight_error_writeback_preserves_excluded_inline_copy`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --features mesh-llm managed_agents::restore::device_home_restore_tests::mesh_preflight_error_writeback_preserves_excluded_inline_copy -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `complete_restore_spawn_results_with`; exact call `child_ownership::complete_restore_spawn_results_with(
+        app,
+        spawn_results,`; behavior test `managed_agents::restore::device_home_restore_tests::post_spawn_authority_error_settles_all_owned_children`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::post_spawn_authority_error_settles_all_owned_children -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `retry_restore_cleanup`; exact call `child_ownership::retry_restore_cleanup(app)?;`; behavior test `managed_agents::restore::device_home_restore_tests::failed_child_cleanup_propagates_and_retains_retry_ownership`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::failed_child_cleanup_propagates_and_retains_retry_ownership -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/managed_agents/runtime_commands.rs`
@@ -1004,5 +1014,41 @@ New module: `true`.
 - Required symbol: `fn phase_c_fresh_authority_blocks_changed_target_and_preserves_concurrent_rows`
 - Required symbol: `fn mesh_preflight_error_writeback_preserves_excluded_inline_copy`
 - Required symbol: `fn proven_disabled_housekeeping_uses_captured_context_without_key_operations`
+- Required symbol: `fn post_spawn_authority_error_settles_all_owned_children`
+- Required symbol: `fn fresh_authority_rejection_cleans_only_new_rejected_child`
+- Required symbol: `fn failed_child_cleanup_propagates_and_retains_retry_ownership`
+- Required symbol: `fn receipt_failure_settles_unregistered_child_and_preserves_error`
+- Required symbol: `fn new_child_collision_never_replaces_previously_tracked_child`
+- Required symbol: `fn restore_child_exit_confirmation_is_bounded_and_tree_is_reaped`
 - Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml device_home_restore_tests`
 - Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --features mesh-llm device_home_restore_tests`
+
+## `desktop/src-tauri/src/managed_agents/restore/child_ownership.rs`
+
+Own spawned restore children through authorized registration or bounded terminate/reap; retain failed cleanup handles in an app-owned queue reached by restore retry and shutdown without replacing existing tracked children
+
+New module: `true`.
+
+- Required symbol: `fn complete_restore_spawn_results_with`
+- Required symbol: `fn settle_restore_child`
+- Required symbol: `fn retry_restore_cleanup`
+- Required symbol: `fn wait_for_restore_child_exit`
+- Required symbol: `struct RestoreCleanup`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore/child_ownership.rs` → `settle_restore_child`; exact call `settle_restore_child(app, key, process, &mut cleanup)`; behavior test `managed_agents::restore::device_home_restore_tests::post_spawn_authority_error_settles_all_owned_children`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::post_spawn_authority_error_settles_all_owned_children -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore/child_ownership.rs` → `retry_restore_cleanup_with`; exact call `retry_restore_cleanup_with(app, terminate_restore_child)`; behavior test `managed_agents::restore::device_home_restore_tests::failed_child_cleanup_propagates_and_retains_retry_ownership`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::failed_child_cleanup_propagates_and_retains_retry_ownership -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore/child_ownership.rs` → `terminate_process`; exact call `super::super::terminate_process(process.child.id())?;`; behavior test `managed_agents::restore::device_home_restore_tests::restore_child_exit_confirmation_is_bounded_and_tree_is_reaped`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::restore_child_exit_confirmation_is_bounded_and_tree_is_reaped -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore/child_ownership.rs` → `wait_for_restore_child_exit`; exact call `wait_for_restore_child_exit(process, std::time::Duration::from_secs(1))`; behavior test `managed_agents::restore::device_home_restore_tests::restore_child_exit_confirmation_is_bounded_and_tree_is_reaped`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::restore_child_exit_confirmation_is_bounded_and_tree_is_reaped -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore/child_ownership.rs` → `write_agent_runtime_receipt`; exact call `super::super::write_agent_runtime_receipt(app, &receipt)`; behavior test `managed_agents::restore::device_home_restore_tests::receipt_failure_settles_unregistered_child_and_preserves_error`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::receipt_failure_settles_unregistered_child_and_preserves_error -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace --features mesh-llm`
+
+## `desktop/src-tauri/src/shutdown.rs`
+
+Retry independently owned failed restore cleanup under shutdown transition before structural/key reads; preserve cleanup errors while existing tracked-agent shutdown continues
+
+New module: `false`.
+
+- Required symbol: `let restore_cleanup_error = managed_agents::retry_restore_cleanup(app).err();`
+- Required symbol: `match restore_cleanup_error`
+- Invocation: `desktop/src-tauri/src/shutdown.rs` → `retry_restore_cleanup`; exact call `managed_agents::retry_restore_cleanup(app).err();`; behavior test `managed_agents::restore::device_home_restore_tests::failed_child_cleanup_propagates_and_retains_retry_ownership`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::failed_child_cleanup_propagates_and_retains_retry_ownership -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`

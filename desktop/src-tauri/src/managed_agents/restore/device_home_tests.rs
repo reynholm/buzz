@@ -357,3 +357,337 @@ fn mesh_preflight_error_writeback_preserves_excluded_inline_copy() {
         Some("injected mesh preflight failure")
     );
 }
+
+fn spawned_result(record: &super::super::ManagedAgentRecord) -> AgentSpawnResult {
+    // Controlled child exits immediately; lifecycle boundaries remain injectable
+    // without leaving a real agent/process behind when a RED assertion fails.
+    #[cfg(unix)]
+    let child = {
+        use std::os::unix::process::CommandExt;
+        std::process::Command::new("/usr/bin/true")
+            .process_group(0)
+            .spawn()
+            .unwrap()
+    };
+    #[cfg(windows)]
+    let child = std::process::Command::new("cmd")
+        .args(["/C", "exit", "0"])
+        .spawn()
+        .unwrap();
+    let key =
+        super::super::ManagedAgentRuntimeKey::new(&record.pubkey, "wss://relay.example").unwrap();
+    let process = ManagedAgentProcess {
+        child,
+        log_path: Default::default(),
+        spawn_config: super::super::spawn_snapshot::prospective_spawn_config_snapshot(
+            record,
+            &[],
+            &[],
+            &key.relay_url,
+            &Default::default(),
+            false,
+        ),
+        setup_mode: false,
+        adapter_availability: None,
+        start_nonce: "isolated-restore-test".into(),
+        #[cfg(windows)]
+        job: None,
+    };
+    (
+        record.pubkey.clone(),
+        SpawnOutcome::Spawned(key, Box::new(process)),
+    )
+}
+
+#[test]
+fn post_spawn_authority_error_settles_all_owned_children() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let base = super::super::managed_agents_base_dir(app.handle()).unwrap();
+    let (raw, _) = mixed_records();
+    write(&base, &raw);
+    let before = std::fs::read(base.join("managed-agents.json")).unwrap();
+    let cleaned = RefCell::new(Vec::new());
+    let results = vec![spawned_result(&raw[1]), spawned_result(&raw[3])];
+    let expected: Vec<_> = results
+        .iter()
+        .filter_map(|(_, outcome)| match outcome {
+            SpawnOutcome::Spawned(_, child) => Some(child.child.id()),
+            _ => None,
+        })
+        .collect();
+    let error = child_ownership::complete_restore_spawn_results_with(
+        app.handle(),
+        results,
+        |_, _| Err("injected post-spawn authority error".into()),
+        |_| panic!("failed authority reached hydration"),
+        |_| panic!("failed authority reached persistence"),
+        |process| {
+            cleaned.borrow_mut().push(process.child.id());
+            process.child.wait().unwrap();
+            Ok(())
+        },
+    )
+    .err()
+    .unwrap();
+    assert!(error.contains("post-spawn authority error"));
+    assert_eq!(
+        *cleaned.borrow(),
+        expected,
+        "completion discarded owned children"
+    );
+    assert_eq!(
+        before,
+        std::fs::read(base.join("managed-agents.json")).unwrap()
+    );
+    let state = app.state::<AppState>();
+    assert!(state.managed_agent_processes.lock().unwrap().is_empty());
+    assert!(state
+        .managed_agent_restore_cleanup
+        .0
+        .lock()
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn fresh_authority_rejection_cleans_only_new_rejected_child() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let base = super::super::managed_agents_base_dir(app.handle()).unwrap();
+    let (raw, allowed) = mixed_records();
+    write(&base, &raw);
+    let state = app.state::<AppState>();
+    let mut tracked = raw[3].clone();
+    tracked.pubkey = nostr::Keys::generate().public_key().to_hex();
+    let (_, SpawnOutcome::Spawned(tracked_key, tracked_child)) = spawned_result(&tracked) else {
+        unreachable!()
+    };
+    let tracked_pid = tracked_child.child.id();
+    state.managed_agent_processes.lock().unwrap().insert(
+        tracked_key.clone(),
+        super::super::ManagedAgentPairRuntime::starting(*tracked_child),
+    );
+    let rejected = spawned_result(&raw[1]);
+    let SpawnOutcome::Spawned(_, rejected_child) = &rejected.1 else {
+        unreachable!()
+    };
+    let rejected_pid = rejected_child.child.id();
+    let cleaned = RefCell::new(Vec::new());
+    let secrets = Secrets::default();
+    let items = child_ownership::complete_restore_spawn_results_with(
+        app.handle(),
+        vec![
+            rejected,
+            spawned_result(&raw[3]),
+            (tracked.pubkey.clone(), SpawnOutcome::Skipped),
+        ],
+        |_, _| Ok(context(EvidenceReadiness::Ready)),
+        |rs| hydrate_keys_with(&secrets, rs),
+        |rs| persist_agent_keys_with(&secrets, rs),
+        |process| {
+            cleaned.borrow_mut().push(process.child.id());
+            process.child.wait().unwrap();
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(*cleaned.borrow(), vec![rejected_pid]);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].0, allowed);
+    assert_preserved(&base, &raw, &secrets);
+    let mut runtimes = state.managed_agent_processes.lock().unwrap();
+    assert_eq!(runtimes.len(), 2);
+    assert_eq!(runtimes.get(&tracked_key).unwrap().child.id(), tracked_pid);
+    assert!(runtimes.keys().any(|key| key.pubkey == allowed));
+    for runtime in runtimes.values_mut() {
+        runtime.child.wait().unwrap();
+    }
+}
+
+#[test]
+fn failed_child_cleanup_propagates_and_retains_retry_ownership() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let base = super::super::managed_agents_base_dir(app.handle()).unwrap();
+    let (raw, _) = mixed_records();
+    write(&base, &raw);
+    let result = child_ownership::complete_restore_spawn_results_with(
+        app.handle(),
+        vec![spawned_result(&raw[1])],
+        |_, _| Ok(context(EvidenceReadiness::Ready)),
+        |rs| assert!(rs.is_empty(), "rejected child reached hydration"),
+        |_| {},
+        |_| Err("injected termination failure".into()),
+    );
+    let state = app.state::<AppState>();
+    let owned = state.managed_agent_restore_cleanup.0.lock().unwrap().len();
+    let retry_failure = child_ownership::retry_restore_cleanup_with(app.handle(), |_| {
+        Err("injected retry failure".into())
+    });
+    let retained_after_retry = state.managed_agent_restore_cleanup.0.lock().unwrap().len();
+    let retry = child_ownership::retry_restore_cleanup(app.handle());
+    assert!(result.is_err(), "failed cleanup reported success");
+    assert!(result
+        .err()
+        .unwrap()
+        .contains("injected termination failure"));
+    assert_eq!(owned, 1, "unconfirmed child lost reachable ownership");
+    assert!(retry_failure
+        .unwrap_err()
+        .contains("injected retry failure"));
+    assert_eq!(retained_after_retry, 1, "failed retry discarded ownership");
+    retry.unwrap();
+    assert!(state
+        .managed_agent_restore_cleanup
+        .0
+        .lock()
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn receipt_failure_settles_unregistered_child_and_preserves_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let base = super::super::managed_agents_base_dir(app.handle()).unwrap();
+    let (raw, allowed) = mixed_records();
+    write(&base, &raw);
+    std::fs::write(base.join("agent-pids"), b"block receipt directory").unwrap();
+    let cleaned = RefCell::new(0);
+    let secrets = Secrets::default();
+    child_ownership::complete_restore_spawn_results_with(
+        app.handle(),
+        vec![spawned_result(&raw[3])],
+        |_, _| panic!("shared target requested authority"),
+        |rs| hydrate_keys_with(&secrets, rs),
+        |rs| persist_agent_keys_with(&secrets, rs),
+        |process| {
+            *cleaned.borrow_mut() += 1;
+            process.child.wait().unwrap();
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(*cleaned.borrow(), 1, "receipt failure discarded the child");
+    let state = app.state::<AppState>();
+    assert!(state.managed_agent_processes.lock().unwrap().is_empty());
+    assert!(state
+        .managed_agent_restore_cleanup
+        .0
+        .lock()
+        .unwrap()
+        .is_empty());
+    assert_preserved(&base, &raw, &secrets);
+    let after = read_policy_records(&base.join("managed-agents.json")).unwrap();
+    assert!(after
+        .iter()
+        .find(|r| r.pubkey == allowed)
+        .unwrap()
+        .last_error
+        .as_ref()
+        .unwrap()
+        .contains("agent-pids"));
+}
+
+#[test]
+fn new_child_collision_never_replaces_previously_tracked_child() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let base = super::super::managed_agents_base_dir(app.handle()).unwrap();
+    let (raw, _) = mixed_records();
+    write(&base, &raw);
+    let (_, SpawnOutcome::Spawned(key, tracked)) = spawned_result(&raw[3]) else {
+        unreachable!()
+    };
+    let tracked_pid = tracked.child.id();
+    let state = app.state::<AppState>();
+    state.managed_agent_processes.lock().unwrap().insert(
+        key.clone(),
+        super::super::ManagedAgentPairRuntime::starting(*tracked),
+    );
+    let new = spawned_result(&raw[3]);
+    let SpawnOutcome::Spawned(_, child) = &new.1 else {
+        unreachable!()
+    };
+    let new_pid = child.child.id();
+    let cleaned = RefCell::new(Vec::new());
+    let secrets = Secrets::default();
+    let items = child_ownership::complete_restore_spawn_results_with(
+        app.handle(),
+        vec![new],
+        |_, _| panic!("shared target requested authority"),
+        |rs| hydrate_keys_with(&secrets, rs),
+        |rs| persist_agent_keys_with(&secrets, rs),
+        |process| {
+            cleaned.borrow_mut().push(process.child.id());
+            process.child.wait().unwrap();
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert!(items.is_empty());
+    assert_eq!(*cleaned.borrow(), vec![new_pid]);
+    let mut runtimes = state.managed_agent_processes.lock().unwrap();
+    assert_eq!(runtimes.len(), 1);
+    let tracked = runtimes.get_mut(&key).unwrap();
+    assert_eq!(tracked.child.id(), tracked_pid);
+    tracked.child.wait().unwrap();
+    assert_preserved(&base, &raw, &secrets);
+}
+
+#[cfg(unix)]
+#[test]
+fn restore_child_exit_confirmation_is_bounded_and_tree_is_reaped() {
+    use std::os::unix::process::CommandExt;
+    let (raw, _) = mixed_records();
+    let (_, SpawnOutcome::Spawned(_, mut process)) = spawned_result(&raw[3]) else {
+        unreachable!()
+    };
+    process.child.wait().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("nested-pid");
+    process.child = std::process::Command::new("/bin/sh")
+        .args(["-c", "trap 'kill \"$nested\" 2>/dev/null; wait \"$nested\"; exit 0' TERM; /bin/sleep 60 & nested=$!; printf '%s' \"$nested\" > \"$1\"; wait \"$nested\"", "restore-tree-test"])
+        .arg(&pid_file).process_group(0).spawn().unwrap();
+    let ready_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let nested_pid = loop {
+        if let Some(pid) = std::fs::read_to_string(&pid_file)
+            .ok()
+            .and_then(|text| text.parse::<u32>().ok())
+        {
+            break Some(pid);
+        }
+        if std::time::Instant::now() >= ready_deadline {
+            break None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    let start = std::time::Instant::now();
+    let unconfirmed =
+        child_ownership::wait_for_restore_child_exit(&mut process, std::time::Duration::ZERO);
+    let cleanup = child_ownership::terminate_restore_child(&mut process);
+    let elapsed = start.elapsed();
+    let reaped_before_release = !super::super::process_is_running(process.child.id());
+    let reaped = process.child.try_wait().unwrap().is_some();
+    // Always settle this controlled tree before assertions, including mutations
+    // that falsely report cleanup success without confirming the leader's exit.
+    if cleanup.is_err() || !reaped {
+        let _ = super::super::terminate_process(process.child.id());
+        let _ = process.child.kill();
+        let _ = process.child.wait();
+    }
+    assert!(unconfirmed.unwrap_err().contains("timed out reaping"));
+    cleanup.unwrap();
+    assert!(elapsed < std::time::Duration::from_secs(3));
+    assert!(
+        reaped_before_release,
+        "production released ownership before reaping leader"
+    );
+    assert!(reaped, "leader was not reaped before ownership release");
+    let nested_pid = nested_pid.expect("isolated nested child readiness");
+    assert!(
+        !super::super::process_is_running(nested_pid),
+        "descendant survived group cleanup"
+    );
+}

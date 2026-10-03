@@ -39,6 +39,7 @@ pub(crate) mod reconcile;
 mod relay_mesh;
 mod repos;
 mod restore;
+pub(crate) use restore::child_ownership::{retry_restore_cleanup, RestoreCleanup};
 pub mod retention;
 mod runtime;
 mod runtime_commands;

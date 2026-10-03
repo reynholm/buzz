@@ -130,6 +130,8 @@ pub(crate) fn shutdown_managed_agents(app: &tauri::AppHandle) -> Result<(), Stri
         .managed_agent_runtime_transition
         .lock()
         .map_err(|error| error.to_string())?;
+    // Retained restore failures remain owned independently of structural rows.
+    let restore_cleanup_error = managed_agents::retry_restore_cleanup(app).err();
     let _store_guard = state
         .managed_agents_store_lock
         .lock()
@@ -266,7 +268,10 @@ pub(crate) fn shutdown_managed_agents(app: &tauri::AppHandle) -> Result<(), Stri
         save_managed_agents(app, &records)?;
     }
 
-    Ok(())
+    match restore_cleanup_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 #[cfg(test)]
