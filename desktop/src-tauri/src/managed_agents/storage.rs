@@ -133,7 +133,7 @@ fn newest_agent_log_in_dir(dir: &Path, pubkey: &str) -> Option<PathBuf> {
 /// The keyring operations the migration chokepoint needs. Abstracted so the
 /// migrate-and-strip decision logic ([`migrate_inline_key`]) can be unit-tested
 /// against a fake without touching the live OS keyring.
-trait KeyStore {
+pub(crate) trait KeyStore {
     fn probe(&self, name: &str) -> KeyringProbe;
     /// Read a key. `Ok(None)` is "no such entry" (absent); `Err` is a backend
     /// failure (keyring unreachable) — the caller MUST NOT collapse the two.
@@ -325,7 +325,7 @@ pub(crate) fn hydrate_keys(records: &mut [ManagedAgentRecord]) {
 /// to spawn an agent whose key could not be read (see the empty-key bail in
 /// `spawn_agent_child`). Empty here never means "fine" — it means "no usable
 /// key this boot."
-fn hydrate_keys_with(store: &impl KeyStore, records: &mut [ManagedAgentRecord]) {
+pub(crate) fn hydrate_keys_with(store: &impl KeyStore, records: &mut [ManagedAgentRecord]) {
     for record in records.iter_mut() {
         // A key-less definition (no pubkey yet — unified agent model) has no
         // keyring entry by construction; keys are minted on first start.
@@ -392,6 +392,39 @@ pub fn save_managed_agents<R: tauri::Runtime>(
     write_agent_store(app, definitions, sorted)
 }
 
+/// Persist only authorized restore updates into a fresh structural snapshot.
+/// Non-target keys and excluded/concurrently added rows are never hydrated,
+/// migrated or dropped. Definition rows and excluded inline secrets stay intact.
+pub(crate) fn save_restore_records_with<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    records: &[ManagedAgentRecord],
+    key_targets: &std::collections::HashSet<String>,
+    persist: impl FnOnce(&mut [ManagedAgentRecord]),
+) -> Result<(), String> {
+    let mut raw = load_agent_store(app)?;
+    let mut keyed_updates: Vec<_> = records
+        .iter()
+        .filter(|r| key_targets.contains(&r.pubkey))
+        .cloned()
+        .collect();
+    persist(&mut keyed_updates);
+    for current in raw.iter_mut().filter(|r| !r.pubkey.is_empty()) {
+        let Some(update) = records.iter().find(|r| r.pubkey == current.pubkey) else {
+            continue;
+        };
+        let inline = current.private_key_nsec.clone();
+        *current = update.clone();
+        current.private_key_nsec = keyed_updates
+            .iter()
+            .find(|r| r.pubkey == current.pubkey)
+            .map(|r| r.private_key_nsec.clone())
+            .unwrap_or(inline);
+    }
+    let bytes = serde_json::to_vec_pretty(&raw)
+        .map_err(|e| format!("failed to serialize restore store: {e}"))?;
+    atomic_write_json_restricted(&managed_agents_store_path(app)?, &bytes)
+}
+
 /// Save the key-less agent *definitions*, preserving the keyed instances —
 /// the definition-side mirror of [`save_managed_agents`].
 pub(crate) fn save_agent_definitions<R: tauri::Runtime>(
@@ -432,7 +465,7 @@ fn write_agent_store<R: tauri::Runtime>(
 /// on success. Keys that cannot be persisted (keyring unreachable) stay inline
 /// in the JSON. Mutates `records` (a save-local clone) — the caller's in-memory
 /// records keep their keys.
-fn persist_agent_keys(records: &mut [ManagedAgentRecord]) {
+pub(crate) fn persist_agent_keys(records: &mut [ManagedAgentRecord]) {
     let Some(store) = agent_secret_store() else {
         // No keyring backend: keys stay inline.
         return;
@@ -441,7 +474,7 @@ fn persist_agent_keys(records: &mut [ManagedAgentRecord]) {
 }
 
 /// Testable core of [`persist_agent_keys`], generic over the [`KeyStore`] seam.
-fn persist_agent_keys_with(store: &impl KeyStore, records: &mut [ManagedAgentRecord]) {
+pub(crate) fn persist_agent_keys_with(store: &impl KeyStore, records: &mut [ManagedAgentRecord]) {
     for record in records.iter_mut() {
         // Only a verified keyring entry lets us drop the inline copy. Both
         // other outcomes keep the key inline: `KeptInline` (keyring

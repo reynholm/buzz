@@ -102,156 +102,14 @@ pub async fn restore_managed_agents_on_launch(
 
     let state = app.state::<AppState>();
 
-    // ── Phase A (under lock): housekeeping + collect agents to restore ──
-    let mut agents_to_start: Vec<super::ManagedAgentRecord>;
-    {
-        let _store_guard = state
-            .managed_agents_store_lock
-            .lock()
-            .map_err(|error| error.to_string())?;
-
-        if shutdown_started.load(Ordering::SeqCst) {
-            return Ok(());
-        }
-
-        let policy_records = super::persona_device_view::read_policy_records(
-            &super::managed_agents_store_path(app)?,
-        )?;
-        let context = if needs_auto_start_authority(&policy_records) {
-            Some(super::persona_device_view::load_device_policy_context(
-                app, &state,
-            )?)
-        } else {
-            None
-        };
-        let mut selected = select_auto_start_candidates(&policy_records, context.as_ref())?;
-        super::storage::hydrate_keys(&mut selected);
-        let eligible: std::collections::HashSet<_> =
-            selected.iter().map(|r| r.pubkey.clone()).collect();
-        let mut records = policy_records;
-        records.retain(|r| !r.pubkey.is_empty());
-        // Hydrate only eligible candidates; copied records must not import keys.
-        for record in &mut records {
-            if let Some(hydrated) = selected.iter().find(|r| r.pubkey == record.pubkey) {
-                record.private_key_nsec = hydrated.private_key_nsec.clone();
-            }
-        }
-        recover_pending_assignment_cleanup(&managed_agents_base_dir(app)?, |pending_pubkey| {
-            records
-                .iter()
-                .any(|record| record.pubkey.eq_ignore_ascii_case(pending_pubkey))
-        })?;
-        let mut runtimes = state
-            .managed_agent_processes
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let (mut changed, _exited) = sync_managed_agent_processes(
-            &mut records,
-            &mut runtimes,
-            &super::current_instance_id(app),
-        );
-        changed |=
-            kill_stale_tracked_processes(&mut records, &runtimes, &super::current_instance_id(app));
-
-        let tracked_pids: Vec<u32> = runtimes
-            .values()
-            .map(|runtime| runtime.child.id())
-            .chain(
-                super::read_all_agent_runtime_receipts(app)
-                    .into_iter()
-                    .filter_map(|(path, receipt)| {
-                        super::valid_agent_runtime_receipt(
-                            &path,
-                            &receipt,
-                            &super::current_instance_id(app),
-                        )
-                        .then_some(receipt.pid)
-                    }),
-            )
-            .collect();
-        super::sweep_orphaned_agent_processes(app, &tracked_pids);
-
-        // System-wide sweep: enumerate all user processes and kill any known
-        // agent binaries not tracked by this session. Catches orphans whose
-        // PID files were already cleaned up (e.g. agent workers in their own
-        // process group whose parent harness exited).
-        super::sweep_system_agent_processes(&super::current_instance_id(app), &tracked_pids);
-
-        // Dead-instance reaping: find agents belonging to Buzz instances
-        // whose desktop process is no longer running and reap them.
-        super::reap_dead_instance_agents(&super::current_instance_id(app), &tracked_pids);
-
-        // Exact-path sweep: kill any buzz-acp process whose executable path
-        // matches this bundle's harness binary but is not in the tracked set.
-        // Complements the env-var sweep above — catches orphans that predate
-        // BUZZ_MANAGED_AGENT injection or lost their PID-file receipt.
-        //
-        // TODO: the three sweeps above each walk the PID table independently.
-        // A future consolidation should collect a single shared process snapshot
-        // at the top of this block and thread it through all sweep functions,
-        // replacing the three separate kernel enumerations.
-        super::sweep_untracked_bundle_harnesses(&tracked_pids);
-
-        let candidates: Vec<String> = records
-            .iter()
-            .filter(|record| eligible.contains(&record.pubkey))
-            .map(|record| record.pubkey.clone())
-            .collect();
-
-        let mut to_start = Vec::new();
-        for pubkey in &candidates {
-            if let Some(runtime) = runtimes
-                .iter_mut()
-                .find(|(key, _)| key.pubkey == *pubkey)
-                .map(|(_, runtime)| runtime)
-            {
-                if runtime.child.try_wait().ok().flatten().is_none() {
-                    continue;
-                }
-            }
-            if let Some(record) = records.iter().find(|r| r.pubkey == *pubkey) {
-                if let Some(pid) = record.runtime_pid {
-                    if super::process_is_running(pid) {
-                        continue;
-                    }
-                }
-                to_start.push(record.clone());
-            }
-        }
-        agents_to_start = to_start;
-
-        // Re-snapshot persona config for agents about to be restored, matching
-        // the interactive spawn path so auto-start agents also pick up the
-        // current persona on app launch.
-        let personas_for_snapshot = super::load_personas(app).unwrap_or_default();
-        for record in records.iter_mut() {
-            if !agents_to_start.iter().any(|r| r.pubkey == record.pubkey) {
-                continue;
-            }
-            let Some(persona_id) = record.persona_id.clone() else {
-                continue;
-            };
-            let Some(persona) = personas_for_snapshot.iter().find(|p| p.id == persona_id) else {
-                // Orphaned: no current persona to re-snapshot from. Leave the
-                // record as-is — `spawn_agent_child` (Phase B below) refuses to
-                // spawn it and Phase C persists the refusal to `last_error`.
-                continue;
-            };
-            super::persona_events::apply_persona_snapshot(record, persona);
-            record.updated_at = util::now_iso();
-            changed = true;
-        }
-        // Re-collect to_start from the updated records so Phase B spawns the refreshed config.
-        agents_to_start = records
-            .iter()
-            .filter(|r| agents_to_start.iter().any(|s| s.pubkey == r.pubkey))
-            .cloned()
-            .collect();
-
-        if changed {
-            save_managed_agents(app, &records)?;
-        }
-    }
+    let agents_to_start = prepare_restore_phase_a_with(
+        app,
+        shutdown_started,
+        super::persona_device_view::load_device_policy_context,
+        super::storage::hydrate_keys,
+        super::storage::persist_agent_keys,
+        |records, eligible| prepare_restore_processes(app, records, eligible),
+    )?;
 
     if agents_to_start.is_empty() {
         return Ok(());
@@ -290,7 +148,7 @@ pub async fn restore_managed_agents_on_launch(
                 crate::commands::ensure_relay_mesh_for_record(app, mesh_model_id.as_deref(), false)
                     .await
             {
-                persist_restore_error(app, &state, &record.pubkey, error)?;
+                persist_restore_error(app, &record.pubkey, error)?;
                 mesh_preflight_failures.insert(record.pubkey.clone());
             }
         }
@@ -390,110 +248,118 @@ pub async fn restore_managed_agents_on_launch(
         return Ok(());
     }
 
-    // ── Phase C (re-acquire lock): write back PIDs and status to records ──
-    let _store_guard = state
-        .managed_agents_store_lock
-        .lock()
-        .map_err(|error| error.to_string())?;
-    let mut records = load_managed_agents(app)?;
-    let mut runtimes = state
-        .managed_agent_processes
-        .lock()
-        .map_err(|error| error.to_string())?;
+    let started_pubkeys = spawn_results
+        .iter()
+        .map(|(pubkey, _)| pubkey.clone())
+        .collect();
+    let reconcile_items = complete_restore_phase_c_with(
+        app,
+        &started_pubkeys,
+        super::persona_device_view::load_device_policy_context,
+        super::storage::hydrate_keys,
+        super::storage::persist_agent_keys,
+        |records| {
+            let mut runtimes = state
+                .managed_agent_processes
+                .lock()
+                .map_err(|error| error.to_string())?;
 
-    let mut successfully_spawned: Vec<(String, String)> = Vec::new();
+            let mut successfully_spawned: Vec<(String, String)> = Vec::new();
 
-    for (pubkey, outcome) in spawn_results {
-        match outcome {
-            // Skipped means a concurrent reconcile already owns a live child for
-            // this pair; leave its runtime and record state untouched.
-            SpawnOutcome::Skipped => continue,
-            SpawnOutcome::Spawned(key, mut process) => {
-                let Ok(record) = find_managed_agent_mut(&mut records, &pubkey) else {
-                    continue;
-                };
-                let now = util::now_iso();
-                let receipt = super::ManagedAgentRuntimeReceipt {
-                    key: key.clone(),
-                    pid: process.child.id(),
-                    desktop_instance_id: super::current_instance_id(app),
-                    started_at: now.clone(),
-                };
-                if let Err(error) = super::write_agent_runtime_receipt(app, &receipt) {
-                    let _ = super::terminate_process(process.child.id());
-                    let _ = process.child.wait();
-                    record.updated_at = now;
-                    record.last_error = Some(error);
-                    continue;
+            for (pubkey, outcome) in spawn_results {
+                match outcome {
+                    // Skipped means a concurrent reconcile already owns a live child for
+                    // this pair; leave its runtime and record state untouched.
+                    SpawnOutcome::Skipped => continue,
+                    SpawnOutcome::Spawned(key, mut process) => {
+                        let Ok(record) = find_managed_agent_mut(records, &pubkey) else {
+                            continue;
+                        };
+                        let now = util::now_iso();
+                        let receipt = super::ManagedAgentRuntimeReceipt {
+                            key: key.clone(),
+                            pid: process.child.id(),
+                            desktop_instance_id: super::current_instance_id(app),
+                            started_at: now.clone(),
+                        };
+                        if let Err(error) = super::write_agent_runtime_receipt(app, &receipt) {
+                            let _ = super::terminate_process(process.child.id());
+                            let _ = process.child.wait();
+                            record.updated_at = now;
+                            record.last_error = Some(error);
+                            continue;
+                        }
+                        record.updated_at = now.clone();
+                        record.runtime_pid = None;
+                        record.last_started_at = Some(now);
+                        record.last_stopped_at = None;
+                        record.last_exit_code = None;
+                        record.last_error = None;
+                        runtimes.insert(
+                            key.clone(),
+                            super::ManagedAgentPairRuntime::starting(*process),
+                        );
+                        // Carry the spawn key's relay into profile reconciliation so
+                        // the background task queries/publishes on the relay this
+                        // spawn was actually keyed to — not whatever workspace is
+                        // active when the task eventually executes.
+                        successfully_spawned.push((pubkey, key.relay_url.clone()));
+                    }
+                    SpawnOutcome::Failed(error) => {
+                        let Ok(record) = find_managed_agent_mut(records, &pubkey) else {
+                            continue;
+                        };
+                        record.updated_at = util::now_iso();
+                        record.last_error = Some(error);
+                    }
                 }
-                record.updated_at = now.clone();
-                record.runtime_pid = None;
-                record.last_started_at = Some(now);
-                record.last_stopped_at = None;
-                record.last_exit_code = None;
-                record.last_error = None;
-                runtimes.insert(
-                    key.clone(),
-                    super::ManagedAgentPairRuntime::starting(*process),
-                );
-                // Carry the spawn key's relay into profile reconciliation so
-                // the background task queries/publishes on the relay this
-                // spawn was actually keyed to — not whatever workspace is
-                // active when the task eventually executes.
-                successfully_spawned.push((pubkey, key.relay_url.clone()));
             }
-            SpawnOutcome::Failed(error) => {
-                let Ok(record) = find_managed_agent_mut(&mut records, &pubkey) else {
-                    continue;
-                };
-                record.updated_at = util::now_iso();
-                record.last_error = Some(error);
-            }
-        }
-    }
 
-    // Collect profile reconciliation data for successfully spawned agents before
-    // releasing the lock. This mirrors the fire-and-forget pattern in
-    // start_managed_agent — ensuring boot-restored agents get the same profile
-    // self-healing as UI-started agents.
-    let reconcile_personas = super::load_personas(app).unwrap_or_default();
-    let reconcile_items: Vec<(String, crate::commands::ProfileReconcileData)> =
-        successfully_spawned
-            .iter()
-            .filter_map(|(pubkey, spawn_relay)| {
-                let record = records.iter().find(|r| r.pubkey == *pubkey)?;
-                // Resolve the effective harness for the avatar-fallback
-                // derivation (the snapshot may be empty/stale for an inherited
-                // harness). Mirrors the UI start path.
-                let effective_command =
-                    crate::managed_agents::record_agent_command(record, &reconcile_personas);
-                Some((
-                    pubkey.clone(),
-                    crate::commands::ProfileReconcileData {
-                        private_key_nsec: record.private_key_nsec.clone(),
-                        name: record.name.clone(),
-                        relay_url: record.relay_url.clone(),
-                        // Pin the relay this spawn was keyed to (see the
-                        // successfully_spawned push above) so the deferred
-                        // task cannot resolve a post-switch workspace.
-                        target_relay_url: Some(spawn_relay.clone()),
-                        avatar_url: record.avatar_url.clone(),
-                        auth_tag: record.auth_tag.clone(),
-                        pubkey: record.pubkey.clone(),
-                        agent_command: effective_command,
-                        persona_id: record.persona_id.clone(),
-                        about: crate::managed_agents::record_effective_description(
+            // Collect profile reconciliation data for successfully spawned agents before
+            // releasing the lock. This mirrors the fire-and-forget pattern in
+            // start_managed_agent — ensuring boot-restored agents get the same profile
+            // self-healing as UI-started agents.
+            let reconcile_personas = super::load_personas(app).unwrap_or_default();
+            let reconcile_items: Vec<(String, crate::commands::ProfileReconcileData)> =
+                successfully_spawned
+                    .iter()
+                    .filter_map(|(pubkey, spawn_relay)| {
+                        let record = records.iter().find(|r| r.pubkey == *pubkey)?;
+                        // Resolve the effective harness for the avatar-fallback
+                        // derivation (the snapshot may be empty/stale for an inherited
+                        // harness). Mirrors the UI start path.
+                        let effective_command = crate::managed_agents::record_agent_command(
                             record,
                             &reconcile_personas,
-                        ),
-                    },
-                ))
-            })
-            .collect();
+                        );
+                        Some((
+                            pubkey.clone(),
+                            crate::commands::ProfileReconcileData {
+                                private_key_nsec: record.private_key_nsec.clone(),
+                                name: record.name.clone(),
+                                relay_url: record.relay_url.clone(),
+                                // Pin the relay this spawn was keyed to (see the
+                                // successfully_spawned push above) so the deferred
+                                // task cannot resolve a post-switch workspace.
+                                target_relay_url: Some(spawn_relay.clone()),
+                                avatar_url: record.avatar_url.clone(),
+                                auth_tag: record.auth_tag.clone(),
+                                pubkey: record.pubkey.clone(),
+                                agent_command: effective_command,
+                                persona_id: record.persona_id.clone(),
+                                about: crate::managed_agents::record_effective_description(
+                                    record,
+                                    &reconcile_personas,
+                                ),
+                            },
+                        ))
+                    })
+                    .collect();
 
-    save_managed_agents(app, &records)?;
-    drop(runtimes);
-    drop(_store_guard);
+            drop(runtimes);
+            Ok(reconcile_items)
+        },
+    )?;
     drop(restore_transition);
 
     // ── Profile reconciliation (fire-and-forget) ────────────────────────────
@@ -513,6 +379,265 @@ pub async fn restore_managed_agents_on_launch(
     }
 
     Ok(())
+}
+
+/// Phase A production orchestration with only authority, key and process boundaries injected.
+fn prepare_restore_phase_a_with<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    shutdown_started: &AtomicBool,
+    context_provider: impl FnOnce(
+        &tauri::AppHandle<R>,
+        &AppState,
+    )
+        -> Result<super::persona_device_view::DevicePolicyContext, String>,
+    hydrate: impl FnOnce(&mut [super::ManagedAgentRecord]),
+    persist: impl FnOnce(&mut [super::ManagedAgentRecord]),
+    processes: impl FnOnce(
+        &mut [super::ManagedAgentRecord],
+        &std::collections::HashSet<String>,
+    ) -> Result<(bool, Vec<String>), String>,
+) -> Result<Vec<super::ManagedAgentRecord>, String> {
+    let state = app.state::<AppState>();
+    let _store_guard = state
+        .managed_agents_store_lock
+        .lock()
+        .map_err(|error| error.to_string())?;
+
+    if shutdown_started.load(Ordering::SeqCst) {
+        return Ok(Vec::new());
+    }
+
+    let policy_records =
+        super::persona_device_view::read_policy_records(&super::managed_agents_store_path(app)?)?;
+    let context = if needs_auto_start_authority(&policy_records) {
+        Some(context_provider(app, &state)?)
+    } else {
+        None
+    };
+    let update_pubkeys = authorized_restore_updates(&policy_records, context.as_ref())?;
+    let mut selected = select_auto_start_candidates(&policy_records, context.as_ref())?;
+    hydrate(&mut selected);
+    let eligible: std::collections::HashSet<_> =
+        selected.iter().map(|r| r.pubkey.clone()).collect();
+    let mut records = policy_records;
+    records.retain(|r| !r.pubkey.is_empty());
+    // Hydrate only eligible candidates; copied records must not import keys.
+    for record in &mut records {
+        if let Some(hydrated) = selected.iter().find(|r| r.pubkey == record.pubkey) {
+            record.private_key_nsec = hydrated.private_key_nsec.clone();
+        }
+    }
+    recover_pending_assignment_cleanup(&managed_agents_base_dir(app)?, |pending_pubkey| {
+        records
+            .iter()
+            .any(|record| record.pubkey.eq_ignore_ascii_case(pending_pubkey))
+    })?;
+    let (mut changed, candidates) = processes(&mut records, &eligible)?;
+    let mut agents_to_start: Vec<_> = records
+        .iter()
+        .filter(|r| candidates.contains(&r.pubkey))
+        .cloned()
+        .collect();
+
+    // Re-snapshot persona config for agents about to be restored, matching
+    // the interactive spawn path so auto-start agents also pick up the
+    // current persona on app launch.
+    let personas_for_snapshot = super::load_personas(app).unwrap_or_default();
+    for record in records.iter_mut() {
+        if !agents_to_start.iter().any(|r| r.pubkey == record.pubkey) {
+            continue;
+        }
+        let Some(persona_id) = record.persona_id.clone() else {
+            continue;
+        };
+        let Some(persona) = personas_for_snapshot.iter().find(|p| p.id == persona_id) else {
+            // Orphaned: no current persona to re-snapshot from. Leave the
+            // record as-is — `spawn_agent_child` (Phase B below) refuses to
+            // spawn it and Phase C persists the refusal to `last_error`.
+            continue;
+        };
+        super::persona_events::apply_persona_snapshot(record, persona);
+        record.updated_at = util::now_iso();
+        changed = true;
+    }
+    // Re-collect to_start from the updated records so Phase B spawns the refreshed config.
+    agents_to_start = records
+        .iter()
+        .filter(|r| agents_to_start.iter().any(|s| s.pubkey == r.pubkey))
+        .cloned()
+        .collect();
+
+    if changed {
+        records.retain(|r| update_pubkeys.contains(&r.pubkey));
+        super::storage::save_restore_records_with(app, &records, &eligible, persist)?;
+    }
+    Ok(agents_to_start)
+}
+
+fn prepare_restore_processes(
+    app: &tauri::AppHandle,
+    records: &mut [super::ManagedAgentRecord],
+    eligible: &std::collections::HashSet<String>,
+) -> Result<(bool, Vec<String>), String> {
+    let state = app.state::<AppState>();
+    let mut runtimes = state
+        .managed_agent_processes
+        .lock()
+        .map_err(|error| error.to_string())?;
+    let (mut changed, _exited) =
+        sync_managed_agent_processes(records, &mut runtimes, &super::current_instance_id(app));
+    changed |= kill_stale_tracked_processes(records, &runtimes, &super::current_instance_id(app));
+
+    let tracked_pids: Vec<u32> = runtimes
+        .values()
+        .map(|runtime| runtime.child.id())
+        .chain(
+            super::read_all_agent_runtime_receipts(app)
+                .into_iter()
+                .filter_map(|(path, receipt)| {
+                    super::valid_agent_runtime_receipt(
+                        &path,
+                        &receipt,
+                        &super::current_instance_id(app),
+                    )
+                    .then_some(receipt.pid)
+                }),
+        )
+        .collect();
+    super::sweep_orphaned_agent_processes(app, &tracked_pids);
+
+    // System-wide sweep: enumerate all user processes and kill any known
+    // agent binaries not tracked by this session. Catches orphans whose
+    // PID files were already cleaned up (e.g. agent workers in their own
+    // process group whose parent harness exited).
+    super::sweep_system_agent_processes(&super::current_instance_id(app), &tracked_pids);
+
+    // Dead-instance reaping: find agents belonging to Buzz instances
+    // whose desktop process is no longer running and reap them.
+    super::reap_dead_instance_agents(&super::current_instance_id(app), &tracked_pids);
+
+    // Exact-path sweep: kill any buzz-acp process whose executable path
+    // matches this bundle's harness binary but is not in the tracked set.
+    // Complements the env-var sweep above — catches orphans that predate
+    // BUZZ_MANAGED_AGENT injection or lost their PID-file receipt.
+    //
+    // TODO: the three sweeps above each walk the PID table independently.
+    // A future consolidation should collect a single shared process snapshot
+    // at the top of this block and thread it through all sweep functions,
+    // replacing the three separate kernel enumerations.
+    super::sweep_untracked_bundle_harnesses(&tracked_pids);
+
+    let candidates: Vec<String> = records
+        .iter()
+        .filter(|record| eligible.contains(&record.pubkey))
+        .map(|record| record.pubkey.clone())
+        .collect();
+
+    let mut to_start = Vec::new();
+    for pubkey in &candidates {
+        if let Some(runtime) = runtimes
+            .iter_mut()
+            .find(|(key, _)| key.pubkey == *pubkey)
+            .map(|(_, runtime)| runtime)
+        {
+            if runtime.child.try_wait().ok().flatten().is_none() {
+                continue;
+            }
+        }
+        if let Some(record) = records.iter().find(|r| r.pubkey == *pubkey) {
+            if let Some(pid) = record.runtime_pid {
+                if super::process_is_running(pid) {
+                    continue;
+                }
+            }
+            to_start.push(record.clone());
+        }
+    }
+    Ok((changed, to_start.into_iter().map(|r| r.pubkey).collect()))
+}
+
+/// Phase C production reload/writeback with only authority, key and runtime boundaries injected.
+fn complete_restore_phase_c_with<R: tauri::Runtime, T>(
+    app: &tauri::AppHandle<R>,
+    started_pubkeys: &std::collections::HashSet<String>,
+    context_provider: impl FnOnce(
+        &tauri::AppHandle<R>,
+        &AppState,
+    )
+        -> Result<super::persona_device_view::DevicePolicyContext, String>,
+    hydrate: impl FnOnce(&mut [super::ManagedAgentRecord]),
+    persist: impl FnOnce(&mut [super::ManagedAgentRecord]),
+    apply: impl FnOnce(&mut [super::ManagedAgentRecord]) -> Result<T, String>,
+) -> Result<T, String> {
+    let state = app.state::<AppState>();
+    let _store = state
+        .managed_agents_store_lock
+        .lock()
+        .map_err(|e| e.to_string())?;
+    let raw =
+        super::persona_device_view::read_policy_records(&super::managed_agents_store_path(app)?)?;
+    // Phase B releases the store lock. Derive authority from CURRENT target rows
+    // plus their current structural definitions, never a stale pubkey whitelist.
+    let targets: Vec<_> = raw
+        .iter()
+        .filter(|r| r.pubkey.is_empty() || started_pubkeys.contains(&r.pubkey))
+        .cloned()
+        .collect();
+    let context = if super::device_home_migration::needs_private_authority(&targets) {
+        Some(context_provider(app, &state)?)
+    } else {
+        None
+    };
+    let authorized = authorized_restore_updates(&raw, context.as_ref())?;
+    let mut records: Vec<_> = raw
+        .into_iter()
+        .filter(|r| !r.pubkey.is_empty() && authorized.contains(&r.pubkey))
+        .collect();
+    let key_targets: std::collections::HashSet<_> =
+        started_pubkeys.intersection(&authorized).cloned().collect();
+    let mut selected: Vec<_> = records
+        .iter()
+        .filter(|r| key_targets.contains(&r.pubkey))
+        .cloned()
+        .collect();
+    hydrate(&mut selected);
+    for record in &mut records {
+        if let Some(hydrated) = selected.iter().find(|r| r.pubkey == record.pubkey) {
+            record.private_key_nsec = hydrated.private_key_nsec.clone();
+        }
+    }
+    let result = apply(&mut records)?;
+    super::storage::save_restore_records_with(app, &records, &key_targets, persist)?;
+    Ok(result)
+}
+
+/// Housekeeping may update safe non-candidates without resolving their keys.
+/// Missing context freezes private non-candidates; it never triggers a proof read.
+fn authorized_restore_updates(
+    records: &[super::ManagedAgentRecord],
+    context: Option<&super::persona_device_view::DevicePolicyContext>,
+) -> Result<std::collections::HashSet<String>, String> {
+    let definitions: Vec<_> = records
+        .iter()
+        .filter(|r| r.pubkey.is_empty())
+        .cloned()
+        .collect();
+    let views: Vec<_> = definitions
+        .iter()
+        .filter_map(super::ManagedAgentRecord::to_definition_view)
+        .collect();
+    let mut authorized = std::collections::HashSet::new();
+    for record in records.iter().filter(|r| !r.pubkey.is_empty()) {
+        let mut relevant = definitions.clone();
+        relevant.push(record.clone());
+        if context.is_none() && super::device_home_migration::needs_private_authority(&relevant) {
+            continue;
+        }
+        if super::device_home_migration::auto_start_allowed(record, &views, context)? {
+            authorized.insert(record.pubkey.clone());
+        }
+    }
+    Ok(authorized)
 }
 
 fn profile_reconcile_completed(outcome: crate::commands::ProfileReconcileOutcome) -> bool {
@@ -569,19 +694,46 @@ pub(crate) fn spawn_pending_profile_reconciliations(app: &tauri::AppHandle, work
 #[cfg(feature = "mesh-llm")]
 fn persist_restore_error(
     app: &tauri::AppHandle,
-    state: &AppState,
     pubkey: &str,
     error: String,
 ) -> Result<(), String> {
-    let _store_guard = state
-        .managed_agents_store_lock
-        .lock()
-        .map_err(|error| error.to_string())?;
-    let mut records = load_managed_agents(app)?;
-    let record = find_managed_agent_mut(&mut records, pubkey)?;
-    record.updated_at = util::now_iso();
-    record.last_error = Some(error);
-    save_managed_agents(app, &records)
+    persist_restore_error_with(
+        app,
+        pubkey,
+        error,
+        super::persona_device_view::load_device_policy_context,
+        |_| {},
+        |_| {},
+    )
+}
+
+#[cfg(feature = "mesh-llm")]
+fn persist_restore_error_with<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    pubkey: &str,
+    error: String,
+    context_provider: impl FnOnce(
+        &tauri::AppHandle<R>,
+        &AppState,
+    )
+        -> Result<super::persona_device_view::DevicePolicyContext, String>,
+    hydrate: impl FnOnce(&mut [super::ManagedAgentRecord]),
+    persist: impl FnOnce(&mut [super::ManagedAgentRecord]),
+) -> Result<(), String> {
+    complete_restore_phase_c_with(
+        app,
+        &[pubkey.to_string()].into_iter().collect(),
+        context_provider,
+        hydrate,
+        persist,
+        |records| {
+            if let Ok(record) = find_managed_agent_mut(records, pubkey) {
+                record.updated_at = util::now_iso();
+                record.last_error = Some(error);
+            }
+            Ok(())
+        },
+    )
 }
 
 /// Select fresh auto-start records through the home guard before lifecycle work.
@@ -633,3 +785,7 @@ mod profile_reconcile_tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "restore/device_home_tests.rs"]
+mod device_home_restore_tests;

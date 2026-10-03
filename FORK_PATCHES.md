@@ -733,14 +733,16 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/workspace.rs`
 
-Invalidate backend home evidence on workspace apply; Migrate proven homes before scoped event sync without waiting for frontend history; top-level Wry entry wiring is compile coverage with native acceptance outstanding
+Invalidate backend home evidence on workspace apply; Migrate proven homes before scoped event sync without waiting for frontend history; top-level Wry entry wiring is compile coverage with native acceptance outstanding; initialize captured scoped retention schema before read-only policy, propagating open/schema errors while retaining Pending
 
 New module: `false`.
 
 - Required symbol: `device_home_sync::reset(&state)?;`
-- Invocation: `desktop/src-tauri/src/commands/workspace.rs` → `migrate_device_homes_before_sync`; exact call `crate::managed_agents::device_home_migration::migrate_device_homes_before_sync(
-                &restore_app,
-            )?;`; behavior test `managed_agents::device_home_migration::tests::workspace_hook_defers_legacy_but_reclaims_proven_origin_before_sync`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::workspace_hook_defers_legacy_but_reclaims_proven_origin_before_sync -- --exact`
+- Required symbol: `fn prepare_workspace_event_sync`
+- Required symbol: `fn prepare_workspace_event_sync_with`
+- Invocation: `desktop/src-tauri/src/commands/workspace.rs` → `prepare_workspace_event_sync`; exact call `prepare_workspace_event_sync(&restore_app, &scope)?;`; behavior test `commands::workspace::device_home_preparation_tests::fresh_workspace_preparation_initializes_scope_without_authorizing_absence`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::workspace::device_home_preparation_tests::fresh_workspace_preparation_initializes_scope_without_authorizing_absence -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/workspace.rs` → `open_retention_db`; exact call `crate::managed_agents::retention::open_retention_db(&scope.db_path)?;`; behavior test `commands::workspace::device_home_preparation_tests::fresh_workspace_preparation_initializes_scope_without_authorizing_absence`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::workspace::device_home_preparation_tests::fresh_workspace_preparation_initializes_scope_without_authorizing_absence -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/workspace.rs` → `migrate_device_homes_before_sync`; exact call `crate::managed_agents::device_home_migration::migrate_device_homes_before_sync(app)`; behavior test `commands::workspace::device_home_preparation_tests::fresh_workspace_preparation_initializes_scope_without_authorizing_absence`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::workspace::device_home_preparation_tests::fresh_workspace_preparation_initializes_scope_without_authorizing_absence -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/commands/personas/inbound.rs`
@@ -914,25 +916,40 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/managed_agents/storage.rs`
 
-Read-only migration key resolver propagates backend/malformed-secret errors and verifies pubkey; expose existing hydration boundary for eligible-only auto-start work
+Read-only migration key resolver propagates backend/malformed-secret errors and verifies pubkey; expose existing hydration boundary for eligible-only auto-start work; protected restore merge reloads current raw unified store and preserves excluded keys/definitions/concurrent rows, injectable existing KeyStore hydration/persistence
 
 New module: `false`.
 
 - Required symbol: `fn resolve_agent_key_readonly`
 - Required symbol: `fn resolve_agent_key_readonly_with`
+- Required symbol: `fn save_restore_records_with`
+- Required symbol: `pub(crate) trait KeyStore`
 - Invocation: `desktop/src-tauri/src/managed_agents/storage.rs` → `load_all_readonly`; exact call `.load_all_readonly()?`; behavior test `managed_agents::storage::migration_key_tests::migration_key_resolver_validates_read_only_secrets_and_errors`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::storage::migration_key_tests::migration_key_resolver_validates_read_only_secrets_and_errors -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/storage.rs` → `load_agent_store`; exact call `let mut raw = load_agent_store(app)?;`; behavior test `managed_agents::restore::device_home_restore_tests::phase_c_fresh_authority_blocks_changed_target_and_preserves_concurrent_rows`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::phase_c_fresh_authority_blocks_changed_target_and_preserves_concurrent_rows -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/storage.rs` → `atomic_write_json_restricted`; exact call `atomic_write_json_restricted(&managed_agents_store_path(app)?, &bytes)`; behavior test `managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/managed_agents/restore.rs`
 
-Select proven/shared/standalone auto-start candidates before key hydration or lifecycle work, retaining existing live-pair duplicate guards; top-level Wry entry wiring is compile coverage with native acceptance outstanding; authority lookup excludes private records not selected for auto-start
+Select proven/shared/standalone auto-start candidates before key hydration or lifecycle work, retaining existing live-pair duplicate guards; top-level Wry entry wiring is compile coverage with native acceptance outstanding; authority lookup excludes private records not selected for auto-start; PhaseA and fresh PhaseC protected raw-store merge preserves excluded rows/definitions, keys restricted to actual authorized targets, baseline safe disabled housekeeping remains structural-only; mesh preflight error uses same protected writeback
 
 New module: `false`.
 
 - Required symbol: `fn select_auto_start_candidates`
 - Required symbol: `fn needs_auto_start_authority`
+- Required symbol: `fn prepare_restore_phase_a_with`
+- Required symbol: `fn complete_restore_phase_c_with`
+- Required symbol: `fn authorized_restore_updates`
+- Required symbol: `fn persist_restore_error_with`
 - Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `auto_start_allowed`; exact call `super::device_home_migration::auto_start_allowed(record, &definitions, context)?`; behavior test `managed_agents::runtime_commands::device_home_job_tests::copied_and_deferred_auto_start_jobs_have_zero_hydration_and_probes`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::runtime_commands::device_home_job_tests::copied_and_deferred_auto_start_jobs_have_zero_hydration_and_probes -- --exact`
-- Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `select_auto_start_candidates`; exact call `select_auto_start_candidates(&policy_records, context.as_ref())?;`; behavior test `managed_agents::device_home_migration::tests::copy_suppresses_both_outbound_kinds_and_restore_candidates`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::copy_suppresses_both_outbound_kinds_and_restore_candidates -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `select_auto_start_candidates`; exact call `select_auto_start_candidates(&policy_records, context.as_ref())?;`; behavior test `managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `save_restore_records_with`; exact call `super::storage::save_restore_records_with(app, &records, &eligible, persist)?;`; behavior test `managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `save_restore_records_with`; exact call `super::storage::save_restore_records_with(app, &records, &key_targets, persist)?;`; behavior test `managed_agents::restore::device_home_restore_tests::mixed_restore_phase_c_reload_and_save_never_import_excluded_copy`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::mixed_restore_phase_c_reload_and_save_never_import_excluded_copy -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `authorized_restore_updates`; exact call `authorized_restore_updates(&policy_records, context.as_ref())?;`; behavior test `managed_agents::restore::device_home_restore_tests::disabled_safe_housekeeping_persists_without_key_operations`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::disabled_safe_housekeeping_persists_without_key_operations -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `authorized_restore_updates`; exact call `authorized_restore_updates(&raw, context.as_ref())?;`; behavior test `managed_agents::restore::device_home_restore_tests::phase_c_fresh_authority_blocks_changed_target_and_preserves_concurrent_rows`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::phase_c_fresh_authority_blocks_changed_target_and_preserves_concurrent_rows -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `complete_restore_phase_c_with`; exact call `complete_restore_phase_c_with(
+        app,
+        &[pubkey.to_string()].into_iter().collect(),`; behavior test `managed_agents::restore::device_home_restore_tests::mesh_preflight_error_writeback_preserves_excluded_inline_copy`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --features mesh-llm managed_agents::restore::device_home_restore_tests::mesh_preflight_error_writeback_preserves_excluded_inline_copy -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/managed_agents/runtime_commands.rs`
@@ -964,3 +981,28 @@ New module: `false`.
 
 - Required symbol: `fn slimming_republish_wave_is_one_time`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/workspace_device_home_tests.rs`
+
+Task4 fix1 regression tests bind production owning orchestration with temporary app storage and injected existing authority/process/KeyStore boundaries
+
+New module: `true`.
+
+- Required symbol: `fn fresh_workspace_preparation_initializes_scope_without_authorizing_absence`
+- Required symbol: `fn workspace_preparation_database_open_and_schema_errors_are_fatal`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml device_home_preparation_tests`
+
+## `desktop/src-tauri/src/managed_agents/restore/device_home_tests.rs`
+
+Task4 fix1 regression tests bind production owning orchestration with temporary app storage and injected existing authority/process/KeyStore boundaries
+
+New module: `true`.
+
+- Required symbol: `fn mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy`
+- Required symbol: `fn mixed_restore_phase_c_reload_and_save_never_import_excluded_copy`
+- Required symbol: `fn disabled_safe_housekeeping_persists_without_key_operations`
+- Required symbol: `fn phase_c_fresh_authority_blocks_changed_target_and_preserves_concurrent_rows`
+- Required symbol: `fn mesh_preflight_error_writeback_preserves_excluded_inline_copy`
+- Required symbol: `fn proven_disabled_housekeeping_uses_captured_context_without_key_operations`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml device_home_restore_tests`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --features mesh-llm device_home_restore_tests`

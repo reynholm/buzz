@@ -1066,19 +1066,37 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/workspace.rs",
-      "responsibility": "Invalidate backend home evidence on workspace apply; Migrate proven homes before scoped event sync without waiting for frontend history; top-level Wry entry wiring is compile coverage with native acceptance outstanding",
+      "responsibility": "Invalidate backend home evidence on workspace apply; Migrate proven homes before scoped event sync without waiting for frontend history; top-level Wry entry wiring is compile coverage with native acceptance outstanding; initialize captured scoped retention schema before read-only policy, propagating open/schema errors while retaining Pending",
       "is_new": false,
       "required_symbols": [
-        "device_home_sync::reset(&state)?;"
+        "device_home_sync::reset(&state)?;",
+        "fn prepare_workspace_event_sync",
+        "fn prepare_workspace_event_sync_with"
       ],
       "invocation_seams": [
         {
           "caller_path": "desktop/src-tauri/src/commands/workspace.rs",
+          "callee_symbol": "prepare_workspace_event_sync",
+          "invocation": "prepare_workspace_event_sync(&restore_app, &scope)?;",
+          "behavior_test": "commands::workspace::device_home_preparation_tests::fresh_workspace_preparation_initializes_scope_without_authorizing_absence",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::workspace::device_home_preparation_tests::fresh_workspace_preparation_initializes_scope_without_authorizing_absence -- --exact",
+          "coverage": "Wry wrapper compile/wiring; native preparation helper behavior; native app acceptance outstanding"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/workspace.rs",
+          "callee_symbol": "open_retention_db",
+          "invocation": "crate::managed_agents::retention::open_retention_db(&scope.db_path)?;",
+          "behavior_test": "commands::workspace::device_home_preparation_tests::fresh_workspace_preparation_initializes_scope_without_authorizing_absence",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::workspace::device_home_preparation_tests::fresh_workspace_preparation_initializes_scope_without_authorizing_absence -- --exact",
+          "coverage": "native production behavior with injected boundaries"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/workspace.rs",
           "callee_symbol": "migrate_device_homes_before_sync",
-          "invocation": "crate::managed_agents::device_home_migration::migrate_device_homes_before_sync(\n                &restore_app,\n            )?;",
-          "behavior_test": "managed_agents::device_home_migration::tests::workspace_hook_defers_legacy_but_reclaims_proven_origin_before_sync",
-          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::workspace_hook_defers_legacy_but_reclaims_proven_origin_before_sync -- --exact",
-          "coverage": "Wry workspace wiring/compile; injected production workspace adapter behavior; native gate outstanding"
+          "invocation": "crate::managed_agents::device_home_migration::migrate_device_homes_before_sync(app)",
+          "behavior_test": "commands::workspace::device_home_preparation_tests::fresh_workspace_preparation_initializes_scope_without_authorizing_absence",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::workspace::device_home_preparation_tests::fresh_workspace_preparation_initializes_scope_without_authorizing_absence -- --exact",
+          "coverage": "generic default adapter wiring; native injected migration provider/key boundaries exercised"
         }
       ],
       "verification_commands": [
@@ -1399,11 +1417,13 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/storage.rs",
-      "responsibility": "Read-only migration key resolver propagates backend/malformed-secret errors and verifies pubkey; expose existing hydration boundary for eligible-only auto-start work",
+      "responsibility": "Read-only migration key resolver propagates backend/malformed-secret errors and verifies pubkey; expose existing hydration boundary for eligible-only auto-start work; protected restore merge reloads current raw unified store and preserves excluded keys/definitions/concurrent rows, injectable existing KeyStore hydration/persistence",
       "is_new": false,
       "required_symbols": [
         "fn resolve_agent_key_readonly",
-        "fn resolve_agent_key_readonly_with"
+        "fn resolve_agent_key_readonly_with",
+        "fn save_restore_records_with",
+        "pub(crate) trait KeyStore"
       ],
       "invocation_seams": [
         {
@@ -1413,6 +1433,22 @@
           "behavior_test": "managed_agents::storage::migration_key_tests::migration_key_resolver_validates_read_only_secrets_and_errors",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::storage::migration_key_tests::migration_key_resolver_validates_read_only_secrets_and_errors -- --exact",
           "coverage": "behavior"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/storage.rs",
+          "callee_symbol": "load_agent_store",
+          "invocation": "let mut raw = load_agent_store(app)?;",
+          "behavior_test": "managed_agents::restore::device_home_restore_tests::phase_c_fresh_authority_blocks_changed_target_and_preserves_concurrent_rows",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::phase_c_fresh_authority_blocks_changed_target_and_preserves_concurrent_rows -- --exact",
+          "coverage": "native production behavior with injected boundaries"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/storage.rs",
+          "callee_symbol": "atomic_write_json_restricted",
+          "invocation": "atomic_write_json_restricted(&managed_agents_store_path(app)?, &bytes)",
+          "behavior_test": "managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy -- --exact",
+          "coverage": "native production behavior with injected boundaries"
         }
       ],
       "verification_commands": [
@@ -1421,11 +1457,15 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/restore.rs",
-      "responsibility": "Select proven/shared/standalone auto-start candidates before key hydration or lifecycle work, retaining existing live-pair duplicate guards; top-level Wry entry wiring is compile coverage with native acceptance outstanding; authority lookup excludes private records not selected for auto-start",
+      "responsibility": "Select proven/shared/standalone auto-start candidates before key hydration or lifecycle work, retaining existing live-pair duplicate guards; top-level Wry entry wiring is compile coverage with native acceptance outstanding; authority lookup excludes private records not selected for auto-start; PhaseA and fresh PhaseC protected raw-store merge preserves excluded rows/definitions, keys restricted to actual authorized targets, baseline safe disabled housekeeping remains structural-only; mesh preflight error uses same protected writeback",
       "is_new": false,
       "required_symbols": [
         "fn select_auto_start_candidates",
-        "fn needs_auto_start_authority"
+        "fn needs_auto_start_authority",
+        "fn prepare_restore_phase_a_with",
+        "fn complete_restore_phase_c_with",
+        "fn authorized_restore_updates",
+        "fn persist_restore_error_with"
       ],
       "invocation_seams": [
         {
@@ -1440,9 +1480,49 @@
           "caller_path": "desktop/src-tauri/src/managed_agents/restore.rs",
           "callee_symbol": "select_auto_start_candidates",
           "invocation": "select_auto_start_candidates(&policy_records, context.as_ref())?;",
-          "behavior_test": "managed_agents::device_home_migration::tests::copy_suppresses_both_outbound_kinds_and_restore_candidates",
-          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::copy_suppresses_both_outbound_kinds_and_restore_candidates -- --exact",
-          "coverage": "Wry restore wiring/compile; shared production selection behavior; native gate outstanding"
+          "behavior_test": "managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy -- --exact",
+          "coverage": "native production behavior with injected boundaries"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/restore.rs",
+          "callee_symbol": "save_restore_records_with",
+          "invocation": "super::storage::save_restore_records_with(app, &records, &eligible, persist)?;",
+          "behavior_test": "managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy -- --exact",
+          "coverage": "native production behavior with injected boundaries"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/restore.rs",
+          "callee_symbol": "save_restore_records_with",
+          "invocation": "super::storage::save_restore_records_with(app, &records, &key_targets, persist)?;",
+          "behavior_test": "managed_agents::restore::device_home_restore_tests::mixed_restore_phase_c_reload_and_save_never_import_excluded_copy",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::mixed_restore_phase_c_reload_and_save_never_import_excluded_copy -- --exact",
+          "coverage": "native production behavior with injected boundaries"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/restore.rs",
+          "callee_symbol": "authorized_restore_updates",
+          "invocation": "authorized_restore_updates(&policy_records, context.as_ref())?;",
+          "behavior_test": "managed_agents::restore::device_home_restore_tests::disabled_safe_housekeeping_persists_without_key_operations",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::disabled_safe_housekeeping_persists_without_key_operations -- --exact",
+          "coverage": "native production behavior with injected boundaries"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/restore.rs",
+          "callee_symbol": "authorized_restore_updates",
+          "invocation": "authorized_restore_updates(&raw, context.as_ref())?;",
+          "behavior_test": "managed_agents::restore::device_home_restore_tests::phase_c_fresh_authority_blocks_changed_target_and_preserves_concurrent_rows",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::phase_c_fresh_authority_blocks_changed_target_and_preserves_concurrent_rows -- --exact",
+          "coverage": "native production behavior with injected boundaries"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/restore.rs",
+          "callee_symbol": "complete_restore_phase_c_with",
+          "invocation": "complete_restore_phase_c_with(\n        app,\n        &[pubkey.to_string()].into_iter().collect(),",
+          "behavior_test": "managed_agents::restore::device_home_restore_tests::mesh_preflight_error_writeback_preserves_excluded_inline_copy",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --features mesh-llm managed_agents::restore::device_home_restore_tests::mesh_preflight_error_writeback_preserves_excluded_inline_copy -- --exact",
+          "coverage": "native production behavior with injected boundaries"
         }
       ],
       "verification_commands": [
@@ -1500,6 +1580,37 @@
       "invocation_seams": [],
       "verification_commands": [
         "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/workspace_device_home_tests.rs",
+      "responsibility": "Task4 fix1 regression tests bind production owning orchestration with temporary app storage and injected existing authority/process/KeyStore boundaries",
+      "is_new": true,
+      "required_symbols": [
+        "fn fresh_workspace_preparation_initializes_scope_without_authorizing_absence",
+        "fn workspace_preparation_database_open_and_schema_errors_are_fatal"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml device_home_preparation_tests"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/restore/device_home_tests.rs",
+      "responsibility": "Task4 fix1 regression tests bind production owning orchestration with temporary app storage and injected existing authority/process/KeyStore boundaries",
+      "is_new": true,
+      "required_symbols": [
+        "fn mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy",
+        "fn mixed_restore_phase_c_reload_and_save_never_import_excluded_copy",
+        "fn disabled_safe_housekeeping_persists_without_key_operations",
+        "fn phase_c_fresh_authority_blocks_changed_target_and_preserves_concurrent_rows",
+        "fn mesh_preflight_error_writeback_preserves_excluded_inline_copy",
+        "fn proven_disabled_housekeeping_uses_captured_context_without_key_operations"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml device_home_restore_tests",
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml --features mesh-llm device_home_restore_tests"
       ]
     }
   ]

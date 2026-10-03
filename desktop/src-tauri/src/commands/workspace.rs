@@ -41,8 +41,8 @@ async fn begin_workspace_apply(
 /// Best-effort: a failure is logged and the boot proceeds. The migration's own
 /// crash-safety guards make the next launch retry safely, and blocking the
 /// workspace apply on it would be worse than a delayed publish.
-fn migrate_legacy_retention_into(
-    app: &AppHandle,
+fn migrate_legacy_retention_into<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     scope: &crate::managed_agents::retention::RetentionScope,
 ) {
     let Ok(base_dir) = crate::managed_agents::managed_agents_base_dir(app) else {
@@ -59,6 +59,28 @@ fn migrate_legacy_retention_into(
         }
         Err(error) => eprintln!("buzz-desktop: legacy retention migration failed: {error}"),
     }
+}
+
+/// Prepare the captured scope before the read-only home policy and event-sync legs.
+fn prepare_workspace_event_sync<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    scope: &crate::managed_agents::retention::RetentionScope,
+) -> Result<(), String> {
+    prepare_workspace_event_sync_with(app, scope, || {
+        crate::managed_agents::device_home_migration::migrate_device_homes_before_sync(app)
+    })
+}
+/// Only the migration's native authority/key boundaries differ in isolated tests.
+fn prepare_workspace_event_sync_with<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    scope: &crate::managed_agents::retention::RetentionScope,
+    migrate: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    migrate_legacy_retention_into(app, scope);
+    // Scope adoption can be a no-op when there is no legacy DB. Establish the
+    // schema before the policy reader opens this captured path read-only.
+    crate::managed_agents::retention::open_retention_db(&scope.db_path)?;
+    migrate()
 }
 
 #[derive(Deserialize)]
@@ -298,7 +320,6 @@ pub async fn apply_workspace(
             // it is not a prerequisite for the superseding head — the team leg
             // below builds the repaired roster's head fresh from disk with a
             // monotonic `created_at` regardless of what the legacy copy left.
-            migrate_legacy_retention_into(&restore_app, &scope);
             // Await the reconcile to completion — do NOT spawn it — and
             // propagate its failure. The boot migration may have repaired team
             // membership on disk; the frontend starts inbound history replay
@@ -311,9 +332,7 @@ pub async fn apply_workspace(
             // On failure we return `Err` — the command reports failure,
             // `useCommunityInit` never exposes the community, and inbound replay
             // never starts against an un-superseded disk state.
-            crate::managed_agents::device_home_migration::migrate_device_homes_before_sync(
-                &restore_app,
-            )?;
+            prepare_workspace_event_sync(&restore_app, &scope)?;
             crate::event_sync::run_event_sync_blocking(
                 restore_app.clone(),
                 scope.owner_keys,
@@ -437,3 +456,7 @@ mod tests {
         assert_current_apply_generation(&generation, queued_ticket).unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "workspace_device_home_tests.rs"]
+mod device_home_preparation_tests;
