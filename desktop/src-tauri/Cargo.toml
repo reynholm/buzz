@@ -133,6 +133,7 @@ chrono = { version = "0.4", features = ["serde"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-notification = "2.3.3"
 uuid = { version = "1", features = ["v4", "v5"] }
+gethostname = "=1.1.0"
 png = "0.18"
 # wayland-data-control: without it arboard is X11-only on Linux, so copies made
 # in a Wayland session land in XWayland's clipboard where Wayland-native apps

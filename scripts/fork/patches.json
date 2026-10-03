@@ -620,6 +620,162 @@
       "verification_commands": [
         "just desktop-tauri-test desktop-tauri-check"
       ]
+    },
+    {
+      "path": "desktop/src-tauri/Cargo.toml",
+      "responsibility": "Safe hostname default using the already locked gethostname dependency",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/Cargo.lock",
+      "responsibility": "Direct Desktop gethostname dependency without version changes",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/device_identity.rs",
+      "responsibility": "Atomic interprocess device identity and separate verified local keychain proof",
+      "is_new": true,
+      "required_symbols": [
+        "pub fn load_or_create_device_identity",
+        "pub(crate) fn load_or_create_host_proof"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/device_identity.rs",
+          "callee_symbol": "validate_identity",
+          "invocation": "validate_identity(&identity)?;",
+          "behavior_test": "malformed_identity_is_preserved_and_reported",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::malformed_identity_is_preserved_and_reported -- --exact"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/device_identity.rs",
+          "callee_symbol": "get_or_create_verified",
+          "invocation": "store.get_or_create_verified(\"host\", || uuid::Uuid::new_v4().to_string())?",
+          "behavior_test": "unavailable_keychain_does_not_rebind",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::unavailable_keychain_does_not_rebind -- --exact"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/device_identity.rs",
+          "callee_symbol": "lock",
+          "invocation": "lock.lock()",
+          "behavior_test": "concurrent_identity_initialization_has_one_uuid",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::concurrent_identity_initialization_has_one_uuid -- --exact"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/device_identity/tests.rs",
+      "responsibility": "Independent-process UUID initialization and injected secret load/store/verification failures",
+      "is_new": true,
+      "required_symbols": [
+        "fn concurrent_identity_initialization_has_one_uuid",
+        "fn deleted_device_json_keeps_host_proof",
+        "fn unavailable_keychain_does_not_rebind",
+        "fn demo_marker_does_not_touch_production",
+        "fn concurrent_host_proof_initialization_generates_once"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/device_identity.rs",
+      "responsibility": "Expose public device metadata using app data directory and hostname; storage behavior covered below IPC routing, isolated native UI routing remains later acceptance",
+      "is_new": true,
+      "required_symbols": [
+        "pub fn get_device_identity",
+        "load_or_create_device_identity(&directory.join(\"device.json\"), label)"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/mod.rs",
+      "responsibility": "Register device identity IPC command",
+      "is_new": false,
+      "required_symbols": [
+        "pub use device_identity::*;"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/lib.rs",
+      "responsibility": "Register device identity module and public metadata IPC command",
+      "is_new": false,
+      "required_symbols": [
+        "mod device_identity;",
+        "commands::get_device_identity,"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/build_identity.rs",
+      "responsibility": "Separate host proof service for production and named demo builds",
+      "is_new": false,
+      "required_symbols": [
+        "pub(crate) fn device_host_service"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/secret_store.rs",
+      "responsibility": "Fresh-read get-or-create under existing blob lock with raw-byte durable verification",
+      "is_new": false,
+      "required_symbols": [
+        "pub fn get_or_create_verified",
+        "fn mutate_blob_verified"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/secret_store.rs",
+          "callee_symbol": "acquire_blob_lock",
+          "invocation": "let _lock = acquire_blob_lock(&self.service)?;",
+          "behavior_test": "concurrent_host_proof_initialization_generates_once",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::concurrent_host_proof_initialization_generates_once -- --exact"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/secret_store.rs",
+          "callee_symbol": "read_blob_raw",
+          "invocation": "let raw = self.read_blob_raw()?;",
+          "behavior_test": "verified_value_uses_fresh_storage_and_generates_once",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::verified_value_uses_fresh_storage_and_generates_once -- --exact"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/secret_store.rs",
+          "callee_symbol": "read_blob_raw",
+          "invocation": "if verify && self.read_blob_raw()?.as_deref() != Some(json.as_bytes())",
+          "behavior_test": "unavailable_keychain_does_not_rebind",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::unavailable_keychain_does_not_rebind -- --exact"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
     }
   ]
 }

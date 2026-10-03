@@ -490,3 +490,96 @@ Document optional device execution metadata and old-client enforcement limitatio
 New module: `false`.
 
 - Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/Cargo.toml`
+
+Safe hostname default using the already locked gethostname dependency
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/Cargo.lock`
+
+Direct Desktop gethostname dependency without version changes
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/device_identity.rs`
+
+Atomic interprocess device identity and separate verified local keychain proof
+
+New module: `true`.
+
+- Required symbol: `pub fn load_or_create_device_identity`
+- Required symbol: `pub(crate) fn load_or_create_host_proof`
+- Invocation: `desktop/src-tauri/src/device_identity.rs` → `validate_identity`; exact call `validate_identity(&identity)?;`; behavior test `malformed_identity_is_preserved_and_reported`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::malformed_identity_is_preserved_and_reported -- --exact`
+- Invocation: `desktop/src-tauri/src/device_identity.rs` → `get_or_create_verified`; exact call `store.get_or_create_verified("host", || uuid::Uuid::new_v4().to_string())?`; behavior test `unavailable_keychain_does_not_rebind`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::unavailable_keychain_does_not_rebind -- --exact`
+- Invocation: `desktop/src-tauri/src/device_identity.rs` → `lock`; exact call `lock.lock()`; behavior test `concurrent_identity_initialization_has_one_uuid`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::concurrent_identity_initialization_has_one_uuid -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/device_identity/tests.rs`
+
+Independent-process UUID initialization and injected secret load/store/verification failures
+
+New module: `true`.
+
+- Required symbol: `fn concurrent_identity_initialization_has_one_uuid`
+- Required symbol: `fn deleted_device_json_keeps_host_proof`
+- Required symbol: `fn unavailable_keychain_does_not_rebind`
+- Required symbol: `fn demo_marker_does_not_touch_production`
+- Required symbol: `fn concurrent_host_proof_initialization_generates_once`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/device_identity.rs`
+
+Expose public device metadata using app data directory and hostname; storage behavior covered below IPC routing, isolated native UI routing remains later acceptance
+
+New module: `true`.
+
+- Required symbol: `pub fn get_device_identity`
+- Required symbol: `load_or_create_device_identity(&directory.join("device.json"), label)`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/mod.rs`
+
+Register device identity IPC command
+
+New module: `false`.
+
+- Required symbol: `pub use device_identity::*;`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/lib.rs`
+
+Register device identity module and public metadata IPC command
+
+New module: `false`.
+
+- Required symbol: `mod device_identity;`
+- Required symbol: `commands::get_device_identity,`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/build_identity.rs`
+
+Separate host proof service for production and named demo builds
+
+New module: `false`.
+
+- Required symbol: `pub(crate) fn device_host_service`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/secret_store.rs`
+
+Fresh-read get-or-create under existing blob lock with raw-byte durable verification
+
+New module: `false`.
+
+- Required symbol: `pub fn get_or_create_verified`
+- Required symbol: `fn mutate_blob_verified`
+- Invocation: `desktop/src-tauri/src/secret_store.rs` → `acquire_blob_lock`; exact call `let _lock = acquire_blob_lock(&self.service)?;`; behavior test `concurrent_host_proof_initialization_generates_once`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::concurrent_host_proof_initialization_generates_once -- --exact`
+- Invocation: `desktop/src-tauri/src/secret_store.rs` → `read_blob_raw`; exact call `let raw = self.read_blob_raw()?;`; behavior test `verified_value_uses_fresh_storage_and_generates_once`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::verified_value_uses_fresh_storage_and_generates_once -- --exact`
+- Invocation: `desktop/src-tauri/src/secret_store.rs` → `read_blob_raw`; exact call `if verify && self.read_blob_raw()?.as_deref() != Some(json.as_bytes())`; behavior test `unavailable_keychain_does_not_rebind`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml device_identity::tests::unavailable_keychain_does_not_rebind -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`

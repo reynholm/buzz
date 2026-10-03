@@ -217,8 +217,16 @@ impl Drop for BlobLockGuard {
 /// single JSON blob entry (one OS prompt per process lifetime).
 pub struct SecretStore {
     service: String,
+    #[cfg(test)]
+    pub(crate) test_backend: Option<std::sync::Arc<dyn TestBlobBackend>>,
     /// In-memory cache of the deserialized blob. `None` means "not yet loaded".
     cache: Mutex<Option<HashMap<String, String>>>,
+}
+
+#[cfg(test)]
+pub(crate) trait TestBlobBackend: Send + Sync {
+    fn read(&self) -> Result<Option<Vec<u8>>, String>;
+    fn write(&self, bytes: &[u8]) -> Result<(), String>;
 }
 
 impl SecretStore {
@@ -228,7 +236,33 @@ impl SecretStore {
     pub fn keyring(service: impl Into<String>) -> Self {
         SecretStore {
             service: service.into(),
+            #[cfg(test)]
+            test_backend: None,
             cache: Mutex::new(None),
+        }
+    }
+
+    /// Return an existing durable value or persist and verify a new one.
+    pub fn get_or_create_verified(
+        &self,
+        key: &str,
+        generate: impl FnOnce() -> String,
+    ) -> Result<String, String> {
+        #[cfg(feature = "system-keyring")]
+        {
+            let mut value = None;
+            self.mutate_blob_verified(
+                |map| {
+                    value = Some(map.entry(key.to_string()).or_insert_with(generate).clone());
+                },
+                true,
+            )?;
+            value.ok_or_else(|| "verified value missing".to_string())
+        }
+        #[cfg(not(feature = "system-keyring"))]
+        {
+            let _ = (key, generate);
+            Err("keyring unavailable: system-keyring feature disabled".to_string())
         }
     }
 
@@ -353,6 +387,10 @@ impl SecretStore {
     /// builds that lack hardened-runtime entitlements).
     #[cfg(feature = "system-keyring")]
     fn read_blob_raw_keyring(&self) -> Result<Option<Vec<u8>>, String> {
+        #[cfg(test)]
+        if let Some(backend) = &self.test_backend {
+            return backend.read();
+        }
         let entry =
             keyring_entry(&self.service, BLOB_KEY).map_err(|e| format!("keyring entry: {e}"))?;
         match entry.get_password() {
@@ -396,6 +434,14 @@ impl SecretStore {
     where
         F: FnOnce(&mut HashMap<String, String>),
     {
+        self.mutate_blob_verified(f, false)
+    }
+
+    #[cfg(feature = "system-keyring")]
+    fn mutate_blob_verified<F>(&self, f: F, verify: bool) -> Result<(), String>
+    where
+        F: FnOnce(&mut HashMap<String, String>),
+    {
         // Acquire the interprocess advisory lock first. All Buzz processes
         // using the same service name contend on the same lockfile at
         // /tmp/buzz-keychain-<uid>-<service>.lock (a deterministic per-user
@@ -434,7 +480,13 @@ impl SecretStore {
 
         // Write to keyring while still holding the file lock.
         let json = serde_json::to_string(&next).map_err(|e| format!("blob serialize: {e}"))?;
-        match self.write_blob_raw(json.as_bytes()) {
+        let write_result = self.write_blob_raw(json.as_bytes()).and_then(|()| {
+            if verify && self.read_blob_raw()?.as_deref() != Some(json.as_bytes()) {
+                return Err("keyring write verification failed".to_string());
+            }
+            Ok(())
+        });
+        match write_result {
             Ok(()) => {
                 // Advance the cache to `next` only after the durable write succeeds.
                 let mut guard = self.cache.lock().unwrap_or_else(|e| e.into_inner());
@@ -464,6 +516,10 @@ impl SecretStore {
 
     #[cfg(feature = "system-keyring")]
     fn write_blob_raw_keyring(&self, bytes: &[u8]) -> Result<(), String> {
+        #[cfg(test)]
+        if let Some(backend) = &self.test_backend {
+            return backend.write(bytes);
+        }
         let value = std::str::from_utf8(bytes).map_err(|e| format!("blob utf8 encode: {e}"))?;
         let entry =
             keyring_entry(&self.service, BLOB_KEY).map_err(|e| format!("keyring entry: {e}"))?;
@@ -930,6 +986,7 @@ mod tests {
         fn with_cache(service: &str, cache: Option<HashMap<String, String>>) -> Self {
             SecretStore {
                 service: service.to_string(),
+                test_backend: None,
                 cache: Mutex::new(cache),
             }
         }

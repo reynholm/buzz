@@ -181,3 +181,13 @@ mod tests {
         );
     }
 }
+
+/// Separate nonportable host-proof service for this build.
+pub(crate) fn device_host_service() -> Cow<'static, str> {
+    device_host_service_for(demo_slug())
+}
+
+pub(crate) fn device_host_service_for(slug: Option<&str>) -> Cow<'static, str> {
+    slug.map(|slug| Cow::Owned(format!("buzz-desktop-device-host-demo.{slug}")))
+        .unwrap_or(Cow::Borrowed("buzz-desktop-device-host"))
+}
