@@ -118,7 +118,7 @@
     },
     {
       "path": "docs/fork/MAINTENANCE.md",
-      "responsibility": "Owner update policy and reproducible baseline evidence",
+      "responsibility": "Fork maintenance runbook, all-registry falsification scope and honest local-versus-external acceptance status",
       "is_new": true,
       "required_symbols": [],
       "invocation_seams": [],
@@ -4162,7 +4162,7 @@
     },
     {
       "path": "docs/fork/DEVICE_AGENT_ACCEPTANCE.md",
-      "responsibility": "Exact-candidate owner native and physical device acceptance procedure",
+      "responsibility": "Exact-candidate owner native/physical acceptance procedure and explicitly pending final handoff gates",
       "is_new": true,
       "required_symbols": [],
       "invocation_seams": [],

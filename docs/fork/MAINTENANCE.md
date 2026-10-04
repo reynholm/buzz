@@ -377,3 +377,65 @@ candidate. Current owner instructions authorize local commits only: no real tag,
 release, push, merge, promotion, installation or workflow activation has occurred.
 Owner review/native/physical acceptance and the next actual upstream tag remain
 pending external gates.
+
+
+## M5 local handoff and open acceptance: 2026-10-04
+
+The newest owner instruction ends implementation with local commits and an
+unpushed branch on `fork/device-bound-agents`. M5's local evidence preparation
+is complete only after registry falsification, restored validation, full Python,
+size and documentation checks. Overall feature acceptance stays open. Owner
+review is a separate next action; no new independent review, hosted activation,
+publication, merge, tag, installation or completion reaction is authorized here.
+
+The read-only upstream tag query on 2026-10-04 at 08:54 UTC found no stable desktop
+tag after `desktop-v0.5.26`. Criterion 17 is **next-real-tag unavailable**. This
+is neither an upgrade success nor a conflict/baseline failure. When a real tag
+appears and hosted execution is authorized, selection must record its exact SHA,
+skipped tags and upstream range; the recurring clean-target baseline must pass
+before any candidate job. A repeated target must reuse its owned draft/result,
+and scheduled/manual work must serialize. Source workflow tests prove these
+contracts locally; they do not prove a hosted job or schedule ran.
+
+The complete registry at Task12 HEAD contained 199 paths, 78 new modules and
+211 protected invocation entries. In a disposable detached clone, M5 removed
+each new module and each exact invocation independently and invoked the actual
+`sync.py validate` CLI. All 289 mutations produced the matching missing-path or
+missing-invocation rejection; restored validation passed. Original/mutant/restored
+hashes, exact commands, exits and all raw-log hashes are retained in
+`.superpowers/sdd/2026-10-03-device-bound-agents/M5-registry-mutations.json`.
+The source checkout was never mutated. Deletion of the validator or its registry
+uses the original external validator and manifest to measure missing-path rejection.
+These are **validator failures**, not compile failures or runtime behavior
+assertions. Prior owning runtime mutation receipts, including recorded survivors
+and their later targeted fixes, keep their original commits and hashes.
+
+Task12's actual full `just ci` exit0 was at
+`6f2ef4a026bc90a9ee1456a31f882c3d87baf997`, tree
+`b182ee71e9194dfb4967e529fda5c7346f6bd336`. Its supplemental full Python59/0,
+lint/build/typecheck/registry/size receipts passed at that same commit. The mesh
+3800/0 receipt retains its original precommit HEAD and identical tested source
+closure; it is not a later-SHA rerun. M5 documentation/inventory changes carry
+these results only through verified unchanged product/test/build-source bytes.
+Run new relevant gates when source or environment changes warrant them. On this
+host, native Git tests require the official task-local Git2.50.1 full runtime
+(templates and exec-path), not Apple Git2.39.5 or a binary-only PATH override.
+Keep the test toolchain local; commits still use the trusted identity wrapper.
+
+Task12's actual named-demo arm64 build and bounded launch prove only isolated
+packaging/config/probe/process startup. Host-proof initialization failed with
+`keyring write: Platform secure storage failure: UNIX[Operation not permitted]`.
+Native Wry About/agent workflows, real local-relay integration, successful keychain
+storage/prompt/recovery, existing-data migration and full sidecar runtime remain
+unverified. Two temporary stores or two demo instances cannot pass two physical
+notebook acceptance. Use [the owner procedure](DEVICE_AGENT_ACCEPTANCE.md).
+
+After the last local source/document commit, build and verify the exact final
+candidate SHA. Retain that SHA/tree, immutable artifact directory, manifest,
+archive/DMG and SHA256SUMS hashes in ignored task evidence and the timestamped
+workspace WORK_LOG; do not add another source commit solely to record its own
+artifact identity. If the build fails, record exact-final artifact pending.
+Existing fcbe assets and the independent upstream baseline retain their identities.
+A successful final build still leaves owner review, all native/physical acceptance,
+maintenance-command acceptance, next real tag, confirmed default branch/hosted
+schedule, configured promotion environment and owner merge/promotion open.

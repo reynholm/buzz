@@ -75,7 +75,7 @@ New module: `true`.
 
 ## `docs/fork/MAINTENANCE.md`
 
-Owner update policy and reproducible baseline evidence
+Fork maintenance runbook, all-registry falsification scope and honest local-versus-external acceptance status
 
 New module: `true`.
 
@@ -2480,7 +2480,7 @@ New module: `true`.
 
 ## `docs/fork/DEVICE_AGENT_ACCEPTANCE.md`
 
-Exact-candidate owner native and physical device acceptance procedure
+Exact-candidate owner native/physical acceptance procedure and explicitly pending final handoff gates
 
 New module: `true`.
 

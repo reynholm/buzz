@@ -7,8 +7,9 @@ This procedure implements the owner acceptance contract in the
 run on one host, and two physical notebooks are separate evidence. None grants
 owner review or installation approval.
 
-Current delivery remains pending owner review, native workflow, two physical
-notebooks, final exact-SHA artifact and a genuine subsequent upstream tag.
+Delivery requires owner review, native workflow, two physical notebooks, an
+exact-final-SHA artifact and a genuine subsequent upstream tag. The final artifact
+status is recorded after the last source commit in the task/workspace evidence.
 The latest owner instruction authorizes local commits only. Do not push,
 activate workflows, promote, install, or add `buzz-review-completed` on the basis
 of agent tests. The owner performs review separately after implementation.
@@ -191,3 +192,32 @@ and the actual merged `pr_url`. Its `evidence` requires independently scoped
 `two_physical_devices`, and `maintenance_command`. Leave all pending entries
 unaccepted; never fill them from synthetic fixture booleans. Follow M4's
 read-only preflight before any separately authorized publication.
+
+
+## Handoff evidence is scoped; acceptance remains open
+
+M5's full registry deletion campaign rejected all 78 new-module and 211 invocation
+removals in disposable fixture trees and passed after exact restoration. This
+proves registry protection, separately from the original owning runtime mutation
+receipts. Task12 full CI/supplemental results are pinned to commit
+`6f2ef4a026bc90a9ee1456a31f882c3d87baf997` and tree
+`b182ee71e9194dfb4967e529fda5c7346f6bd336`; documentation-only successor commits
+must cite unchanged source closure without renaming those test runs.
+
+The named-demo native attempt built and launched, but host-proof keyring writes
+failed with macOS `Operation not permitted`. Native authority/UI, real local-relay
+agent workflow, keychain storage/prompt/recovery, existing-data and full sidecar
+runtime acceptance remain pending. Do not record these as accepted from process
+liveness, the compiled probe or mock/jsdom/two-store tests. The real upstream tag
+query on 2026-10-04 found no newer stable tag; future-release criterion 17 remains
+unavailable, and synthetic releases cannot satisfy it.
+
+The final app/archive/DMG must identify the exact SHA after M5's last local commit.
+Its checksums and build receipt belong in task/workspace evidence after that
+commit; prior fcbe assets and Task12's demo stay unchanged historical artifacts.
+If no exact-final build succeeds, label that artifact pending. In either case,
+leave every owner receipt gate unaccepted until its actual confirmation exists.
+Owner review, two physical notebooks, the maintenance command, confirmed GitHub
+default branch/hosted schedule, protected promotion environment and actual owner
+merge remain required. The requested local handoff ends with an unpushed branch;
+it does not grant remote activation or overall completion status.
