@@ -505,6 +505,8 @@ def render_registry(manifest: dict) -> str:
     for patch in manifest['patches']:
         lines.extend([f"## `{patch['path']}`", '', patch['responsibility'], '',
                       f"New module: `{str(patch['is_new']).lower()}`.", ''])
+        if patch.get('deleted') is True:
+            lines.extend(['Registered upstream deletion: `true`.', ''])
         for symbol in patch['required_symbols']:
             lines.append(f'- Required symbol: `{symbol}`')
         for seam in patch['invocation_seams']:
@@ -542,6 +544,13 @@ def validate_patches(repo: Path, manifest: dict) -> list[str]:
             continue
         if patch['is_new'] != (path not in upstream):
             errors.append(f'wrong is_new: {path}')
+        if patch.get('deleted'):
+            if (patch['deleted'] is not True or path not in upstream
+                    or patch['required_symbols'] or patch['invocation_seams']):
+                errors.append(f'invalid registered deletion: {path}')
+            elif target.exists() or target.is_symlink():
+                errors.append(f'registered deletion still exists: {path}')
+            continue
         if not target.is_file():
             errors.append(f'missing path: {path}')
             continue

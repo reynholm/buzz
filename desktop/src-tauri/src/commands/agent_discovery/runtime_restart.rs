@@ -154,6 +154,9 @@ async fn restart_single_agent_after_install(
     let app_for_stop = app.clone();
     let pubkey_owned = pubkey.to_string();
     let runtime_id_owned = runtime_id.to_string();
+    let state = app.state::<AppState>();
+    // Capture before stopping so removal during restart refuses the start.
+    let admission = crate::managed_agents::AdmissionSnapshot::capture(&state);
 
     let stop_result = tokio::task::spawn_blocking(move || {
         let state = app_for_stop.state::<AppState>();
@@ -278,6 +281,7 @@ async fn restart_single_agent_after_install(
         pubkey,
         &relay_urls,
         Some(expected),
+        &admission,
     )
     .await
     {

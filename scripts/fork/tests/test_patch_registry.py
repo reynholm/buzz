@@ -80,6 +80,26 @@ class RegistryTests(unittest.TestCase):
             self.fail('Registered assets without text symbols must validate as paths')
         self.assertEqual(errors, [])
 
+    def test_registered_upstream_deletion_is_verified(self):
+        entry = self.entry()
+        entry.update(deleted=True, required_symbols=[], invocation_seams=[])
+        self.manifest['patches'] = [entry]
+        self.git('rm', 'caller.py')
+        self.markdown()
+        self.assertEqual(sync.validate_patches(self.repo, self.manifest), [])
+        (self.repo / 'caller.py').write_text('restored unexpectedly\n')
+        self.assertIn('registered deletion still exists: caller.py',
+                      sync.validate_patches(self.repo, self.manifest))
+
+    def test_deletion_cannot_mask_a_missing_new_module_or_required_guard(self):
+        for overrides in [dict(path='new.py', is_new=True), dict()]:
+            entry = self.entry()
+            entry.update(deleted=True, **overrides)
+            self.manifest['patches'] = [entry]
+            self.markdown()
+            self.assertIn('invalid registered deletion: ' + entry['path'],
+                          sync.validate_patches(self.repo, self.manifest))
+
     def test_new_module_cannot_disappear(self):
         entry = self.entry()
         entry.update(path='new.py', is_new=True, required_symbols=[], invocation_seams=[])

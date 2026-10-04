@@ -439,3 +439,25 @@ Existing fcbe assets and the independent upstream baseline retain their identiti
 A successful final build still leaves owner review, all native/physical acceptance,
 maintenance-command acceptance, next real tag, confirmed default branch/hosted
 schedule, configured promotion environment and owner merge/promotion open.
+
+## Owner-directed main integration: 2026-10-04
+
+Buzz request `da40df459b2ecc64a36321e65ec6e6741395e121692a943dc86f1a14a5d460f7`
+authorizes translation, commit/push, integration into `main`, and publication of a
+new GitHub release exclusively in `reynholm/buzz`. This explicit request supersedes
+the earlier `fork/main` destination and owner-only manual publication workflow
+for this release. It does not attest installed-app or two-device acceptance.
+
+Existing fork `main` at `33f54de2dd27a8f6bce0d359183f5ebe5f2fa9ba` contains 47
+commits outside the device-bound branch. Integrate both histories by an ordinary
+merge, preserving community-removal admission and device ownership/fencing.
+The patch inventory includes inherited changes from that existing main snapshot;
+these entries identify integration history rather than a new upstream fetch.
+Explicit upstream deletions use `deleted: true`; the validator requires the path
+to exist in the base, have no required symbols or invocation seams, and be absent
+from the result. Missing custom modules and guards still fail closed.
+
+The release uses tag `fork-v0.5.26-2` and embedded fork revision `2`, preserving
+base app version `0.5.26` and identifier `xyz.block.buzz.app`. Build only after the
+merged tree passes its full gates and the remote main SHA is verified. Publish
+pinned assets and checksums to the fork; never run upstream release publication.

@@ -519,14 +519,16 @@ pub(crate) fn spawn_with_effort_proof(
 /// publishes the triggering message before this spawn and passes its send
 /// timestamp here so the harness's first REQ replays past that message no
 /// matter how long the spawn takes. buzz-acp clamps stale floors to ~15 min.
-pub fn spawn_agent_child(
-    app: &AppHandle,
+pub fn spawn_agent_child<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     record: &ManagedAgentRecord,
     relay_url: &str,
+    admitted: &super::Admitted<'_>,
     lazy: bool,
     owner_hex: Option<&str>,
     replay_floor_unix: Option<u64>,
 ) -> Result<crate::managed_agents::ManagedAgentProcess, String> {
+    admitted.covers(relay_url)?;
     let state = app.state::<crate::app_state::AppState>();
     super::device_runtime::spawn_child_phase_with(
         app,
@@ -957,12 +959,13 @@ pub fn spawn_agent_child(
 /// exact workspace-relay read the caller's scope assertion passed on; it never
 /// re-reads the mutable override (see `relay::scope`). The key comes from
 /// [`bound_runtime_key`] — the seam the spawn-key regressions exercise.
-pub fn start_managed_agent_process(
-    app: &AppHandle,
+pub fn start_managed_agent_process<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     record: &mut ManagedAgentRecord,
     runtimes: &mut HashMap<ManagedAgentRuntimeKey, ManagedAgentPairRuntime>,
     owner_hex: Option<&str>,
     workspace_relay: &crate::relay::ScopedWorkspaceRelay,
+    admitted: &super::Admitted<'_>,
     replay_floor_unix: Option<u64>,
 ) -> Result<(), String> {
     let state = app.state::<crate::app_state::AppState>();
@@ -975,6 +978,7 @@ pub fn start_managed_agent_process(
         |_, _, _| Ok(()),
     )?;
     let key = bound_runtime_key(record, workspace_relay)?;
+    admitted.covers(&key.relay_url)?;
     if let Some(runtime) = runtimes.get_mut(&key) {
         if runtime
             .child
@@ -996,6 +1000,7 @@ pub fn start_managed_agent_process(
         app,
         record,
         &key.relay_url,
+        admitted,
         false,
         owner_hex,
         replay_floor_unix,

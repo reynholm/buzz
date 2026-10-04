@@ -91,8 +91,8 @@ pub fn managed_agent_log_path<R: tauri::Runtime>(
 
 /// Pair-scoped log path for a managed runtime. The relay URL never appears in
 /// the filename; the suffix is a hash of the canonical URL.
-pub fn managed_agent_runtime_log_path(
-    app: &AppHandle,
+pub fn managed_agent_runtime_log_path<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     key: &ManagedAgentRuntimeKey,
 ) -> Result<PathBuf, String> {
     Ok(managed_agents_logs_dir(app)?.join(format!("{}.log", key.runtime_id())))
@@ -872,8 +872,8 @@ pub fn remove_agent_runtime_receipt_path(path: &Path) {
     let _ = fs::remove_file(path);
 }
 
-pub fn read_all_agent_runtime_receipts(
-    app: &AppHandle,
+pub fn read_all_agent_runtime_receipts<R: tauri::Runtime>(
+    app: &AppHandle<R>,
 ) -> Vec<(PathBuf, ManagedAgentRuntimeReceipt)> {
     let Ok(dir) = agent_pids_dir(app) else {
         return Vec::new();

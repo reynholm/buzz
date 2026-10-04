@@ -790,7 +790,18 @@ New module: `true`.
 - Invocation: `desktop/src-tauri/src/commands/device_home_sync.rs` → `reset`; exact call `device_home_sync::reset(state)?;`; behavior test `commands::device_home_sync::tests::begin_retention_error_revokes_previous_readiness`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::device_home_sync::tests::begin_retention_error_revokes_previous_readiness -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/device_home_sync.rs` → `finish_session_with`; exact call `device_home_sync::finish_session_with(state, session_token, migrate)?;`; behavior test `commands::device_home_sync::migration_tests::finish_adapter_key_error_latches_failed_and_preserves_store`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::device_home_sync::migration_tests::finish_adapter_key_error_latches_failed_and_preserves_store -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/device_home_sync.rs` → `capture_scope`; exact call `device_home_sync::capture_scope(state)? != *expected`; behavior test `commands::device_home_sync::migration_tests::returned_completion_scope_fences_deferred_restore`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::device_home_sync::migration_tests::returned_completion_scope_fences_deferred_restore -- --exact`
-- Invocation: `desktop/src-tauri/src/commands/device_home_sync.rs` → `restore_managed_agents_on_launch`; exact call `crate::managed_agents::restore_managed_agents_on_launch(&app, &state.shutdown_started)`; behavior test `commands::device_home_sync::migration_tests::returned_completion_scope_fences_deferred_restore`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::device_home_sync::migration_tests::returned_completion_scope_fences_deferred_restore -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/device_home_sync.rs` → `restore_managed_agents_on_launch`; exact call `crate::managed_agents::restore_managed_agents_on_launch(
+                &self.app,
+                &state.shutdown_started,
+                self.admission,
+                self.sweeps,
+            )`; behavior test `commands::device_home_sync::migration_tests::returned_completion_scope_fences_deferred_restore`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::device_home_sync::migration_tests::returned_completion_scope_fences_deferred_restore -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/device_home_sync.rs` → `finish_device_home_sync_deferred_restore_with`; exact call `finish_device_home_sync_deferred_restore_with(
+        session_token,
+        app,`; behavior test `commands::device_home_sync::deferred_restore_tests::remove_and_readd_during_archive_does_not_revive_deferred_restore`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib commands::device_home_sync::deferred_restore_tests::remove_and_readd_during_archive_does_not_revive_deferred_restore -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/device_home_sync.rs` → `finish_device_home_sync_deferred_restore_with`; exact call `finish_device_home_sync_deferred_restore_with(
+        session_token,
+        app,`; behavior test `commands::device_home_sync::deferred_restore_tests::remove_and_readd_while_restore_waits_for_workspace_lock_does_not_revive_it`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib commands::device_home_sync::deferred_restore_tests::remove_and_readd_while_restore_waits_for_workspace_lock_does_not_revive_it -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/commands/personas/device_view_tests.rs`
@@ -1127,7 +1138,7 @@ New module: `false`.
         app,
         &[pubkey.to_string()].into_iter().collect(),`; behavior test `managed_agents::restore::device_home_restore_tests::mesh_preflight_error_writeback_preserves_excluded_inline_copy`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --features mesh-llm managed_agents::restore::device_home_restore_tests::mesh_preflight_error_writeback_preserves_excluded_inline_copy -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `complete_restore_spawn_results_with`; exact call `child_ownership::complete_restore_spawn_results_with(
-        (app, Some(&restore_fence)),
+        (app, Some(restore_fence)),
         spawn_results,`; behavior test `managed_agents::restore::device_home_restore_tests::post_spawn_authority_error_settles_all_owned_children`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::post_spawn_authority_error_settles_all_owned_children -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `retry_restore_cleanup`; exact call `child_ownership::retry_restore_cleanup(app)?;`; behavior test `managed_agents::restore::device_home_restore_tests::failed_child_cleanup_propagates_and_retains_retry_ownership`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::failed_child_cleanup_propagates_and_retains_retry_ownership -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `backfill_persona_snapshots_with`; exact call `backfill_persona_snapshots_with(
@@ -1174,7 +1185,7 @@ New module: `false`.
         &app,
         &state,
         &pubkey,
-        expected_scope.map(|e| &e.scope),
+        scope.expected.map(|e| &e.scope),
         super::persona_device_view::load_device_policy_context,`; behavior test `managed_agents::device_runtime_tests::owning_manual_start_refuses_receipt_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_manual_start_refuses_receipt_effects -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/runtime_commands.rs` → `probe_auto_start_job_with`; exact call `probe_auto_start_job_with(
             &app,
@@ -1182,12 +1193,10 @@ New module: `false`.
                 record,
                 requested,
                 fence: &runtime_fence,`; behavior test `managed_agents::runtime_commands::reconcile_callback_tests::restore_and_reconcile_skip_foreign_pairs_before_probe`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::runtime_commands::reconcile_callback_tests::restore_and_reconcile_skip_foreign_pairs_before_probe -- --exact`
-- Invocation: `desktop/src-tauri/src/managed_agents/runtime_commands.rs` → `start_pair`; exact call `start_pair(pubkey, relay_url, true, None, None, false, app)
+- Invocation: `desktop/src-tauri/src/managed_agents/runtime_commands.rs` → `start_pair`; exact call `start_pair(pubkey, relay_url, true, None, admission, app)
 }
 
-pub(crate) fn start_managed_agent_pair_scoped(
-    pubkey: String,
-    relay_url: String,`; behavior test `managed_agents::device_runtime_tests::shared_lifecycle_matches_baseline`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::shared_lifecycle_matches_baseline -- --exact`
+pub(crate) fn start_managed_agent_pair_scoped<`; behavior test `managed_agents::device_runtime_tests::shared_lifecycle_matches_baseline`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::shared_lifecycle_matches_baseline -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/runtime_commands.rs` → `auto_start_jobs_with`; exact call `let jobs = auto_start_jobs_with(
         Some(&runtime_fence),
         &app,
@@ -1537,16 +1546,13 @@ New module: `true`.
         expected,
         crate::managed_agents::persona_device_view::load_device_policy_context,
         |r, d, _| preflight(app, r, d, false),`; behavior test `managed_agents::device_runtime_tests::preflight_rechecks_current_binding_after_await`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::preflight_rechecks_current_binding_after_await -- --exact`
-- Invocation: `desktop/src-tauri/src/commands/agents/runtime_start.rs` → `runtime_preflight_with`; exact call `device_runtime::runtime_preflight_with(
-        app,
-        state,
-        pubkey,
-        expected,
-        crate::managed_agents::persona_device_view::load_device_policy_context,
-        |r, d, _| preflight(app, r, d, fresh),`; behavior test `managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/agents/runtime_start.rs` → `start_local_agent_after_preflight`; exact call `start_local_agent_after_preflight(app, state, pubkey, requested, |model| async move {
+        ensure_relay_mesh_for_record(app, model.as_deref(), fresh).await
+    })`; behavior test `commands::agents::admission_tests::ordinary_start_removed_and_readded_during_preflight_is_refused`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib commands::agents::admission_tests::ordinary_start_removed_and_readded_during_preflight_is_refused -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/agents/runtime_start.rs` → `start_managed_agent_pair_scoped`; exact call `crate::managed_agents::runtime_commands::start_managed_agent_pair_scoped(
             pubkey.to_string(),
             relay.clone(),
+            admission,
             app.clone(),
             &fence,
         ) {`; behavior test `managed_agents::device_runtime_tests::owning_manual_start_refuses_receipt_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_manual_start_refuses_receipt_effects -- --exact`
@@ -2575,3 +2581,2589 @@ New module: `true`.
 - Required symbol: `archive_transport_failures_and_invalid_kind_never_complete_as_empty_evidence`
 - Required symbol: `stalled_archive_headers_or_body_are_bounded_and_recover_same_identity_and_token`
 - Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
+
+## `.github/scripts/codex-security-review.js`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `.github/scripts/codex-security-review.test.js`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `.github/workflows/_ci-desktop-macos.yml`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `.github/workflows/_ci-relay.yml`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `.github/workflows/_ci-rust.yml`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `.github/workflows/ci.yml`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `.github/workflows/codex-security-review.yml`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `ARCHITECTURE.md`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `CHANGELOG.md`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `Cargo.lock`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `Justfile`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `bin/.uv-0.12.21.pkg`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `bin/uv`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `bin/uvx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-acp/README.md`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-acp/src/acp.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-acp/src/acp/launch.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-acp/src/acp/launch/tests.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-acp/src/acp_frame_writer.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-acp/src/base_prompt.md`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-acp/src/config.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-acp/src/edit_routing.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-acp/src/git.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-acp/src/lib.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-acp/src/pool.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-acp/src/queue.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-acp/src/recovery_wake.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-acp/src/scope.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-acp/src/setup_mode.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-acp/tests/run_task.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-agent/tests/regressions.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-auth/Cargo.toml`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-auth/src/lib.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-auth/src/nip_fi/command.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-auth/src/nip_fi/command_replay.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-auth/src/nip_fi/community.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-auth/src/nip_fi/config.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-auth/src/nip_fi/deny_map.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-auth/src/nip_fi/jwks/mod.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-auth/src/nip_fi/jwks/tests.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-auth/src/nip_fi/mod.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-auth/src/nip_fi/startup/mod.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-auth/src/nip_fi/startup/tests.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-auth/src/nip_fi/verifier.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-auth/src/nip_fi/verifier/tests.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-core/src/tenant.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-db/src/runtime/migration.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-db/src/runtime/mod.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-db/src/runtime/replica_fence.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-db/src/runtime/tests.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-db/src/runtime/tests/thread_window_postgres_tests.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-db/src/store/community.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-db/src/store/deletion.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-db/src/store/moderation.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-db/src/store/relay_admin_actions.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-db/src/store/relay_members.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-db/src/store/user.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-deletion/src/lib.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-dev-mcp/Cargo.toml`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-dev-mcp/src/lib.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-dev-mcp/src/shell.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-dev-mcp/src/todo.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-dev-mcp/src/view_image.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-dev-mcp/tests/lifecycle.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-media/src/error.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-pubsub/src/conn_control.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-pubsub/src/lib.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-pubsub/src/nip_fi_command_replay.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/Cargo.toml`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/admin/auth.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/admin/direct.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/admin/mod.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/bridge.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/gifs.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/git/settings.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/git/settings_tests.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/git/transport.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/invites.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/media.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/mod.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/nip_fi.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/operator.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/workflows.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/audio/handler.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/config.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/connection.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/handlers/admin_action_worker.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/handlers/admin_outbox_worker.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/handlers/artifact.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/handlers/auth.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/handlers/community_provisioning.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/handlers/count.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/handlers/event.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/handlers/ingest.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/handlers/moderation_commands.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/handlers/relay_admin.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/handlers/report_resolution.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/handlers/req.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/lib.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/main.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/nip11.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/nip_fi_config.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/nip_fi_core.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/nip_fi_http.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/nip_fi_session.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/nip_fi_shadow.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/nip_fi_shadow_session.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/nip_fi_test_hooks.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/nip_fi_upgrade.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/router.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/state.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/test_support.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/playwright.config.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/icons/icon.icns`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/commands/admin/direct_action_tests.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/commands/admin/error.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/commands/admin/helpers.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/commands/admin/mod.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/commands/admin/mod_tests.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/commands/admin/routes.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/commands/agent_config.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/commands/agent_models_tests.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/commands/agents_admission_tests.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/commands/channels.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/commands/channels/starter_tests.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/commands/channels_tests.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/commands/dms.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/commands/mesh_llm.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/egress_guard.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/huddle/agents.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/managed_agents/admission_test_support.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/managed_agents/discovery.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/managed_agents/env_vars/tests.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/managed_agents/nest.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/managed_agents/nest/tests.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/managed_agents/nest_agents.md`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/managed_agents/nest_skill.md`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/managed_agents/pair_admission.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/managed_agents/reserved_env_keys.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/managed_agents/restore_admission_tests.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/managed_agents/runtime/process.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/managed_agents/runtime_commands_admission_tests.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src-tauri/src/mesh_llm/coordinator.rs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/app/App.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/app/AppShell.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/app/useCommunityNavigationTransitions.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/admin-console/AdminConsoleActionsTab.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/admin-console/AdminConsolePanel.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/admin-console/AdminConsolePanelHelpers.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/admin-console/AdminConsoleReportsTab.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/admin-console/adminConsolePanelActions.jsdom-test.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/admin-console/adminConsolePanelTestHelpers.jsdom.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/admin-console/api.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/hooks.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/lib/managedAgentControlActions.test.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/lib/managedAgentControlActions.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/lib/useAutoRestartPolicy.relayRemoved.jsdom-test.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/lib/useAutoRestartPolicy.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/managedAgentReconciliationPlan.test.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/managedAgentReconciliationPlan.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/managedAgentRelayCleanup.test.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/managedAgentRelayCleanup.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/managedAgentRuntimeHooks.test.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/managedAgentRuntimeHooks.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/managedAgentRuntimeStatus.test.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/managedAgentRuntimeStatus.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/ui/AgentInstanceEditDialog.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/ui/PersonaDropdownField.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/ui/PersonaDropdownOptionLabel.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/ui/PersonaModelCombobox.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/ui/activityRenderClasses/ThoughtActivity.jsdom-test.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/ui/activityRenderClasses/ThoughtActivity.render.test.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/ui/activityRenderClasses/ThoughtActivity.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/ui/agentConfigOptions.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/ui/modelCapabilities.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/ui/modelMenuDescriptions.jsdom-test.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/ui/relayMeshModelPicker.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/ui/useManagedAgentActions.relayRemoved.jsdom-test.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/ui/usePersonaModelDiscovery.jsdom-test.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/ui/usePersonaModelDiscovery.test.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/ui/usePersonaModelDiscovery.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/useManagedAgentRuntimeReconciliation.jsdom-test.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/agents/useManagedAgentRuntimeReconciliation.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/channels/hooks.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/channels/rosterAdminKick.test.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/channels/rosterFreshness.test.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/channels/rosterFreshness.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/channels/ui/ChannelScreen.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/channels/ui/useMembersSidebarActions.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/channels/useMembershipNotifications.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/channels/useUnreadChannels.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/communities/legacyCommunityReadmit.jsdom-test.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/communities/legacyCommunityStorage.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/communities/ui/CommunitySwitcher.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/communities/updateCommunityReadmit.jsdom-test.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/communities/useCommunities.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/communities/useCommunityInit.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/huddle/components/HuddleBar.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/huddle/components/HuddleRoomHeader.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/messages/hooks.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/messages/ui/TimelineMessageList.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/messages/ui/TimelineMessageRow.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/messages/ui/submitMessageEdit.test.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/messages/ui/submitMessageEdit.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/messages/ui/useMentionSendFlow.test-support.mjs`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/messages/ui/useMentionSendFlow.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/profile/ui/useAgentLifecycleActions.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/sidebar/ui/AppSidebar.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/sidebar/ui/AppSidebar.types.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/sidebar/ui/SidebarProfileCard.tsx`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/protectedFeatures/bestie/api.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/shared/api/channelMembershipWrites.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src/shared/api/tauriChannels.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/shared/api/tauriWorkspace.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/src/testing/e2eBridge.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/tests/e2e/community-rail.spec.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/tests/e2e/forum-agent-invitation.spec.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/tests/e2e/huddle-transcription.spec.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/tests/e2e/image-attachment-gallery.spec.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/tests/e2e/persistent-agent-audience.spec.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/tests/e2e/profile-custom-emoji-status.spec.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `desktop/tests/e2e/thread-follow.spec.ts`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `docs/operator-community-deletion.md`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `migrations/0054_owner_deletion_quota_reservation.sql`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0055_relay_admin_direct_actions.sql`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/assets/images/buzz-wordmark.png`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/assets/images/shell-gradient.png`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner.xcodeproj/project.pbxproj`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/AppDelegate.swift`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/NativeMessageMenu.swift`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/NativeMessagePresentationCoordinator.swift`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/NativeReactionDetails.swift`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/ios/RunnerTests/NativeMessageImageLoaderTests.swift`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/app.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/activity/activity_page.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/activity/activity_page/inbox_row.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/activity/activity_page/lists.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/add_members_sheet.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_actions_sheet.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_detail_page.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_detail_page/app_bar.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_detail_page/huddle_call_avatar.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_detail_page/huddle_call_participants.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_detail_page/huddle_participant_cluster.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_detail_page/huddle_participant_overlay.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_detail_page/huddle_sheet.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_detail_page/system_rows.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_details_page.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channels_page.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channels_page/body.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channels_page/channel_tile.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channels_page/community.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channels_page/sheets.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/compose_bar/draft_lifecycle.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/dm_channel_labels.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/members_sheet.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/message_actions.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/message_actions/native_actions.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/message_long_press_region.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/reaction_row.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/home/home_page.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/pairing/pairing_page.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/pairing/pairing_page/onboarding_background.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/pairing/pairing_page/onboarding_colors.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/pairing/pairing_page/onboarding_glass_button.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/pairing/pairing_page/onboarding_wordmark.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/pairing/pairing_page/pairing_welcome_view.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/pairing/pairing_qr_scanner.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/pairing/pairing_qr_scanner/dynamic_island_portal.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/profile/presence_cache_provider.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/profile/settings_profile_header.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/profile/user_profile_sheet.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/pulse/agent_activity_card.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/pulse/compose_note_page.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/pulse/note_card.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/pulse/pulse_page.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/search/search_page.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/settings/settings_page.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/settings/settings_page/community_section.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/settings/settings_page/connection_section.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/settings/settings_page/notifications_section.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/settings/settings_page/profile_section.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/settings/settings_page/status_section.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/settings/theme_picker_page/theme_preview_sheet.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/identity_names/identity_names.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/identity_names/identity_names_provider.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/success_haptic.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/native_message_presentation.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/pubspec.yaml`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/shaders/onboarding_wordmark.frag`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/activity/activity_page_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/add_members_sheet_names_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/channel_detail_page_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/channel_detail_page_test/presence_tests.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/channels_page_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/channels_page_test/presence_tests.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/compose_bar_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/compose_bar_test/durable_mention_tests.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/message_actions_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/reaction_row_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/pairing/onboarding_wordmark_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/pairing/pairing_page_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/pairing/pairing_qr_scanner_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/profile/presence_cache_provider_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/profile/presence_ordering_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/profile/presence_snapshot_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/profile/settings_profile_header_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/pulse/compose_note_page_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/pulse/note_card_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/pulse/pulse_page_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/search/search_page_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/settings/connection_section_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/settings/notification_recovery_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/settings/settings_page_loading_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/settings/settings_page_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/push/push_unconfigured_build_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/widget_test.dart`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `schema/schema.sql`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `scripts/cutover/README.md`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `scripts/generate-macos-icon.py`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `scripts/macos-icon.sh`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `scripts/reconcile-schema-after-pgschema.sql`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `scripts/run-tests.sh`
+
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+
+New module: `false`.
+
+- Verify: `just ci`

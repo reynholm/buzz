@@ -2,8 +2,8 @@
 use super::*;
 use crate::managed_agents::device_runtime::{self, RuntimeFence};
 
-async fn preflight(
-    app: &AppHandle,
+async fn preflight<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     record: ManagedAgentRecord,
     definitions: Vec<crate::managed_agents::AgentDefinition>,
     fresh: bool,
@@ -34,14 +34,15 @@ fn snapshot(
     }
     Ok(())
 }
-/// Preserve the unscoped pair-start interface while capturing a fence internally.
+/// Restart pairs with admission captured before the caller stops them.
 pub(in crate::commands) async fn start_local_agent_pairs_with_preflight(
     app: &AppHandle,
     state: &AppState,
     pubkey: &str,
     relay_urls: &[String],
+    admission: &crate::managed_agents::AdmissionSnapshot,
 ) -> Result<ManagedAgentSummary, String> {
-    start_local_agent_pairs_impl(app, state, pubkey, relay_urls, None).await
+    start_local_agent_pairs_impl(app, state, pubkey, relay_urls, None, admission).await
 }
 /// Restart pairs only within the caller's original runtime scope.
 pub(in crate::commands) async fn start_local_agent_pairs_scoped(
@@ -50,12 +51,16 @@ pub(in crate::commands) async fn start_local_agent_pairs_scoped(
     pubkey: &str,
     relay_urls: &[String],
     expected: Option<&RuntimeFence>,
+    admission: &crate::managed_agents::AdmissionSnapshot,
 ) -> Result<ManagedAgentSummary, String> {
     match expected {
         Some(expected) => {
-            start_local_agent_pairs_impl(app, state, pubkey, relay_urls, Some(expected)).await
+            start_local_agent_pairs_impl(app, state, pubkey, relay_urls, Some(expected), admission)
+                .await
         }
-        None => start_local_agent_pairs_with_preflight(app, state, pubkey, relay_urls).await,
+        None => {
+            start_local_agent_pairs_with_preflight(app, state, pubkey, relay_urls, admission).await
+        }
     }
 }
 async fn start_local_agent_pairs_impl(
@@ -64,6 +69,7 @@ async fn start_local_agent_pairs_impl(
     pubkey: &str,
     relay_urls: &[String],
     expected: Option<&RuntimeFence>,
+    admission: &crate::managed_agents::AdmissionSnapshot,
 ) -> Result<ManagedAgentSummary, String> {
     let fence = device_runtime::runtime_preflight_with(
         app,
@@ -85,10 +91,13 @@ async fn start_local_agent_pairs_impl(
         if let Err(error) = crate::managed_agents::runtime_commands::start_managed_agent_pair_scoped(
             pubkey.to_string(),
             relay.clone(),
+            admission,
             app.clone(),
             &fence,
         ) {
-            errors.push(format!("{relay}: {error}"));
+            if error != crate::managed_agents::RELAY_REMOVED_ERROR {
+                errors.push(format!("{relay}: {error}"));
+            }
         }
     }
     if !errors.is_empty() {
@@ -125,35 +134,105 @@ pub(in crate::commands) struct LocalStartScope<'a> {
     pub fence: Option<&'a RuntimeFence>,
 }
 /// Preflight and start one authorized local target with fresh policy and scope.
-pub(in crate::commands) async fn start_local_agent_with_preflight(
-    app: &AppHandle,
+pub(in crate::commands) async fn start_local_agent_with_preflight<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     state: &AppState,
     pubkey: &str,
     fresh: bool,
     requested: LocalStartScope<'_>,
 ) -> Result<ManagedAgentSummary, String> {
+    start_local_agent_after_preflight(app, state, pubkey, requested, |model| async move {
+        ensure_relay_mesh_for_record(app, model.as_deref(), fresh).await
+    })
+    .await
+}
+
+/// Supply the ordinary start's awaited probe so tests can remove a relay while
+/// it is pending. Device authority and admission remain the production checks.
+pub(in crate::commands) async fn start_local_agent_after_preflight<R, P, F>(
+    app: &AppHandle<R>,
+    state: &AppState,
+    pubkey: &str,
+    requested: LocalStartScope<'_>,
+    preflight: P,
+) -> Result<ManagedAgentSummary, String>
+where
+    R: tauri::Runtime,
+    P: FnOnce(Option<String>) -> F,
+    F: std::future::Future<Output = Result<(), String>>,
+{
     let LocalStartScope {
         relay: expected_relay,
         owner: expected_owner,
         replay_floor,
         fence: expected,
     } = requested;
-
+    // Capture before the mesh await. Remove-and-readd must also refuse this
+    // in-flight start, while a later user action can capture fresh admission.
+    let admission = crate::managed_agents::AdmissionSnapshot::capture(state);
     crate::relay::assert_expected_relay_scope(expected_relay, &relay_ws_url_with_override(state))?;
     crate::relay::assert_expected_signer(expected_owner, &workspace_owner_hex(state)?)?;
-    device_runtime::runtime_preflight_with(
+
+    let (record, definitions, scope, fence) = {
+        let _store = state
+            .managed_agents_store_lock
+            .lock()
+            .map_err(|e| e.to_string())?;
+        let fence = device_runtime::capture_runtime_fence(state)?;
+        if let Some(expected) = expected {
+            device_runtime::assert_runtime_fence(state, expected)?;
+        }
+        device_runtime::runtime_phase_locked_with(
+            app,
+            state,
+            pubkey,
+            None,
+            crate::managed_agents::persona_device_view::load_device_policy_context,
+            |record, definitions, scope| Ok((record, definitions, scope, fence)),
+        )?
+    };
+    if record.backend != BackendKind::Local {
+        return Err(format!("agent {pubkey} is not a local agent"));
+    }
+    let global = crate::managed_agents::load_global_agent_config(app).unwrap_or_default();
+    let model = crate::managed_agents::effective_config::resolve_effective_relay_mesh_model_id(
+        &record,
+        &definitions,
+        &global,
+    );
+    preflight(model).await?;
+
+    // Match pair-start's lock order: transition, store, runtimes. Hold admission
+    // until registration so removal's subsequent stop sweep sees this pair.
+    let transition = state
+        .managed_agent_runtime_transition
+        .lock()
+        .map_err(|e| e.to_string())?;
+    let _store = state
+        .managed_agents_store_lock
+        .lock()
+        .map_err(|e| e.to_string())?;
+    device_runtime::assert_runtime_fence(state, &fence)?;
+    device_runtime::runtime_phase_locked_with(
         app,
         state,
         pubkey,
-        expected,
+        Some(&scope),
         crate::managed_agents::persona_device_view::load_device_policy_context,
-        |r, d, _| preflight(app, r, d, fresh),
         |mut record, definitions, scope| {
+            if record.backend != BackendKind::Local {
+                return Err(format!("agent {pubkey} is no longer a local agent"));
+            }
             snapshot(&mut record, &definitions)?;
             let relay = crate::relay::bind_expected_relay_scope(
                 Some(&scope.relay_url),
                 scope.relay_url.clone(),
             )?;
+            // Use the same target resolution as process launch. Legacy record
+            // relay values do not override the current workspace after cutover.
+            let runtime_relay =
+                crate::relay::effective_agent_relay_url(&record.relay_url, relay.as_str());
+            let admitted = transition.admit(&admission, &runtime_relay)?;
             let mut runtimes = state
                 .managed_agent_processes
                 .lock()
@@ -168,6 +247,7 @@ pub(in crate::commands) async fn start_local_agent_with_preflight(
                 &mut runtimes,
                 Some(owner.as_str()),
                 &relay,
+                &admitted,
                 replay_floor,
             )?;
             device_runtime::save_runtime_record(app, &record)?;
@@ -175,5 +255,4 @@ pub(in crate::commands) async fn start_local_agent_with_preflight(
             summarize_from_disk(app, &record, &runtimes)
         },
     )
-    .await
 }

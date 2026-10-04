@@ -48,7 +48,8 @@ pub struct AppState {
     /// Serializes every managed-runtime transition that changes the protected
     /// PID set: spawn/register, adoption, stop, shutdown, and sweep snapshots.
     /// Never perform network I/O while holding this lock.
-    pub managed_agent_runtime_transition: Mutex<()>,
+    /// Owns the per-relay admission record every local pair spawn re-checks.
+    pub managed_agent_runtime_transition: Mutex<crate::managed_agents::RelayAdmissions>,
     pub(crate) managed_agent_restore_cleanup: crate::managed_agents::RestoreCleanup,
     pub managed_agents_store_lock: Mutex<()>,
     pub channel_templates_store_lock: Mutex<()>,
@@ -226,7 +227,7 @@ pub fn build_app_state() -> AppState {
         managed_agent_restore_pending: AtomicBool::new(false),
         managed_agent_experiments: crate::managed_agents::ManagedAgentExperimentState::default(),
         shutdown_started: AtomicBool::new(false),
-        managed_agent_runtime_transition: Mutex::new(()),
+        managed_agent_runtime_transition: Mutex::default(),
         identity_mutation: Mutex::new(()),
         managed_agent_restore_cleanup: Default::default(),
         managed_agents_store_lock: Mutex::new(()),

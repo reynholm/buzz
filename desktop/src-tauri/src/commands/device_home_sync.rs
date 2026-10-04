@@ -75,28 +75,74 @@ pub async fn finish_device_home_sync(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let state_ref = &*state;
-    let expected = finish_device_home_sync_after_archive(
-        &state,
+    let restore = finish_device_home_sync_deferred_restore_with(
+        session_token,
+        app,
         |target| async move {
             super::identity_archive::fetch_verified_archived_pubkeys_at(state_ref, &target).await
         },
-        |archived| {
-            finish_device_home_sync_inner_with_archive(&session_token, &app, &state, archived)
-        },
+        crate::managed_agents::live_process_sweeps,
     )
     .await?;
     tauri::async_runtime::spawn(async move {
-        let state = app.state::<AppState>();
-        if let Err(error) = retry_device_home_restore_with(&state, &expected, || async {
-            crate::managed_agents::restore_managed_agents_on_launch(&app, &state.shutdown_started)
-                .await
-        })
-        .await
-        {
+        if let Err(error) = restore.run().await {
             eprintln!("buzz-desktop: deferred home restore failed: {error}");
         }
     });
     Ok(())
+}
+
+struct DeferredHomeRestore<R: tauri::Runtime, S> {
+    app: AppHandle<R>,
+    expected: device_home_sync::SyncScope,
+    admission: crate::managed_agents::AdmissionSnapshot,
+    sweeps: S,
+}
+
+impl<R: tauri::Runtime, S: FnOnce(&AppHandle<R>, &[u32])> DeferredHomeRestore<R, S> {
+    async fn run(self) -> Result<(), String> {
+        let state = self.app.state::<AppState>();
+        retry_device_home_restore_with(&state, &self.expected, || async {
+            crate::managed_agents::restore_managed_agents_on_launch(
+                &self.app,
+                &state.shutdown_started,
+                self.admission,
+                self.sweeps,
+            )
+            .await
+        })
+        .await
+    }
+}
+
+// The IPC awaits completion, then schedules this owned restore. Only the network
+// fetch and live process sweeps are replaceable in tests; completion and restore
+// retain their actual native authority, token, admission and writeback checks.
+async fn finish_device_home_sync_deferred_restore_with<R, Fut, S>(
+    session_token: String,
+    app: AppHandle<R>,
+    fetch: impl FnOnce(super::identity_archive::RelayTarget) -> Fut,
+    sweeps: S,
+) -> Result<DeferredHomeRestore<R, S>, String>
+where
+    R: tauri::Runtime,
+    Fut: std::future::Future<Output = Result<Vec<String>, String>>,
+    S: FnOnce(&AppHandle<R>, &[u32]),
+{
+    let state = app.state::<AppState>();
+    // Capture before the archive fetch and both workspace-lock waits. Removing
+    // and re-adding the same relay must not bless this pending completion's start.
+    let admission = crate::managed_agents::AdmissionSnapshot::capture(&state);
+    let expected = finish_device_home_sync_after_archive(&state, fetch, |archived| {
+        finish_device_home_sync_inner_with_archive(&session_token, &app, &state, archived)
+    })
+    .await?;
+    Ok(DeferredHomeRestore {
+        app,
+        expected,
+        admission,
+        sweeps,
+    })
 }
 
 // Network work must not hold either workspace-apply or managed-store locks.
@@ -414,5 +460,111 @@ mod migration_tests {
         })
         .await
         .unwrap();
+    }
+}
+
+#[cfg(all(test, not(target_os = "windows")))]
+mod deferred_restore_tests {
+    use super::*;
+    use crate::managed_agents::{
+        admission_test_support::{app_with_keyless_agent, reached_spawn, TestApp, RELAY},
+        load_managed_agents, readd_relay, remove_relay,
+    };
+
+    async fn hydrated(test: &TestApp) -> String {
+        let state = test.app.state::<AppState>();
+        let session = device_home_sync::begin_session(&state).unwrap();
+        device_home_sync::hydrate_history(
+            &state,
+            &session.token,
+            |_| async { Ok(vec![]) },
+            |_| async { Ok(()) },
+        )
+        .await
+        .unwrap();
+        session.token
+    }
+
+    fn remove_and_readd(state: &AppState) {
+        let scope = device_home_sync::capture_scope(state).unwrap();
+        remove_relay(state, RELAY).unwrap();
+        readd_relay(state, RELAY).unwrap();
+        assert_eq!(device_home_sync::capture_scope(state).unwrap(), scope);
+    }
+
+    fn assert_start(test: &TestApp, removed: bool) {
+        let records = load_managed_agents(test.app.handle()).unwrap();
+        let error = records[0].last_error.as_deref();
+        if removed {
+            assert_eq!(error, None, "stale deferred restore reached spawn");
+        } else {
+            assert!(
+                error.is_some_and(reached_spawn),
+                "fresh restore did not reach spawn: {error:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn remove_and_readd_during_archive_does_not_revive_deferred_restore() {
+        for removed in [false, true] {
+            let test = app_with_keyless_agent();
+            let token = hydrated(&test).await;
+            let state = test.app.state::<AppState>();
+            let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+            let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+            let finish = finish_device_home_sync_deferred_restore_with(
+                token,
+                test.app.handle().clone(),
+                |_| async {
+                    entered_tx.send(()).unwrap();
+                    release_rx.await.unwrap();
+                    Ok(vec![])
+                },
+                |_, _| {},
+            );
+            tokio::pin!(finish);
+            tokio::select! {
+                result = &mut finish => panic!("archive did not pause: {}", result.is_ok()),
+                _ = entered_rx => {},
+            }
+            if removed {
+                remove_and_readd(&state);
+            }
+            release_tx.send(()).unwrap();
+            finish.await.unwrap().run().await.unwrap();
+            assert_start(&test, removed);
+        }
+    }
+
+    #[tokio::test]
+    async fn remove_and_readd_while_restore_waits_for_workspace_lock_does_not_revive_it() {
+        for removed in [false, true] {
+            let test = app_with_keyless_agent();
+            let token = hydrated(&test).await;
+            let state = test.app.state::<AppState>();
+            let restore = finish_device_home_sync_deferred_restore_with(
+                token,
+                test.app.handle().clone(),
+                |_| async { Ok(vec![]) },
+                |_, _| {},
+            )
+            .await
+            .unwrap();
+            let apply = state.workspace_apply_lock.clone().lock_owned().await;
+            let run = restore.run();
+            tokio::pin!(run);
+            tokio::select! {
+                biased;
+                result = &mut run => panic!("restore bypassed apply lock: {result:?}"),
+                _ = tokio::task::yield_now() => {},
+            }
+            if removed {
+                remove_and_readd(&state);
+            }
+            drop(apply);
+            run.await.unwrap();
+            assert_start(&test, removed);
+        }
     }
 }

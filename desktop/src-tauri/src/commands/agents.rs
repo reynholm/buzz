@@ -39,8 +39,8 @@ pub(crate) use pending::{
 /// For one-shot command paths only — the 5s list poll calls
 /// `build_managed_agent_summary` directly with stores loaded once per call,
 /// not once per record.
-pub(super) fn summarize_from_disk(
-    app: &AppHandle,
+pub(super) fn summarize_from_disk<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     record: &ManagedAgentRecord,
     runtimes: &std::collections::HashMap<
         crate::managed_agents::ManagedAgentRuntimeKey,
@@ -62,8 +62,8 @@ mod create_fields;
 use create_fields::{normalize_relay_mesh, resolve_created_avatar_url, trim_to_optional_string};
 
 #[cfg(feature = "mesh-llm")]
-async fn ensure_relay_mesh_for_record(
-    app: &AppHandle,
+async fn ensure_relay_mesh_for_record<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     model_id: Option<&str>,
     allow_fresh_create_start: bool,
 ) -> Result<(), String> {
@@ -71,8 +71,8 @@ async fn ensure_relay_mesh_for_record(
 }
 
 #[cfg(not(feature = "mesh-llm"))]
-async fn ensure_relay_mesh_for_record(
-    _app: &AppHandle,
+async fn ensure_relay_mesh_for_record<R: tauri::Runtime>(
+    _app: &AppHandle<R>,
     _model_id: Option<&str>,
     _allow_fresh_create_start: bool,
 ) -> Result<(), String> {
@@ -1086,6 +1086,9 @@ pub(crate) use profile::*;
 #[cfg(test)]
 use profile::{profile_needs_sync, resolve_legacy_avatar};
 
+#[cfg(all(test, not(target_os = "windows")))]
+#[path = "agents_admission_tests.rs"]
+mod admission_tests;
 #[cfg(test)]
 #[path = "agents_tests.rs"]
 mod tests;
