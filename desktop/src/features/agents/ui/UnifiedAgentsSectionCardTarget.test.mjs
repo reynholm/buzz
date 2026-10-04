@@ -55,6 +55,7 @@ function agent(overrides = {}) {
     name: "Instance",
     personaId: "persona-1",
     status: "stopped",
+    canStartOnDevice: true,
     model: null,
     modelSource: "global",
     lastError: null,
@@ -69,6 +70,12 @@ function persona(overrides = {}) {
   return {
     id: "persona-1",
     displayName: "Fizz Prime",
+    home: { kind: "local", label: "Here", remoteInstancePubkeys: [] },
+    capabilities: {
+      canCreateInstance: true,
+      canDeleteDefinition: true,
+      blockedReason: null,
+    },
     avatarUrl: null,
     model: null,
     isBuiltIn: false,

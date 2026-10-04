@@ -44,6 +44,7 @@ export function createPersonaDialogState(): PersonaDialogState {
     submitLabel: "Create agent",
     initialValues: {
       displayName: "",
+      shareAcrossDevices: false,
       avatarUrl: "",
       systemPrompt: "",
       acpCommand: "buzz-acp",
@@ -63,6 +64,7 @@ export function duplicatePersonaDialogState(
     submitLabel: "Create agent",
     initialValues: {
       displayName: `${persona.displayName} copy`,
+      shareAcrossDevices: false,
       avatarUrl: persona.avatarUrl ?? "",
       description: persona.description ?? undefined,
       systemPrompt: persona.systemPrompt,

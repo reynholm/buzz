@@ -135,6 +135,23 @@ with a TypeScript lookup table or an id comparison in a component.
     published or removed. A queued update must stay visibly queued, and the
     catalog itself must render only relay-confirmed publications — never an
     optimistic local persona.
+    Device execution permission is separate: `shareAcrossDevices` is chosen
+    only when creating a definition, defaults to false (also for duplicates and
+    agent drafts), and cannot be changed by Edit. Only backend `home` and
+    `capabilities` authorize creation/deletion; a local inventory row, origin,
+    name, catalog publication, or relay presence cannot grant that authority.
+    Instance start also requires the exact backend `canStartOnDevice` projection.
+    Presence reads use the reported `home.remoteInstancePubkeys`, never names.
+    Remote and unresolved definitions remain visible and editable. Pending
+    hydration hides Start/Delete; failed reads retain an honest state refresh and explain connection recovery.
+    State refresh reloads backend projections; the existing fenced sync lifecycle
+    resumes history hydration on connection/workspace changes. Do not imply a
+    projection refresh has completed hydration or add a second sync controller.
+    A saved definition survives a later refused instance creation: close Create,
+    explain that it was saved and use its existing Start after synchronization.
+    Never repair the refusal by creating another definition or rolling it back.
+    Instruction access (`respondTo`/allowlist/owner-only) still follows rule 11;
+    neither device permission nor catalog publication changes that audience.
 11. **Shared agent access names the consequence where it is selected.** The
    shared respond-to field shows a persistent warning whenever `anyone` **or**
    `allowlist` is selected — both hand the host's access to someone other than

@@ -3448,6 +3448,20 @@
           "behavior_test": "persona: definition deletion refuses before team/cascade mutations (definition_hosted_elsewhere)",
           "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs",
           "coverage": "Task10 production action behavior through synthetic IPC; deliberately removed and runtime-failed, restored"
+        },
+        {
+          "caller_path": "desktop/src/features/agents/ui/usePersonaActions.ts",
+          "callee_symbol": "savedDefinitionRecovery",
+          "invocation": "savedDefinitionRecovery(savedDefinition.displayName, error)",
+          "behavior_test": "persona: saved definition refusal closes creation with Start recovery and no duplicate retry",
+          "verification_command": "just desktop-test"
+        },
+        {
+          "caller_path": "desktop/src/features/agents/ui/usePersonaActions.ts",
+          "callee_symbol": "savedDefinitionRecovery",
+          "invocation": "savedDefinitionRecovery(persona.displayName, error)",
+          "behavior_test": "persona: native refusal after saved definition keeps Start recovery",
+          "verification_command": "just desktop-test"
         }
       ],
       "verification_commands": [
@@ -3489,6 +3503,13 @@
           "behavior_test": "management: all_builder_callers_observe_remote_refusal / pending_history_blocks_every_creation_path (definition_hosted_elsewhere)",
           "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs",
           "coverage": "Task10 production action behavior through synthetic IPC; deliberately removed and runtime-failed, restored"
+        },
+        {
+          "caller_path": "desktop/src/features/agents/useAgentManagement.ts",
+          "callee_symbol": "savedDefinitionRecovery",
+          "invocation": "savedDefinitionRecovery(savedDefinitionName, cause)",
+          "behavior_test": "management: saved definition refusal closes creation with Start recovery and no duplicate retry",
+          "verification_command": "just desktop-test"
         }
       ],
       "verification_commands": [
@@ -3596,6 +3617,246 @@
         "production builder caller inventory is exact"
       ],
       "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/AGENTS.md",
+      "responsibility": "Device sharing creation UI, authoritative home presentation and saved-definition recovery",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/lib/savedDefinitionRecovery.ts",
+      "responsibility": "Device sharing creation UI, authoritative home presentation and saved-definition recovery",
+      "is_new": true,
+      "required_symbols": [
+        "export function savedDefinitionRecovery("
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/ui/AgentDefinitionDialog.tsx",
+      "responsibility": "Device sharing creation UI, authoritative home presentation and saved-definition recovery",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/agents/ui/AgentDefinitionDialog.tsx",
+          "callee_symbol": "AgentDeviceSharingField",
+          "invocation": "<AgentDeviceSharingField",
+          "behavior_test": "create_toggle_defaults_off_and_survives_submit",
+          "verification_command": "just desktop-test"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/ui/AgentDeviceSharingField.tsx",
+      "responsibility": "Device sharing creation UI, authoritative home presentation and saved-definition recovery",
+      "is_new": true,
+      "required_symbols": [
+        "export function AgentDeviceSharingField(",
+        "checked={value}",
+        "onChange(event.target.checked)"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/ui/PersonaActionsMenu.tsx",
+      "responsibility": "Device sharing creation UI, authoritative home presentation and saved-definition recovery",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/agents/ui/PersonaActionsMenu.tsx",
+          "callee_symbol": "canDeleteDefinition",
+          "invocation": "persona.capabilities?.canDeleteDefinition === true",
+          "behavior_test": "remote_card_has_no_start_or_delete",
+          "verification_command": "just desktop-test"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/ui/PersonaRemoteRuntime.tsx",
+      "responsibility": "Device sharing creation UI, authoritative home presentation and saved-definition recovery",
+      "is_new": true,
+      "required_symbols": [
+        "export function PersonaRemoteRuntime(",
+        "persona.home?.remoteInstancePubkeys",
+        "\"device_home_sync_pending\""
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/agents/ui/PersonaRemoteRuntime.tsx",
+          "callee_symbol": "useAgentAvailabilityLookup",
+          "invocation": "useAgentAvailabilityLookup(pubkeys)",
+          "behavior_test": "presence_uses_pubkey_not_name",
+          "verification_command": "just desktop-test"
+        },
+        {
+          "caller_path": "desktop/src/features/agents/ui/PersonaRemoteRuntime.tsx",
+          "callee_symbol": "invalidateQueries",
+          "invocation": "client.invalidateQueries({ queryKey: personasQueryKey })",
+          "behavior_test": "pending_failed_and_missing_projection_hide_actions_but_allow_sync_retry",
+          "verification_command": "just desktop-test"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/ui/RequestedAgentCreateDialogs.tsx",
+      "responsibility": "Device sharing creation UI, authoritative home presentation and saved-definition recovery",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/ui/UnifiedAgentsSection.tsx",
+      "responsibility": "Device sharing creation UI, authoritative home presentation and saved-definition recovery",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/agents/ui/UnifiedAgentsSection.tsx",
+          "callee_symbol": "PersonaRemoteRuntime",
+          "invocation": "<PersonaRemoteRuntime persona={persona} />",
+          "behavior_test": "remote_card_has_no_start_or_delete",
+          "verification_command": "just desktop-test"
+        },
+        {
+          "caller_path": "desktop/src/features/agents/ui/UnifiedAgentsSection.tsx",
+          "callee_symbol": "canCreateInstance",
+          "invocation": "persona.capabilities?.canCreateInstance === true",
+          "behavior_test": "pending_failed_and_missing_projection_hide_actions_but_allow_sync_retry",
+          "verification_command": "just desktop-test"
+        },
+        {
+          "caller_path": "desktop/src/features/agents/ui/UnifiedAgentsSection.tsx",
+          "callee_symbol": "canStartOnDevice",
+          "invocation": "(!agent || agent.canStartOnDevice === true)",
+          "behavior_test": "copied_local_instance_does_not_restore_start",
+          "verification_command": "just desktop-test"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/ui/UnifiedAgentsSectionCardTarget.test.mjs",
+      "responsibility": "Device sharing creation UI, authoritative home presentation and saved-definition recovery",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/ui/UnifiedAgentsSectionDeviceHome.jsdom-test.mjs",
+      "responsibility": "Device sharing creation UI, authoritative home presentation and saved-definition recovery",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/ui/personaDialogState.test.mjs",
+      "responsibility": "Device sharing creation UI, authoritative home presentation and saved-definition recovery",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/ui/personaDialogState.ts",
+      "responsibility": "Device sharing creation UI, authoritative home presentation and saved-definition recovery",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/settings/ui/AgentsSettingsPanel.tsx",
+      "responsibility": "Device identity settings and honest queued publication UI",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/settings/ui/AgentsSettingsPanel.tsx",
+          "callee_symbol": "DeviceIdentitySettingsCard",
+          "invocation": "<DeviceIdentitySettingsCard />",
+          "behavior_test": "label_keyboard_save_reports_queued",
+          "verification_command": "just desktop-test"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/settings/ui/DeviceIdentitySettingsCard.jsdom-test.mjs",
+      "responsibility": "Device identity settings and honest queued publication UI",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/settings/ui/DeviceIdentitySettingsCard.tsx",
+      "responsibility": "Device identity settings and honest queued publication UI",
+      "is_new": true,
+      "required_symbols": [
+        "export function DeviceIdentitySettingsCard(",
+        "save.mutate(label.trim())",
+        "save.data.publication === \"queued\""
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/settings/ui/DeviceIdentitySettingsCard.tsx",
+          "callee_symbol": "getDeviceIdentity",
+          "invocation": "queryFn: getDeviceIdentity",
+          "behavior_test": "identity_read_error_retains_retry_affordance",
+          "verification_command": "just desktop-test"
+        },
+        {
+          "caller_path": "desktop/src/features/settings/ui/DeviceIdentitySettingsCard.tsx",
+          "callee_symbol": "setDeviceLabel",
+          "invocation": "mutationFn: setDeviceLabel",
+          "behavior_test": "label_keyboard_save_reports_queued",
+          "verification_command": "just desktop-test"
+        }
+      ],
       "verification_commands": [
         "just desktop-test desktop-typecheck"
       ]

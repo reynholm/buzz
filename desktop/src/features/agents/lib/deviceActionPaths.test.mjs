@@ -522,6 +522,89 @@ for (const owner of ["managed", "persona", "management", "profile"]) {
     });
   }
 }
+for (const owner of ["persona", "management"]) {
+  test(`${owner}: saved definition refusal closes creation with Start recovery and no duplicate retry`, async () => {
+    setup(
+      [blocked("device_home_sync_pending", { id: "created" })],
+      owner === "management" ? [rawAgent({ persona_id: null })] : [],
+    );
+    const surface = mount(owner, rawPersona());
+    if (owner === "management") await requestManagement(surface);
+    else
+      await act(() =>
+        surface.current().openDuplicate(fromRawPersona(rawPersona())),
+      );
+    let result;
+    await act(async () => {
+      result =
+        owner === "persona"
+          ? await surface
+              .current()
+              .handleSubmit(creationInput, "definition_start")
+          : await surface
+              .current()
+              .submitCreate(creationInput, "definition_start", null);
+    });
+    const message =
+      owner === "persona"
+        ? surface.current().personaErrorMessage
+        : surface.current().error;
+    assert.match(message, /saved/);
+    assert.match(message, /Start/);
+    assert.match(message, /device_home_sync_pending/);
+    assert.deepEqual(effects(), []);
+    assert.equal(
+      commands.filter(([cmd]) => cmd === "create_persona").length,
+      1,
+    );
+    if (owner === "persona") {
+      assert.equal(
+        result,
+        true,
+        "saved definition should dismiss Create instead of permitting a duplicate retry",
+      );
+      assert.equal(surface.current().personaDialogState, null);
+    } else {
+      assert.equal(surface.current().request, null);
+      await act(async () =>
+        surface.current().submitCreate(creationInput, "definition_start", null),
+      );
+      assert.equal(
+        commands.filter(([cmd]) => cmd === "create_persona").length,
+        1,
+      );
+    }
+  });
+}
+test("persona: native refusal after saved definition keeps Start recovery", async () => {
+  setup([rawPersona({ id: "created" })], []);
+  handlers.set("create_managed_agent", () => {
+    throw new Error("definition_hosted_elsewhere");
+  });
+  const surface = mount("persona", rawPersona());
+  await act(() =>
+    surface.current().openDuplicate(fromRawPersona(rawPersona())),
+  );
+  let result;
+  await act(async () => {
+    result = await surface
+      .current()
+      .handleSubmit(creationInput, "definition_start");
+  });
+  assert.equal(result, true);
+  assert.match(surface.current().personaErrorMessage, /saved/);
+  assert.match(surface.current().personaErrorMessage, /Start/);
+  assert.match(
+    surface.current().personaErrorMessage,
+    /definition_hosted_elsewhere/,
+  );
+  assert.equal(surface.current().personaDialogState, null);
+  assert.equal(commands.filter(([cmd]) => cmd === "create_persona").length, 1);
+  assert.equal(
+    commands.filter(([cmd]) => cmd === "start_managed_agent").length,
+    0,
+  );
+});
 for (const selected of [false, true])
   for (const owner of ["persona", "management"]) {
     test(`${owner}: new dialog creates definition first with selected policy ${selected}, exact linkage and access`, async () => {

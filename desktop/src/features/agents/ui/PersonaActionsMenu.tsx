@@ -84,7 +84,8 @@ export function PersonaActionsMenu({
             <Trash2 className="h-4 w-4" />
             Managed by team
           </DropdownMenuItem>
-        ) : (
+        ) : persona.home !== undefined &&
+          persona.capabilities?.canDeleteDefinition === true ? (
           <DropdownMenuItem
             className="text-destructive focus:text-destructive"
             disabled={disabled}
@@ -100,7 +101,7 @@ export function PersonaActionsMenu({
             <Trash2 className="h-4 w-4" />
             Delete
           </DropdownMenuItem>
-        )}
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );

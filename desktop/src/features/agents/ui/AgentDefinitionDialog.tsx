@@ -10,6 +10,7 @@ import { cn } from "@/shared/lib/cn";
 import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
 import { AgentCreationPreview } from "./AgentCreationPreview";
+import { AgentDeviceSharingField } from "./AgentDeviceSharingField";
 import { AgentIdentityFields } from "./AgentDescriptionField";
 import { PersonaDropdownField } from "./PersonaDropdownField";
 import type { EnvVarsValue } from "./EnvVarsEditor";
@@ -70,6 +71,7 @@ import {
   useAcpCommandsQuery,
   useBakedBuildEnvKeysQuery,
   useRuntimeFileConfigQuery,
+  usePersonasQuery,
 } from "../hooks";
 import { useAgentDialogDefaults } from "./useAgentDialogDefaults";
 import { AcpCommandField } from "./AcpCommandField";
@@ -192,6 +194,12 @@ export function AgentDefinitionDialog({
     [globalConfig.preferred_runtime, runtimes],
   );
   const isCreateMode = Boolean(initialValues && !("id" in initialValues));
+  const [shareAcrossDevices, setShareAcrossDevices] = React.useState(false);
+  const personasQuery = usePersonasQuery({ enabled: open && !isCreateMode });
+  const editedPersona =
+    initialValues && "id" in initialValues
+      ? personasQuery.data?.find((persona) => persona.id === initialValues.id)
+      : undefined;
   const shouldReduceMotion = useReducedMotion();
   const initialModelProviderEditableWithoutRuntime = Boolean(
     initialValues &&
@@ -207,6 +215,9 @@ export function AgentDefinitionDialog({
       return;
     }
     setDisplayName(initialValues.displayName);
+    setShareAcrossDevices(
+      "id" in initialValues ? false : initialValues.shareAcrossDevices === true,
+    );
     setDescriptionDraft(initialValues.description ?? "");
     setAvatarUrl(initialValues.avatarUrl ?? "");
     setSystemPrompt(initialValues.systemPrompt);
@@ -376,7 +387,10 @@ export function AgentDefinitionDialog({
       );
       return;
     }
-    await onSubmit(baseInput, { publishCatalogUpdates: false });
+    await onSubmit(
+      { ...baseInput, shareAcrossDevices },
+      { publishCatalogUpdates: false },
+    );
   }
 
   function handleSubmitForm(event: React.FormEvent<HTMLFormElement>) {
@@ -758,6 +772,34 @@ export function AgentDefinitionDialog({
           onDescriptionChange={setDescriptionDraft}
           onDisplayNameChange={setDisplayName}
         />
+
+        {isCreateMode ? (
+          <fieldset disabled={isPending}>
+            <AgentDeviceSharingField
+              value={shareAcrossDevices}
+              onChange={setShareAcrossDevices}
+            />
+          </fieldset>
+        ) : (
+          <div className="space-y-1 text-sm text-muted-foreground">
+            <p>
+              Работает на:{" "}
+              {editedPersona?.home?.label?.trim() ||
+                (editedPersona?.home?.kind === "remote"
+                  ? "На другом устройстве"
+                  : "Размещение неизвестно")}
+            </p>
+            <p>
+              Разрешить запуск на других моих устройствах:{" "}
+              {!editedPersona
+                ? "неизвестно"
+                : editedPersona.shareAcrossDevices === true
+                  ? "включено"
+                  : "выключено"}
+              . Выбирается при создании.
+            </p>
+          </div>
+        )}
 
         <div className="space-y-1.5">
           <label

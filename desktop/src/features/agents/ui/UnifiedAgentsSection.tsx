@@ -13,6 +13,7 @@ import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlA
 import { pickProfileAgent } from "@/features/agents/lib/pickProfileAgent";
 import { useIsArchivedPredicate } from "@/features/identity-archive/hooks";
 import { useUserProfileQuery } from "@/features/profile/hooks";
+import { ProfileAvatar } from "@/features/profile/ui/ProfileAvatar";
 import type { AgentPersona, ManagedAgent } from "@/shared/api/types";
 import type { ProfilePanelOpenOptions } from "@/shared/context/ProfilePanelContext";
 import { useFeedbackToasts } from "@/shared/hooks/useToastEffect";
@@ -26,6 +27,8 @@ import { AgentIdentityCard } from "./AgentIdentityCard";
 import { AgentRuntimeAvatarControl } from "./AgentRuntimeAvatarControl";
 import { CreateIdentityCard } from "./CreateIdentityCard";
 import { PersonaActionsMenu } from "./PersonaActionsMenu";
+import { PersonaRemoteRuntime } from "./PersonaRemoteRuntime";
+import { IdentityInitialsAvatar } from "./IdentityInitialsAvatar";
 import { buildUnifiedGroups } from "./unifiedAgentGroups";
 
 type UnifiedAgentsSectionProps = {
@@ -284,6 +287,10 @@ function AgentPersonaCard({
       defaultModel,
     });
   const isActive = agent ? isManagedAgentActive(agent) : false;
+  const canRun =
+    persona.home !== undefined &&
+    persona.capabilities?.canCreateInstance === true &&
+    (!agent || agent.canStartOnDevice === true);
   const profileQuery = useUserProfileQuery(agent?.pubkey);
   const avatarUrl = agent
     ? resolveAgentCardAvatarUrl(profileQuery.data?.avatarUrl, persona.avatarUrl)
@@ -300,7 +307,18 @@ function AgentPersonaCard({
       )}
       ariaLabel={`${title} agent profile`}
       avatar={
-        agent ? (
+        !canRun ? (
+          avatarUrl ? (
+            <ProfileAvatar
+              avatarUrl={avatarUrl}
+              label={title}
+              shape="squircle"
+              className="h-full w-full"
+            />
+          ) : (
+            <IdentityInitialsAvatar label={title} size={96} />
+          )
+        ) : agent ? (
           <AgentRuntimeAvatarControl
             activeTestId={`agent-runtime-active-${agent.pubkey}`}
             avatarUrl={avatarUrl}
@@ -356,7 +374,9 @@ function AgentPersonaCard({
         onOpenPersonaProfile(persona);
       }}
       statusBadge={
-        agent?.personaOrphaned ? (
+        !canRun ? (
+          <PersonaRemoteRuntime persona={persona} />
+        ) : agent?.personaOrphaned ? (
           <Badge className="gap-1" variant="warning">
             <AlertTriangle className="h-3 w-3" />
             Configuration missing
@@ -405,27 +425,40 @@ function StandaloneAgentCard({
     <AgentIdentityCard
       ariaLabel={`${title} agent profile`}
       avatar={
-        <AgentRuntimeAvatarControl
-          activeTestId={`agent-runtime-active-${agent.pubkey}`}
-          avatarUrl={profileQuery.data?.avatarUrl}
-          errorLabel={friendlyError}
-          errorTestId={`agent-runtime-error-${agent.pubkey}`}
-          isActive={isActive}
-          availability={availability}
-          isRestarting={restartingAgentPubkey === agent.pubkey}
-          isStarting={startingAgentPubkey === agent.pubkey}
-          label={title}
-          requiresRestart={agent.needsRestart}
-          startTestId={`agent-runtime-start-${agent.pubkey}`}
-          onOpenError={() => {
-            onOpenAgentProfile(agent.pubkey, { tab: "runtime" });
-          }}
-          onStart={() =>
-            agent.needsRestart
-              ? onRestartAgent(agent.pubkey)
-              : onStartAgent(agent.pubkey)
-          }
-        />
+        agent.canStartOnDevice !== true ? (
+          profileQuery.data?.avatarUrl ? (
+            <ProfileAvatar
+              avatarUrl={profileQuery.data.avatarUrl}
+              label={title}
+              shape="squircle"
+              className="h-full w-full"
+            />
+          ) : (
+            <IdentityInitialsAvatar label={title} size={96} />
+          )
+        ) : (
+          <AgentRuntimeAvatarControl
+            activeTestId={`agent-runtime-active-${agent.pubkey}`}
+            avatarUrl={profileQuery.data?.avatarUrl}
+            errorLabel={friendlyError}
+            errorTestId={`agent-runtime-error-${agent.pubkey}`}
+            isActive={isActive}
+            availability={availability}
+            isRestarting={restartingAgentPubkey === agent.pubkey}
+            isStarting={startingAgentPubkey === agent.pubkey}
+            label={title}
+            requiresRestart={agent.needsRestart}
+            startTestId={`agent-runtime-start-${agent.pubkey}`}
+            onOpenError={() => {
+              onOpenAgentProfile(agent.pubkey, { tab: "runtime" });
+            }}
+            onStart={() =>
+              agent.needsRestart
+                ? onRestartAgent(agent.pubkey)
+                : onStartAgent(agent.pubkey)
+            }
+          />
+        )
       }
       avatarUrl={profileQuery.data?.avatarUrl}
       dataTestId={`managed-agent-${agent.pubkey}`}
@@ -450,7 +483,11 @@ function StandaloneAgentCard({
         );
       }}
       statusBadge={
-        agent.personaOrphaned ? (
+        agent.canStartOnDevice !== true ? (
+          <span className="text-xs text-muted-foreground">
+            Запуск на этом устройстве недоступен
+          </span>
+        ) : agent.personaOrphaned ? (
           <Badge className="gap-1" variant="warning">
             <AlertTriangle className="h-3 w-3" />
             Configuration missing

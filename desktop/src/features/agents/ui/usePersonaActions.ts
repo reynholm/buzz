@@ -1,5 +1,6 @@
 import { getDefinitionForAction } from "@/features/agents/lib/definitionCapabilities";
 import * as React from "react";
+import { savedDefinitionRecovery } from "../lib/savedDefinitionRecovery";
 import { useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -185,6 +186,7 @@ export function usePersonaActions() {
 
     clearFeedback("library");
     setIsPersonaSubmitPending(true);
+    let savedDefinition: AgentPersona | null = null;
     try {
       if ("id" in input) {
         // "Save and publish" promises the community catalog sees this edit, so
@@ -231,6 +233,7 @@ export function usePersonaActions() {
           ...input,
           avatarUrl,
         });
+        savedDefinition = persona;
 
         if (resolveCreateIntent(intent) === "definition") {
           setPersonaNoticeMessage(`Created ${persona.displayName}.`);
@@ -262,15 +265,20 @@ export function usePersonaActions() {
           }
         } catch (error) {
           setPersonaErrorMessage(
-            error instanceof Error
-              ? `${persona.displayName} was created, but the agent instance could not be created: ${error.message}`
-              : `${persona.displayName} was created, but the agent instance could not be created.`,
+            savedDefinitionRecovery(persona.displayName, error),
           );
         }
       }
       setPersonaDialogState(null);
       return true;
     } catch (error) {
+      if (savedDefinition) {
+        setPersonaErrorMessage(
+          savedDefinitionRecovery(savedDefinition.displayName, error),
+        );
+        setPersonaDialogState(null);
+        return true;
+      }
       setPersonaErrorMessage(
         error instanceof Error ? error.message : "Failed to save agent.",
       );

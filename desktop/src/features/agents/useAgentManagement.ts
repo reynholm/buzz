@@ -1,5 +1,7 @@
 import { getDefinitionForAction } from "@/features/agents/lib/definitionCapabilities";
 import * as React from "react";
+import { toast } from "sonner";
+import { savedDefinitionRecovery } from "./lib/savedDefinitionRecovery";
 import { useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -162,6 +164,7 @@ export function useAgentManagement() {
       return false;
     }
     setError(null);
+    let savedDefinitionName: string | null = null;
     try {
       assertAgentCanActFromOrigin(request.request.channelId);
       const runtimes = await availableRuntimesForStart(runtimesQuery);
@@ -181,6 +184,7 @@ export function useAgentManagement() {
         ...input,
         avatarUrl,
       });
+      savedDefinitionName = persona.displayName;
 
       if (intent === "definition_start") {
         const created = await createAgentMutation.mutateAsync(
@@ -208,6 +212,13 @@ export function useAgentManagement() {
       dismiss();
       return true;
     } catch (cause) {
+      if (savedDefinitionName) {
+        const message = savedDefinitionRecovery(savedDefinitionName, cause);
+        setError(message);
+        toast.error(message);
+        dismiss();
+        return true;
+      }
       setError(
         cause instanceof Error ? cause.message : "Could not save this agent.",
       );

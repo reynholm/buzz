@@ -1,4 +1,5 @@
 import { AgentDefaultsSettingsCard } from "./AgentDefaultsSettingsCard";
+import { DeviceIdentitySettingsCard } from "./DeviceIdentitySettingsCard";
 import {
   setKeepMentionedAgentsPinned,
   useKeepMentionedAgentsPinned,
@@ -24,6 +25,7 @@ export function AgentsSettingsPanel() {
       />
 
       <SettingsOptionGroupList>
+        <DeviceIdentitySettingsCard />
         <SettingsOptionGroup title="Conversations">
           <SettingsOptionRow data-testid="settings-automatic-agent-mentions">
             <div className="min-w-0">

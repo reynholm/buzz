@@ -62,6 +62,7 @@ test("createPersonaDialogState returns a fresh empty draft", () => {
   assert.equal(first.title, "Create agent");
   assert.deepEqual(first.initialValues, {
     displayName: "",
+    shareAcrossDevices: false,
     avatarUrl: "",
     systemPrompt: "",
     acpCommand: "buzz-acp",
@@ -90,6 +91,7 @@ test("duplicatePersonaDialogState copies persona fields into a new draft", () =>
 
   assert.deepEqual(state.initialValues, {
     displayName: "Solo copy",
+    shareAcrossDevices: false,
     avatarUrl: "avatar://solo",
     description: "Reviews desktop changes.",
     systemPrompt: "Be direct.",
@@ -335,5 +337,21 @@ test("a non-allowlist mode does not seed a stale allowlist into the dialog", () 
     state.initialValues.behavior.respondToAllowlist,
     undefined,
     "stale pubkeys must not resurrect through the dialog seed",
+  );
+});
+
+// Device execution policy is a fresh choice for each new definition.
+test("creation and duplication explicitly seed private execution", () => {
+  assert.equal(
+    createPersonaDialogState().initialValues.shareAcrossDevices,
+    false,
+  );
+  assert.equal(
+    duplicatePersonaDialogState({
+      displayName: "Shared",
+      shareAcrossDevices: true,
+      systemPrompt: "",
+    }).initialValues.shareAcrossDevices,
+    false,
   );
 });

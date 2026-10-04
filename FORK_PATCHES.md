@@ -2067,6 +2067,8 @@ New module: `false`.
 
 - Invocation: `desktop/src/features/agents/ui/usePersonaActions.ts` → `getDefinitionForAction`; exact call `await getDefinitionForAction(persona.id, "createInstance")`; behavior test `persona: all_builder_callers_observe_remote_refusal / pending_history_blocks_every_creation_path (definition_hosted_elsewhere)`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs`
 - Invocation: `desktop/src/features/agents/ui/usePersonaActions.ts` → `getDefinitionForAction`; exact call `      await getDefinitionForAction(persona.id, "deleteDefinition");`; behavior test `persona: definition deletion refuses before team/cascade mutations (definition_hosted_elsewhere)`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs`
+- Invocation: `desktop/src/features/agents/ui/usePersonaActions.ts` → `savedDefinitionRecovery`; exact call `savedDefinitionRecovery(savedDefinition.displayName, error)`; behavior test `persona: saved definition refusal closes creation with Start recovery and no duplicate retry`; verify `just desktop-test`
+- Invocation: `desktop/src/features/agents/ui/usePersonaActions.ts` → `savedDefinitionRecovery`; exact call `savedDefinitionRecovery(persona.displayName, error)`; behavior test `persona: native refusal after saved definition keeps Start recovery`; verify `just desktop-test`
 - Verify: `just desktop-test desktop-typecheck`
 
 ## `desktop/src/features/agents/ui/useTeamActions.ts`
@@ -2091,6 +2093,7 @@ Task10 authoritative device capability integration and owning action coverage
 New module: `false`.
 
 - Invocation: `desktop/src/features/agents/useAgentManagement.ts` → `getDefinitionForAction`; exact call `await getDefinitionForAction(persona.id, "createInstance")`; behavior test `management: all_builder_callers_observe_remote_refusal / pending_history_blocks_every_creation_path (definition_hosted_elsewhere)`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs`
+- Invocation: `desktop/src/features/agents/useAgentManagement.ts` → `savedDefinitionRecovery`; exact call `savedDefinitionRecovery(savedDefinitionName, cause)`; behavior test `management: saved definition refusal closes creation with Start recovery and no duplicate retry`; verify `just desktop-test`
 - Verify: `just desktop-test desktop-typecheck`
 
 ## `desktop/src/features/onboarding/welcomeGuide.test.mjs`
@@ -2144,4 +2147,144 @@ Task10 authoritative device capability integration and owning action coverage
 New module: `true`.
 
 - Required symbol: `production builder caller inventory is exact`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/AGENTS.md`
+
+Device sharing creation UI, authoritative home presentation and saved-definition recovery
+
+New module: `false`.
+
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/lib/savedDefinitionRecovery.ts`
+
+Device sharing creation UI, authoritative home presentation and saved-definition recovery
+
+New module: `true`.
+
+- Required symbol: `export function savedDefinitionRecovery(`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/ui/AgentDefinitionDialog.tsx`
+
+Device sharing creation UI, authoritative home presentation and saved-definition recovery
+
+New module: `false`.
+
+- Invocation: `desktop/src/features/agents/ui/AgentDefinitionDialog.tsx` → `AgentDeviceSharingField`; exact call `<AgentDeviceSharingField`; behavior test `create_toggle_defaults_off_and_survives_submit`; verify `just desktop-test`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/ui/AgentDeviceSharingField.tsx`
+
+Device sharing creation UI, authoritative home presentation and saved-definition recovery
+
+New module: `true`.
+
+- Required symbol: `export function AgentDeviceSharingField(`
+- Required symbol: `checked={value}`
+- Required symbol: `onChange(event.target.checked)`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/ui/PersonaActionsMenu.tsx`
+
+Device sharing creation UI, authoritative home presentation and saved-definition recovery
+
+New module: `false`.
+
+- Invocation: `desktop/src/features/agents/ui/PersonaActionsMenu.tsx` → `canDeleteDefinition`; exact call `persona.capabilities?.canDeleteDefinition === true`; behavior test `remote_card_has_no_start_or_delete`; verify `just desktop-test`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/ui/PersonaRemoteRuntime.tsx`
+
+Device sharing creation UI, authoritative home presentation and saved-definition recovery
+
+New module: `true`.
+
+- Required symbol: `export function PersonaRemoteRuntime(`
+- Required symbol: `persona.home?.remoteInstancePubkeys`
+- Required symbol: `"device_home_sync_pending"`
+- Invocation: `desktop/src/features/agents/ui/PersonaRemoteRuntime.tsx` → `useAgentAvailabilityLookup`; exact call `useAgentAvailabilityLookup(pubkeys)`; behavior test `presence_uses_pubkey_not_name`; verify `just desktop-test`
+- Invocation: `desktop/src/features/agents/ui/PersonaRemoteRuntime.tsx` → `invalidateQueries`; exact call `client.invalidateQueries({ queryKey: personasQueryKey })`; behavior test `pending_failed_and_missing_projection_hide_actions_but_allow_sync_retry`; verify `just desktop-test`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/ui/RequestedAgentCreateDialogs.tsx`
+
+Device sharing creation UI, authoritative home presentation and saved-definition recovery
+
+New module: `false`.
+
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/ui/UnifiedAgentsSection.tsx`
+
+Device sharing creation UI, authoritative home presentation and saved-definition recovery
+
+New module: `false`.
+
+- Invocation: `desktop/src/features/agents/ui/UnifiedAgentsSection.tsx` → `PersonaRemoteRuntime`; exact call `<PersonaRemoteRuntime persona={persona} />`; behavior test `remote_card_has_no_start_or_delete`; verify `just desktop-test`
+- Invocation: `desktop/src/features/agents/ui/UnifiedAgentsSection.tsx` → `canCreateInstance`; exact call `persona.capabilities?.canCreateInstance === true`; behavior test `pending_failed_and_missing_projection_hide_actions_but_allow_sync_retry`; verify `just desktop-test`
+- Invocation: `desktop/src/features/agents/ui/UnifiedAgentsSection.tsx` → `canStartOnDevice`; exact call `(!agent || agent.canStartOnDevice === true)`; behavior test `copied_local_instance_does_not_restore_start`; verify `just desktop-test`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/ui/UnifiedAgentsSectionCardTarget.test.mjs`
+
+Device sharing creation UI, authoritative home presentation and saved-definition recovery
+
+New module: `false`.
+
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/ui/UnifiedAgentsSectionDeviceHome.jsdom-test.mjs`
+
+Device sharing creation UI, authoritative home presentation and saved-definition recovery
+
+New module: `true`.
+
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/ui/personaDialogState.test.mjs`
+
+Device sharing creation UI, authoritative home presentation and saved-definition recovery
+
+New module: `false`.
+
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/ui/personaDialogState.ts`
+
+Device sharing creation UI, authoritative home presentation and saved-definition recovery
+
+New module: `false`.
+
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/settings/ui/AgentsSettingsPanel.tsx`
+
+Device identity settings and honest queued publication UI
+
+New module: `false`.
+
+- Invocation: `desktop/src/features/settings/ui/AgentsSettingsPanel.tsx` → `DeviceIdentitySettingsCard`; exact call `<DeviceIdentitySettingsCard />`; behavior test `label_keyboard_save_reports_queued`; verify `just desktop-test`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/settings/ui/DeviceIdentitySettingsCard.jsdom-test.mjs`
+
+Device identity settings and honest queued publication UI
+
+New module: `true`.
+
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/settings/ui/DeviceIdentitySettingsCard.tsx`
+
+Device identity settings and honest queued publication UI
+
+New module: `true`.
+
+- Required symbol: `export function DeviceIdentitySettingsCard(`
+- Required symbol: `save.mutate(label.trim())`
+- Required symbol: `save.data.publication === "queued"`
+- Invocation: `desktop/src/features/settings/ui/DeviceIdentitySettingsCard.tsx` → `getDeviceIdentity`; exact call `queryFn: getDeviceIdentity`; behavior test `identity_read_error_retains_retry_affordance`; verify `just desktop-test`
+- Invocation: `desktop/src/features/settings/ui/DeviceIdentitySettingsCard.tsx` → `setDeviceLabel`; exact call `mutationFn: setDeviceLabel`; behavior test `label_keyboard_save_reports_queued`; verify `just desktop-test`
 - Verify: `just desktop-test desktop-typecheck`
