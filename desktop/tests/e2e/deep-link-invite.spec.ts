@@ -302,20 +302,22 @@ test("deleted public starter channels do not strand community onboarding", async
   );
   await page.goto("/");
 
+  // AppReady may request starter setup again after finalization. Bind this
+  // regression to the rejected request being tolerated, not total call count.
+  const finalizationWarnings: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "warning") {
+      finalizationWarnings.push(message.text());
+    }
+  });
+
   await page.getByRole("button", { name: "Take me to Buzz" }).click();
 
   await expect(page.getByTestId("community-onboarding-flow")).toHaveCount(0);
   await expect(page).toHaveURL(/#\/channels\/[^/]+$/);
   await expect(page.getByTestId("chat-title")).toContainText("Welcome");
   await expect(page.getByText(starterError)).toHaveCount(0);
-  expect(
-    await page.evaluate(
-      () =>
-        window.__BUZZ_E2E_COMMANDS__?.filter(
-          (command) => command === "ensure_starter_channels",
-        ).length ?? 0,
-    ),
-  ).toBe(1);
+  expect(finalizationWarnings.join("\n")).toContain(starterError);
 });
 
 test("required Welcome creation failure keeps community onboarding open", async ({

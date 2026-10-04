@@ -654,7 +654,11 @@ fn failed_child_cleanup_propagates_and_retains_retry_ownership() {
         Err("injected retry failure".into())
     });
     let retained_after_retry = state.managed_agent_restore_cleanup.0.lock().unwrap().len();
-    let retry = child_ownership::retry_restore_cleanup(app.handle());
+    // The fixture exits on its own. Reap it through the same cleanup seam:
+    // Windows taskkill cannot terminate a tree whose root has already exited.
+    let retry = child_ownership::retry_restore_cleanup_with(app.handle(), |process| {
+        child_ownership::wait_for_restore_child_exit(process, std::time::Duration::from_secs(1))
+    });
     assert!(result.is_err(), "failed cleanup reported success");
     assert!(result
         .err()

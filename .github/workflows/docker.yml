@@ -84,6 +84,8 @@ env:
 
 jobs:
   build:
+    # Upstream registry publication is not configured by forking the source.
+    if: github.event_name == 'pull_request' || github.repository == 'block/buzz' || vars.GHCR_IMAGE != ''
     name: Build (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -130,7 +132,7 @@ jobs:
 
       - name: Log in to GHCR
         # Skip on pull_request from forks — no GHCR creds, build-only.
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: (github.repository == 'block/buzz' || vars.GHCR_IMAGE != '') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
         with:
           registry: ghcr.io
@@ -187,7 +189,7 @@ jobs:
           cache-from: |
             type=registry,ref=${{ env.IMAGE_NAME }}-buildcache:${{ matrix.arch }}
           cache-to: |
-            ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && format('type=registry,ref={0}-buildcache:{1},mode=max,compression=zstd', env.IMAGE_NAME, matrix.arch) || '' }}
+            ${{ (github.repository == 'block/buzz' || vars.GHCR_IMAGE != '') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && format('type=registry,ref={0}-buildcache:{1},mode=max,compression=zstd', env.IMAGE_NAME, matrix.arch) || '' }}
 
       - name: Build and push debug image by digest
         id: build-debug
@@ -236,7 +238,7 @@ jobs:
 
   qualify:
     name: Qualify relay image source
-    if: github.event_name != 'pull_request'
+    if: (github.repository == 'block/buzz' || vars.GHCR_IMAGE != '') && github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     permissions:
@@ -311,7 +313,7 @@ jobs:
 
   merge:
     name: Merge ${{ matrix.variant }} multi-arch manifest
-    if: github.event_name != 'pull_request'
+    if: (github.repository == 'block/buzz' || vars.GHCR_IMAGE != '') && github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     needs: [build, qualify]
     timeout-minutes: 15
@@ -493,6 +495,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   push-gateway-build:
+    if: github.event_name == 'pull_request' || github.repository == 'block/buzz'
     name: Build public push gateway (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -529,7 +532,7 @@ jobs:
             [worker.oci]
               max-parallelism = 2
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: github.repository == 'block/buzz' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
         with:
           registry: ghcr.io
@@ -554,7 +557,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=ghcr.io/block/buzz-push-gateway,push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
           cache-from: type=registry,ref=ghcr.io/block/buzz-push-gateway-buildcache:${{ matrix.arch }}
-          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && format('type=registry,ref=ghcr.io/block/buzz-push-gateway-buildcache:{0},mode=max,compression=zstd', matrix.arch) || '' }}
+          cache-to: ${{ github.repository == 'block/buzz' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && format('type=registry,ref=ghcr.io/block/buzz-push-gateway-buildcache:{0},mode=max,compression=zstd', matrix.arch) || '' }}
       - name: Export digest
         if: github.event_name != 'pull_request'
         env:
@@ -604,7 +607,7 @@ jobs:
 
   push-gateway-merge:
     name: Publish public push gateway image
-    if: github.event_name != 'pull_request'
+    if: github.repository == 'block/buzz' && github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     needs: push-gateway-build
     timeout-minutes: 15

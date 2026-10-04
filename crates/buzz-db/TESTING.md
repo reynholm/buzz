@@ -39,8 +39,12 @@ migration-applied coverage rather than making the bootstrap implicit.
 
 Tests that inspect cluster-wide PostgreSQL state or open least-privilege
 sessions include `cluster_global_` in the function name. Migration-backed cases
-use `migration_schema_cluster_global_`. Nextest serializes this small group
-because separate databases still share `pg_stat_activity` and roles.
+use `migration_schema_cluster_global_`. Nextest reserves every worker for each
+of these tests, so it cannot overlap ordinary tests either: separate databases
+still share `pg_stat_activity` and roles, including backend connection and
+disconnection activity. The test group alone only serializes its own members;
+the `threads-required = "num-test-threads"` override in
+`.config/nextest.toml` provides exclusion across the entire lane.
 
 ## Run the lane locally
 

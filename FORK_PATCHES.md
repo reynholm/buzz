@@ -2523,8 +2523,8 @@ R1 ACL proof/stop failure and identical-event retry regressions
 
 New module: `true`.
 
-- Required symbol: `fn access_revocation_stops_owned_child_despite_unavailable_proof`
-- Required symbol: `fn failed_access_stop_preserves_old_acl_and_same_head_retry`
+- Required symbol: `fn effective_access_revocation_stops_owned_child_despite_unavailable_proof`
+- Required symbol: `fn effective_access_stop_failure_preserves_old_acl_and_same_head_retry`
 - Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
 
 ## `desktop/src-tauri/src/commands/agents/provider_deploy_tests.rs`
@@ -5167,3 +5167,79 @@ Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 New module: `false`.
 
 - Verify: `just ci`
+
+## `.config/nextest.toml`
+
+Fork hosted CI fixtures and publication boundaries
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `.github/workflows/docker.yml`
+
+Fork hosted CI fixtures and publication boundaries
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `.github/workflows/sprig.yml`
+
+Fork hosted CI fixtures and publication boundaries
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `crates/buzz-db/TESTING.md`
+
+Fork hosted CI fixtures and publication boundaries
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `desktop/tests/e2e/deep-link-invite.spec.ts`
+
+Fork hosted CI fixtures and publication boundaries
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `desktop/tests/e2e/exact-key-profile.spec.ts`
+
+Fork hosted CI fixtures and publication boundaries
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `desktop/tests/helpers/bridge.ts`
+
+Fork hosted CI fixtures and publication boundaries
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `desktop/tests/e2e/scroll-history.spec.ts`
+
+Model real reader scroll intent before passive virtualized coverage regression
+
+New module: `false`.
+
+- Required symbol: `fast middle-page scroll settles with continuous mounted coverage`
+- Required symbol: `scrollTopBeforeWheel`
+- Required symbol: `page.mouse.wheel(0, -300)`
+- Required symbol: `viewportCoverage`
+- Verify: `pnpm -C desktop exec playwright test --project=smoke tests/e2e/scroll-history.spec.ts`
+- Verify: `python3 scripts/fork/sync.py validate`

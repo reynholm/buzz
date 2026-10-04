@@ -11,7 +11,7 @@ use nostr::JsonUtil;
 use std::cell::Cell;
 
 #[test]
-fn access_revocation_stops_owned_child_despite_unavailable_proof() {
+fn effective_access_revocation_stops_owned_child_despite_unavailable_proof() {
     let dir = tempfile::tempdir().unwrap();
     let app = app(dir.path());
     let state = app.state::<AppState>();
@@ -48,11 +48,22 @@ fn access_revocation_stops_owned_child_despite_unavailable_proof() {
         },
     )
     .unwrap();
-    assert_eq!(stops.get(), 1, "revocation cannot depend on spawn proof");
-    assert!(matches!(result, Some(InboundRuntimeRefresh::Local { .. })));
     let saved = read_policy_records(&base.join("managed-agents.json")).unwrap();
     assert!(matches!(saved[1].respond_to, RespondTo::OwnerOnly));
-    assert_eq!(saved[1].runtime_pid, None);
+    if crate::managed_agents::owner_only_access_build() {
+        // Both stored modes already execute as owner-only in this build.
+        assert_eq!(
+            stops.get(),
+            0,
+            "unchanged effective access stopped the child"
+        );
+        assert!(result.is_none());
+        assert_eq!(saved[1].runtime_pid, Some(123));
+    } else {
+        assert_eq!(stops.get(), 1, "revocation cannot depend on spawn proof");
+        assert!(matches!(result, Some(InboundRuntimeRefresh::Local { .. })));
+        assert_eq!(saved[1].runtime_pid, None);
+    }
     // New spawn still requires authority; stop permission cannot grant it.
     assert!(
         crate::managed_agents::device_runtime::runtime_phase_locked_with(
@@ -68,7 +79,7 @@ fn access_revocation_stops_owned_child_despite_unavailable_proof() {
 }
 
 #[test]
-fn failed_access_stop_preserves_old_acl_and_same_head_retry() {
+fn effective_access_stop_failure_preserves_old_acl_and_same_head_retry() {
     let dir = tempfile::tempdir().unwrap();
     let app = app(dir.path());
     let state = app.state::<AppState>();
@@ -97,17 +108,47 @@ fn failed_access_stop_preserves_old_acl_and_same_head_retry() {
         || {},
         |_, _, _| Err("injected stop failure".into()),
     );
-    assert!(result.is_err());
-    assert!(
-        std::fs::read(base.join("managed-agents.json")).unwrap() == before,
-        "failed stop changed durable ACL bytes"
-    );
     let conn = open_retention_db(&scoped_retention_db_path(
         &base,
         &relay,
         &keys.public_key().to_hex(),
     ))
     .unwrap();
+    if crate::managed_agents::owner_only_access_build() {
+        // A portable stored-policy update needs no runtime transition when
+        // this build enforces owner-only access before and after the update.
+        assert!(result.unwrap().is_none());
+        let saved = read_policy_records(&base.join("managed-agents.json")).unwrap();
+        assert!(matches!(saved[1].respond_to, RespondTo::OwnerOnly));
+        assert_eq!(saved[1].runtime_pid, Some(123));
+        assert!(
+            get_retained_event(&conn, 30177, &keys.public_key().to_hex(), &raw[1].pubkey)
+                .unwrap()
+                .is_some()
+        );
+        let accepted = std::fs::read(base.join("managed-agents.json")).unwrap();
+        let replay = reconcile_inbound_persona_event_blocking_with_stop(
+            event.as_json(),
+            relay,
+            app.handle().clone(),
+            |_, _| Err("proof unavailable during replay".into()),
+            || {},
+            |_, _, _| panic!("unchanged owner-only access stopped the child on replay"),
+        )
+        .unwrap();
+        assert!(replay.is_none());
+        assert_eq!(
+            std::fs::read(base.join("managed-agents.json")).unwrap(),
+            accepted,
+            "accepted same-head replay changed durable ACL bytes"
+        );
+        return;
+    }
+    assert!(result.is_err());
+    assert!(
+        std::fs::read(base.join("managed-agents.json")).unwrap() == before,
+        "failed stop changed durable ACL bytes"
+    );
     assert!(
         get_retained_event(&conn, 30177, &keys.public_key().to_hex(), &raw[1].pubkey)
             .unwrap()

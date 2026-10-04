@@ -107,8 +107,10 @@ jobs:
   publish:
     name: Publish rolling release
     needs: build
+    # Fork pushes build artifacts without assuming an existing rolling release.
+    # An explicit manual publish request remains available.
     if: |
-      github.event_name == 'push' && github.ref == 'refs/heads/main'
+      (github.repository == 'block/buzz' && github.event_name == 'push' && github.ref == 'refs/heads/main')
       || (github.event_name == 'workflow_dispatch' && inputs.publish)
     runs-on: ubuntu-latest
     timeout-minutes: 10

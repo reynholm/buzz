@@ -4258,8 +4258,8 @@
       "responsibility": "R1 ACL proof/stop failure and identical-event retry regressions",
       "is_new": true,
       "required_symbols": [
-        "fn access_revocation_stops_owned_child_despite_unavailable_proof",
-        "fn failed_access_stop_preserves_old_acl_and_same_head_retry"
+        "fn effective_access_revocation_stops_owned_child_despite_unavailable_proof",
+        "fn effective_access_stop_failure_preserves_old_acl_and_same_head_retry"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -7565,6 +7565,99 @@
       "invocation_seams": [],
       "verification_commands": [
         "just ci"
+      ]
+    },
+    {
+      "path": ".config/nextest.toml",
+      "responsibility": "Fork hosted CI fixtures and publication boundaries",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": ".github/workflows/docker.yml",
+      "responsibility": "Fork hosted CI fixtures and publication boundaries",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": ".github/workflows/sprig.yml",
+      "responsibility": "Fork hosted CI fixtures and publication boundaries",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/TESTING.md",
+      "responsibility": "Fork hosted CI fixtures and publication boundaries",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "desktop/tests/e2e/deep-link-invite.spec.ts",
+      "responsibility": "Fork hosted CI fixtures and publication boundaries",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "desktop/tests/e2e/exact-key-profile.spec.ts",
+      "responsibility": "Fork hosted CI fixtures and publication boundaries",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "desktop/tests/helpers/bridge.ts",
+      "responsibility": "Fork hosted CI fixtures and publication boundaries",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "desktop/tests/e2e/scroll-history.spec.ts",
+      "responsibility": "Model real reader scroll intent before passive virtualized coverage regression",
+      "is_new": false,
+      "required_symbols": [
+        "fast middle-page scroll settles with continuous mounted coverage",
+        "scrollTopBeforeWheel",
+        "page.mouse.wheel(0, -300)",
+        "viewportCoverage"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm -C desktop exec playwright test --project=smoke tests/e2e/scroll-history.spec.ts",
+        "python3 scripts/fork/sync.py validate"
       ]
     }
   ]

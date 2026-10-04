@@ -89,8 +89,10 @@ import type {
 import type {
   RawAcpRuntimeCatalogEntry,
   RawInstallRuntimeResult,
+  RawManagedAgent as NativeRawManagedAgent,
   RuntimeFileConfigSubset,
 } from "@/shared/api/tauri";
+import type { RawPersona as NativeRawPersona } from "@/shared/api/tauriPersonas";
 import {
   ensureRelayOriginFetch,
   resetMediaCaches,
@@ -114,6 +116,8 @@ type MockCommandAvailability = {
 };
 
 export type MockManagedAgentSeed = {
+  /** Native device authority; seeded records default to verified local fixtures. */
+  canStartOnDevice?: boolean;
   pubkey: string;
   name: string;
   avatarUrl?: string | null;
@@ -154,7 +158,7 @@ type MockRelayAgentSeed = {
   status?: PresenceStatus;
 };
 
-type MockPersonaSeed = {
+export type MockPersonaSeed = {
   id?: string;
   displayName: string;
   avatarUrl?: string | null;
@@ -162,6 +166,11 @@ type MockPersonaSeed = {
   updatedAt?: string;
   isActive?: boolean;
   shared?: boolean;
+  shareAcrossDevices?: boolean;
+  /** Explicit backend projections, including null/omitted authority for failures. */
+  home?: RawPersona["home"];
+  homeError?: string;
+  capabilities?: RawPersona["capabilities"];
   sourceTeam?: string | null;
   envVars?: Record<string, string>;
   runtime?: string | null;
@@ -952,7 +961,7 @@ type RawRelayAgent = {
   respond_to_allowlist?: string[];
 };
 
-type RawManagedAgent = {
+type RawManagedAgent = Pick<NativeRawManagedAgent, "can_start_on_device"> & {
   pubkey: string;
   name: string;
   persona_id: string | null;
@@ -1032,29 +1041,9 @@ type RawManagedAgentPrereqs = {
   mcp: RawCommandAvailability;
 };
 
-type RawPersona = {
-  acp_command?: string | null;
-  id: string;
-  display_name: string;
-  avatar_url: string | null;
-  description?: string | null;
-  system_prompt: string;
-  runtime?: string | null;
-  model?: string | null;
-  provider?: string | null;
-  name_pool?: string[];
-  is_builtin: boolean;
+type RawPersona = NativeRawPersona & {
   is_active: boolean;
   shared: boolean;
-  source_team?: string | null;
-  catalog_source?: { owner_pubkey: string; persona_id: string } | null;
-  env_vars?: Record<string, string>;
-  respond_to?: string | null;
-  respond_to_allowlist?: string[];
-  parallelism?: number | null;
-  session_policy?: "channel" | "thread";
-  created_at: string;
-  updated_at: string;
 };
 
 type RawTeam = {
@@ -1964,6 +1953,7 @@ function cloneRelayAgent(agent: RawRelayAgent): RawRelayAgent {
 
 function cloneManagedAgent(agent: MockManagedAgent): RawManagedAgent {
   return {
+    can_start_on_device: agent.can_start_on_device,
     pubkey: agent.pubkey,
     name: agent.name,
     persona_id: agent.persona_id,
@@ -2523,6 +2513,7 @@ function buildSeededManagedAgent(seed: MockManagedAgentSeed): MockManagedAgent {
   const agentArgs = catalogEntry?.args ?? ["acp"];
 
   return {
+    can_start_on_device: seed.canStartOnDevice ?? true,
     pubkey: seed.pubkey,
     name: seed.name,
     persona_id: seed.personaId ?? null,
@@ -2677,49 +2668,89 @@ function resetMockPersonas(config?: E2eConfig) {
       system_prompt: "You are Pollen.",
     },
   ];
-  mockPersonas = builtInPersonas.map((persona) => ({
-    id: persona.id,
-    display_name: persona.display_name,
-    avatar_url: persona.avatar_url,
-    system_prompt: persona.system_prompt,
-    runtime: null,
-    model: null,
-    provider: null,
-    name_pool: [],
-    session_policy: "channel",
-    is_builtin: true,
-    is_active: activePersonaIds.has(persona.id),
-    shared: false,
-    source_team: null,
-    created_at: now,
-    updated_at: now,
-  }));
+  mockPersonas = builtInPersonas.map((persona) =>
+    withMockDeviceHome({
+      id: persona.id,
+      display_name: persona.display_name,
+      avatar_url: persona.avatar_url,
+      system_prompt: persona.system_prompt,
+      runtime: null,
+      model: null,
+      provider: null,
+      name_pool: [],
+      session_policy: "channel",
+      is_builtin: true,
+      is_active: activePersonaIds.has(persona.id),
+      shared: false,
+      source_team: null,
+      created_at: now,
+      updated_at: now,
+    }),
+  );
 
   for (const persona of config?.mock?.personas ?? []) {
-    mockPersonas.push({
-      id: persona.id ?? crypto.randomUUID(),
-      display_name: persona.displayName,
-      avatar_url: persona.avatarUrl ?? null,
-      system_prompt: persona.systemPrompt,
-      runtime: persona.runtime ?? null,
-      model: persona.model ?? null,
-      provider: persona.provider ?? null,
-      name_pool: persona.namePool ?? [],
-      respond_to: persona.respondTo ?? null,
-      respond_to_allowlist:
-        persona.respondTo === "allowlist"
-          ? [...(persona.respondToAllowlist ?? [])]
-          : [],
-      session_policy: persona.sessionPolicy ?? "channel",
-      is_builtin: false,
-      is_active: persona.isActive ?? true,
-      shared: persona.shared ?? false,
-      source_team: persona.sourceTeam ?? null,
-      env_vars: { ...(persona.envVars ?? {}) },
-      created_at: now,
-      updated_at: persona.updatedAt ?? now,
-    });
+    mockPersonas.push(
+      withMockDeviceHome(
+        {
+          id: persona.id ?? crypto.randomUUID(),
+          display_name: persona.displayName,
+          avatar_url: persona.avatarUrl ?? null,
+          system_prompt: persona.systemPrompt,
+          runtime: persona.runtime ?? null,
+          model: persona.model ?? null,
+          provider: persona.provider ?? null,
+          name_pool: persona.namePool ?? [],
+          respond_to: persona.respondTo ?? null,
+          respond_to_allowlist:
+            persona.respondTo === "allowlist"
+              ? [...(persona.respondToAllowlist ?? [])]
+              : [],
+          session_policy: persona.sessionPolicy ?? "channel",
+          is_builtin: false,
+          is_active: persona.isActive ?? true,
+          shared: persona.shared ?? false,
+          source_team: persona.sourceTeam ?? null,
+          env_vars: { ...(persona.envVars ?? {}) },
+          created_at: now,
+          updated_at: persona.updatedAt ?? now,
+        },
+        persona,
+      ),
+    );
   }
+}
+
+const MOCK_DEVICE_ID = "a5f7aaf5-680e-4f71-b080-f3f0203bda43";
+
+/** Fixtures represent definitions saved on this installation unless overridden. */
+function withMockDeviceHome(
+  persona: RawPersona,
+  seed?: MockPersonaSeed,
+): RawPersona {
+  return {
+    ...persona,
+    share_across_devices: seed?.shareAcrossDevices ?? false,
+    origin_device_id: MOCK_DEVICE_ID,
+    origin_device_label: "Mock desktop",
+    origin_released: false,
+    home:
+      seed && Object.hasOwn(seed, "home")
+        ? seed.home
+        : {
+            kind: "local",
+            label: "Mock desktop",
+            remoteInstancePubkeys: [],
+          },
+    capabilities:
+      seed && Object.hasOwn(seed, "capabilities")
+        ? seed.capabilities
+        : {
+            canCreateInstance: true,
+            canDeleteDefinition: true,
+            blockedReason: null,
+          },
+    ...(seed?.homeError !== undefined && { homeError: seed.homeError }),
+  };
 }
 
 function resetMockTeams(config?: E2eConfig) {
@@ -8958,6 +8989,7 @@ function applyMockPersonaBehavior(
 
 async function handleCreatePersona(args: {
   input: {
+    shareAcrossDevices?: boolean;
     acpCommand?: string;
     displayName: string;
     avatarUrl?: string;
@@ -8972,35 +9004,42 @@ async function handleCreatePersona(args: {
   };
 }): Promise<RawPersona> {
   const now = new Date().toISOString();
-  const persona: RawPersona = {
-    id: crypto.randomUUID(),
-    display_name: args.input.displayName.trim(),
-    avatar_url: args.input.avatarUrl?.trim() || null,
-    description: args.input.description?.trim() || null,
-    system_prompt: args.input.systemPrompt.trim(),
-    acp_command: args.input.acpCommand ?? "buzz-acp",
-    runtime: args.input.runtime?.trim() || null,
-    model: args.input.model?.trim() || null,
-    provider: args.input.provider?.trim() || null,
-    is_builtin: false,
-    is_active: true,
-    shared: false,
-    source_team: null,
-    // Mirrors `CatalogSource::normalized`: the coordinate a catalog copy keeps
-    // so the catalog can tell an already-added foreign entry from a new one.
-    catalog_source: args.input.catalogSource
-      ? {
-          owner_pubkey: args.input.catalogSource.ownerPubkey
-            .trim()
-            .toLowerCase(),
-          persona_id: args.input.catalogSource.personaId.trim(),
-        }
-      : null,
-    env_vars: { ...(args.input.envVars ?? {}) },
-    session_policy: "channel",
-    created_at: now,
-    updated_at: now,
-  };
+  const persona: RawPersona = withMockDeviceHome(
+    {
+      id: crypto.randomUUID(),
+      display_name: args.input.displayName.trim(),
+      avatar_url: args.input.avatarUrl?.trim() || null,
+      description: args.input.description?.trim() || null,
+      system_prompt: args.input.systemPrompt.trim(),
+      acp_command: args.input.acpCommand ?? "buzz-acp",
+      runtime: args.input.runtime?.trim() || null,
+      model: args.input.model?.trim() || null,
+      provider: args.input.provider?.trim() || null,
+      is_builtin: false,
+      is_active: true,
+      shared: false,
+      source_team: null,
+      // Mirrors `CatalogSource::normalized`: the coordinate a catalog copy keeps
+      // so the catalog can tell an already-added foreign entry from a new one.
+      catalog_source: args.input.catalogSource
+        ? {
+            owner_pubkey: args.input.catalogSource.ownerPubkey
+              .trim()
+              .toLowerCase(),
+            persona_id: args.input.catalogSource.personaId.trim(),
+          }
+        : null,
+      env_vars: { ...(args.input.envVars ?? {}) },
+      session_policy: "channel",
+      created_at: now,
+      updated_at: now,
+    },
+    {
+      displayName: args.input.displayName,
+      systemPrompt: args.input.systemPrompt,
+      shareAcrossDevices: args.input.shareAcrossDevices,
+    },
+  );
   applyMockPersonaBehavior(persona, args.input.behavior);
   mockPersonas.push(persona);
   upsertMockPersonaEvent(persona);
@@ -9666,6 +9705,7 @@ async function handleCreateManagedAgent(
         ? ["acp"]
         : [];
   const managedAgent: MockManagedAgent = {
+    can_start_on_device: true,
     pubkey,
     name,
     persona_id: args.input.personaId ?? null,
@@ -12023,6 +12063,13 @@ export function maybeInstallE2eTauriMocks() {
       sourceUrl: null;
     };
   }> = [];
+  let mockDeviceLabel = "Mock desktop";
+  const deviceIdentity = () => ({
+    device_id: MOCK_DEVICE_ID,
+    label: mockDeviceLabel,
+    created_at: "2026-10-03T00:00:00Z",
+  });
+  const deviceHomeSessions = new Map<string, { hydrated: boolean }>();
   const handleMockCommand = async (
     command: string,
     payload: unknown,
@@ -12047,6 +12094,50 @@ export function maybeInstallE2eTauriMocks() {
     window.__BUZZ_E2E_COMMAND_LOG__?.push({ command, payload });
 
     switch (command) {
+      case "get_device_identity":
+        return deviceIdentity();
+      case "set_device_label": {
+        const label = (payload as { label: string }).label.trim();
+        if (!label) throw new Error("device label is required");
+        mockDeviceLabel = label;
+        for (const persona of mockPersonas) {
+          if (persona.origin_device_id === MOCK_DEVICE_ID)
+            persona.origin_device_label = label;
+          if (persona.home?.kind === "local") persona.home.label = label;
+        }
+        return { identity: deviceIdentity(), publication: "complete" };
+      }
+      case "begin_device_home_sync": {
+        const token = crypto.randomUUID();
+        deviceHomeSessions.set(token, { hydrated: false });
+        return {
+          token,
+          ownerPubkey: getMockMemberPubkey(activeConfig),
+          relayUrl: getRelayWsUrl(activeConfig),
+          workspaceGeneration: 1,
+        };
+      }
+      case "hydrate_device_home_history": {
+        const session = deviceHomeSessions.get(
+          (payload as { sessionToken: string }).sessionToken,
+        );
+        if (!session) throw new Error("device home sync session is invalid");
+        session.hydrated = true;
+        return { coveredEventIds: [] };
+      }
+      case "finish_device_home_sync": {
+        const session = deviceHomeSessions.get(
+          (payload as { sessionToken: string }).sessionToken,
+        );
+        if (!session?.hydrated)
+          throw new Error("device home history is not hydrated");
+        return undefined;
+      }
+      case "invalidate_device_home_sync":
+        deviceHomeSessions.delete(
+          (payload as { sessionToken: string }).sessionToken,
+        );
+        return undefined;
       case "get_huddle_state": {
         const snapshot = mockHuddle ? structuredClone(mockHuddle.state) : null;
         const delayMs = activeConfig?.mock?.huddleStateReadDelayMs ?? 0;
@@ -13761,18 +13852,20 @@ export function maybeInstallE2eTauriMocks() {
               existing.shared = shared;
               existing.updated_at = now;
             } else {
-              mockPersonas.push({
-                id: dTag,
-                display_name: content.display_name ?? dTag,
-                avatar_url: null,
-                system_prompt: content.system_prompt ?? "",
-                is_builtin: false,
-                is_active: true,
-                shared,
-                env_vars: {},
-                created_at: now,
-                updated_at: now,
-              });
+              mockPersonas.push(
+                withMockDeviceHome({
+                  id: dTag,
+                  display_name: content.display_name ?? dTag,
+                  avatar_url: null,
+                  system_prompt: content.system_prompt ?? "",
+                  is_builtin: false,
+                  is_active: true,
+                  shared,
+                  env_vars: {},
+                  created_at: now,
+                  updated_at: now,
+                }),
+              );
             }
           }
         } else if (nostrEvent.kind === 5) {

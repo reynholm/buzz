@@ -1,6 +1,9 @@
 import type { Page } from "@playwright/test";
 import type { ChannelTemplate, RelayEvent } from "../../src/shared/api/types";
-import type { MockManagedAgentSeed } from "../../src/testing/e2eBridge";
+import type {
+  MockManagedAgentSeed,
+  MockPersonaSeed,
+} from "../../src/testing/e2eBridge";
 import { FEATURE_OVERRIDES_STORAGE_KEY, PREVIEW_FEATURE_IDS } from "./features";
 
 export const TEST_IDENTITIES = {
@@ -79,32 +82,6 @@ type MockHuddleSeed = {
   transcriptionEnabled?: boolean;
   ttsEnabled?: boolean;
   isCreator?: boolean;
-};
-
-type MockPersonaSeed = {
-  id?: string;
-  displayName: string;
-  avatarUrl?: string | null;
-  systemPrompt: string;
-  updatedAt?: string;
-  isActive?: boolean;
-  shared?: boolean;
-  sourceTeam?: string | null;
-  envVars?: Record<string, string>;
-  /**
-   * Runtime the persona is pinned to (e.g. "goose", "codex", "claude"). Lets a
-   * spec seed a CLI-login runtime whose provider picker is hidden, so the Edit
-   * dialog's provider-aware submit gate can be driven end-to-end. Omitted →
-   * null (definition inherits the app default at open).
-   */
-  runtime?: string | null;
-  /** Model pinned on the persona (a custom model id for Customize mode). */
-  model?: string | null;
-  /** Provider pinned on the persona. Leave empty for Codex/Claude runtimes. */
-  provider?: string | null;
-  namePool?: string[];
-  respondTo?: "owner-only" | "allowlist" | "anyone";
-  respondToAllowlist?: string[];
 };
 
 type MockTeamSeed = {

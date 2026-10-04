@@ -1343,6 +1343,16 @@ test("fast middle-page scroll settles with continuous mounted coverage", async (
     )
     .toBeGreaterThan(scrollHeightBeforePrepend + 2_000);
 
+  // Take reader ownership with real input before assigning fast-scroll ranges.
+  // Programmatic scroll events retain mount-time bottom intent, so a later
+  // virtual row measurement may legitimately pin them back to the floor.
+  const scrollTopBeforeWheel = (await getTimelineMetrics(page)).scrollTop;
+  await timeline.hover();
+  await page.mouse.wheel(0, -300);
+  await expect
+    .poll(() => getTimelineMetrics(page).then((metrics) => metrics.scrollTop))
+    .toBeLessThan(scrollTopBeforeWheel - 100);
+
   // Simulate a fast trackpad pass through several middle-page ranges, then
   // stop. The final evaluate emits the last scroll event; all coverage samples
   // after it are passive observations.
