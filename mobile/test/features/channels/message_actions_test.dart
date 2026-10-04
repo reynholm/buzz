@@ -3,10 +3,12 @@ import 'dart:ui' as ui;
 import 'package:flutter/services.dart';
 
 import 'package:buzz/features/channels/channel_management_provider.dart';
+import 'package:buzz/features/channels/channel_identity_names_provider.dart';
 import 'package:buzz/features/channels/message_actions.dart';
 import 'package:buzz/features/channels/reaction_row.dart';
 import 'package:buzz/features/channels/message_long_press_region.dart';
 import 'package:buzz/shared/read_state/read_state_provider.dart';
+import 'package:buzz/shared/identity_names/identity_names.dart';
 import 'package:buzz/features/channels/thread_follows/thread_follows_provider.dart';
 import 'package:buzz/features/channels/timeline_message.dart';
 import 'package:buzz/shared/reminders/reminder_service.dart';
@@ -847,6 +849,11 @@ void main() {
             overrides: [
               savedPrefsProvider.overrideWithValue(await _mockPrefs()),
               myPubkeyProvider.overrideWithValue('self'),
+              // These ownership tests have no reactors; keep membership and
+              // its connectivity plugin outside the native presentation seam.
+              channelIdentityNamesProvider(_channelId).overrideWith(
+                (_) => const IdentityNameSources().scope(const []),
+              ),
               readStateProvider.overrideWith(
                 () => _FakeReadStateNotifier(
                   _readState(const {_channelId: 100000}),

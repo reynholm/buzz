@@ -4970,11 +4970,14 @@ New module: `true`.
 
 ## `mobile/test/features/channels/message_actions_test.dart`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches; isolate native cross-surface fixture from unrelated membership/connectivity
 
 New module: `false`.
 
+- Required symbol: `channelIdentityNamesProvider(_channelId).overrideWith`
+- Required symbol: `const IdentityNameSources().scope(const [])`
 - Verify: `just ci`
+- Verify: `just mobile-install mobile-check mobile-test`
 
 ## `mobile/test/features/channels/reaction_row_test.dart`
 

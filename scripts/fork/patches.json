@@ -7319,12 +7319,16 @@
     },
     {
       "path": "mobile/test/features/channels/message_actions_test.dart",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches; isolate native cross-surface fixture from unrelated membership/connectivity",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "channelIdentityNamesProvider(_channelId).overrideWith",
+        "const IdentityNameSources().scope(const [])"
+      ],
       "invocation_seams": [],
       "verification_commands": [
-        "just ci"
+        "just ci",
+        "just mobile-install mobile-check mobile-test"
       ]
     },
     {
