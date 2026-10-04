@@ -39,13 +39,20 @@ New module: `true`.
 
 ## `scripts/fork/sync.py`
 
-Validate lost patch paths, symbols and production invocation seams
+Validate protected patches and prepare idempotent, baseline-guarded release merges and clean blocked reports
 
 New module: `true`.
 
 - Required symbol: `def validate_patches(`
 - Required symbol: `def main(`
+- Required symbol: `def prepare_update(`
+- Required symbol: `def prepare_blocked_report(`
+- Required symbol: `def select_update(`
+- Required symbol: `def run_clean_target(`
 - Invocation: `scripts/fork/sync.py` → `validate_patches`; exact call `errors = validate_patches(args.repo, manifest)`; behavior test `test_cli_rejects_unlisted_path`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
+- Invocation: `scripts/fork/sync.py` → `validate_patches`; exact call `report.missing_seams = validate_patches(worktree, candidate_manifest)`; behavior test `test_merge_success_missing_seam_blocks`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
+- Invocation: `scripts/fork/sync.py` → `prepare_update`; exact call `report = prepare_update(args.repo, selection, manifest, base=args.base, clean_target=baseline)`; behavior test `test_cli_prepare_runs_guarded_candidate`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
+- Invocation: `scripts/fork/sync.py` → `merge_target`; exact call `merge = merge_target(worktree, report.target_sha)`; behavior test `test_clean_merge_uses_target_registry_and_preserves_patch`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
 - Verify: `python3 scripts/fork/sync.py validate`
 
 ## `scripts/fork/patches.json`
@@ -2288,3 +2295,27 @@ New module: `true`.
 - Invocation: `desktop/src/features/settings/ui/DeviceIdentitySettingsCard.tsx` → `getDeviceIdentity`; exact call `queryFn: getDeviceIdentity`; behavior test `identity_read_error_retains_retry_affordance`; verify `just desktop-test`
 - Invocation: `desktop/src/features/settings/ui/DeviceIdentitySettingsCard.tsx` → `setDeviceLabel`; exact call `mutationFn: setDeviceLabel`; behavior test `label_keyboard_save_reports_queued`; verify `just desktop-test`
 - Verify: `just desktop-test desktop-typecheck`
+
+## `.github/workflows/fork-sync.yml`
+
+Exact clean-upstream baseline dependency, full Python regression and draft-only candidate release workflow
+
+New module: `true`.
+
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `scripts/fork/tests/test_sync.py`
+
+Synthetic Git and GH release preparation, conflict reports, recovery and baseline failure regression coverage
+
+New module: `true`.
+
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `scripts/fork/tests/test_workflow_contract.py`
+
+Actual JSON Actions graph ordering and injected clean-target failure regression coverage
+
+New module: `true`.
+
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`

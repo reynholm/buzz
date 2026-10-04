@@ -123,3 +123,81 @@ frontend: 6,747 main tests plus 93 secret-sanitizer tests passed; Tauri workspac
 the build without a push gateway. Full native ACP package also exited 0. These
 counts are tied to the exact upstream SHA above; they do not attest fork product
 changes or the later two-device owner acceptance.
+
+## Guarded release preparation
+
+`scripts/fork/sync.py` reads stable `desktop-vX.Y.Z` refs from
+`https://github.com/block/buzz.git`, selects by numeric semver and reports skipped
+intermediate releases. `prepare` writes a structured `no_update` report and emits
+no stdout or PR when the current base is already newest. It does not create real
+accepted refs or configure remotes on the maintainer's behalf. A selected tag with
+no accepted `fork/main` is blocked. For a real update:
+
+```sh
+python3 scripts/fork/sync.py select --report selection.json
+python3 scripts/fork/sync.py baseline --target-sha <selected-exact-sha> --report baseline.json
+python3 scripts/fork/sync.py prepare --repo . --base fork/main \
+  --manifest scripts/fork/patches.json --baseline-report baseline.json --report preparation.json
+```
+
+The baseline uses an independent detached upstream worktree. It executes the full
+Task12 gates, `just ci`, and the six real arm64 sidecar/app release recipes, then
+checks executable/nonzero Mach-O arm64 binaries and hashes the app binaries and
+DMG. Its JSON includes `upstream_sha`, `gate_commands`, `result` and a separate
+`artifact_manifest`; logs accompany each gate. Failure records evidence and stops
+before candidate branches, merges, tests, builds or candidate uploads. Baseline
+and candidate evidence are never interchangeable. An existing baseline worktree
+requires an explicit maintenance handoff; the tool does not delete it. Baseline
+environment removes managed Git/session policy and fork identity overrides; it
+uses upstream's `CI=true` non-GUI packaging. Git 2.46+ remains a prerequisite.
+
+After baseline success for that exact SHA, preparation fast-forwards the local
+`upstream` mirror and merges the target into an owned `fork/sync-vX.Y.Z` worktree.
+It never rebases or moves accepted `fork/main`. The candidate registry compares
+against the fetched target SHA, so upstream-only changes are excluded; the report
+retains the prior registry base. Protected paths and exact calls are validated
+before and after merging. The upstream side of an unregistered conflict is used
+only after the accepted registry passed. Registered conflicts, missing seams and
+staged conflict markers block the candidate; no buildable SHA is advertised.
+
+Conflicts stay in the separate preparation worktree. `prepare_blocked_report`
+creates a clean `fork/blocked-vX.Y.Z` commit based on accepted `fork/main` changing
+only `docs/fork/sync-reports/desktop-vX.Y.Z.json`. It records base/target SHAs and
+relative conflicts without private workspace paths. Local OS locking and Actions
+concurrency (`cancel-in-progress: false`) serialize runs. Owned interrupted work
+resumes; moved bases, changed targets and foreign branches/worktrees stop with
+ownership evidence, without deletion or reset. A blocked report interrupted
+between branch creation and report commit requires owner handoff. Retiring a
+blocked branch after a clean sync PR is a reviewed owner action.
+
+Publication is separate and requires explicit `--publish`. It pushes only the
+clean candidate/report branch without force, opens one draft PR in
+`https://github.com/reynholm/buzz`, and reuses that draft. On ephemeral runners,
+reuse verifies published merge parent SHAs, durable preparation trailers and the
+entire accepted registry; report reuse verifies a single report-only compare diff.
+Closed/promoted PRs or ownership mismatches require handoff. No promotion, merge,
+final fork tag or release is performed. Authorized workflow runs link the eventual
+verified artifact run URL to the existing draft; failures leave the PR draft.
+
+The JSON-form YAML [fork-sync workflow](../../.github/workflows/fork-sync.yml)
+separates selection, clean baseline, candidate and diagnostic reporting. The
+candidate job requires baseline success and explicitly runs the full fork Python
+suite before full Task12 gates and M3's real build/verification. Diagnostic report
+uploads on failure never count as candidate success. macOS jobs use `macos-15`,
+documented as arm64 by [GitHub's hosted-runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
+(checked 2026-10-04), and assert `uname -m` is `arm64`. Actual hosted execution is
+still an external gate. M3 must provide `build-candidate.sh --candidate-sha SHA
+--baseline-report PATH`, `verify_artifact.py`, and verified files in
+`artifacts/fork/`; absent tooling fails closed, never substitutes placeholders.
+The source workflow is pending owner/default-branch authorization. The owner must
+configure verified `FORK_GIT_AUTHOR_NAME`/`FORK_GIT_AUTHOR_EMAIL` repository variables
+for the repository's author policy before activation. Schedule `0 6 * * *` runs
+only once `fork/main` is confirmed as the default branch and the owner enables it.
+
+Synthetic disposable Git/GH fixtures prove automation behavior, including actual
+clean merges/conflicts, one draft PR, no force-push and failing baseline ordering.
+They do not satisfy next-real-tag, hosted-runner, native app, owner installation or
+two-physical-device acceptance. The real read-only check on 2026-10-04 found no
+stable tag newer than `desktop-v0.5.26`; local `prepare` returned `no_update`, with
+empty stdout and no publication or accepted-ref/mirror changes. Repeat with the
+explicit full Python suite and registry validation before any real update.

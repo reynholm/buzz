@@ -44,11 +44,15 @@
     },
     {
       "path": "scripts/fork/sync.py",
-      "responsibility": "Validate lost patch paths, symbols and production invocation seams",
+      "responsibility": "Validate protected patches and prepare idempotent, baseline-guarded release merges and clean blocked reports",
       "is_new": true,
       "required_symbols": [
         "def validate_patches(",
-        "def main("
+        "def main(",
+        "def prepare_update(",
+        "def prepare_blocked_report(",
+        "def select_update(",
+        "def run_clean_target("
       ],
       "invocation_seams": [
         {
@@ -56,6 +60,27 @@
           "callee_symbol": "validate_patches",
           "invocation": "errors = validate_patches(args.repo, manifest)",
           "behavior_test": "test_cli_rejects_unlisted_path",
+          "verification_command": "python3 -m unittest discover -s scripts/fork/tests -v"
+        },
+        {
+          "caller_path": "scripts/fork/sync.py",
+          "callee_symbol": "validate_patches",
+          "invocation": "report.missing_seams = validate_patches(worktree, candidate_manifest)",
+          "behavior_test": "test_merge_success_missing_seam_blocks",
+          "verification_command": "python3 -m unittest discover -s scripts/fork/tests -v"
+        },
+        {
+          "caller_path": "scripts/fork/sync.py",
+          "callee_symbol": "prepare_update",
+          "invocation": "report = prepare_update(args.repo, selection, manifest, base=args.base, clean_target=baseline)",
+          "behavior_test": "test_cli_prepare_runs_guarded_candidate",
+          "verification_command": "python3 -m unittest discover -s scripts/fork/tests -v"
+        },
+        {
+          "caller_path": "scripts/fork/sync.py",
+          "callee_symbol": "merge_target",
+          "invocation": "merge = merge_target(worktree, report.target_sha)",
+          "behavior_test": "test_clean_merge_uses_target_registry_and_preserves_patch",
           "verification_command": "python3 -m unittest discover -s scripts/fork/tests -v"
         }
       ],
@@ -3859,6 +3884,36 @@
       ],
       "verification_commands": [
         "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": ".github/workflows/fork-sync.yml",
+      "responsibility": "Exact clean-upstream baseline dependency, full Python regression and draft-only candidate release workflow",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "scripts/fork/tests/test_sync.py",
+      "responsibility": "Synthetic Git and GH release preparation, conflict reports, recovery and baseline failure regression coverage",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "scripts/fork/tests/test_workflow_contract.py",
+      "responsibility": "Actual JSON Actions graph ordering and injected clean-target failure regression coverage",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 -m unittest discover -s scripts/fork/tests -v"
       ]
     }
   ]
