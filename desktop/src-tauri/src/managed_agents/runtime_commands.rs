@@ -229,7 +229,16 @@ pub(crate) fn start_managed_agent_runtime_pair_lazy(
     relay_url: String,
     app: AppHandle,
 ) -> Result<ManagedAgentRuntimeStatus, String> {
-    start_pair(pubkey, relay_url, true, None, app)
+    start_pair(pubkey, relay_url, true, None, None, false, app)
+}
+
+pub(crate) fn start_managed_agent_pair_scoped(
+    pubkey: String,
+    relay_url: String,
+    app: AppHandle,
+    expected: &super::device_runtime::RuntimeFence,
+) -> Result<ManagedAgentRuntimeStatus, String> {
+    start_pair(pubkey, relay_url, true, None, Some(expected), false, app)
 }
 
 #[tauri::command]
@@ -246,6 +255,8 @@ fn start_pair(
     relay_url: String,
     lazy: bool,
     expected_updated_at: Option<&str>,
+    expected_scope: Option<&super::device_runtime::RuntimeFence>,
+    restart: bool,
     app: AppHandle,
 ) -> Result<ManagedAgentRuntimeStatus, String> {
     let state = app.state::<AppState>();
@@ -260,59 +271,83 @@ fn start_pair(
         .managed_agents_store_lock
         .lock()
         .map_err(|e| e.to_string())?;
-    let mut records = load_managed_agents(&app)?;
-    let record = find_managed_agent_mut(&mut records, &pubkey)?;
-    if record.backend != BackendKind::Local {
-        return Err("managed runtime pairs require a local agent".into());
+    if let Some(expected) = expected_scope {
+        super::device_runtime::assert_runtime_fence(&state, expected)?;
     }
-    if expected_updated_at.is_some_and(|expected| record.updated_at != expected) {
-        return Err("managed agent changed while runtime reconciliation was in flight".into());
-    }
-    let key = ManagedAgentRuntimeKey::new(pubkey, &relay_url)?;
-    let mut runtimes = state
-        .managed_agent_processes
-        .lock()
-        .map_err(|e| e.to_string())?;
-    if runtimes
-        .get_mut(&key)
-        .is_some_and(|runtime| runtime.child.try_wait().ok().flatten().is_none())
-    {
-        let status = status_for(&app, record, &key, runtimes.get(&key), None);
-        return Ok(status);
-    }
-    runtimes.remove(&key);
-    terminate_untracked_pair_runtime(&app, &key)?;
+    super::device_runtime::start_pair_phase_with(
+        &app,
+        &state,
+        &pubkey,
+        expected_scope.map(|e| &e.scope),
+        super::persona_device_view::load_device_policy_context,
+        |mut record, _, _| {
+            super::storage::hydrate_keys(std::slice::from_mut(&mut record));
+            let record = &mut record;
+            if record.backend != BackendKind::Local {
+                return Err("managed runtime pairs require a local agent".into());
+            }
+            if expected_updated_at.is_some_and(|expected| record.updated_at != expected) {
+                return Err(
+                    "managed agent changed while runtime reconciliation was in flight".into(),
+                );
+            }
+            let key = ManagedAgentRuntimeKey::new(pubkey.clone(), &relay_url)?;
+            let mut runtimes = state
+                .managed_agent_processes
+                .lock()
+                .map_err(|e| e.to_string())?;
+            if !restart
+                && runtimes
+                    .get_mut(&key)
+                    .is_some_and(|runtime| runtime.child.try_wait().ok().flatten().is_none())
+            {
+                let status = status_for(&app, record, &key, runtimes.get(&key), None);
+                return Ok(status);
+            }
+            if let Some(mut previous) = runtimes.remove(&key) {
+                if let Err(error) = terminate_process(previous.child.id())
+                    .and_then(|()| previous.child.wait().map(|_| ()).map_err(|e| e.to_string()))
+                {
+                    runtimes.insert(key.clone(), previous);
+                    return Err(error);
+                }
+                super::remove_agent_runtime_receipt(&app, &key);
+                state.clear_agent_session_cache(&key);
+            }
+            terminate_untracked_pair_runtime(&app, &key)?;
 
-    let owner = state
-        .keys
-        .lock()
-        .ok()
-        .map(|keys| keys.public_key().to_hex());
-    let mut process =
-        spawn_agent_child(&app, record, &key.relay_url, lazy, owner.as_deref(), None)?;
-    let now = crate::util::now_iso();
-    let receipt = ManagedAgentRuntimeReceipt {
-        key: key.clone(),
-        pid: process.child.id(),
-        desktop_instance_id: current_instance_id(&app),
-        started_at: now.clone(),
-    };
-    if let Err(error) = write_agent_runtime_receipt(&app, &receipt) {
-        let _ = terminate_process(process.child.id());
-        let _ = process.child.wait();
-        return Err(error);
-    }
-    record.runtime_pid = None;
-    record.updated_at = now.clone();
-    record.last_started_at = Some(now);
-    record.last_stopped_at = None;
-    record.last_error = None;
-    runtimes.insert(key.clone(), ManagedAgentPairRuntime::starting(process));
-    let status = status_for(&app, record, &key, runtimes.get(&key), None);
-    drop(runtimes);
-    save_managed_agents(&app, &records)?;
-    emit_status(&app, &status);
-    Ok(status)
+            let owner = state
+                .keys
+                .lock()
+                .ok()
+                .map(|keys| keys.public_key().to_hex());
+            let mut process =
+                spawn_agent_child(&app, record, &key.relay_url, lazy, owner.as_deref(), None)?;
+            let now = crate::util::now_iso();
+            let receipt = ManagedAgentRuntimeReceipt {
+                key: key.clone(),
+                pid: process.child.id(),
+                desktop_instance_id: current_instance_id(&app),
+                started_at: now.clone(),
+            };
+            if let Err(error) = write_agent_runtime_receipt(&app, &receipt) {
+                let _ = terminate_process(process.child.id());
+                let _ = process.child.wait();
+                return Err(error);
+            }
+            record.runtime_pid = None;
+            record.updated_at = now.clone();
+            record.last_started_at = Some(now);
+            record.last_stopped_at = None;
+            record.last_error = None;
+            runtimes.insert(key.clone(), ManagedAgentPairRuntime::starting(process));
+            let status = status_for(&app, record, &key, runtimes.get(&key), None);
+            drop(runtimes);
+            super::device_runtime::save_runtime_record(&app, record)?;
+            emit_status(&app, &status);
+            Ok(status)
+        },
+    )
 }
 
 #[tauri::command]
@@ -332,7 +367,7 @@ pub fn stop_managed_agent_runtime(
         .map_err(|e| e.to_string())?;
     let mut records = load_managed_agents(&app)?;
     let record = find_managed_agent_mut(&mut records, &pubkey)?;
-    let key = ManagedAgentRuntimeKey::new(pubkey, &relay_url)?;
+    let key = ManagedAgentRuntimeKey::new(pubkey.clone(), &relay_url)?;
     let mut runtimes = state
         .managed_agent_processes
         .lock()
@@ -388,8 +423,7 @@ pub fn restart_managed_agent_runtime(
     relay_url: String,
     app: AppHandle,
 ) -> Result<ManagedAgentRuntimeStatus, String> {
-    stop_managed_agent_runtime(pubkey.clone(), relay_url.clone(), app.clone())?;
-    start_pair(pubkey, relay_url, true, None, app)
+    start_pair(pubkey, relay_url, true, None, None, true, app)
 }
 
 /// Probe whether this agent can operate on `requested_relay_url`.
@@ -467,7 +501,9 @@ pub async fn reconcile_managed_agent_runtimes(
     communities: Vec<super::ManagedAgentCommunityTarget>,
     app: AppHandle,
 ) -> Result<Vec<ManagedAgentRuntimeStatus>, String> {
+    let runtime_fence = super::device_runtime::capture_runtime_fence(&app.state::<AppState>())?;
     let jobs = auto_start_jobs_with(
+        Some(&runtime_fence),
         &app,
         &communities,
         super::persona_device_view::load_device_policy_context,
@@ -475,7 +511,17 @@ pub async fn reconcile_managed_agent_runtimes(
     )?;
     let probes = probe_auto_start_jobs(jobs, |record, requested| {
         let state = app.state::<AppState>();
-        async move { probe_agent_relay_access(&state, record, requested).await }
+        probe_auto_start_job_with(
+            &app,
+            RuntimeProbeInput {
+                record,
+                requested,
+                fence: &runtime_fence,
+            },
+            super::persona_device_view::load_device_policy_context,
+            super::storage::hydrate_keys,
+            move |r, requested| async move { probe_agent_relay_access(&state, r, requested).await },
+        )
     })
     .await;
 
@@ -495,6 +541,8 @@ pub async fn reconcile_managed_agent_runtimes(
                         key.relay_url.clone(),
                         true,
                         Some(&record.updated_at),
+                        Some(&runtime_fence),
+                        false,
                         app.clone(),
                     ) {
                         Ok(mut status) => {
@@ -717,6 +765,7 @@ mod tests {
 
 /// Build the actual reconcile job set before key hydration or relay probes.
 fn auto_start_jobs_with<R: tauri::Runtime>(
+    expected: Option<&super::device_runtime::RuntimeFence>,
     app: &AppHandle<R>,
     communities: &[super::ManagedAgentCommunityTarget],
     context_provider: impl FnOnce(
@@ -731,13 +780,21 @@ fn auto_start_jobs_with<R: tauri::Runtime>(
         .managed_agents_store_lock
         .lock()
         .map_err(|e| e.to_string())?;
+    let fence = super::device_runtime::capture_runtime_fence(&state)?;
+    if let Some(expected) = expected {
+        super::device_runtime::assert_runtime_fence(&state, expected)?;
+    }
     let records =
         super::persona_device_view::read_policy_records(&super::managed_agents_store_path(app)?)?;
     let context = if super::restore::needs_auto_start_authority(&records) {
-        Some(context_provider(app, &state)?)
+        super::restore::auto_start_context_result(&records, context_provider(app, &state))?
     } else {
         None
     };
+    if let Some(context) = &context {
+        super::device_creation::assert_creation_scope(&fence.scope, &context.scope)?;
+    }
+    super::device_runtime::assert_runtime_fence(&state, &fence)?;
     let mut candidates = super::restore::select_auto_start_candidates(&records, context.as_ref())?;
     hydrate(&mut candidates);
     Ok(communities
@@ -748,6 +805,65 @@ fn auto_start_jobs_with<R: tauri::Runtime>(
                 .map(move |r| (r.clone(), c.relay_url.clone()))
         })
         .collect())
+}
+
+struct RuntimeProbeInput<'a> {
+    record: super::ManagedAgentRecord,
+    requested: String,
+    fence: &'a super::device_runtime::RuntimeFence,
+}
+/// Actual per-job reconcile probe adapter; scope and target policy bracket the await.
+async fn probe_auto_start_job_with<R, F, Fut>(
+    app: &AppHandle<R>,
+    input: RuntimeProbeInput<'_>,
+    mut context: impl FnMut(
+        &AppHandle<R>,
+        &AppState,
+    ) -> Result<super::persona_device_view::DevicePolicyContext, String>,
+    hydrate: impl FnOnce(&mut [super::ManagedAgentRecord]),
+    probe: F,
+) -> Result<(super::ManagedAgentRecord, ManagedAgentRuntimeKey, String), String>
+where
+    R: tauri::Runtime,
+    F: FnOnce(super::ManagedAgentRecord, String) -> Fut,
+    Fut: std::future::Future<
+        Output = Result<(super::ManagedAgentRecord, ManagedAgentRuntimeKey, String), String>,
+    >,
+{
+    let state = app.state::<AppState>();
+    let fresh = {
+        let _store = state
+            .managed_agents_store_lock
+            .lock()
+            .map_err(|e| e.to_string())?;
+        super::device_runtime::assert_runtime_fence(&state, input.fence)?;
+        super::device_runtime::runtime_phase_locked_with(
+            app,
+            &state,
+            &input.record.pubkey,
+            Some(&input.fence.scope),
+            &mut context,
+            |mut record, _, _| {
+                hydrate(std::slice::from_mut(&mut record));
+                Ok(record)
+            },
+        )?
+    };
+    let result = probe(fresh, input.requested).await?;
+    let _store = state
+        .managed_agents_store_lock
+        .lock()
+        .map_err(|e| e.to_string())?;
+    super::device_runtime::assert_runtime_fence(&state, input.fence)?;
+    super::device_runtime::runtime_phase_locked_with(
+        app,
+        &state,
+        &input.record.pubkey,
+        Some(&input.fence.scope),
+        context,
+        |_, _, _| Ok(()),
+    )?;
+    Ok(result)
 }
 
 type AutoStartProbe = Result<
@@ -797,9 +913,14 @@ mod device_home_job_tests {
             rs[1].device_host_binding = copied.then(|| "foreign-marker".into());
             write(&base, &rs);
             let jobs = auto_start_jobs_with(
+                None,
                 app.handle(),
                 &communities,
-                |_, _| Ok(context(EvidenceReadiness::Pending)),
+                |_, state| {
+                    let mut c = context(EvidenceReadiness::Pending);
+                    c.scope = super::super::device_home_sync::capture_scope(state)?;
+                    Ok(c)
+                },
                 |selected| assert!(selected.is_empty(), "blocked records hydrated keys"),
             )
             .unwrap();
@@ -816,13 +937,15 @@ mod device_home_job_tests {
         let base = super::super::managed_agents_base_dir(app.handle()).unwrap();
         let (mut rs, _) = records();
         rs[1].start_on_app_launch = true;
-        let c = context(EvidenceReadiness::Ready);
+        let mut c = context(EvidenceReadiness::Ready);
+        c.scope = super::super::device_home_sync::capture_scope(&app.state::<AppState>()).unwrap();
         rs[1].device_host_binding = Some(c.proof.binding().into());
         write(&base, &rs);
         let communities = vec![super::super::ManagedAgentCommunityTarget {
             relay_url: "wss://other-scope".into(),
         }];
-        let jobs = auto_start_jobs_with(app.handle(), &communities, |_, _| Ok(c), |_| {}).unwrap();
+        let jobs =
+            auto_start_jobs_with(None, app.handle(), &communities, |_, _| Ok(c), |_| {}).unwrap();
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].1, "wss://other-scope");
         let count = std::cell::Cell::new(0);
@@ -840,6 +963,7 @@ mod device_home_job_tests {
         rs[1].device_host_binding = Some("foreign-marker".into());
         write(&base, &rs);
         let jobs = auto_start_jobs_with(
+            None,
             app.handle(),
             &communities,
             |_, _| panic!("shared-only queried proof"),
@@ -857,6 +981,7 @@ mod device_home_job_tests {
         rs[1].start_on_app_launch = true;
         write(&base, &rs);
         assert!(auto_start_jobs_with(
+            None,
             app.handle(),
             &[],
             |_, _| Err("proof locked".into()),
@@ -865,6 +990,7 @@ mod device_home_job_tests {
         .is_err());
         std::fs::write(base.join("managed-agents.json"), b"broken").unwrap();
         assert!(auto_start_jobs_with(
+            None,
             app.handle(),
             &[],
             |_, _| panic!("broken structural store read context"),
@@ -893,6 +1019,7 @@ mod device_home_job_tests {
             relay_url: "wss://test".into(),
         }];
         let jobs = auto_start_jobs_with(
+            None,
             app.handle(),
             &communities,
             |_, _| panic!("unselected private row requested proof for shared jobs"),
@@ -904,5 +1031,211 @@ mod device_home_job_tests {
         .unwrap();
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].0.persona_id.as_deref(), Some("shared-one"));
+    }
+}
+#[cfg(test)]
+mod mixed_runtime_tests {
+    use super::*;
+    use crate::managed_agents::device_home_migration::tests::{app, definition, records, write};
+    #[test]
+    fn mixed_selected_reconcile_keeps_shared_when_private_authority_is_unavailable() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app(dir.path());
+        let base = super::super::managed_agents_base_dir(app.handle()).unwrap();
+        let (mut raw, _) = records();
+        raw[1].start_on_app_launch = true;
+        let mut d = definition();
+        d.id = "shared".into();
+        d.share_across_devices = Some(true);
+        let mut i = d.clone().into_agent_record();
+        i.persona_id = Some(d.id.clone());
+        i.pubkey = nostr::Keys::generate().public_key().to_hex();
+        i.start_on_app_launch = true;
+        let key = i.pubkey.clone();
+        raw.push(d.into_agent_record());
+        raw.push(i);
+        write(&base, &raw);
+        let jobs = auto_start_jobs_with(
+            None,
+            app.handle(),
+            &[super::super::ManagedAgentCommunityTarget {
+                relay_url: "wss://test".into(),
+            }],
+            |_, _| Err("injected proof unavailable".into()),
+            |selected| {
+                assert_eq!(selected.len(), 1);
+                assert_eq!(selected[0].pubkey, key);
+            },
+        )
+        .unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].0.pubkey, key);
+    }
+}
+
+#[cfg(test)]
+mod reconcile_callback_tests {
+    use super::*;
+    use crate::managed_agents::{
+        definition_home::EvidenceReadiness,
+        device_home_migration::tests::{app, context, records, write},
+    };
+    #[tokio::test]
+    async fn restore_and_reconcile_skip_foreign_pairs_before_probe() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app(dir.path());
+        let state = app.state::<AppState>();
+        let (mut raw, _) = records();
+        raw[1].device_host_binding = Some("copied".into());
+        write(
+            &super::super::managed_agents_base_dir(app.handle()).unwrap(),
+            &raw,
+        );
+        let fence = super::super::device_runtime::capture_runtime_fence(&state).unwrap();
+        let probes = std::cell::Cell::new(0);
+        let result = probe_auto_start_job_with(
+            app.handle(),
+            RuntimeProbeInput {
+                record: raw[1].clone(),
+                requested: "wss://test".into(),
+                fence: &fence,
+            },
+            |_, state| {
+                let mut c = context(EvidenceReadiness::Ready);
+                c.scope = super::super::device_home_sync::capture_scope(state)?;
+                Ok(c)
+            },
+            |_| panic!("foreign job hydrated keys"),
+            |_, _| async {
+                probes.set(1);
+                Err("transport was reached".into())
+            },
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(probes.get(), 0);
+    }
+    #[tokio::test]
+    async fn reconcile_shared_probe_result_cannot_start_after_scope_switch() {
+        for change in 0..4 {
+            let dir = tempfile::tempdir().unwrap();
+            let app = app(dir.path());
+            let state = app.state::<AppState>();
+            let (mut raw, _) = records();
+            raw[0].share_across_devices = Some(true);
+            write(
+                &super::super::managed_agents_base_dir(app.handle()).unwrap(),
+                &raw,
+            );
+            let fence = super::super::device_runtime::capture_runtime_fence(&state).unwrap();
+            let result = probe_auto_start_job_with(
+                app.handle(),
+                RuntimeProbeInput {
+                    record: raw[1].clone(),
+                    requested: "wss://test".into(),
+                    fence: &fence,
+                },
+                |_, _| panic!("shared requires no proof"),
+                |_| {},
+                |r, requested| async {
+                    match change {
+                        0 => {
+                            state
+                                .workspace_apply_generation
+                                .fetch_add(1, Ordering::AcqRel);
+                        }
+                        1 => {
+                            *state.keys.lock().unwrap() = nostr::Keys::generate();
+                        }
+                        2 => {
+                            *state.relay_url_override.lock().unwrap() =
+                                Some("wss://switched".into());
+                        }
+                        _ => {
+                            super::super::device_home_sync::begin_session(&state)?;
+                        }
+                    }
+                    let key = ManagedAgentRuntimeKey::new(r.pubkey.clone(), &requested)?;
+                    Ok((r, key, requested))
+                },
+            )
+            .await;
+            assert!(
+                result.is_err(),
+                "stale probe result reached final start loop"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn reconcile_probe_reloads_policy_after_transport() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app(dir.path());
+        let state = app.state::<AppState>();
+        let (mut raw, _) = records();
+        raw[0].share_across_devices = Some(true);
+        let base = super::super::managed_agents_base_dir(app.handle()).unwrap();
+        write(&base, &raw);
+        let fence = super::super::device_runtime::capture_runtime_fence(&state).unwrap();
+        let result = probe_auto_start_job_with(
+            app.handle(),
+            RuntimeProbeInput {
+                record: raw[1].clone(),
+                requested: "wss://test".into(),
+                fence: &fence,
+            },
+            |_, state| {
+                let mut c = context(EvidenceReadiness::Ready);
+                c.scope = super::super::device_home_sync::capture_scope(state)?;
+                Ok(c)
+            },
+            |_| {},
+            |r, requested| async {
+                raw[0].share_across_devices = Some(false);
+                raw[1].device_host_binding = Some("copied".into());
+                write(&base, &raw);
+                let key = ManagedAgentRuntimeKey::new(r.pubkey.clone(), &requested)?;
+                Ok((r, key, requested))
+            },
+        )
+        .await;
+        assert!(result.is_err(), "changed policy reached final start loop");
+    }
+}
+#[cfg(test)]
+mod candidate_scope_tests {
+    use super::*;
+    use crate::managed_agents::device_home_migration::tests::{app, records, write};
+    #[test]
+    fn reconcile_authority_scope_switch_refuses_before_key_effects() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app(dir.path());
+        let state = app.state::<AppState>();
+        let (mut raw, _) = records();
+        let mut c = super::super::device_home_migration::tests::context(
+            super::super::definition_home::EvidenceReadiness::Ready,
+        );
+        c.scope = super::super::device_home_sync::capture_scope(&state).unwrap();
+        raw[1].device_host_binding = Some(c.proof.binding().into());
+        raw[1].start_on_app_launch = true;
+        write(
+            &super::super::managed_agents_base_dir(app.handle()).unwrap(),
+            &raw,
+        );
+        let keys = std::cell::Cell::new(0);
+        let result = auto_start_jobs_with(
+            None,
+            app.handle(),
+            &[],
+            |_, state| {
+                state
+                    .workspace_apply_generation
+                    .fetch_add(1, Ordering::AcqRel);
+                Ok(c)
+            },
+            |_| keys.set(1),
+        );
+        assert!(result.is_err(), "reconcile accepted stale authority");
+        assert_eq!(keys.get(), 0);
     }
 }

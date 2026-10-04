@@ -14,7 +14,10 @@ pub(crate) struct RestoreCleanup(
 );
 
 pub(super) fn complete_restore_spawn_results_with<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
+    (app, expected): (
+        &tauri::AppHandle<R>,
+        Option<&super::super::device_runtime::RuntimeFence>,
+    ),
     spawn_results: Vec<AgentSpawnResult>,
     context_provider: impl FnOnce(
         &tauri::AppHandle<R>,
@@ -28,7 +31,7 @@ pub(super) fn complete_restore_spawn_results_with<R: tauri::Runtime>(
     cleanup: impl FnMut(&mut ManagedAgentProcess) -> Result<(), String>,
 ) -> Result<Vec<(String, crate::commands::ProfileReconcileData)>, String> {
     complete_restore_spawn_results_with_inspection(
-        app,
+        (app, expected),
         spawn_results,
         context_provider,
         hydrate,
@@ -45,7 +48,10 @@ pub(super) fn complete_restore_spawn_results_with<R: tauri::Runtime>(
 }
 
 pub(super) fn complete_restore_spawn_results_with_inspection<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
+    (app, expected): (
+        &tauri::AppHandle<R>,
+        Option<&super::super::device_runtime::RuntimeFence>,
+    ),
     mut spawn_results: Vec<AgentSpawnResult>,
     context_provider: impl FnOnce(
         &tauri::AppHandle<R>,
@@ -66,6 +72,7 @@ pub(super) fn complete_restore_spawn_results_with_inspection<R: tauri::Runtime>(
         .collect();
     let mut completion_errors = Vec::new();
     let result = complete_restore_phase_c_with(
+        expected,
         app,
         &started_pubkeys,
         context_provider,

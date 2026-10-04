@@ -17,10 +17,9 @@ use crate::{
     app_state::AppState,
     managed_agents::{
         agent_readiness, current_instance_id, find_managed_agent_mut, known_acp_runtime,
-        load_global_agent_config, load_managed_agents, load_personas, record_agent_command,
-        resolve_effective_agent_env, save_global_agent_config, save_managed_agents,
-        stop_managed_agent_process, sync_managed_agent_processes, validate_global_config,
-        AgentReadiness, BackendKind, GlobalAgentConfig,
+        load_global_agent_config, load_personas, record_agent_command, resolve_effective_agent_env,
+        save_global_agent_config, stop_managed_agent_process, sync_managed_agent_processes,
+        validate_global_config, AgentReadiness, BackendKind, GlobalAgentConfig,
     },
 };
 
@@ -64,6 +63,9 @@ pub async fn set_global_agent_config(
     config: GlobalAgentConfig,
     app: AppHandle,
 ) -> Result<GlobalAgentConfigSaveResult, String> {
+    use tauri::Manager;
+    let runtime_fence =
+        crate::managed_agents::device_runtime::capture_runtime_fence(&app.state::<AppState>())?;
     // ── Phase 1: disk write (sync, spawn_blocking) ────────────────────────
     //
     // Validate, snapshot old config, write new config, collect pre-filter
@@ -113,6 +115,7 @@ pub async fn set_global_agent_config(
                 &old_global,
                 &new_global,
                 &personas_snapshot,
+                &runtime_fence,
             )
             .await;
             match outcome {
@@ -160,7 +163,9 @@ fn collect_restart_candidates(
     old_global: &GlobalAgentConfig,
     new_global: &GlobalAgentConfig,
 ) -> (Vec<String>, Vec<crate::managed_agents::AgentDefinition>) {
-    let records = match load_managed_agents(app) {
+    let records = match crate::managed_agents::managed_agents_store_path(app)
+        .and_then(|p| crate::managed_agents::persona_device_view::read_policy_records(&p))
+    {
         Ok(r) => r,
         Err(e) => {
             eprintln!(
@@ -250,8 +255,10 @@ async fn restart_local_agent_on_config_change(
     old_global: &GlobalAgentConfig,
     new_global: &GlobalAgentConfig,
     personas_snapshot: &[crate::managed_agents::AgentDefinition],
+    expected: &crate::managed_agents::device_runtime::RuntimeFence,
 ) -> RestartOutcome {
     // ── Step 1: stop under lock, re-verifying eligibility ─────────────────
+    let stop_fence = expected.clone();
     let app_for_stop = app.clone();
     let pubkey_owned = pubkey.to_string();
     let old_global_clone = old_global.clone();
@@ -267,67 +274,94 @@ async fn restart_local_agent_on_config_change(
             .lock()
             .map_err(|e| format!("failed to acquire store lock: {e}"))?;
 
-        let mut records = load_managed_agents(&app_for_stop)?;
-        let mut runtimes = state
-            .managed_agent_processes
-            .lock()
-            .map_err(|e| format!("failed to acquire runtimes lock: {e}"))?;
+        global_restart_phase_with(
+            &app_for_stop,
+            &state,
+            &pubkey_owned,
+            Some(&stop_fence),
+            crate::managed_agents::persona_device_view::load_device_policy_context,
+            |current, _, _| {
+                let mut records = vec![current];
+                let mut runtimes = state
+                    .managed_agent_processes
+                    .lock()
+                    .map_err(|e| format!("failed to acquire runtimes lock: {e}"))?;
 
-        // Sync process state so PID liveness reflects current reality.
-        let (sync_changed, _) = sync_managed_agent_processes(
-            &mut records,
-            &mut runtimes,
-            &current_instance_id(&app_for_stop),
-        );
-        if sync_changed {
-            save_managed_agents(&app_for_stop, &records)?;
-        }
+                // Sync process state so PID liveness reflects current reality.
+                let (sync_changed, _) = sync_managed_agent_processes(
+                    &mut records,
+                    &mut runtimes,
+                    &current_instance_id(&app_for_stop),
+                );
+                if sync_changed {
+                    crate::managed_agents::storage::save_restore_records_with(
+                        &app_for_stop,
+                        &records,
+                        &std::collections::HashSet::new(),
+                        |_| {},
+                    )?;
+                }
 
-        // Re-check eligibility under lock with current record state.
-        let record = records
-            .iter()
-            .find(|r| r.pubkey == pubkey_owned)
-            .ok_or_else(|| format!("agent {pubkey_owned} not found"))?;
+                // Re-check eligibility under lock with current record state.
+                let record = records
+                    .iter()
+                    .find(|r| r.pubkey == pubkey_owned)
+                    .ok_or_else(|| format!("agent {pubkey_owned} not found"))?;
 
-        if record.backend != BackendKind::Local {
-            return Err(format!("agent {pubkey_owned} is no longer a local agent"));
-        }
-        let runtime_keys =
-            crate::managed_agents::managed_agent_runtime_keys(&runtimes, &pubkey_owned);
-        if runtime_keys.is_empty() {
-            return Err(format!(
-                "agent {pubkey_owned} no longer has a live pair runtime after sync"
-            ));
-        }
+                if record.backend != BackendKind::Local {
+                    return Err(format!("agent {pubkey_owned} is no longer a local agent"));
+                }
+                let runtime_keys =
+                    crate::managed_agents::managed_agent_runtime_keys(&runtimes, &pubkey_owned);
+                if runtime_keys.is_empty() {
+                    return Err(format!(
+                        "agent {pubkey_owned} no longer has a live pair runtime after sync"
+                    ));
+                }
 
-        // Re-check the eligibility predicate under lock:
-        //   (old NotReady && new Ready)  OR  (old Ready && env changed)
-        // TODO: busy/mid-turn deferral would slot in here
-        //
-        // Reuse personas_snapshot from Phase 1 — avoids loading personas again
-        // per agent when the save-command personas haven't changed.
-        let effective_cmd = record_agent_command(record, &personas_owned);
-        let runtime_meta = known_acp_runtime(&effective_cmd);
-        let old_effective =
-            resolve_effective_agent_env(record, &personas_owned, runtime_meta, &old_global_clone);
-        let new_effective =
-            resolve_effective_agent_env(record, &personas_owned, runtime_meta, &new_global_clone);
-        let old_ready = matches!(agent_readiness(&old_effective), AgentReadiness::Ready);
-        let new_ready = matches!(agent_readiness(&new_effective), AgentReadiness::Ready);
-        // Under lock, the alive check was already done above via process_is_running.
-        let env_changed = old_ready && old_effective.env != new_effective.env;
-        if !should_restart_on_config_change(old_ready, new_ready, env_changed) {
-            return Err(format!(
-                "agent {pubkey_owned} restart condition no longer valid under lock"
-            ));
-        }
+                // Re-check the eligibility predicate under lock:
+                //   (old NotReady && new Ready)  OR  (old Ready && env changed)
+                // TODO: busy/mid-turn deferral would slot in here
+                //
+                // Reuse personas_snapshot from Phase 1 — avoids loading personas again
+                // per agent when the save-command personas haven't changed.
+                let effective_cmd = record_agent_command(record, &personas_owned);
+                let runtime_meta = known_acp_runtime(&effective_cmd);
+                let old_effective = resolve_effective_agent_env(
+                    record,
+                    &personas_owned,
+                    runtime_meta,
+                    &old_global_clone,
+                );
+                let new_effective = resolve_effective_agent_env(
+                    record,
+                    &personas_owned,
+                    runtime_meta,
+                    &new_global_clone,
+                );
+                let old_ready = matches!(agent_readiness(&old_effective), AgentReadiness::Ready);
+                let new_ready = matches!(agent_readiness(&new_effective), AgentReadiness::Ready);
+                // Under lock, the alive check was already done above via process_is_running.
+                let env_changed = old_ready && old_effective.env != new_effective.env;
+                if !should_restart_on_config_change(old_ready, new_ready, env_changed) {
+                    return Err(format!(
+                        "agent {pubkey_owned} restart condition no longer valid under lock"
+                    ));
+                }
 
-        // Stop the process.
-        let record_mut = find_managed_agent_mut(&mut records, &pubkey_owned)?;
-        stop_managed_agent_process(&app_for_stop, record_mut, &mut runtimes)?;
-        save_managed_agents(&app_for_stop, &records)?;
+                // Stop the process.
+                let record_mut = find_managed_agent_mut(&mut records, &pubkey_owned)?;
+                stop_managed_agent_process(&app_for_stop, record_mut, &mut runtimes)?;
+                crate::managed_agents::storage::save_restore_records_with(
+                    &app_for_stop,
+                    &records,
+                    &std::collections::HashSet::new(),
+                    |_| {},
+                )?;
 
-        Ok(runtime_keys)
+                Ok(runtime_keys)
+            },
+        )
     })
     .await;
 
@@ -348,8 +382,14 @@ async fn restart_local_agent_on_config_change(
     let relay_urls: Vec<_> = runtime_keys.into_iter().map(|key| key.relay_url).collect();
     use tauri::Manager;
     let state = app.state::<AppState>();
-    match super::agents::start_local_agent_pairs_with_preflight(app, &state, pubkey, &relay_urls)
-        .await
+    match super::agents::runtime_start::start_local_agent_pairs_scoped(
+        app,
+        &state,
+        pubkey,
+        &relay_urls,
+        Some(expected),
+    )
+    .await
     {
         Ok(_) => {
             eprintln!(
@@ -361,7 +401,7 @@ async fn restart_local_agent_on_config_change(
             eprintln!(
                 "buzz-desktop: set_global_agent_config: failed to start {pubkey} after restart: {e}"
             );
-            if let Err(save_err) = persist_last_error(app, pubkey, &e) {
+            if let Err(save_err) = persist_last_error(app, pubkey, &e, expected) {
                 eprintln!(
                     "buzz-desktop: set_global_agent_config: failed to persist last_error for {pubkey}: {save_err}"
                 );
@@ -375,18 +415,36 @@ async fn restart_local_agent_on_config_change(
 ///
 /// Best-effort: called only after a failed restart to leave the record
 /// in a diagnosable state rather than a silent "stopped with no error" state.
-fn persist_last_error(app: &AppHandle, pubkey: &str, error: &str) -> Result<(), String> {
+fn persist_last_error(
+    app: &AppHandle,
+    pubkey: &str,
+    error: &str,
+    expected: &crate::managed_agents::device_runtime::RuntimeFence,
+) -> Result<(), String> {
     use tauri::Manager;
     let state = app.state::<AppState>();
     let _store_guard = state
         .managed_agents_store_lock
         .lock()
         .map_err(|e| format!("failed to acquire store lock: {e}"))?;
-    let mut records = load_managed_agents(app)?;
-    let record = find_managed_agent_mut(&mut records, pubkey)?;
-    record.last_error = Some(error.to_string());
-    record.updated_at = crate::util::now_iso();
-    save_managed_agents(app, &records)
+    crate::managed_agents::device_runtime::assert_runtime_fence(&state, expected)?;
+    crate::managed_agents::device_runtime::runtime_phase_locked_with(
+        app,
+        &state,
+        pubkey,
+        Some(&expected.scope),
+        crate::managed_agents::persona_device_view::load_device_policy_context,
+        |mut record, _, _| {
+            record.last_error = Some(error.to_string());
+            record.updated_at = crate::util::now_iso();
+            crate::managed_agents::storage::save_restore_records_with(
+                app,
+                &[record],
+                &std::collections::HashSet::new(),
+                |_| {},
+            )
+        },
+    )
 }
 
 /// Pure predicate: should an agent be restarted given resolved readiness and
@@ -493,5 +551,76 @@ mod tests {
             should_restart_on_config_change(false, true, true),
             "NotReady → Ready (with env change) must be a restart candidate"
         );
+    }
+}
+
+/// Authorize the whole locked restart effect before any key, process or store operation.
+fn global_restart_phase_with<R: tauri::Runtime, T>(
+    app: &tauri::AppHandle<R>,
+    state: &crate::app_state::AppState,
+    pubkey: &str,
+    expected: Option<&crate::managed_agents::device_runtime::RuntimeFence>,
+    context: impl FnOnce(
+        &tauri::AppHandle<R>,
+        &crate::app_state::AppState,
+    ) -> Result<
+        crate::managed_agents::persona_device_view::DevicePolicyContext,
+        String,
+    >,
+    effect: impl FnOnce(
+        crate::managed_agents::ManagedAgentRecord,
+        Vec<crate::managed_agents::AgentDefinition>,
+        crate::managed_agents::device_home_sync::SyncScope,
+    ) -> Result<T, String>,
+) -> Result<T, String> {
+    if let Some(expected) = expected {
+        crate::managed_agents::device_runtime::assert_runtime_fence(state, expected)?;
+    }
+    crate::managed_agents::device_runtime::runtime_phase_locked_with(
+        app,
+        state,
+        pubkey,
+        expected.map(|e| &e.scope),
+        context,
+        effect,
+    )
+}
+#[cfg(test)]
+mod device_runtime_guard_tests {
+    use super::*;
+    use crate::managed_agents::{
+        definition_home::EvidenceReadiness,
+        device_home_migration::tests::{app, context, records, write},
+    };
+    use tauri::Manager;
+    #[test]
+    fn global_restart_phase_with_refuses_before_process_key_and_store_effects() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app(dir.path());
+        let state = app.state::<crate::app_state::AppState>();
+        let (mut raw, _) = records();
+        raw[1].device_host_binding = Some("copied".into());
+        write(
+            &crate::managed_agents::managed_agents_base_dir(app.handle()).unwrap(),
+            &raw,
+        );
+        let effects = std::cell::Cell::new(0);
+        let result = global_restart_phase_with(
+            app.handle(),
+            &state,
+            &raw[1].pubkey,
+            None,
+            |_, state| {
+                let mut c = context(EvidenceReadiness::Ready);
+                c.scope = crate::managed_agents::device_home_sync::capture_scope(state)?;
+                Ok(c)
+            },
+            |_, _, _| {
+                effects.set(1);
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert_eq!(effects.get(), 0);
     }
 }

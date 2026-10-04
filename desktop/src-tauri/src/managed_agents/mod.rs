@@ -40,11 +40,11 @@ pub(crate) mod readiness;
 pub(crate) mod reconcile;
 mod relay_mesh;
 mod repos;
-mod restore;
+pub(crate) mod restore;
 pub(crate) use restore::child_ownership::{retry_restore_cleanup, RestoreCleanup};
 pub mod retention;
 mod runtime;
-mod runtime_commands;
+pub(crate) mod runtime_commands;
 mod runtime_types;
 mod session_policy;
 pub(crate) mod snapshot_avatar;
@@ -158,3 +158,7 @@ fn is_real_dir(path: &std::path::Path) -> bool {
 
 #[cfg(test)]
 mod device_policy_types_tests;
+
+pub(crate) mod device_runtime;
+#[cfg(test)]
+mod device_runtime_tests;

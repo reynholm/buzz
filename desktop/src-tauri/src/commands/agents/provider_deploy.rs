@@ -5,13 +5,21 @@ use tauri::AppHandle;
 use crate::{
     app_state::AppState,
     managed_agents::{
-        discover_provider_candidates, load_managed_agents, provider_deploy,
-        resolve_provider_binary, save_managed_agents, BackendKind, REPLAY_FLOOR_ENV_VAR,
+        discover_provider_candidates, provider_deploy, resolve_provider_binary, BackendKind,
+        REPLAY_FLOOR_ENV_VAR,
     },
     util::now_iso,
 };
 
 use super::build_deploy_payload;
+
+/// Caller expectations carried through serialized provider deployment.
+pub(in crate::commands) struct ProviderStartScope<'a> {
+    pub relay: Option<&'a str>,
+    pub owner: Option<&'a str>,
+    pub replay_floor: Option<u64>,
+    pub fence: Option<&'a crate::managed_agents::device_runtime::RuntimeFence>,
+}
 
 /// Deploy an agent to a provider backend. Resolves the binary, calls deploy via
 /// spawn_blocking, and persists the result (backend_agent_id or last_error).
@@ -25,12 +33,12 @@ use super::build_deploy_payload;
 /// updated and saved before returning.
 ///
 /// Callers with a captured tenant scope (Projects agent starts) pass
-/// `expected_relay_url` / `expected_signer_pubkey`; they are asserted against
+/// relay / owner expectations and an original runtime fence; they are asserted against
 /// the payload REBUILT after the deploy lock — the exact value invoked — so a
 /// workspace or identity switch landing while this call waited behind another
 /// deployment fails closed instead of deploying a stale start into the new
 /// tenant under the new tenant's owner identity. `None` preserves the
-/// unscoped behavior for callers without a tenant boundary.
+/// current scope capture for callers without an earlier runtime boundary.
 ///
 /// `replay_floor_unix`: optional unix-seconds replay floor from a
 /// publish-first mention send. It is injected into the rebuilt payload's
@@ -38,98 +46,119 @@ use super::build_deploy_payload;
 /// startup watermark replays back past the already-published triggering
 /// message exactly like a local spawn. Per-invocation only — never persisted
 /// on the record, so later redeploys do not carry a stale floor.
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn deploy_to_provider(
+pub(crate) async fn deploy_to_provider_scoped(
     app: &AppHandle,
     state: &AppState,
     pubkey: &str,
-    _provider_id: &str,
-    _config: &serde_json::Value,
-    _agent_json: serde_json::Value,
-    _cached_binary_path: Option<&str>,
-    expected_relay_url: Option<&str>,
-    expected_signer_pubkey: Option<&str>,
-    replay_floor_unix: Option<u64>,
+    requested: ProviderStartScope<'_>,
 ) -> Result<(), String> {
+    use crate::managed_agents::{device_runtime, persona_device_view::load_device_policy_context};
+    let ProviderStartScope {
+        relay: expected_relay_url,
+        owner: expected_signer_pubkey,
+        replay_floor: replay_floor_unix,
+        fence: expected,
+    } = requested;
+
+    let fence = {
+        let _store = state
+            .managed_agents_store_lock
+            .lock()
+            .map_err(|e| e.to_string())?;
+        if let Some(expected) = expected {
+            device_runtime::assert_runtime_fence(state, expected)?;
+        }
+        device_runtime::runtime_phase_locked_with(
+            app,
+            state,
+            pubkey,
+            expected.map(|e| &e.scope),
+            load_device_policy_context,
+            |_, _, scope| {
+                crate::relay::assert_expected_relay_scope(expected_relay_url, &scope.relay_url)?;
+                crate::relay::assert_expected_signer(expected_signer_pubkey, &scope.owner_pubkey)?;
+                device_runtime::capture_runtime_fence(state)
+            },
+        )?
+    };
     let deploy_lock = {
         let mut locks = state
             .provider_deploy_locks
             .lock()
-            .map_err(|error| error.to_string())?;
+            .map_err(|e| e.to_string())?;
         Arc::clone(
             locks
                 .entry(pubkey.to_string())
                 .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
         )
     };
-    let _deploy_guard = deploy_lock.lock().await;
-    // The payload may have waited behind another deployment. Rebuild it from
-    // the current record so the final provider invocation always carries the
-    // newest saved policy rather than the stale snapshot captured by its caller.
-    let (provider_id, config, cached_binary_path, mut agent_json) = {
-        let _store_guard = state
+    let _deploy = deploy_lock.lock().await;
+    let invoke_app = app.clone();
+    let target = pubkey.to_string();
+    let invoke_fence = fence.clone();
+    let (deploy_result, deployed_payload) = tokio::task::spawn_blocking(move || {
+        use tauri::Manager;
+        let state = invoke_app.state::<AppState>();
+        let _store = state
             .managed_agents_store_lock
             .lock()
-            .map_err(|error| error.to_string())?;
-        let records = load_managed_agents(app)?;
-        let record = records
-            .iter()
-            .find(|record| record.pubkey == pubkey)
-            .ok_or_else(|| format!("agent {pubkey} not found"))?;
-        let (provider_id, config) = match &record.backend {
-            BackendKind::Provider { id, config } => (id.clone(), config.clone()),
-            BackendKind::Local => return Err(format!("agent {pubkey} is not provider-backed")),
-        };
-        (
-            provider_id,
-            config,
-            record.provider_binary_path.clone(),
-            build_deploy_payload(app, state, record)?,
+            .map_err(|e| e.to_string())?;
+        device_runtime::assert_runtime_fence(&state, &invoke_fence)?;
+        device_runtime::provider_phase_with(
+            &invoke_app,
+            &state,
+            &target,
+            Some(&invoke_fence.scope),
+            load_device_policy_context,
+            |record, _, scope| {
+                let (id, config) = match &record.backend {
+                    BackendKind::Provider { id, config } => (id, config),
+                    BackendKind::Local => {
+                        return Err(format!("agent {target} is not provider-backed"))
+                    }
+                };
+                let mut payload = build_deploy_payload(&invoke_app, &state, &record)?;
+                assert_payload_scope(&payload, Some(&scope.relay_url), Some(&scope.owner_pubkey))?;
+                apply_replay_floor(&mut payload, replay_floor_unix);
+                let binary = record
+                    .provider_binary_path
+                    .as_deref()
+                    .map(std::path::PathBuf::from)
+                    .filter(|p| p.exists())
+                    .map(|p| p.canonicalize().unwrap_or(p))
+                    .filter(|canonical| {
+                        discover_provider_candidates()
+                            .iter()
+                            .any(|(candidate_id, path)| {
+                                candidate_id == id
+                                    && path.canonicalize().ok().as_ref() == Some(canonical)
+                            })
+                    })
+                    .map_or_else(|| resolve_provider_binary(id), Ok)?;
+                let result = provider_deploy(&binary, &payload, config);
+                Ok((result, payload))
+            },
         )
-    };
-    // The rebuild above re-read the live workspace relay and owner identity.
-    // Assert the caller's captured scope against THIS payload — the exact
-    // value invoked below — not the pre-lock snapshot its caller validated.
-    assert_payload_scope(&agent_json, expected_relay_url, expected_signer_pubkey)?;
-    // The floor is invocation state, not record state, so the post-lock
-    // rebuild cannot restore it — inject it into the payload actually invoked.
-    apply_replay_floor(&mut agent_json, replay_floor_unix);
-    // Resolve via discovered candidates only. Cached path must match BOTH
-    // "is a discovered candidate" AND "belongs to this provider_id". A tampered
-    // record cannot redirect deploys to a different provider's binary.
-    let bin_path = cached_binary_path
-        .as_deref()
-        .map(std::path::PathBuf::from)
-        .filter(|p| p.exists())
-        .map(|p| p.canonicalize().unwrap_or(p))
-        .filter(|canonical| {
-            discover_provider_candidates().iter().any(|(id, cp)| {
-                id == &provider_id && cp.canonicalize().ok().as_ref() == Some(canonical)
-            })
-        })
-        .map_or_else(|| resolve_provider_binary(&provider_id), Ok)?;
-
-    let deployed_agent_json = agent_json.clone();
-    let config_clone = config.clone();
-    let deploy_result =
-        tokio::task::spawn_blocking(move || provider_deploy(&bin_path, &agent_json, &config_clone))
-            .await
-            .map_err(|e| format!("spawn_blocking failed: {e}"))?;
-
-    // Persist result under lock.
-    let _store_guard = state
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))??;
+    let _store = state
         .managed_agents_store_lock
         .lock()
         .map_err(|e| e.to_string())?;
-    let mut records = load_managed_agents(app)?;
-    let rec = records
-        .iter_mut()
-        .find(|r| r.pubkey == pubkey)
-        .ok_or_else(|| format!("agent {pubkey} not found"))?;
-
-    let result = apply_deploy_result(rec, deploy_result, &deployed_agent_json);
-    save_managed_agents(app, &records)?;
-    result
+    device_runtime::assert_runtime_fence(state, &fence)?;
+    device_runtime::provider_phase_with(
+        app,
+        state,
+        pubkey,
+        Some(&fence.scope),
+        load_device_policy_context,
+        |mut record, _, _| {
+            let result = apply_deploy_result(&mut record, deploy_result, &deployed_payload);
+            device_runtime::save_runtime_record(app, &record)?;
+            result
+        },
+    )
 }
 
 /// Assert a caller-captured tenant scope against the payload that will

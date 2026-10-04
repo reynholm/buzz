@@ -38,6 +38,7 @@ struct ActiveSession {
 #[derive(Default)]
 pub(crate) struct DeviceHomeSyncState {
     active: Option<ActiveSession>,
+    runtime_generation: u64,
 }
 
 /// Capture identity, normalized relay and workspace epoch before asynchronous work.
@@ -91,6 +92,7 @@ pub(crate) fn begin_session(state: &AppState) -> Result<DeviceHomeSyncSession, S
             relay_url: scope.relay_url.clone(),
             workspace_generation: scope.workspace_generation,
         };
+        sync.runtime_generation = sync.runtime_generation.wrapping_add(1);
         sync.active = Some(ActiveSession {
             session: session.clone(),
             readiness: EvidenceReadiness::Pending,
@@ -136,6 +138,7 @@ pub(crate) fn finish_session_with(
 pub(crate) fn invalidate_session(state: &AppState, token: &str) -> Result<(), String> {
     with_sync(state, |sync, scope| {
         active(sync, scope, token)?;
+        sync.runtime_generation = sync.runtime_generation.wrapping_add(1);
         sync.active = None;
         Ok(())
     })
@@ -152,9 +155,18 @@ pub(crate) fn readiness_locked(
         .filter(|s| s.session.scope() == *scope)
         .map_or(EvidenceReadiness::Pending, |s| s.readiness))
 }
+/// Subscription epoch lookup for runtime effects; caller already holds store lock.
+pub(crate) fn runtime_generation_locked(state: &AppState) -> Result<u64, String> {
+    Ok(state
+        .device_home_sync
+        .lock()
+        .map_err(|e| e.to_string())?
+        .runtime_generation)
+}
 /// Workspace initialization invalidates the old subscription before applying state.
 pub(crate) fn reset(state: &AppState) -> Result<(), String> {
     with_sync(state, |sync, _| {
+        sync.runtime_generation = sync.runtime_generation.wrapping_add(1);
         sync.active = None;
         Ok(())
     })

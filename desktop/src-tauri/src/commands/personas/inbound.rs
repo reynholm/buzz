@@ -29,13 +29,11 @@ enum InboundRuntimeRefresh {
     Local {
         pubkey: String,
         relay_urls: Vec<String>,
+        fence: crate::managed_agents::device_runtime::RuntimeFence,
     },
     Provider {
         pubkey: String,
-        provider_id: String,
-        config: serde_json::Value,
-        cached_binary_path: Option<String>,
-        agent_json: Result<serde_json::Value, String>,
+        fence: crate::managed_agents::device_runtime::RuntimeFence,
     },
 }
 
@@ -105,13 +103,18 @@ async fn reconcile_inbound_persona_event_inner(
     .map_err(|e| format!("spawn_blocking failed: {e}"))??;
 
     match restart {
-        Some(InboundRuntimeRefresh::Local { pubkey, relay_urls }) => {
+        Some(InboundRuntimeRefresh::Local {
+            pubkey,
+            relay_urls,
+            fence,
+        }) => {
             let state = app.state::<AppState>();
-            super::super::agents::start_local_agent_pairs_with_preflight(
+            super::super::agents::runtime_start::start_local_agent_pairs_scoped(
                 &app,
                 &state,
                 &pubkey,
                 &relay_urls,
+                Some(&fence),
             )
             .await
             .map_err(|error| {
@@ -120,39 +123,10 @@ async fn reconcile_inbound_persona_event_inner(
                 )
             })?;
         }
-        Some(InboundRuntimeRefresh::Provider {
-            pubkey,
-            provider_id,
-            config,
-            cached_binary_path,
-            agent_json,
-        }) => {
+        Some(InboundRuntimeRefresh::Provider { pubkey, fence }) => {
             let state = app.state::<AppState>();
-            let agent_json = match agent_json {
-                Ok(agent_json) => agent_json,
-                Err(error) => {
-                    let message = format!(
-                        "Inbound agent access was saved, but its provider deployment could not be refreshed safely: {error}"
-                    );
-                    super::super::agents::provider_access::persist_failure(
-                        &app, &state, &pubkey, &message,
-                    )?;
-                    let _ = app.emit("agents-data-changed", ());
-                    return Err(message);
-                }
-            };
-            super::super::agents::deploy_to_provider(
-                &app,
-                &state,
-                &pubkey,
-                &provider_id,
-                &config,
-                agent_json,
-                cached_binary_path.as_deref(),
-                None,
-                None,
-                None,
-            )
+            super::super::agents::provider_deploy::deploy_to_provider_scoped(&app, &state, &pubkey,
+                super::super::agents::provider_deploy::ProviderStartScope { relay: Some(&fence.scope.relay_url), owner: Some(&fence.scope.owner_pubkey), replay_floor: None, fence: Some(&fence) })
             .await
             .map_err(|error| {
                 format!(
@@ -352,67 +326,86 @@ fn reconcile_inbound_persona_event_blocking<R: tauri::Runtime>(
             if inbound_event_outcome(&conn, &inbound_retained_event)? == InboundOutcome::Skipped {
                 return Ok(None);
             }
-            let mut agents = load_managed_agents(&app)?;
-            let managed_agent = inbound_managed_agent.ok_or_else(|| {
-                "managed-agent content was not parsed before retention".to_string()
-            })?;
-            let access_changed = apply_inbound_managed_agent(&mut agents, &d_tag, managed_agent);
+            let mut agents = crate::managed_agents::persona_device_view::read_policy_records(
+                &crate::managed_agents::managed_agents_store_path(&app)?,
+            )?;
+            let access_changed = apply_inbound_managed_agent(
+                &mut agents,
+                &d_tag,
+                inbound_managed_agent.expect("managed agent parsed above"),
+            );
+            // Receiving a verified owner head never needs local authoring authority.
+            crate::managed_agents::storage::save_restore_records_with(
+                &app,
+                &agents,
+                &std::collections::HashSet::new(),
+                |_| {},
+            )?;
             if access_changed {
-                let record = agents
-                    .iter_mut()
-                    .find(|record| record.pubkey == d_tag)
-                    .ok_or_else(|| format!("agent {d_tag} disappeared during inbound apply"))?;
-                match &record.backend {
-                    crate::managed_agents::BackendKind::Local => {
-                        let mut runtimes = state
-                            .managed_agent_processes
-                            .lock()
-                            .map_err(|error| error.to_string())?;
-                        let mut relay_urls =
-                            crate::managed_agents::managed_agent_runtime_keys(&runtimes, &d_tag)
-                                .into_iter()
-                                .map(|key| key.relay_url)
-                                .collect::<Vec<_>>();
-                        if relay_urls.is_empty() && record.runtime_pid.is_some() {
-                            relay_urls.push(crate::relay::effective_agent_relay_url(
-                                &record.relay_url,
-                                &crate::relay::relay_ws_url_with_override(&state),
-                            ));
-                        }
-                        if !relay_urls.is_empty() {
-                            crate::managed_agents::stop_managed_agent_process(
-                                &app,
-                                record,
-                                &mut runtimes,
-                            )?;
-                            runtime_refresh = Some(InboundRuntimeRefresh::Local {
-                                pubkey: d_tag.clone(),
-                                relay_urls,
-                            });
-                        }
-                    }
-                    crate::managed_agents::BackendKind::Provider { id, config }
-                        if record.backend_agent_id.is_some() =>
-                    {
-                        // Persist the unacknowledged policy transition in the
-                        // same write as the narrowed policy. If the process
-                        // exits before or during deployment, workspace apply
-                        // can still recover it in every build.
-                        record.provider_policy_pending = true;
-                        runtime_refresh = Some(InboundRuntimeRefresh::Provider {
-                            pubkey: d_tag.clone(),
-                            provider_id: id.clone(),
-                            config: config.clone(),
-                            cached_binary_path: record.provider_binary_path.clone(),
-                            agent_json: super::super::agents::build_deploy_payload(
-                                &app, &state, record,
-                            ),
-                        });
-                    }
-                    crate::managed_agents::BackendKind::Provider { .. } => {}
-                }
+                let refresh = crate::managed_agents::device_runtime::inbound_refresh_phase_with(
+                    &app,
+                    &state,
+                    &d_tag,
+                    None,
+                    crate::managed_agents::persona_device_view::load_device_policy_context,
+                    |mut record, _, _| {
+                        let fence =
+                            crate::managed_agents::device_runtime::capture_runtime_fence(&state)?;
+                        let next = match &record.backend {
+                            crate::managed_agents::BackendKind::Local => {
+                                let mut runtimes = state
+                                    .managed_agent_processes
+                                    .lock()
+                                    .map_err(|e| e.to_string())?;
+                                let mut relay_urls: Vec<_> =
+                                    crate::managed_agents::managed_agent_runtime_keys(
+                                        &runtimes, &d_tag,
+                                    )
+                                    .into_iter()
+                                    .map(|k| k.relay_url)
+                                    .collect();
+                                if relay_urls.is_empty() && record.runtime_pid.is_some() {
+                                    relay_urls
+                                        .push(crate::relay::relay_ws_url_with_override(&state));
+                                }
+                                if relay_urls.is_empty() {
+                                    None
+                                } else {
+                                    crate::managed_agents::stop_managed_agent_process(
+                                        &app,
+                                        &mut record,
+                                        &mut runtimes,
+                                    )?;
+                                    crate::managed_agents::device_runtime::save_runtime_record(
+                                        &app, &record,
+                                    )?;
+                                    Some(InboundRuntimeRefresh::Local {
+                                        pubkey: d_tag.clone(),
+                                        relay_urls,
+                                        fence,
+                                    })
+                                }
+                            }
+                            crate::managed_agents::BackendKind::Provider { .. }
+                                if record.backend_agent_id.is_some() =>
+                            {
+                                let next = InboundRuntimeRefresh::Provider {
+                                    pubkey: d_tag.clone(),
+                                    fence,
+                                };
+                                record.provider_policy_pending = true;
+                                crate::managed_agents::device_runtime::save_runtime_record(
+                                    &app, &record,
+                                )?;
+                                Some(next)
+                            }
+                            _ => None,
+                        };
+                        Ok(next)
+                    },
+                )?;
+                runtime_refresh = refresh.flatten();
             }
-            save_managed_agents(&app, &agents)?;
             let outcome = retain_inbound_event(&conn, &inbound_retained_event)?;
             debug_assert_eq!(outcome, InboundOutcome::Applied);
         }

@@ -11,7 +11,6 @@ use crate::managed_agents::AgentDefinition;
 use crate::{
     app_state::AppState,
     managed_agents::{load_personas, ManagedAgentRecord},
-    relay::relay_ws_url_with_override,
 };
 
 /// Effective projection fields for the deploy payload — all derived from the
@@ -193,58 +192,92 @@ pub(crate) fn build_deploy_payload<R: tauri::Runtime>(
     state: &AppState,
     record: &ManagedAgentRecord,
 ) -> Result<serde_json::Value, String> {
-    if let Some(err) = crate::managed_agents::spawn_key_refusal(record) {
-        return Err(err);
-    }
-
-    let global = crate::managed_agents::load_global_agent_config(app).unwrap_or_default();
-    let personas = load_personas(app).unwrap_or_default();
-    let teams = crate::managed_agents::load_teams(app).unwrap_or_default();
-    let persona_env =
-        crate::managed_agents::live_persona_env(&personas, record.persona_id.as_deref());
-    let global_persona_env = crate::managed_agents::merged_user_env(&global.env_vars, &persona_env);
-    let merged_user_env =
-        crate::managed_agents::merged_user_env(&global_persona_env, &record.env_vars);
-    let effective = crate::managed_agents::effective_config::resolve_effective_config(
-        record, &personas, &global,
+    build_deploy_payload_with(
+        app,
+        state,
+        record,
+        crate::managed_agents::persona_device_view::load_device_policy_context,
+        crate::managed_agents::storage::hydrate_keys,
     )
-    .require_resolved()?;
+}
+/// Payload construction guards current structural policy before resolving any agent secret.
+fn build_deploy_payload_with<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    state: &AppState,
+    record: &ManagedAgentRecord,
+    context: impl FnOnce(
+        &AppHandle<R>,
+        &AppState,
+    ) -> Result<
+        crate::managed_agents::persona_device_view::DevicePolicyContext,
+        String,
+    >,
+    hydrate: impl FnOnce(&mut [ManagedAgentRecord]),
+) -> Result<serde_json::Value, String> {
+    crate::managed_agents::device_runtime::provider_phase_with(
+        app,
+        state,
+        &record.pubkey,
+        None,
+        context,
+        |mut current, _, scope| {
+            hydrate(std::slice::from_mut(&mut current));
+            let record = &current;
+            if let Some(err) = crate::managed_agents::spawn_key_refusal(record) {
+                return Err(err);
+            }
 
-    ensure_remote_provider_supported(effective.provider.value.as_deref())?;
+            let global = crate::managed_agents::load_global_agent_config(app).unwrap_or_default();
+            let personas = load_personas(app)?;
+            let teams = crate::managed_agents::load_teams(app).unwrap_or_default();
+            let persona_env =
+                crate::managed_agents::live_persona_env(&personas, record.persona_id.as_deref());
+            let global_persona_env =
+                crate::managed_agents::merged_user_env(&global.env_vars, &persona_env);
+            let merged_user_env =
+                crate::managed_agents::merged_user_env(&global_persona_env, &record.env_vars);
+            let effective = crate::managed_agents::effective_config::resolve_effective_config(
+                record, &personas, &global,
+            )
+            .require_resolved()?;
 
-    let descriptor =
-        crate::managed_agents::resolve_effective_harness_descriptor(record, &personas, &global)
+            ensure_remote_provider_supported(effective.provider.value.as_deref())?;
+
+            let descriptor = crate::managed_agents::resolve_effective_harness_descriptor(
+                record, &personas, &global,
+            )
             .map_err(|error| crate::managed_agents::user_facing_harness_error(&error))?;
-    let owner_pubkey = super::workspace_owner_hex(state)?;
-    let launch = build_launch_block_for_policy(
-        record,
-        &descriptor,
-        &teams,
-        effective.system_prompt.value.as_deref(),
-        effective.model.value.as_deref(),
-        &owner_pubkey,
-        crate::managed_agents::effective_acp_session_policy(record, &personas),
-    );
+            let owner_pubkey = scope.owner_pubkey;
+            let launch = build_launch_block_for_policy(
+                record,
+                &descriptor,
+                &teams,
+                effective.system_prompt.value.as_deref(),
+                effective.model.value.as_deref(),
+                &owner_pubkey,
+                crate::managed_agents::effective_acp_session_policy(record, &personas),
+            );
 
-    let effective_parallelism =
-        crate::managed_agents::effective_parallelism(&descriptor.command, record.parallelism);
+            let effective_parallelism = crate::managed_agents::effective_parallelism(
+                &descriptor.command,
+                record.parallelism,
+            );
 
-    Ok(deploy_payload_json(
-        record,
-        crate::relay::effective_agent_relay_url(
-            &record.relay_url,
-            &relay_ws_url_with_override(state),
-        ),
-        DeployProjections {
-            effective_model: effective.model.value,
-            effective_provider: effective.provider.value,
-            effective_prompt: effective.system_prompt.value,
-            effective_parallelism,
-            owner_only_access: crate::managed_agents::owner_only_access_build(),
+            Ok(deploy_payload_json(
+                record,
+                crate::relay::effective_agent_relay_url(&record.relay_url, &scope.relay_url),
+                DeployProjections {
+                    effective_model: effective.model.value,
+                    effective_provider: effective.provider.value,
+                    effective_prompt: effective.system_prompt.value,
+                    effective_parallelism,
+                    owner_only_access: crate::managed_agents::owner_only_access_build(),
+                },
+                merged_user_env,
+                launch,
+            ))
         },
-        merged_user_env,
-        launch,
-    ))
+    )
 }
 
 /// Pure serialization half of [`build_deploy_payload`]. Legacy top-level fields
@@ -804,5 +837,70 @@ mod tests {
             payload["parallelism"], cap,
             "legacy top-level parallelism must match launch.policy_env — both must be {cap}"
         );
+    }
+}
+
+#[cfg(test)]
+mod device_payload_tests {
+    use super::*;
+    use crate::managed_agents::{
+        definition_home::EvidenceReadiness,
+        device_home_migration::tests::{app, context, records, write},
+    };
+    use tauri::Manager;
+    #[test]
+    fn provider_redeploy_obeys_home_before_payload_key_lookup() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app(dir.path());
+        let state = app.state::<AppState>();
+        let (mut raw, keys) = records();
+        raw[1].device_host_binding = Some("copied".into());
+        raw[1].private_key_nsec = nostr::ToBech32::to_bech32(keys.secret_key()).unwrap();
+        write(
+            &crate::managed_agents::managed_agents_base_dir(app.handle()).unwrap(),
+            &raw,
+        );
+        let reads = std::cell::Cell::new(0);
+        let result = build_deploy_payload_with(
+            app.handle(),
+            &state,
+            &raw[1],
+            |_, state| {
+                let mut c = context(EvidenceReadiness::Ready);
+                c.scope = crate::managed_agents::device_home_sync::capture_scope(state)?;
+                Ok(c)
+            },
+            |_| reads.set(1),
+        );
+        assert!(result.is_err());
+        assert_eq!(reads.get(), 0);
+    }
+    #[test]
+    fn shared_provider_payload_keeps_original_key_owner_and_relay_without_host_authority() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app(dir.path());
+        let state = app.state::<AppState>();
+        let (mut raw, keys) = records();
+        raw[0].share_across_devices = Some(true);
+        raw[1].private_key_nsec = nostr::ToBech32::to_bech32(keys.secret_key()).unwrap();
+        write(
+            &crate::managed_agents::managed_agents_base_dir(app.handle()).unwrap(),
+            &raw,
+        );
+        let payload = build_deploy_payload_with(
+            app.handle(),
+            &state,
+            &raw[1],
+            |_, _| panic!("shared payload reads no host proof"),
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(payload["private_key_nsec"], raw[1].private_key_nsec);
+        assert_eq!(payload["relay_url"], "wss://test");
+        assert_eq!(
+            payload["launch"]["owner_pubkey"],
+            state.signing_keys().unwrap().public_key().to_hex()
+        );
+        assert!(!payload.to_string().contains("device_host_binding"));
     }
 }

@@ -82,10 +82,34 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/agents.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery
+Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery; Task6: Carry original create/manual runtime fence through local/provider tails, guard summaries and persist only authorized target records
 
 New module: `false`.
 
+- Invocation: `desktop/src-tauri/src/commands/agents.rs` → `deploy_to_provider_scoped`; exact call `provider_deploy::deploy_to_provider_scoped(
+                &app,
+                &state,
+                &pubkey,
+                provider_deploy::ProviderStartScope {
+                    relay: Some(&create_scope.relay_url),`; behavior test `managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/agents.rs` → `deploy_to_provider_scoped`; exact call `provider_deploy::deploy_to_provider_scoped(
+                &app,
+                &state,
+                &pubkey,
+                provider_deploy::ProviderStartScope {
+                    relay: expected_relay_url.as_deref(),`; behavior test `managed_agents::device_runtime_tests::owning_provider_refuses_deploy_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_provider_refuses_deploy_effects -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/agents.rs` → `start_local_agent_with_preflight`; exact call `start_local_agent_with_preflight(
+            &app,
+            &state,
+            &pubkey,
+            true,
+            runtime_start::LocalStartScope {
+                relay: Some(&create_scope.relay_url),
+                owner: Some(&create_scope.owner_pubkey),
+                replay_floor: None,
+                fence: Some(&create_fence),
+            },
+        )`; behavior test `managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/commands/agents_tests.rs`
@@ -340,7 +364,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/managed_agents/mod.rs`
 
-Register the device policy compatibility test module; Register home policy, sync and projection modules; Register device-home migration production module; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery
+Register the device policy compatibility test module; Register home policy, sync and projection modules; Register device-home migration production module; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery; Task6: Register runtime authorization module and owning test module
 
 New module: `false`.
 
@@ -350,6 +374,8 @@ New module: `false`.
 - Required symbol: `pub(crate) mod persona_device_view;`
 - Required symbol: `pub(crate) mod device_home_migration;`
 - Required symbol: `pub(crate) use restore::child_ownership::{retry_restore_cleanup, RestoreCleanup};`
+- Required symbol: `mod device_runtime;`
+- Required symbol: `mod device_runtime_tests;`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/managed_agents/nest/render_tests.rs`
@@ -587,7 +613,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/lib.rs`
 
-Register device identity module and public metadata IPC command
+Register device identity module and public metadata IPC command; Task6: Recovery-mode boot invokes authorized snapshot backfill only through the guarded boot seam
 
 New module: `false`.
 
@@ -598,6 +624,12 @@ New module: `false`.
 - Required symbol: `commands::finish_device_home_sync,`
 - Required symbol: `commands::invalidate_device_home_sync,`
 - Required symbol: `device_identity::initialize_device_authority(&app_handle)`
+- Invocation: `desktop/src-tauri/src/lib.rs` → `run_boot_backfill_with`; exact call `managed_agents::restore::run_boot_backfill_with(recovery_mode, || {
+                backfill_persona_snapshots(&app_handle)
+            }) {
+                eprintln!("buzz-desktop: persona-snapshot backfill failed: {e}");
+            }
+`; behavior test `managed_agents::restore::runtime_backfill_tests::recovery_boot_has_no_backfill_effect`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::restore::runtime_backfill_tests::recovery_boot_has_no_backfill_effect -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/build_identity.rs`
@@ -647,7 +679,7 @@ New module: `true`.
 
 ## `desktop/src-tauri/src/managed_agents/device_home_sync.rs`
 
-Backend token/scope hydration, exhaustive authenticated paging and live-apply completion barrier; Run deferred migration with prospective readiness under hydrated/drained/token/scope barrier before installing Ready
+Backend token/scope hydration, exhaustive authenticated paging and live-apply completion barrier; Run deferred migration with prospective readiness under hydrated/drained/token/scope barrier before installing Ready; Task6: Expose store-locked runtime subscription generation and advance it on session replacement/invalidation/reset
 
 New module: `true`.
 
@@ -656,6 +688,7 @@ New module: `true`.
 - Required symbol: `async fn hydrate_history`
 - Required symbol: `struct DeviceHomeHistory`
 - Required symbol: `fn finish_session_with`
+- Required symbol: `fn runtime_generation_locked`
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_sync.rs` → `active`; exact call `let s = active(sync, scope, token)?;`; behavior test `managed_agents::device_home_sync::tests::stale_sync_session_cannot_ready_new_scope`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_sync::tests::stale_sync_session_cannot_ready_new_scope -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_sync.rs` → `ordered_heads`; exact call `ordered_heads(collected)`; behavior test `managed_agents::device_home_sync::tests::exhaustive_history_applies_catalog_last_and_coalesces`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_sync::tests::exhaustive_history_applies_catalog_last_and_coalesces -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_sync.rs` → `begin_apply`; exact call `begin_apply(state,Some(token))?`; behavior test `managed_agents::device_home_sync::tests::finish_waits_for_live_apply_and_latches_error_after_ready`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_sync::tests::finish_waits_for_live_apply_and_latches_error_after_ready -- --exact`
@@ -774,16 +807,35 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/personas/inbound.rs`
 
-Token-scoped live apply leases fence async reconciliation and record failures
+Token-scoped live apply leases fence async reconciliation and record failures; Task6: Accept legitimate remote owner heads without local author proof; independently skip copied runtime refresh and secret effects while preserving hydration retry semantics
 
 New module: `false`.
 
 - Required symbol: `session_token: Option<String>`
 - Required symbol: `lease.complete(&result)?;`
 - Required symbol: `fn reconcile_inbound_tombstone_with_refresh`
+- Required symbol: `enum InboundRuntimeRefresh`
 - Invocation: `desktop/src-tauri/src/commands/personas/inbound.rs` → `reconcile_inbound_tombstone_with_refresh`; exact call `reconcile_inbound_tombstone_with_refresh(event, arrival_relay_url, app, state, || {
         try_regenerate_nest(app);
     })`; behavior test `commands::personas::inbound::device_sync_tests::signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::inbound::device_sync_tests::signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/personas/inbound.rs` → `inbound_refresh_phase_with`; exact call `crate::managed_agents::device_runtime::inbound_refresh_phase_with(
+                    &app,
+                    &state,
+                    &d_tag,
+                    None,
+                    crate::managed_agents::persona_device_view::load_device_policy_context,`; behavior test `managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/personas/inbound.rs` → `start_local_agent_pairs_scoped`; exact call `super::super::agents::runtime_start::start_local_agent_pairs_scoped(
+                &app,
+                &state,
+                &pubkey,
+                &relay_urls,
+                Some(&fence),`; behavior test `managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/personas/inbound.rs` → `deploy_to_provider_scoped`; exact call `super::super::agents::provider_deploy::deploy_to_provider_scoped(&app, &state, &pubkey,
+                super::super::agents::provider_deploy::ProviderStartScope { relay: Some(&fence.scope.relay_url), owner: Some(&fence.scope.owner_pubkey), replay_floor: None, fence: Some(&fence) })
+            .await
+            .map_err(|error| {
+                format!(
+                    "Inbound agent access was saved, but its provider deployment failed to refresh with the new policy: {error}"`; behavior test `managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src/features/agents/lib/usePersonaSync.ts`
@@ -959,7 +1011,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/managed_agents/restore.rs`
 
-Select proven/shared/standalone auto-start candidates before key hydration or lifecycle work, retaining existing live-pair duplicate guards; top-level Wry entry wiring is compile coverage with native acceptance outstanding; authority lookup excludes private records not selected for auto-start; PhaseA and fresh PhaseC protected raw-store merge preserves excluded rows/definitions, keys restricted to actual authorized targets, baseline safe disabled housekeeping remains structural-only; mesh preflight error uses same protected writeback; retain spawned-child ownership across fresh authority failures and delegate bounded settlement/retry to child_ownership
+Select proven/shared/standalone auto-start candidates before key hydration or lifecycle work, retaining existing live-pair duplicate guards; top-level Wry entry wiring is compile coverage with native acceptance outstanding; authority lookup excludes private records not selected for auto-start; PhaseA and fresh PhaseC protected raw-store merge preserves excluded rows/definitions, keys restricted to actual authorized targets, baseline safe disabled housekeeping remains structural-only; mesh preflight error uses same protected writeback; retain spawned-child ownership across fresh authority failures and delegate bounded settlement/retry to child_ownership; Task6: Guard boot backfill before secrets/metadata, preserve mixed shared jobs, locked final restore spawn and carry original fence through mesh/writeback/child ownership
 
 New module: `false`.
 
@@ -971,31 +1023,85 @@ New module: `false`.
 - Required symbol: `fn persist_restore_error_with`
 - Required symbol: `child_ownership::complete_restore_spawn_results_with`
 - Required symbol: `child_ownership::retry_restore_cleanup`
-- Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `auto_start_allowed`; exact call `super::device_home_migration::auto_start_allowed(record, &definitions, context)?`; behavior test `managed_agents::runtime_commands::device_home_job_tests::copied_and_deferred_auto_start_jobs_have_zero_hydration_and_probes`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::runtime_commands::device_home_job_tests::copied_and_deferred_auto_start_jobs_have_zero_hydration_and_probes -- --exact`
+- Required symbol: `fn backfill_persona_snapshots_with`
+- Required symbol: `fn run_boot_backfill_with`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `auto_start_allowed`; exact call `super::device_home_migration::auto_start_allowed(record, &views, context)?`; behavior test `managed_agents::runtime_commands::device_home_job_tests::copied_and_deferred_auto_start_jobs_have_zero_hydration_and_probes`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::runtime_commands::device_home_job_tests::copied_and_deferred_auto_start_jobs_have_zero_hydration_and_probes -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `select_auto_start_candidates`; exact call `select_auto_start_candidates(&policy_records, context.as_ref())?;`; behavior test `managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `save_restore_records_with`; exact call `super::storage::save_restore_records_with(app, &records, &eligible, persist)?;`; behavior test `managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `save_restore_records_with`; exact call `super::storage::save_restore_records_with(app, &records, &key_targets, persist)?;`; behavior test `managed_agents::restore::device_home_restore_tests::mixed_restore_phase_c_reload_and_save_never_import_excluded_copy`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::mixed_restore_phase_c_reload_and_save_never_import_excluded_copy -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `authorized_restore_updates`; exact call `authorized_restore_updates(&policy_records, context.as_ref())?;`; behavior test `managed_agents::restore::device_home_restore_tests::disabled_safe_housekeeping_persists_without_key_operations`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::disabled_safe_housekeeping_persists_without_key_operations -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `authorized_restore_updates`; exact call `authorized_restore_updates(&raw, context.as_ref())?;`; behavior test `managed_agents::restore::device_home_restore_tests::phase_c_fresh_authority_blocks_changed_target_and_preserves_concurrent_rows`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::phase_c_fresh_authority_blocks_changed_target_and_preserves_concurrent_rows -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `complete_restore_phase_c_with`; exact call `complete_restore_phase_c_with(
+        expected,
         app,
         &[pubkey.to_string()].into_iter().collect(),`; behavior test `managed_agents::restore::device_home_restore_tests::mesh_preflight_error_writeback_preserves_excluded_inline_copy`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --features mesh-llm managed_agents::restore::device_home_restore_tests::mesh_preflight_error_writeback_preserves_excluded_inline_copy -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `complete_restore_spawn_results_with`; exact call `child_ownership::complete_restore_spawn_results_with(
-        app,
+        (app, Some(&restore_fence)),
         spawn_results,`; behavior test `managed_agents::restore::device_home_restore_tests::post_spawn_authority_error_settles_all_owned_children`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::post_spawn_authority_error_settles_all_owned_children -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `retry_restore_cleanup`; exact call `child_ownership::retry_restore_cleanup(app)?;`; behavior test `managed_agents::restore::device_home_restore_tests::failed_child_cleanup_propagates_and_retains_retry_ownership`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::restore::device_home_restore_tests::failed_child_cleanup_propagates_and_retains_retry_ownership -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `backfill_persona_snapshots_with`; exact call `backfill_persona_snapshots_with(
+        app,
+        super::persona_device_view::load_device_policy_context,
+        super::storage::hydrate_keys,
+        super::storage::persist_agent_keys,
+    )`; behavior test `managed_agents::restore::runtime_backfill_tests::boot_backfill_skips_copied_private_and_preserves_shared_metadata_path`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::restore::runtime_backfill_tests::boot_backfill_skips_copied_private_and_preserves_shared_metadata_path -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `restore_spawn_phase_with`; exact call `super::device_runtime::restore_spawn_phase_with(
+                            app,
+                            &state,
+                            &record.pubkey,
+                            Some(&restore_fence_ref.scope),
+                            super::persona_device_view::load_device_policy_context,`; behavior test `managed_agents::device_runtime_tests::owning_restore_refuses_final_receipt_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_restore_refuses_final_receipt_effects -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `runtime_preflight_with`; exact call `super::device_runtime::runtime_preflight_with(
+                app,
+                &state,
+                &record.pubkey,
+                Some(&restore_fence),
+                super::persona_device_view::load_device_policy_context,`; behavior test `managed_agents::device_runtime_tests::shared_preflight_refuses_subscription_replacement_after_await`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::shared_preflight_refuses_subscription_replacement_after_await -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/restore.rs` → `prepare_restore_phase_a_with`; exact call `let agents_to_start = prepare_restore_phase_a_with(
+        Some(&restore_fence),
+        app,
+        shutdown_started,
+        super::persona_device_view::load_device_policy_context,
+        super::storage::hydrate_keys,`; behavior test `managed_agents::restore::device_home_restore_tests::restore_phase_a_authority_scope_switch_refuses_before_key_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::restore::device_home_restore_tests::restore_phase_a_authority_scope_switch_refuses_before_key_effects -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/managed_agents/runtime_commands.rs`
 
-Guard actual auto-start job selection before key hydration and bounded relay probes; preserve shared and standalone baseline; shared-only selected jobs avoid proof lookup even when unrelated disabled private rows exist
+Guard actual auto-start job selection before key hydration and bounded relay probes; preserve shared and standalone baseline; shared-only selected jobs avoid proof lookup even when unrelated disabled private rows exist; Task6: Atomic authorized restart/terminate, target-only persistence, mixed private/shared jobs, fresh scoped probes and fenced pair start
 
 New module: `false`.
 
 - Required symbol: `fn auto_start_jobs_with`
 - Required symbol: `async fn probe_auto_start_jobs`
+- Required symbol: `fn start_pair`
+- Required symbol: `fn probe_auto_start_job_with`
+- Required symbol: `fn start_managed_agent_pair_scoped`
 - Invocation: `desktop/src-tauri/src/managed_agents/runtime_commands.rs` → `select_auto_start_candidates`; exact call `super::restore::select_auto_start_candidates(&records, context.as_ref())?;`; behavior test `managed_agents::runtime_commands::device_home_job_tests::copied_and_deferred_auto_start_jobs_have_zero_hydration_and_probes`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::runtime_commands::device_home_job_tests::copied_and_deferred_auto_start_jobs_have_zero_hydration_and_probes -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/runtime_commands.rs` → `needs_auto_start_authority`; exact call `super::restore::needs_auto_start_authority(&records)`; behavior test `managed_agents::runtime_commands::device_home_job_tests::shared_jobs_ignore_unselected_private_authority`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::runtime_commands::device_home_job_tests::shared_jobs_ignore_unselected_private_authority -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/runtime_commands.rs` → `start_pair_phase_with`; exact call `super::device_runtime::start_pair_phase_with(
+        &app,
+        &state,
+        &pubkey,
+        expected_scope.map(|e| &e.scope),
+        super::persona_device_view::load_device_policy_context,`; behavior test `managed_agents::device_runtime_tests::owning_manual_start_refuses_receipt_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_manual_start_refuses_receipt_effects -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/runtime_commands.rs` → `probe_auto_start_job_with`; exact call `probe_auto_start_job_with(
+            &app,
+            RuntimeProbeInput {
+                record,
+                requested,
+                fence: &runtime_fence,`; behavior test `managed_agents::runtime_commands::reconcile_callback_tests::restore_and_reconcile_skip_foreign_pairs_before_probe`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::runtime_commands::reconcile_callback_tests::restore_and_reconcile_skip_foreign_pairs_before_probe -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/runtime_commands.rs` → `start_pair`; exact call `start_pair(pubkey, relay_url, true, None, None, false, app)
+}
+
+pub(crate) fn start_managed_agent_pair_scoped(
+    pubkey: String,
+    relay_url: String,`; behavior test `managed_agents::device_runtime_tests::shared_lifecycle_matches_baseline`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::shared_lifecycle_matches_baseline -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/runtime_commands.rs` → `auto_start_jobs_with`; exact call `let jobs = auto_start_jobs_with(
+        Some(&runtime_fence),
+        &app,
+        &communities,
+        super::persona_device_view::load_device_policy_context,
+        super::storage::hydrate_keys,`; behavior test `managed_agents::runtime_commands::candidate_scope_tests::reconcile_authority_scope_switch_refuses_before_key_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::runtime_commands::candidate_scope_tests::reconcile_authority_scope_switch_refuses_before_key_effects -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/migration.rs`
@@ -1028,7 +1134,7 @@ New module: `true`.
 
 ## `desktop/src-tauri/src/managed_agents/restore/device_home_tests.rs`
 
-Task4 fix1 regression tests bind production owning orchestration with temporary app storage and injected existing authority/process/KeyStore boundaries
+Task4 fix1 regression tests bind production owning orchestration with temporary app storage and injected existing authority/process/KeyStore boundaries; Task6: Compatibility adaptation for fenced restore completion/error interfaces; historical child cleanup and row-preservation behavior retained
 
 New module: `true`.
 
@@ -1051,7 +1157,7 @@ New module: `true`.
 
 ## `desktop/src-tauri/src/managed_agents/restore/child_ownership.rs`
 
-Own spawned restore children through authorized registration or target-verified bounded terminate/reap; retain failed cleanup handles for restore retry and shutdown; preserve live/uninspectable pair owners while permitting confirmed-exited replacements
+Own spawned restore children through authorized registration or target-verified bounded terminate/reap; retain failed cleanup handles for restore retry and shutdown; preserve live/uninspectable pair owners while permitting confirmed-exited replacements; Task6: Carry original RuntimeFence to restore PhaseC while retaining exact child settlement and durable cleanup retry
 
 New module: `true`.
 
@@ -1263,3 +1369,226 @@ New module: `false`.
 - Required symbol: `confirm_readonly_plain_snapshot_skips_all_agent_secret_lookups`
 - Required symbol: `confirm_readonly_structural_and_key_errors_fail_closed`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/device_runtime.rs`
+
+Exact-target device binding authorization, canonical definition structural reads, proof-free shared/legacy effects, scoped native effect adapters and asynchronous runtime fences
+
+New module: `true`.
+
+- Required symbol: `fn authorize_instance_start`
+- Required symbol: `fn runtime_phase_locked_with`
+- Required symbol: `struct RuntimeFence`
+- Required symbol: `fn runtime_preflight_with`
+- Required symbol: `fn save_runtime_record`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace --features mesh-llm`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/managed_agents/device_runtime_tests.rs`
+
+Runtime spies, original creation/preflight scope, copied keys/auth, mixed sibling binding, canonical read failures and baseline positive lifecycle tests
+
+New module: `true`.
+
+- Required symbol: `fn copied_record_never_reaches_spawn`
+- Required symbol: `fn runtime_rechecks_scope_after_authority_before_effect`
+- Required symbol: `fn shared_and_legacy_owning_adapters_need_no_host_proof`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace --features mesh-llm`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/managed_agents/runtime.rs`
+
+Authorize fresh exact target before logs, receipt reuse and process spawn; use fresh signer/scope and fail closed persona reads
+
+New module: `false`.
+
+- Required symbol: `fn spawn_agent_child`
+- Required symbol: `fn start_managed_agent_process`
+- Invocation: `desktop/src-tauri/src/managed_agents/runtime.rs` → `spawn_child_phase_with`; exact call `super::device_runtime::spawn_child_phase_with(
+        app,
+        &state,
+        &record.pubkey,
+        None,
+        super::persona_device_view::load_device_policy_context,`; behavior test `managed_agents::device_runtime_tests::owning_spawn_rejects_copied_key_and_auth`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_spawn_rejects_copied_key_and_auth -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/runtime.rs` → `runtime_phase_locked_with`; exact call `super::device_runtime::runtime_phase_locked_with(
+        app,
+        &state,
+        &record.pubkey,
+        None,
+        super::persona_device_view::load_device_policy_context,`; behavior test `managed_agents::device_runtime_tests::start_refuses_before_terminating_existing_receipt`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::start_refuses_before_terminating_existing_receipt -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace --features mesh-llm`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/commands/agents/runtime_start.rs`
+
+Cohesive extraction of local preflight/pair orchestration preserving pair interface and original creation scope
+
+New module: `true`.
+
+- Required symbol: `fn start_local_agent_pairs_with_preflight`
+- Required symbol: `struct LocalStartScope`
+- Invocation: `desktop/src-tauri/src/commands/agents/runtime_start.rs` → `runtime_preflight_with`; exact call `device_runtime::runtime_preflight_with(
+        app,
+        state,
+        pubkey,
+        expected,
+        crate::managed_agents::persona_device_view::load_device_policy_context,
+        |r, d, _| preflight(app, r, d, false),`; behavior test `managed_agents::device_runtime_tests::preflight_rechecks_current_binding_after_await`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::preflight_rechecks_current_binding_after_await -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/agents/runtime_start.rs` → `runtime_preflight_with`; exact call `device_runtime::runtime_preflight_with(
+        app,
+        state,
+        pubkey,
+        expected,
+        crate::managed_agents::persona_device_view::load_device_policy_context,
+        |r, d, _| preflight(app, r, d, fresh),`; behavior test `managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/agents/runtime_start.rs` → `start_managed_agent_pair_scoped`; exact call `crate::managed_agents::runtime_commands::start_managed_agent_pair_scoped(
+            pubkey.to_string(),
+            relay.clone(),
+            app.clone(),
+            &fence,
+        ) {`; behavior test `managed_agents::device_runtime_tests::owning_manual_start_refuses_receipt_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_manual_start_refuses_receipt_effects -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace --features mesh-llm`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/commands/agents/provider_deploy.rs`
+
+Serialized synchronous provider invocation under authorized store lock, fresh payload identity, original runtime fence and target-only result writeback
+
+New module: `false`.
+
+- Required symbol: `struct ProviderStartScope`
+- Required symbol: `fn deploy_to_provider_scoped`
+- Invocation: `desktop/src-tauri/src/commands/agents/provider_deploy.rs` → `provider_phase_with`; exact call `device_runtime::provider_phase_with(
+            &invoke_app,
+            &state,
+            &target,
+            Some(&invoke_fence.scope),
+            load_device_policy_context,`; behavior test `managed_agents::device_runtime_tests::owning_provider_refuses_deploy_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_provider_refuses_deploy_effects -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/agents/provider_deploy.rs` → `provider_phase_with`; exact call `device_runtime::provider_phase_with(
+        app,
+        state,
+        pubkey,
+        Some(&fence.scope),
+        load_device_policy_context,`; behavior test `managed_agents::device_runtime_tests::owning_provider_refuses_deploy_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_provider_refuses_deploy_effects -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace --features mesh-llm`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/commands/agents/provider_access.rs`
+
+Structural provider reconciliation selection before payload/key effects, mixed private skips without clearing pending retries and scoped metadata-only failures
+
+New module: `false`.
+
+- Required symbol: `fn collect_runtime_targets_with`
+- Required symbol: `fn persist_failure_with`
+- Invocation: `desktop/src-tauri/src/commands/agents/provider_access.rs` → `collect_runtime_targets_with`; exact call `collect_runtime_targets_with(
+            app,
+            state,
+            owner_only_access,
+            crate::managed_agents::persona_device_view::load_device_policy_context,
+            |record| super::build_deploy_payload(app, state, record),`; behavior test `commands::agents::provider_access::runtime_tests::provider_access_mixed_batch_preserves_denied_pending_without_keys`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib commands::agents::provider_access::runtime_tests::provider_access_mixed_batch_preserves_denied_pending_without_keys -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/agents/provider_access.rs` → `deploy_to_provider_scoped`; exact call `super::provider_deploy::deploy_to_provider_scoped(
+            app,
+            state,
+            &pubkey,
+            super::provider_deploy::ProviderStartScope {
+                relay: Some(&fence.scope.relay_url),`; behavior test `managed_agents::device_runtime_tests::owning_provider_refuses_deploy_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_provider_refuses_deploy_effects -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/agents/provider_access.rs` → `persist_failure_with`; exact call `persist_failure_with(
+        app,
+        state,
+        pubkey,
+        error,
+        fence,`; behavior test `commands::agents::provider_access::runtime_tests::provider_access_failure_writeback_is_scoped_and_preserves_pending`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib commands::agents::provider_access::runtime_tests::provider_access_failure_writeback_is_scoped_and_preserves_pending -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace --features mesh-llm`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/commands/agents_deploy.rs`
+
+Build fresh authorized provider payload before selected key hydration using captured owner/relay
+
+New module: `false`.
+
+- Required symbol: `fn build_deploy_payload_with`
+- Invocation: `desktop/src-tauri/src/commands/agents_deploy.rs` → `provider_phase_with`; exact call `crate::managed_agents::device_runtime::provider_phase_with(
+        app,
+        state,
+        &record.pubkey,
+        None,
+        context,`; behavior test `commands::agents::deploy::device_payload_tests::provider_redeploy_obeys_home_before_payload_key_lookup`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib commands::agents::deploy::device_payload_tests::provider_redeploy_obeys_home_before_payload_key_lookup -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace --features mesh-llm`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/commands/agent_models_update.rs`
+
+Fence and authorize model update before stop/key/store effects and carry original runtime scope through restarts
+
+New module: `false`.
+
+- Required symbol: `fn model_update_phase_with`
+- Invocation: `desktop/src-tauri/src/commands/agent_models_update.rs` → `model_update_phase_with`; exact call `model_update_phase_with(
+            &app,
+            &state,
+            &input.pubkey.clone(),
+            Some(&runtime_fence),
+            crate::managed_agents::persona_device_view::load_device_policy_context,`; behavior test `commands::agent_models::update::device_runtime_guard_tests::model_update_phase_with_refuses_before_process_key_and_store_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib commands::agent_models::update::device_runtime_guard_tests::model_update_phase_with_refuses_before_process_key_and_store_effects -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace --features mesh-llm`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/commands/global_agent_config.rs`
+
+Authorize and fence config-triggered agent restart before target effects and continuation writes
+
+New module: `false`.
+
+- Required symbol: `fn global_restart_phase_with`
+- Invocation: `desktop/src-tauri/src/commands/global_agent_config.rs` → `global_restart_phase_with`; exact call `global_restart_phase_with(
+            &app_for_stop,
+            &state,
+            &pubkey_owned,
+            Some(&stop_fence),
+            crate::managed_agents::persona_device_view::load_device_policy_context,`; behavior test `commands::global_agent_config::device_runtime_guard_tests::global_restart_phase_with_refuses_before_process_key_and_store_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib commands::global_agent_config::device_runtime_guard_tests::global_restart_phase_with_refuses_before_process_key_and_store_effects -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace --features mesh-llm`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/commands/agent_discovery.rs`
+
+Delegate installer-triggered runtime restart to cohesive scoped module
+
+New module: `false`.
+
+- Required symbol: `mod runtime_restart;`
+- Invocation: `desktop/src-tauri/src/commands/agent_discovery.rs` → `restart_setup_mode_agents_after_install`; exact call `restart_setup_mode_agents_after_install(&app, &runtime_id, &runtime_fence).await;
+
+    Ok(InstallRuntimeResult {
+        success: true,
+        steps: install_result.steps,
+        restarted_count,`; behavior test `commands::agent_discovery::runtime_restart::device_runtime_guard_tests::discovery_restart_phase_with_refuses_before_process_key_and_store_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib commands::agent_discovery::runtime_restart::device_runtime_guard_tests::discovery_restart_phase_with_refuses_before_process_key_and_store_effects -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace --features mesh-llm`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/commands/agent_discovery/runtime_restart.rs`
+
+Cohesive extraction of installer restart collection/effects with original scope and target authorization
+
+New module: `true`.
+
+- Required symbol: `fn discovery_restart_phase_with`
+- Invocation: `desktop/src-tauri/src/commands/agent_discovery/runtime_restart.rs` → `discovery_restart_phase_with`; exact call `discovery_restart_phase_with(
+            &app_for_stop,
+            &state,
+            &pubkey_owned,
+            Some(&stop_fence),
+            crate::managed_agents::persona_device_view::load_device_policy_context,`; behavior test `commands::agent_discovery::runtime_restart::device_runtime_guard_tests::discovery_restart_phase_with_refuses_before_process_key_and_store_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib commands::agent_discovery::runtime_restart::device_runtime_guard_tests::discovery_restart_phase_with_refuses_before_process_key_and_store_effects -- --exact`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace --features mesh-llm`
+- Verify: `just desktop-tauri-clippy`

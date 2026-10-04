@@ -319,7 +319,9 @@ pub fn run() {
             // restore_managed_agents_on_launch so no agent spawns from an empty
             // snapshot. Synchronous and best-effort — a failure here must not
             // block launch, but a missing persona is logged loudly inside.
-            if let Err(e) = backfill_persona_snapshots(&app_handle) {
+            if let Err(e) = managed_agents::restore::run_boot_backfill_with(recovery_mode, || {
+                backfill_persona_snapshots(&app_handle)
+            }) {
                 eprintln!("buzz-desktop: persona-snapshot backfill failed: {e}");
             }
 

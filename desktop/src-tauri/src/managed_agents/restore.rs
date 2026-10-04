@@ -1,9 +1,8 @@
 pub(crate) mod child_ownership;
 use super::{
     bestie_assignment::recover_pending_assignment_cleanup, find_managed_agent_mut,
-    kill_stale_tracked_processes, load_managed_agents, load_personas, managed_agents_base_dir,
-    save_managed_agents, spawn_agent_child, sync_managed_agent_processes, BackendKind,
-    ManagedAgentProcess,
+    kill_stale_tracked_processes, managed_agents_base_dir, spawn_agent_child,
+    sync_managed_agent_processes, BackendKind, ManagedAgentProcess,
 };
 use crate::app_state::AppState;
 use crate::util;
@@ -42,49 +41,103 @@ type AgentSpawnResult = (String, SpawnOutcome);
 /// it stays orphaned and `spawn_agent_child` refuses to start it (see
 /// `effective_config::resolve_effective_config`'s `OrphanedInstance` arm).
 pub fn backfill_persona_snapshots(app: &tauri::AppHandle) -> Result<(), String> {
+    backfill_persona_snapshots_with(
+        app,
+        super::persona_device_view::load_device_policy_context,
+        super::storage::hydrate_keys,
+        super::storage::persist_agent_keys,
+    )
+}
+/// Boot backfill uses structural records and isolated injectable secret boundaries.
+fn backfill_persona_snapshots_with<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    context_provider: impl FnOnce(
+        &tauri::AppHandle<R>,
+        &AppState,
+    )
+        -> Result<super::persona_device_view::DevicePolicyContext, String>,
+    hydrate: impl FnOnce(&mut [super::ManagedAgentRecord]),
+    persist: impl FnOnce(&mut [super::ManagedAgentRecord]),
+) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let _store_guard = state
+    let _store = state
         .managed_agents_store_lock
         .lock()
-        .map_err(|error| error.to_string())?;
-
-    let mut records = load_managed_agents(app)?;
-    let needs_backfill = records
+        .map_err(|e| e.to_string())?;
+    let fence = super::device_runtime::capture_runtime_fence(&state)?;
+    let raw =
+        super::persona_device_view::read_policy_records(&super::managed_agents_store_path(app)?)?;
+    let definition_rows: Vec<_> = raw
         .iter()
-        .any(|r| r.persona_id.is_some() && r.persona_source_version.is_none());
-    if !needs_backfill {
-        return Ok(());
-    }
-
-    let personas = load_personas(app)?;
-    let mut changed = false;
-    for record in records.iter_mut() {
-        let Some(persona_id) = record.persona_id.clone() else {
-            continue;
-        };
-        if record.persona_source_version.is_some() {
-            continue;
+        .filter(|r| r.pubkey.is_empty())
+        .cloned()
+        .collect();
+    let definitions = super::persona_definitions_for_policy(&definition_rows);
+    let relevant: Vec<_> = raw
+        .iter()
+        .filter(|r| {
+            r.pubkey.is_empty() || (r.persona_id.is_some() && r.persona_source_version.is_none())
+        })
+        .cloned()
+        .collect();
+    let context = if super::device_home_migration::needs_private_authority(&relevant) {
+        match context_provider(app, &state) {
+            Ok(c) => {
+                super::device_creation::assert_creation_scope(&fence.scope, &c.scope)?;
+                Some(c)
+            }
+            Err(e) => {
+                eprintln!("buzz-desktop: private snapshot backfill skipped: {e}");
+                None
+            }
         }
-        let Some(persona) = personas.iter().find(|p| p.id == persona_id) else {
-            eprintln!(
-                "buzz-desktop: persona-snapshot backfill: agent {} links persona {persona_id} which no longer exists; leaving it orphaned — spawn will refuse it",
-                record.pubkey
-            );
-            continue;
-        };
-        // Layer precedence at read time: persona env < agent env. When the
-        // persona leaves model/provider blank, the record's own configured
-        // values are preserved — a blank persona must not clobber a
-        // user-configured agent. See `apply_persona_snapshot`.
-        super::persona_events::apply_persona_snapshot(record, persona);
-        record.updated_at = util::now_iso();
-        changed = true;
+    } else {
+        None
+    };
+    let mut selected: Vec<_> = raw
+        .into_iter()
+        .filter(|r| {
+            !r.pubkey.is_empty() && r.persona_id.is_some() && r.persona_source_version.is_none()
+        })
+        .collect();
+    selected.retain(|r| {
+        let definition = definitions
+            .iter()
+            .find(|d| r.persona_id.as_deref() == Some(d.id.as_str()));
+        match (definition, context.as_ref()) {
+            (Some(d), _) if d.share_across_devices == Some(true) => true,
+            (Some(d), Some(c)) => {
+                super::device_runtime::authorize_instance_start(r, Some(d), c).is_ok()
+            }
+            _ => false,
+        }
+    });
+    super::device_runtime::assert_runtime_fence(&state, &fence)?;
+    hydrate(&mut selected);
+    for record in &mut selected {
+        if let Some(d) = definitions
+            .iter()
+            .find(|d| record.persona_id.as_deref() == Some(d.id.as_str()))
+        {
+            super::persona_events::apply_persona_snapshot(record, d);
+            record.updated_at = util::now_iso();
+        }
     }
-
-    if changed {
-        save_managed_agents(app, &records)?;
+    let targets = selected.iter().map(|r| r.pubkey.clone()).collect();
+    if !selected.is_empty() {
+        super::storage::save_restore_records_with(app, &selected, &targets, persist)?;
     }
     Ok(())
+}
+/// Boot recovery must withhold owner-related snapshot effects.
+pub(crate) fn run_boot_backfill_with(
+    recovery_mode: bool,
+    effect: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    if recovery_mode {
+        return Ok(());
+    }
+    effect()
 }
 
 /// Restore managed agents that were running before the app was closed.
@@ -103,6 +156,7 @@ pub async fn restore_managed_agents_on_launch(
 
     let state = app.state::<AppState>();
 
+    let restore_fence = super::device_runtime::capture_runtime_fence(&state)?;
     {
         let _cleanup_transition = state
             .managed_agent_runtime_transition
@@ -112,6 +166,7 @@ pub async fn restore_managed_agents_on_launch(
     }
 
     let agents_to_start = prepare_restore_phase_a_with(
+        Some(&restore_fence),
         app,
         shutdown_started,
         super::persona_device_view::load_device_policy_context,
@@ -140,24 +195,31 @@ pub async fn restore_managed_agents_on_launch(
         // (definition → global fallback). A linked instance's own `provider`/`model`/
         // `relay_mesh` bytes never contribute. See `start_local_agent_with_preflight`
         // in `commands/agents.rs` for the identical rationale on the interactive path.
-        let personas = load_personas(app).unwrap_or_default();
         let global = super::load_global_agent_config(app).unwrap_or_default();
         let mut mesh_preflight_failures = std::collections::HashSet::new();
         for record in &agents_to_start {
-            let mesh_model_id = super::effective_config::resolve_effective_relay_mesh_model_id(
-                record, &personas, &global,
-            );
-            if mesh_model_id.is_none() {
-                continue;
-            }
-            // Auto-start after relaunch: re-resolve a live bootstrap target and
-            // dial it. Skip (with an actionable error) only when no live target
-            // serves this model right now.
-            if let Err(error) =
-                crate::commands::ensure_relay_mesh_for_record(app, mesh_model_id.as_deref(), false)
-                    .await
-            {
-                persist_restore_error(app, &record.pubkey, error)?;
+            let preflight = super::device_runtime::runtime_preflight_with(
+                app,
+                &state,
+                &record.pubkey,
+                Some(&restore_fence),
+                super::persona_device_view::load_device_policy_context,
+                |current, definitions, _| {
+                    let model = super::effective_config::resolve_effective_relay_mesh_model_id(
+                        &current,
+                        &definitions,
+                        &global,
+                    );
+                    async move {
+                        crate::commands::ensure_relay_mesh_for_record(app, model.as_deref(), false)
+                            .await
+                    }
+                },
+                |_, _, _| Ok(()),
+            )
+            .await;
+            if let Err(error) = preflight {
+                persist_restore_error(app, &record.pubkey, error, &restore_fence)?;
                 mesh_preflight_failures.insert(record.pubkey.clone());
             }
         }
@@ -185,65 +247,92 @@ pub async fn restore_managed_agents_on_launch(
     // ── Phase B (transition lock held): resolve commands and spawn in parallel ──
     let spawn_results: Vec<AgentSpawnResult> = std::thread::scope(|scope| {
         let owner_hex_ref = owner_hex.as_deref();
+        let restore_fence_ref = &restore_fence;
         let handles: Vec<_> = agents_to_start
             .iter()
             .filter(|_| !shutdown_started.load(Ordering::SeqCst))
             .map(|record| {
                 let handle = scope.spawn(move || {
-                    let workspace_relay =
-                        crate::relay::relay_ws_url_with_override(&app.state::<AppState>());
-                    let relay_url = crate::relay::effective_agent_relay_url(
-                        &record.relay_url,
-                        &workspace_relay,
-                    );
-                    let outcome =
-                        match super::ManagedAgentRuntimeKey::new(record.pubkey.clone(), &relay_url)
-                        {
-                            Ok(key) => {
-                                // F2: if a concurrent startup reconcile already
-                                // tracked a live child for this exact pair during
-                                // the Phase A window, leave it alone. Mirrors the
-                                // live-child guard in `start_pair`.
-                                let already_live = app
-                                    .state::<AppState>()
-                                    .managed_agent_processes
-                                    .lock()
-                                    .ok()
-                                    .and_then(|mut runtimes| {
-                                        runtimes.get_mut(&key).map(|runtime| {
-                                            runtime.child.try_wait().ok().flatten().is_none()
-                                        })
-                                    })
-                                    .unwrap_or(false);
-                                if already_live {
-                                    SpawnOutcome::Skipped
-                                } else {
-                                    match super::terminate_untracked_pair_runtime(app, &key)
-                                        .and_then(|()| {
-                                            // F1: restore spawns lazy, matching
-                                            // reconcile and manual start. Eager on
-                                            // restore buys nothing — a crashed
-                                            // mid-turn session is not resumed by an
-                                            // eager child — and silently reintroduces
-                                            // N idle brains on every launch.
-                                            spawn_agent_child(
-                                                app,
-                                                record,
-                                                &key.relay_url,
-                                                true,
-                                                owner_hex_ref,
-                                                None,
-                                            )
-                                        }) {
-                                        Ok(process) => {
-                                            SpawnOutcome::Spawned(key, Box::new(process))
+                    let state = app.state::<AppState>();
+                    let outcome = (|| {
+                        let _store = state
+                            .managed_agents_store_lock
+                            .lock()
+                            .map_err(|e| e.to_string())?;
+                        super::device_runtime::assert_runtime_fence(&state, restore_fence_ref)?;
+                        super::device_runtime::restore_spawn_phase_with(
+                            app,
+                            &state,
+                            &record.pubkey,
+                            Some(&restore_fence_ref.scope),
+                            super::persona_device_view::load_device_policy_context,
+                            |mut current, _, scope| {
+                                super::storage::hydrate_keys(std::slice::from_mut(&mut current));
+                                let record = &current;
+                                let workspace_relay = scope.relay_url;
+                                let relay_url = crate::relay::effective_agent_relay_url(
+                                    &record.relay_url,
+                                    &workspace_relay,
+                                );
+                                let outcome = match super::ManagedAgentRuntimeKey::new(
+                                    record.pubkey.clone(),
+                                    &relay_url,
+                                ) {
+                                    Ok(key) => {
+                                        // F2: if a concurrent startup reconcile already
+                                        // tracked a live child for this exact pair during
+                                        // the Phase A window, leave it alone. Mirrors the
+                                        // live-child guard in `start_pair`.
+                                        let already_live = app
+                                            .state::<AppState>()
+                                            .managed_agent_processes
+                                            .lock()
+                                            .ok()
+                                            .and_then(|mut runtimes| {
+                                                runtimes.get_mut(&key).map(|runtime| {
+                                                    runtime
+                                                        .child
+                                                        .try_wait()
+                                                        .ok()
+                                                        .flatten()
+                                                        .is_none()
+                                                })
+                                            })
+                                            .unwrap_or(false);
+                                        if already_live {
+                                            SpawnOutcome::Skipped
+                                        } else {
+                                            match super::terminate_untracked_pair_runtime(app, &key)
+                                                .and_then(|()| {
+                                                    // F1: restore spawns lazy, matching
+                                                    // reconcile and manual start. Eager on
+                                                    // restore buys nothing — a crashed
+                                                    // mid-turn session is not resumed by an
+                                                    // eager child — and silently reintroduces
+                                                    // N idle brains on every launch.
+                                                    spawn_agent_child(
+                                                        app,
+                                                        record,
+                                                        &key.relay_url,
+                                                        true,
+                                                        owner_hex_ref,
+                                                        None,
+                                                    )
+                                                }) {
+                                                Ok(process) => {
+                                                    SpawnOutcome::Spawned(key, Box::new(process))
+                                                }
+                                                Err(error) => SpawnOutcome::Failed(error),
+                                            }
                                         }
-                                        Err(error) => SpawnOutcome::Failed(error),
                                     }
-                                }
-                            }
-                            Err(error) => SpawnOutcome::Failed(error),
-                        };
+                                    Err(error) => SpawnOutcome::Failed(error),
+                                };
+                                Ok(outcome)
+                            },
+                        )
+                    })()
+                    .unwrap_or_else(SpawnOutcome::Failed);
                     (record.pubkey.clone(), outcome)
                 });
                 handle
@@ -258,7 +347,7 @@ pub async fn restore_managed_agents_on_launch(
     }
 
     let reconcile_items = child_ownership::complete_restore_spawn_results_with(
-        app,
+        (app, Some(&restore_fence)),
         spawn_results,
         super::persona_device_view::load_device_policy_context,
         super::storage::hydrate_keys,
@@ -288,6 +377,7 @@ pub async fn restore_managed_agents_on_launch(
 
 /// Phase A production orchestration with only authority, key and process boundaries injected.
 fn prepare_restore_phase_a_with<R: tauri::Runtime>(
+    expected: Option<&super::device_runtime::RuntimeFence>,
     app: &tauri::AppHandle<R>,
     shutdown_started: &AtomicBool,
     context_provider: impl FnOnce(
@@ -312,13 +402,22 @@ fn prepare_restore_phase_a_with<R: tauri::Runtime>(
         return Ok(Vec::new());
     }
 
+    let fence = super::device_runtime::capture_runtime_fence(&state)?;
+    if let Some(expected) = expected {
+        super::device_runtime::assert_runtime_fence(&state, expected)?;
+    }
+
     let policy_records =
         super::persona_device_view::read_policy_records(&super::managed_agents_store_path(app)?)?;
     let context = if needs_auto_start_authority(&policy_records) {
-        Some(context_provider(app, &state)?)
+        auto_start_context_result(&policy_records, context_provider(app, &state))?
     } else {
         None
     };
+    if let Some(context) = &context {
+        super::device_creation::assert_creation_scope(&fence.scope, &context.scope)?;
+    }
+    super::device_runtime::assert_runtime_fence(&state, &fence)?;
     let update_pubkeys = authorized_restore_updates(&policy_records, context.as_ref())?;
     let mut selected = select_auto_start_candidates(&policy_records, context.as_ref())?;
     hydrate(&mut selected);
@@ -347,7 +446,7 @@ fn prepare_restore_phase_a_with<R: tauri::Runtime>(
     // Re-snapshot persona config for agents about to be restored, matching
     // the interactive spawn path so auto-start agents also pick up the
     // current persona on app launch.
-    let personas_for_snapshot = super::load_personas(app).unwrap_or_default();
+    let personas_for_snapshot = super::load_personas(app)?;
     for record in records.iter_mut() {
         if !agents_to_start.iter().any(|r| r.pubkey == record.pubkey) {
             continue;
@@ -463,6 +562,7 @@ fn prepare_restore_processes(
 
 /// Phase C production reload/writeback with only authority, key and runtime boundaries injected.
 fn complete_restore_phase_c_with<R: tauri::Runtime, T>(
+    expected: Option<&super::device_runtime::RuntimeFence>,
     app: &tauri::AppHandle<R>,
     started_pubkeys: &std::collections::HashSet<String>,
     context_provider: impl FnOnce(
@@ -479,6 +579,10 @@ fn complete_restore_phase_c_with<R: tauri::Runtime, T>(
         .managed_agents_store_lock
         .lock()
         .map_err(|e| e.to_string())?;
+    if let Some(expected) = expected {
+        super::device_runtime::assert_runtime_fence(&state, expected)?;
+    }
+    let fence = super::device_runtime::capture_runtime_fence(&state)?;
     let raw =
         super::persona_device_view::read_policy_records(&super::managed_agents_store_path(app)?)?;
     // Phase B releases the store lock. Derive authority from CURRENT target rows
@@ -493,6 +597,10 @@ fn complete_restore_phase_c_with<R: tauri::Runtime, T>(
     } else {
         None
     };
+    if let Some(context) = &context {
+        super::device_creation::assert_creation_scope(&fence.scope, &context.scope)?;
+    }
+    super::device_runtime::assert_runtime_fence(&state, &fence)?;
     let authorized = authorized_restore_updates(&raw, context.as_ref())?;
     let mut records: Vec<_> = raw
         .into_iter()
@@ -601,8 +709,10 @@ fn persist_restore_error(
     app: &tauri::AppHandle,
     pubkey: &str,
     error: String,
+    expected: &super::device_runtime::RuntimeFence,
 ) -> Result<(), String> {
     persist_restore_error_with(
+        Some(expected),
         app,
         pubkey,
         error,
@@ -614,6 +724,7 @@ fn persist_restore_error(
 
 #[cfg(feature = "mesh-llm")]
 fn persist_restore_error_with<R: tauri::Runtime>(
+    expected: Option<&super::device_runtime::RuntimeFence>,
     app: &tauri::AppHandle<R>,
     pubkey: &str,
     error: String,
@@ -626,6 +737,7 @@ fn persist_restore_error_with<R: tauri::Runtime>(
     persist: impl FnOnce(&mut [super::ManagedAgentRecord]),
 ) -> Result<(), String> {
     complete_restore_phase_c_with(
+        expected,
         app,
         &[pubkey.to_string()].into_iter().collect(),
         context_provider,
@@ -655,11 +767,33 @@ pub(crate) fn select_auto_start_candidates(
     for record in records.iter().filter(|r| {
         !r.pubkey.is_empty() && r.start_on_app_launch && r.backend == BackendKind::Local
     }) {
-        if super::device_home_migration::auto_start_allowed(record, &definitions, context)? {
+        if let Some(reason) =
+            super::device_runtime::runtime_start_refusal(record, &definitions, context)
+        {
+            eprintln!("buzz-desktop: runtime skipped {}: {reason}", record.pubkey);
+        } else {
             selected.push(record.clone());
         }
     }
     Ok(selected)
+}
+
+/// Mixed jobs retain explicitly shared candidates when private authority is unavailable.
+pub(crate) fn auto_start_context_result(
+    records: &[super::ManagedAgentRecord],
+    result: Result<super::persona_device_view::DevicePolicyContext, String>,
+) -> Result<Option<super::persona_device_view::DevicePolicyContext>, String> {
+    match result {
+        Ok(context) => Ok(Some(context)),
+        Err(error) => {
+            let shared = select_auto_start_candidates(records, None)?;
+            if shared.is_empty() {
+                return Err(error);
+            }
+            eprintln!("buzz-desktop: private runtime candidates skipped: device_home_sync_failed: {error}");
+            Ok(None)
+        }
+    }
 }
 
 /// Require host authority only for records this auto-start operation selects.
@@ -694,3 +828,112 @@ mod profile_reconcile_tests {
 #[cfg(test)]
 #[path = "restore/device_home_tests.rs"]
 mod device_home_restore_tests;
+
+#[cfg(test)]
+mod runtime_backfill_tests {
+    use super::*;
+    use crate::managed_agents::{
+        device_home_migration::tests::{app, records, write},
+        persona_device_view::read_policy_records,
+    };
+    #[test]
+    fn boot_backfill_skips_copied_private_and_preserves_shared_metadata_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app(dir.path());
+        let base = super::super::managed_agents_base_dir(app.handle()).unwrap();
+        let (mut raw, _) = records();
+        raw[1].device_host_binding = Some("copied".into());
+        let mut d = crate::managed_agents::device_home_migration::tests::definition();
+        d.id = "shared".into();
+        d.share_across_devices = Some(true);
+        let mut i = d.clone().into_agent_record();
+        i.persona_id = Some(d.id.clone());
+        i.pubkey = nostr::Keys::generate().public_key().to_hex();
+        let shared_key = i.pubkey.clone();
+        raw.push(d.into_agent_record());
+        raw.push(i);
+        write(&base, &raw);
+        backfill_persona_snapshots_with(
+            app.handle(),
+            |_, _| Err("isolated proof unavailable".into()),
+            |_| {},
+            |_| {},
+        )
+        .unwrap();
+        let after = read_policy_records(&base.join("managed-agents.json")).unwrap();
+        assert!(
+            after
+                .iter()
+                .find(|r| r.pubkey == raw[1].pubkey)
+                .unwrap()
+                .persona_source_version
+                .is_none(),
+            "copied metadata mutated at boot"
+        );
+        assert!(after
+            .iter()
+            .find(|r| r.pubkey == shared_key)
+            .unwrap()
+            .persona_source_version
+            .is_some());
+    }
+    #[test]
+    fn recovery_boot_has_no_backfill_effect() {
+        let count = std::cell::Cell::new(0);
+        run_boot_backfill_with(true, || {
+            count.set(1);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(count.get(), 0);
+        run_boot_backfill_with(false, || {
+            count.set(1);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(count.get(), 1);
+    }
+}
+#[cfg(test)]
+mod mixed_restore_tests {
+    use super::*;
+    use crate::managed_agents::device_home_migration::tests::{app, definition, records, write};
+    #[test]
+    fn mixed_selected_restore_keeps_shared_when_private_authority_is_unavailable() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app(dir.path());
+        let base = super::super::managed_agents_base_dir(app.handle()).unwrap();
+        let (mut raw, _) = records();
+        raw[1].start_on_app_launch = true;
+        let mut d = definition();
+        d.id = "shared".into();
+        d.share_across_devices = Some(true);
+        let mut i = d.clone().into_agent_record();
+        i.persona_id = Some(d.id.clone());
+        i.pubkey = nostr::Keys::generate().public_key().to_hex();
+        i.start_on_app_launch = true;
+        let key = i.pubkey.clone();
+        raw.push(d.into_agent_record());
+        raw.push(i);
+        write(&base, &raw);
+        let selected = prepare_restore_phase_a_with(
+            None,
+            app.handle(),
+            &AtomicBool::new(false),
+            |_, _| Err("injected proof unavailable".into()),
+            |selected| {
+                assert_eq!(selected.len(), 1);
+                assert_eq!(selected[0].pubkey, key);
+            },
+            |_| {},
+            |_, eligible| {
+                assert_eq!(eligible.len(), 1);
+                assert!(eligible.contains(&key));
+                Ok((false, vec![key.clone()]))
+            },
+        )
+        .unwrap();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].pubkey, key);
+    }
+}

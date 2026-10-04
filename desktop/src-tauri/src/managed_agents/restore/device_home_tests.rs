@@ -9,6 +9,126 @@ use crate::secret_store::KeyringProbe;
 use nostr::ToBech32;
 use std::{cell::RefCell, collections::HashMap};
 
+fn scoped_context(
+    state: &AppState,
+    readiness: EvidenceReadiness,
+) -> crate::managed_agents::persona_device_view::DevicePolicyContext {
+    let mut c = context(readiness);
+    c.scope = super::super::device_home_sync::capture_scope(state).unwrap();
+    c
+}
+
+#[test]
+fn restore_phase_a_authority_scope_switch_refuses_before_key_effects() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let state = app.state::<AppState>();
+    let (mut raw, _) = records();
+    let mut c = context(EvidenceReadiness::Ready);
+    c.scope = super::super::device_home_sync::capture_scope(&state).unwrap();
+    raw[1].device_host_binding = Some(c.proof.binding().into());
+    raw[1].start_on_app_launch = true;
+    write(
+        &super::super::managed_agents_base_dir(app.handle()).unwrap(),
+        &raw,
+    );
+    let keys = std::cell::Cell::new(0);
+    let result = prepare_restore_phase_a_with(
+        None,
+        app.handle(),
+        &AtomicBool::new(false),
+        |_, state| {
+            state
+                .workspace_apply_generation
+                .fetch_add(1, Ordering::AcqRel);
+            Ok(c)
+        },
+        |_| keys.set(1),
+        |_| {},
+        |_, _| Ok((false, vec![])),
+    );
+    assert!(result.is_err(), "restore PhaseA accepted stale authority");
+    assert_eq!(keys.get(), 0);
+}
+
+#[test]
+fn restore_phase_c_authority_scope_switch_refuses_before_key_effects() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let state = app.state::<AppState>();
+    let (mut raw, _) = records();
+    let mut c = context(EvidenceReadiness::Ready);
+    c.scope = super::super::device_home_sync::capture_scope(&state).unwrap();
+    raw[1].device_host_binding = Some(c.proof.binding().into());
+    write(
+        &super::super::managed_agents_base_dir(app.handle()).unwrap(),
+        &raw,
+    );
+    let keys = std::cell::Cell::new(0);
+    let result = complete_restore_phase_c_with(
+        None,
+        app.handle(),
+        &[raw[1].pubkey.clone()].into_iter().collect(),
+        |_, state| {
+            state
+                .workspace_apply_generation
+                .fetch_add(1, Ordering::AcqRel);
+            Ok(c)
+        },
+        |_| keys.set(1),
+        |_| {},
+        |_| Ok(()),
+    );
+    assert!(result.is_err(), "restore PhaseC accepted stale authority");
+    assert_eq!(keys.get(), 0);
+}
+
+#[test]
+fn phase_c_own_origin_without_exact_target_binding_never_hydrates_or_updates_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let state = app.state::<AppState>();
+    let (mut raw, _) = records();
+    let mut c = context(EvidenceReadiness::Ready);
+    c.scope = super::super::device_home_sync::capture_scope(&state).unwrap();
+    raw[0].origin_device_id = Some(c.device.device_id.clone());
+    raw[1].device_host_binding = Some("copied".into());
+    let target = raw[1].pubkey.clone();
+    let base = super::super::managed_agents_base_dir(app.handle()).unwrap();
+    write(&base, &raw);
+    complete_restore_phase_c_with(
+        None,
+        app.handle(),
+        &[target.clone()].into_iter().collect(),
+        |_, _| Ok(c),
+        |rows| {
+            assert!(
+                rows.iter().all(|r| r.pubkey != target),
+                "foreign target key hydration"
+            )
+        },
+        |rows| {
+            assert!(
+                rows.iter().all(|r| r.pubkey != target),
+                "foreign target key persistence"
+            )
+        },
+        |rows| {
+            assert!(
+                rows.iter().all(|r| r.pubkey != target),
+                "foreign target metadata update"
+            );
+            Ok(())
+        },
+    )
+    .unwrap();
+    let current = read_policy_records(&base.join("managed-agents.json")).unwrap();
+    assert_eq!(
+        serde_json::to_value(current.iter().find(|r| r.pubkey == target).unwrap()).unwrap(),
+        serde_json::to_value(&raw[1]).unwrap()
+    );
+}
+
 #[derive(Default)]
 struct Secrets {
     entries: RefCell<HashMap<String, String>>,
@@ -88,9 +208,10 @@ fn mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy
     write(&base, &raw);
     let secrets = Secrets::default();
     let candidates = prepare_restore_phase_a_with(
+        None,
         app.handle(),
         &AtomicBool::new(false),
-        |_, _| Ok(context(EvidenceReadiness::Ready)),
+        |_, state| Ok(scoped_context(state, EvidenceReadiness::Ready)),
         |rs| hydrate_keys_with(&secrets, rs),
         |rs| persist_agent_keys_with(&secrets, rs),
         |_, eligible| Ok((false, eligible.iter().cloned().collect())),
@@ -111,6 +232,7 @@ fn mixed_restore_phase_a_save_and_phase_c_writeback_preserve_foreign_inline_copy
     );
     let started = candidates.iter().map(|r| r.pubkey.clone()).collect();
     complete_restore_phase_c_with(
+        None,
         app.handle(),
         &started,
         |_, _| panic!("shared-only restore targets requested authority"),
@@ -155,6 +277,7 @@ fn mixed_restore_phase_c_reload_and_save_never_import_excluded_copy() {
     write(&base, &raw);
     let secrets = Secrets::default();
     complete_restore_phase_c_with(
+        None,
         app.handle(),
         &[allowed.clone()].into_iter().collect(),
         |_, _| panic!("shared-only writeback targets requested authority"),
@@ -189,7 +312,7 @@ fn proven_disabled_housekeeping_uses_captured_context_without_key_operations() {
     let app = app(dir.path());
     let base = super::super::managed_agents_base_dir(app.handle()).unwrap();
     let (mut raw, allowed) = mixed_records();
-    let c = context(EvidenceReadiness::Ready);
+    let c = scoped_context(&app.state::<AppState>(), EvidenceReadiness::Ready);
     raw[2].share_across_devices = Some(false);
     raw[3].device_host_binding = Some(c.proof.binding().into());
     let mut disabled = raw[3].clone();
@@ -200,6 +323,7 @@ fn proven_disabled_housekeeping_uses_captured_context_without_key_operations() {
     write(&base, &raw);
     let secrets = Secrets::default();
     let candidates = prepare_restore_phase_a_with(
+        None,
         app.handle(),
         &AtomicBool::new(false),
         |_, _| Ok(c),
@@ -244,6 +368,7 @@ fn disabled_safe_housekeeping_persists_without_key_operations() {
     write(&base, &raw);
     let secrets = Secrets::default();
     let candidates = prepare_restore_phase_a_with(
+        None,
         app.handle(),
         &AtomicBool::new(false),
         |_, _| panic!("disabled private row forced authority lookup"),
@@ -279,9 +404,10 @@ fn phase_c_fresh_authority_blocks_changed_target_and_preserves_concurrent_rows()
     write(&base, &raw);
     let secrets = Secrets::default();
     let candidates = prepare_restore_phase_a_with(
+        None,
         app.handle(),
         &AtomicBool::new(false),
-        |_, _| Ok(context(EvidenceReadiness::Ready)),
+        |_, state| Ok(scoped_context(state, EvidenceReadiness::Ready)),
         |rs| hydrate_keys_with(&secrets, rs),
         |rs| persist_agent_keys_with(&secrets, rs),
         |_, eligible| Ok((false, eligible.iter().cloned().collect())),
@@ -305,9 +431,10 @@ fn phase_c_fresh_authority_blocks_changed_target_and_preserves_concurrent_rows()
     let before = serde_json::to_value(&current).unwrap();
     secrets.operations.borrow_mut().clear();
     complete_restore_phase_c_with(
+        None,
         app.handle(),
         &[allowed.clone()].into_iter().collect(),
-        |_, _| Ok(context(EvidenceReadiness::Ready)),
+        |_, state| Ok(scoped_context(state, EvidenceReadiness::Ready)),
         |rs| hydrate_keys_with(&secrets, rs),
         |rs| persist_agent_keys_with(&secrets, rs),
         |rs| {
@@ -337,6 +464,7 @@ fn mesh_preflight_error_writeback_preserves_excluded_inline_copy() {
     write(&base, &raw);
     let secrets = Secrets::default();
     persist_restore_error_with(
+        None,
         app.handle(),
         &allowed,
         "injected mesh preflight failure".into(),
@@ -417,7 +545,7 @@ fn post_spawn_authority_error_settles_all_owned_children() {
         })
         .collect();
     let error = child_ownership::complete_restore_spawn_results_with(
-        app.handle(),
+        (app.handle(), None),
         results,
         |_, _| Err("injected post-spawn authority error".into()),
         |_| panic!("failed authority reached hydration"),
@@ -476,13 +604,13 @@ fn fresh_authority_rejection_cleans_only_new_rejected_child() {
     let cleaned = RefCell::new(Vec::new());
     let secrets = Secrets::default();
     let items = child_ownership::complete_restore_spawn_results_with(
-        app.handle(),
+        (app.handle(), None),
         vec![
             rejected,
             spawned_result(&raw[3]),
             (tracked.pubkey.clone(), SpawnOutcome::Skipped),
         ],
-        |_, _| Ok(context(EvidenceReadiness::Ready)),
+        |_, state| Ok(scoped_context(state, EvidenceReadiness::Ready)),
         |rs| hydrate_keys_with(&secrets, rs),
         |rs| persist_agent_keys_with(&secrets, rs),
         |process| {
@@ -513,9 +641,9 @@ fn failed_child_cleanup_propagates_and_retains_retry_ownership() {
     let (raw, _) = mixed_records();
     write(&base, &raw);
     let result = child_ownership::complete_restore_spawn_results_with(
-        app.handle(),
+        (app.handle(), None),
         vec![spawned_result(&raw[1])],
-        |_, _| Ok(context(EvidenceReadiness::Ready)),
+        |_, state| Ok(scoped_context(state, EvidenceReadiness::Ready)),
         |rs| assert!(rs.is_empty(), "rejected child reached hydration"),
         |_| {},
         |_| Err("injected termination failure".into()),
@@ -557,7 +685,7 @@ fn receipt_failure_settles_unregistered_child_and_preserves_error() {
     let cleaned = RefCell::new(0);
     let secrets = Secrets::default();
     child_ownership::complete_restore_spawn_results_with(
-        app.handle(),
+        (app.handle(), None),
         vec![spawned_result(&raw[3])],
         |_, _| panic!("shared target requested authority"),
         |rs| hydrate_keys_with(&secrets, rs),
@@ -665,7 +793,7 @@ fn new_child_collision_never_replaces_previously_tracked_child() {
     let cleaned = RefCell::new(Vec::new());
     let secrets = Secrets::default();
     let result = child_ownership::complete_restore_spawn_results_with(
-        app.handle(),
+        (app.handle(), None),
         vec![new],
         |_, _| panic!("shared target requested authority"),
         |rs| hydrate_keys_with(&secrets, rs),
@@ -729,7 +857,7 @@ fn confirmed_exited_owner_allows_replacement_receipt_and_reconcile() {
     let cleaned = RefCell::new(Vec::new());
     let secrets = Secrets::default();
     let result = child_ownership::complete_restore_spawn_results_with(
-        app.handle(),
+        (app.handle(), None),
         vec![new],
         |_, _| panic!("shared target requested authority"),
         |rs| hydrate_keys_with(&secrets, rs),
@@ -809,9 +937,9 @@ fn owner_inspection_error_preserves_handle_settles_incoming_and_propagates() {
     let inspected = RefCell::new(Vec::new());
     let secrets = Secrets::default();
     let result = child_ownership::complete_restore_spawn_results_with_inspection(
-        app.handle(),
+        (app.handle(), None),
         vec![new, rejected],
-        |_, _| Ok(context(EvidenceReadiness::Ready)),
+        |_, state| Ok(scoped_context(state, EvidenceReadiness::Ready)),
         |rs| hydrate_keys_with(&secrets, rs),
         |rs| persist_agent_keys_with(&secrets, rs),
         |process| {
