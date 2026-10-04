@@ -404,6 +404,9 @@ pub(crate) async fn fetch_relay_self_at(
 }
 
 fn archived_pubkeys_from_snapshot(snapshot: &nostr::Event) -> Vec<String> {
+    if snapshot.kind.as_u16() != 13535 {
+        return vec![];
+    }
     snapshot
         .tags
         .iter()
@@ -589,6 +592,17 @@ mod tests {
 
         let expected = vec![valid.to_string(), uppercase.to_ascii_lowercase()];
         assert_eq!(archived_pubkeys_from_snapshot(&snapshot), expected);
+    }
+
+    #[test]
+    fn non_archive_event_cannot_retire_a_migration_conflict() {
+        let relay = Keys::generate();
+        let archived = Keys::generate().public_key().to_hex();
+        let other_kind = EventBuilder::new(Kind::Custom(30177), "")
+            .tags([Tag::parse(["p", archived.as_str()]).unwrap()])
+            .sign_with_keys(&relay)
+            .unwrap();
+        assert!(archived_pubkeys_from_snapshot(&other_kind).is_empty());
     }
 
     #[test]

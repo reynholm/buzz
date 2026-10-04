@@ -1154,7 +1154,7 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/device_home_sync.rs",
-      "responsibility": "Native IPC adapters, captured-key history transport and reset-before-open/error-aware finalization; Async IPC preserves external unit result, serializes finish with workspace apply, migrates before Ready and retries fresh restore against returned verified scope; top-level Wry entry wiring is compile coverage with native acceptance outstanding",
+      "responsibility": "Native IPC adapters, captured-key history transport and reset-before-open/error-aware finalization; Async IPC preserves external unit result, serializes finish with workspace apply, migrates before Ready and retries fresh restore against returned verified scope; top-level Wry entry wiring is compile coverage with native acceptance outstanding; fetch verified captured-relay archive off locks, fence scope/session, and pass archive to legacy migration before Ready",
       "is_new": true,
       "required_symbols": [
         "fn begin_device_home_sync",
@@ -1162,7 +1162,11 @@
         "fn finish_device_home_sync",
         "fn invalidate_device_home_sync",
         "async fn finish_device_home_sync",
-        "async fn retry_device_home_restore_with"
+        "async fn retry_device_home_restore_with",
+        "async fn finish_device_home_sync_after_archive",
+        "fn finish_device_home_sync_inner_with_archive",
+        "super::identity_archive::fetch_archived_pubkeys_at(state_ref, &target).await",
+        "device_home_sync::capture_scope(state)? != expected"
       ],
       "invocation_seams": [
         {
@@ -1604,14 +1608,18 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/device_home_migration.rs",
-      "responsibility": "Atomic legacy binding/origin snapshot, read-only key verification, prewrite scope fence, shared bypass and durable signed-head retry; Task7: Delegate common publication authority to canonical exact target checks",
+      "responsibility": "Atomic legacy binding/origin snapshot, read-only key verification, prewrite scope fence, shared bypass and durable signed-head retry; Task7: Delegate common publication authority to canonical exact target checks; verified archived duplicates do not block local key/proof claim; active/copy/unavailable evidence still blocks",
       "is_new": true,
       "required_symbols": [
         "fn migrate_device_homes_locked",
         "fn migrate_device_homes_in_dir",
         "fn may_publish_local_instance",
         "fn publication_allowed",
-        "fn needs_private_authority"
+        "fn needs_private_authority",
+        "fn migrate_device_homes_in_dir_with_archive",
+        "fn migrate_device_homes_locked_with_archive",
+        "!archived.contains(&e.pubkey)",
+        "archived.contains(&records[i].pubkey)"
       ],
       "invocation_seams": [
         {
@@ -3660,9 +3668,12 @@
     },
     {
       "path": "desktop/src/features/profile/ui/UserProfilePanel.tsx",
-      "responsibility": "Task10 authoritative device capability integration and owning action coverage",
+      "responsibility": "Task10 authoritative device capability integration and owning action coverage; render Start/Delete only from computed backend capabilities",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "resolvedPersona.capabilities?.canCreateInstance === true",
+        "resolvedPersona.capabilities?.canDeleteDefinition === true"
+      ],
       "invocation_seams": [
         {
           "caller_path": "desktop/src/features/profile/ui/UserProfilePanel.tsx",
@@ -4260,6 +4271,42 @@
         "fn newer_successful_label_survives_older_sql_enqueue_failure_and_recovery",
         "fn newer_label_preserves_other_relay_owner_and_unresolved_scope_worklists"
       ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace"
+      ]
+    },
+    {
+      "path": "desktop/src/features/profile/ui/UserProfilePanelSections.tsx",
+      "responsibility": "Device agent profile and archived duplicate migration regression protection",
+      "is_new": false,
+      "required_symbols": [
+        "managedAgent.canStartOnDevice === true",
+        "<PersonaRemoteRuntime persona={persona} />"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir desktop test",
+        "pnpm --dir desktop typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/identity_archive.rs",
+      "responsibility": "Device agent profile and archived duplicate migration regression protection",
+      "is_new": false,
+      "required_symbols": [
+        "snapshot.kind.as_u16() != 13535"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/device_home_sync_archive_tests.rs",
+      "responsibility": "Device agent profile and archived duplicate migration regression protection",
+      "is_new": true,
+      "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
         "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace"

@@ -773,7 +773,7 @@ New module: `true`.
 
 ## `desktop/src-tauri/src/commands/device_home_sync.rs`
 
-Native IPC adapters, captured-key history transport and reset-before-open/error-aware finalization; Async IPC preserves external unit result, serializes finish with workspace apply, migrates before Ready and retries fresh restore against returned verified scope; top-level Wry entry wiring is compile coverage with native acceptance outstanding
+Native IPC adapters, captured-key history transport and reset-before-open/error-aware finalization; Async IPC preserves external unit result, serializes finish with workspace apply, migrates before Ready and retries fresh restore against returned verified scope; top-level Wry entry wiring is compile coverage with native acceptance outstanding; fetch verified captured-relay archive off locks, fence scope/session, and pass archive to legacy migration before Ready
 
 New module: `true`.
 
@@ -783,6 +783,10 @@ New module: `true`.
 - Required symbol: `fn invalidate_device_home_sync`
 - Required symbol: `async fn finish_device_home_sync`
 - Required symbol: `async fn retry_device_home_restore_with`
+- Required symbol: `async fn finish_device_home_sync_after_archive`
+- Required symbol: `fn finish_device_home_sync_inner_with_archive`
+- Required symbol: `super::identity_archive::fetch_archived_pubkeys_at(state_ref, &target).await`
+- Required symbol: `device_home_sync::capture_scope(state)? != expected`
 - Invocation: `desktop/src-tauri/src/commands/device_home_sync.rs` → `reset`; exact call `device_home_sync::reset(state)?;`; behavior test `commands::device_home_sync::tests::begin_retention_error_revokes_previous_readiness`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::device_home_sync::tests::begin_retention_error_revokes_previous_readiness -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/device_home_sync.rs` → `finish_session_with`; exact call `device_home_sync::finish_session_with(state, session_token, migrate)?;`; behavior test `commands::device_home_sync::migration_tests::finish_adapter_key_error_latches_failed_and_preserves_store`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::device_home_sync::migration_tests::finish_adapter_key_error_latches_failed_and_preserves_store -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/device_home_sync.rs` → `capture_scope`; exact call `device_home_sync::capture_scope(state)? != *expected`; behavior test `commands::device_home_sync::migration_tests::returned_completion_scope_fences_deferred_restore`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::device_home_sync::migration_tests::returned_completion_scope_fences_deferred_restore -- --exact`
@@ -1014,7 +1018,7 @@ New module: `true`.
 
 ## `desktop/src-tauri/src/managed_agents/device_home_migration.rs`
 
-Atomic legacy binding/origin snapshot, read-only key verification, prewrite scope fence, shared bypass and durable signed-head retry; Task7: Delegate common publication authority to canonical exact target checks
+Atomic legacy binding/origin snapshot, read-only key verification, prewrite scope fence, shared bypass and durable signed-head retry; Task7: Delegate common publication authority to canonical exact target checks; verified archived duplicates do not block local key/proof claim; active/copy/unavailable evidence still blocks
 
 New module: `true`.
 
@@ -1023,6 +1027,10 @@ New module: `true`.
 - Required symbol: `fn may_publish_local_instance`
 - Required symbol: `fn publication_allowed`
 - Required symbol: `fn needs_private_authority`
+- Required symbol: `fn migrate_device_homes_in_dir_with_archive`
+- Required symbol: `fn migrate_device_homes_locked_with_archive`
+- Required symbol: `!archived.contains(&e.pubkey)`
+- Required symbol: `archived.contains(&records[i].pubkey)`
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_migration.rs` → `resolve`; exact call `resolve(&records[i])?`; behavior test `managed_agents::device_home_migration::tests::legacy_claim_requires_available_key`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::legacy_claim_requires_available_key -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_migration.rs` → `authorize_instance_authority`; exact call `super::device_authority::authorize_instance_authority(
         record,
@@ -2150,10 +2158,12 @@ New module: `false`.
 
 ## `desktop/src/features/profile/ui/UserProfilePanel.tsx`
 
-Task10 authoritative device capability integration and owning action coverage
+Task10 authoritative device capability integration and owning action coverage; render Start/Delete only from computed backend capabilities
 
 New module: `false`.
 
+- Required symbol: `resolvedPersona.capabilities?.canCreateInstance === true`
+- Required symbol: `resolvedPersona.capabilities?.canDeleteDefinition === true`
 - Invocation: `desktop/src/features/profile/ui/UserProfilePanel.tsx` → `getDefinitionForAction`; exact call `      personaToStart = await getDefinitionForAction(
         personaToStart.id,
         "createInstance",
@@ -2529,4 +2539,32 @@ New module: `true`.
 
 - Required symbol: `fn newer_successful_label_survives_older_sql_enqueue_failure_and_recovery`
 - Required symbol: `fn newer_label_preserves_other_relay_owner_and_unresolved_scope_worklists`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
+
+## `desktop/src/features/profile/ui/UserProfilePanelSections.tsx`
+
+Device agent profile and archived duplicate migration regression protection
+
+New module: `false`.
+
+- Required symbol: `managedAgent.canStartOnDevice === true`
+- Required symbol: `<PersonaRemoteRuntime persona={persona} />`
+- Verify: `pnpm --dir desktop test`
+- Verify: `pnpm --dir desktop typecheck`
+
+## `desktop/src-tauri/src/commands/identity_archive.rs`
+
+Device agent profile and archived duplicate migration regression protection
+
+New module: `false`.
+
+- Required symbol: `snapshot.kind.as_u16() != 13535`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
+
+## `desktop/src-tauri/src/commands/device_home_sync_archive_tests.rs`
+
+Device agent profile and archived duplicate migration regression protection
+
+New module: `true`.
+
 - Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`

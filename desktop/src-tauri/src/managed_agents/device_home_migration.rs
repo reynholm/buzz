@@ -10,16 +10,28 @@ use tauri::Manager;
 
 /// Migrate one unified snapshot without opportunistic keychain writes.
 /// Caller owns the managed store lock; failure before persist leaves it unchanged.
+#[cfg(test)]
 pub(crate) fn migrate_device_homes_in_dir(
     base: &Path,
     context: &DevicePolicyContext,
+    resolve: impl FnMut(&ManagedAgentRecord) -> Result<Option<nostr::Keys>, String>,
+) -> Result<bool, String> {
+    migrate_device_homes_in_dir_with_archive(base, context, &[], resolve)
+}
+
+/// A verified archive excludes retired duplicates from legacy conflicts only.
+/// It grants no host/key authority and never claims an archived local identity.
+pub(crate) fn migrate_device_homes_in_dir_with_archive(
+    base: &Path,
+    context: &DevicePolicyContext,
+    archived: &[String],
     mut resolve: impl FnMut(&ManagedAgentRecord) -> Result<Option<nostr::Keys>, String>,
 ) -> Result<bool, String> {
     let path = base.join("managed-agents.json");
     let mut records = read_policy_records(&path)?;
     let mut changed = false;
     for i in 0..records.len() {
-        if records[i].pubkey.is_empty() {
+        if records[i].pubkey.is_empty() || archived.contains(&records[i].pubkey) {
             continue;
         }
         let Some(persona_id) = records[i].persona_id.as_deref() else {
@@ -51,10 +63,11 @@ pub(crate) fn migrate_device_homes_in_dir(
                         .origin_device_id
                         .as_deref()
                         .is_some_and(|id| id != context.device.device_id))
-                || context
-                    .evidence
-                    .iter()
-                    .any(|e| e.persona_id == persona_id && e.pubkey != records[i].pubkey)
+                || context.evidence.iter().any(|e| {
+                    e.persona_id == persona_id
+                        && e.pubkey != records[i].pubkey
+                        && !archived.contains(&e.pubkey)
+                })
             {
                 continue;
             }
@@ -142,16 +155,20 @@ pub(crate) fn needs_private_authority(records: &[ManagedAgentRecord]) -> bool {
 /// Persist binding and origin atomically, then queue signed heads. If retention
 /// fails, the proven snapshot remains on disk and the next invocation retries
 /// content-diff publication, including a run with no new migration edits.
-pub(crate) fn migrate_device_homes_locked<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    context: &DevicePolicyContext,
-) -> Result<(), String> {
-    migrate_device_homes_locked_with(app, context, resolve_agent_key_readonly)
-}
 /// Production migration orchestration with only the key lookup boundary injected.
 pub(crate) fn migrate_device_homes_locked_with<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     context: &DevicePolicyContext,
+    resolve: impl FnMut(&ManagedAgentRecord) -> Result<Option<nostr::Keys>, String>,
+) -> Result<(), String> {
+    migrate_device_homes_locked_with_archive(app, context, &[], resolve)
+}
+
+/// Complete legacy migration with archive evidence fetched for this exact scope.
+pub(crate) fn migrate_device_homes_locked_with_archive<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    context: &DevicePolicyContext,
+    archived: &[String],
     resolve: impl FnMut(&ManagedAgentRecord) -> Result<Option<nostr::Keys>, String>,
 ) -> Result<(), String> {
     let state = app.state::<crate::app_state::AppState>();
@@ -159,7 +176,7 @@ pub(crate) fn migrate_device_homes_locked_with<R: tauri::Runtime>(
         return Err("device_home_sync_stale_session".into());
     }
     let base = super::managed_agents_base_dir(app)?;
-    migrate_device_homes_in_dir(&base, context, resolve)?;
+    migrate_device_homes_in_dir_with_archive(&base, context, archived, resolve)?;
     let keys = state.signing_keys()?;
     if keys.public_key().to_hex() != context.scope.owner_pubkey {
         return Err("device_home_sync_stale_session".into());

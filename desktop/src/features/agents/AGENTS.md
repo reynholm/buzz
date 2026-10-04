@@ -141,6 +141,10 @@ with a TypeScript lookup table or an id comparison in a component.
     `capabilities` authorize creation/deletion; a local inventory row, origin,
     name, catalog publication, or relay presence cannot grant that authority.
     Instance start also requires the exact backend `canStartOnDevice` projection.
+    Profiles apply the same permissions as the directory: denied or unresolved
+    definitions offer no Start/Delete and show the backend home state. Denied
+    instance spawn permission hides Start/Deploy/Restart but does not remove Stop
+    for an existing running process. Do not infer spawn authority from ownership.
     Presence reads use the reported `home.remoteInstancePubkeys`, never names.
     Remote and unresolved definitions remain visible and editable. Pending
     hydration hides Start/Delete; failed reads retain an honest state refresh and explain connection recovery.

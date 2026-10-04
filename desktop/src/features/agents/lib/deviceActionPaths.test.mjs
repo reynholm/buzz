@@ -7,19 +7,27 @@ import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
 import ts from "typescript";
 
-// Only presentation/navigation/huddle adapters are replaced. All owning
+// Presentation/navigation/huddle adapters and the external live work signal
+// are replaced. All owning
 // action handlers, React Query mutations, fresh getter and native IPC wrappers
 // run unchanged. The panel's real callbacks are captured at its render boundary.
-let summaryProps, dialogProps;
+let summaryProps,
+  dialogProps,
+  renderSummary = false,
+  RealSummary;
 globalThis.__deviceSummary = (props) => {
   summaryProps = props;
-  return null;
+  return renderSummary ? React.createElement(RealSummary, props) : null;
 };
 globalThis.__deviceDialogs = (props) => {
   dialogProps = props;
   return null;
 };
 const replacements = new Map([
+  [
+    "/features/agents/agentWorkingSignal.ts",
+    'export * from "./agentWorkingSignal.ts?device-real"; const idle={working:false,source:"none",channels:[]}; export const useAgentWorking = () => idle;',
+  ],
   [
     "/shared/layout/AuxiliaryPanelBody.tsx",
     "export const AuxiliaryPanelBody = props => props.children;",
@@ -51,6 +59,23 @@ const replacements = new Map([
 ]);
 const loader = registerHooks({
   load(url, context, nextLoad) {
+    if (url.endsWith("?device-real")) {
+      return {
+        format: "module",
+        shortCircuit: true,
+        source: ts.transpileModule(
+          fs.readFileSync(fileURLToPath(url), "utf8"),
+          {
+            compilerOptions: {
+              jsx: ts.JsxEmit.ReactJSX,
+              module: ts.ModuleKind.ESNext,
+              target: ts.ScriptTarget.ES2020,
+            },
+            fileName: fileURLToPath(url),
+          },
+        ).outputText,
+      };
+    }
     for (const [suffix, source] of replacements) {
       if (url.endsWith(suffix))
         return { format: "module", shortCircuit: true, source };
@@ -147,6 +172,7 @@ function blocked(reason = "definition_hosted_elsewhere", overrides = {}) {
 }
 let act,
   render,
+  screen,
   cleanup,
   waitFor,
   React,
@@ -182,6 +208,12 @@ before(async () => {
     document: dom.window.document,
     localStorage: dom.window.localStorage,
     HTMLElement: dom.window.HTMLElement,
+    Element: dom.window.Element,
+    ResizeObserver: class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
     IS_REACT_ACT_ENVIRONMENT: true,
   });
   Object.defineProperty(globalThis, "navigator", {
@@ -271,7 +303,9 @@ before(async () => {
     },
     transformCallback: () => 1,
   };
-  ({ act, render, cleanup, waitFor } = await import("@testing-library/react"));
+  ({ act, render, screen, cleanup, waitFor } = await import(
+    "@testing-library/react"
+  ));
   React = await import("react");
   ({ QueryClient, QueryClientProvider } = await import(
     "@tanstack/react-query"
@@ -287,6 +321,9 @@ before(async () => {
   ({ useAgentManagement } = await import("../useAgentManagement.ts"));
   ({ UserProfilePanel } = await import(
     "../../profile/ui/UserProfilePanel.tsx"
+  ));
+  ({ ProfileSummaryView: RealSummary } = await import(
+    "../../profile/ui/UserProfilePanelSections.tsx?device-real"
   ));
   channelAgents = await import("../channelAgents.ts");
   welcomeGuide = await import("../../onboarding/welcomeGuide.ts");
@@ -339,6 +376,7 @@ function setup(rows = [blocked()], instances = []) {
   errors = [];
   toastErrors = [];
   summaryProps = null;
+  renderSummary = false;
   dialogProps = null;
   dom.window.confirm = () => true;
 }
@@ -423,6 +461,78 @@ function effects() {
       "set_persona_active",
     ].includes(name),
   );
+}
+for (const reason of [
+  "definition_hosted_elsewhere",
+  "device_home_sync_pending",
+  "device_home_sync_failed",
+  "missing",
+]) {
+  test(`profile hides Start and Delete when definition permission is ${reason}`, async () => {
+    const row =
+      reason === "missing"
+        ? rawPersona({ home: undefined, capabilities: undefined })
+        : blocked(reason);
+    setup([row], []);
+    mount("profile", row);
+    await waitFor(() => assert.ok(summaryProps));
+    assert.equal(summaryProps.canInstantiateAgent, false);
+    assert.equal(summaryProps.canDeleteAgent, false);
+    assert.equal(typeof summaryProps.handleEditPersona, "function");
+    assert.equal(typeof summaryProps.onDuplicateAgent, "function");
+    assert.equal(typeof summaryProps.onExportAgent, "function");
+  });
+}
+test("profile retains Start and Delete for an explicitly permitted definition", async () => {
+  const row = rawPersona();
+  setup([row], []);
+  mount("profile", row);
+  await waitFor(() => assert.ok(summaryProps));
+  assert.equal(summaryProps.canInstantiateAgent, true);
+  assert.equal(summaryProps.canDeleteAgent, true);
+});
+test("remote definition profile shows home state with no Start or Delete tile", async () => {
+  const row = blocked();
+  setup([row], []);
+  renderSummary = true;
+  mount("profile", row);
+  await waitFor(() =>
+    assert.match(
+      screen.getByTestId("persona-runtime-remote-persona").textContent,
+      /Laptop A/,
+    ),
+  );
+  assert.equal(screen.queryByRole("button", { name: "Start agent" }), null);
+  assert.equal(screen.queryByRole("button", { name: "Delete agent" }), null);
+});
+for (const status of ["stopped", "running"]) {
+  test(`profile instance ${status} keeps Stop separate from denied spawn permission`, async () => {
+    const row = blocked();
+    setup([row], []);
+    const surface = mount("profile", row);
+    await waitFor(() => assert.ok(summaryProps));
+    const props = {
+      ...summaryProps,
+      managedAgent: fromRawManagedAgent(
+        rawAgent({ status, can_start_on_device: false }),
+      ),
+      pubkey: PK,
+      onStickyChromeChange() {},
+      onTabChange() {},
+    };
+    cleanup();
+    render(
+      React.createElement(
+        QueryClientProvider,
+        { client: surface.client },
+        React.createElement(RealSummary, props),
+      ),
+    );
+    assert.equal(screen.queryByRole("button", { name: "Start agent" }), null);
+    assert.equal(screen.queryByRole("button", { name: "Restart agent" }), null);
+    if (status === "running")
+      assert.ok(screen.getByRole("button", { name: "Stop" }));
+  });
 }
 async function requestManagement(surface) {
   await act(async () =>

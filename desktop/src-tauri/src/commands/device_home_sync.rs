@@ -74,9 +74,17 @@ pub async fn finish_device_home_sync(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let apply_lock = state.workspace_apply_lock.clone().lock_owned().await;
-    let expected = finish_device_home_sync_inner(&session_token, &app, &state)?;
-    drop(apply_lock);
+    let state_ref = &*state;
+    let expected = finish_device_home_sync_after_archive(
+        &state,
+        |target| async move {
+            super::identity_archive::fetch_archived_pubkeys_at(state_ref, &target).await
+        },
+        |archived| {
+            finish_device_home_sync_inner_with_archive(&session_token, &app, &state, archived)
+        },
+    )
+    .await?;
     tauri::async_runtime::spawn(async move {
         let state = app.state::<AppState>();
         if let Err(error) = retry_device_home_restore_with(&state, &expected, || async {
@@ -90,6 +98,34 @@ pub async fn finish_device_home_sync(
     });
     Ok(())
 }
+
+// Network work must not hold either workspace-apply or managed-store locks.
+// Revalidate the captured relay/owner/generation before consuming its snapshot.
+async fn finish_device_home_sync_after_archive<Fut>(
+    state: &AppState,
+    fetch: impl FnOnce(super::identity_archive::RelayTarget) -> Fut,
+    finish: impl FnOnce(&[String]) -> Result<device_home_sync::SyncScope, String>,
+) -> Result<device_home_sync::SyncScope, String>
+where
+    Fut: std::future::Future<Output = Vec<String>>,
+{
+    let expected = device_home_sync::capture_scope(state)?;
+    let target = super::identity_archive::capture_relay_target(state);
+    if target.ws_url.trim().trim_end_matches('/') != expected.relay_url {
+        return Err("device_home_sync_stale_session".into());
+    }
+    let archived = fetch(target).await;
+    let _apply = state.workspace_apply_lock.clone().lock_owned().await;
+    if device_home_sync::capture_scope(state)? != expected {
+        return Err("device_home_sync_stale_session".into());
+    }
+    // The actual completion adapter checks the token under its native barrier.
+    finish(&archived)
+}
+
+#[cfg(test)]
+#[path = "device_home_sync_archive_tests.rs"]
+mod archive_tests;
 // Serialize posthistory retry with workspace applies and retain the completion's
 // verified scope. Boundary injection leaves this scheduling fence in native tests.
 async fn retry_device_home_restore_with<Fut>(
@@ -106,10 +142,19 @@ where
     }
     restore().await
 }
+#[cfg(test)]
 fn finish_device_home_sync_inner<R: tauri::Runtime>(
     session_token: &str,
     app: &AppHandle<R>,
     state: &AppState,
+) -> Result<device_home_sync::SyncScope, String> {
+    finish_device_home_sync_inner_with_archive(session_token, app, state, &[])
+}
+fn finish_device_home_sync_inner_with_archive<R: tauri::Runtime>(
+    session_token: &str,
+    app: &AppHandle<R>,
+    state: &AppState,
+    archived: &[String],
 ) -> Result<device_home_sync::SyncScope, String> {
     finish_device_home_sync_with(session_token, app, state, |scope| {
         use crate::managed_agents::{device_home_migration::*, persona_device_view::*};
@@ -122,7 +167,12 @@ fn finish_device_home_sync_inner<R: tauri::Runtime>(
             scope.clone(),
             crate::managed_agents::definition_home::EvidenceReadiness::Ready,
         )?;
-        migrate_device_homes_locked(app, &context)
+        migrate_device_homes_locked_with_archive(
+            app,
+            &context,
+            archived,
+            crate::managed_agents::storage::resolve_agent_key_readonly,
+        )
     })
 }
 // Boundary injection preserves the actual completion adapter/barrier in native tests.

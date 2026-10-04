@@ -59,6 +59,102 @@ fn read(dir: &Path) -> Vec<ManagedAgentRecord> {
     read_policy_records(&dir.join("managed-agents.json")).unwrap()
 }
 #[test]
+fn archived_duplicate_does_not_block_verified_legacy_local_claim() {
+    let dir = tempfile::tempdir().unwrap();
+    let (rs, key) = records();
+    let duplicate = nostr::Keys::generate().public_key().to_hex();
+    let mut c = context(EvidenceReadiness::Ready);
+    c.evidence = vec![
+        super::super::definition_home::RemoteInstanceEvidence {
+            pubkey: rs[1].pubkey.clone(),
+            persona_id: "one".into(),
+        },
+        super::super::definition_home::RemoteInstanceEvidence {
+            pubkey: duplicate.clone(),
+            persona_id: "one".into(),
+        },
+    ];
+    write(dir.path(), &rs);
+    assert!(
+        migrate_device_homes_in_dir_with_archive(dir.path(), &c, &[duplicate], |_| Ok(Some(
+            key.clone()
+        )),)
+        .unwrap()
+    );
+    let result = read(dir.path());
+    assert_eq!(result[1].pubkey, rs[1].pubkey, "keep the existing identity");
+    assert_eq!(
+        result[1].device_host_binding.as_deref(),
+        Some(c.proof.binding())
+    );
+    assert_eq!(
+        result[0].origin_device_id.as_deref(),
+        Some(c.device.device_id.as_str())
+    );
+    let home = c.project(result[0].to_definition_view().unwrap(), &result);
+    assert_eq!(
+        home.home.unwrap().kind,
+        super::super::definition_home::HomeKind::Local
+    );
+    assert!(home.capabilities.can_create_instance);
+}
+
+#[test]
+fn archive_does_not_replace_local_key_or_host_authority() {
+    for scenario in [
+        "active-duplicate",
+        "unavailable-archive",
+        "missing-key",
+        "wrong-key",
+        "foreign-binding",
+        "archived-local",
+        "pending",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut rs, key) = records();
+        let duplicate = nostr::Keys::generate().public_key().to_hex();
+        let mut c = context(EvidenceReadiness::Ready);
+        c.evidence = vec![super::super::definition_home::RemoteInstanceEvidence {
+            pubkey: duplicate.clone(),
+            persona_id: "one".into(),
+        }];
+        let archived = match scenario {
+            "active-duplicate" | "unavailable-archive" => vec![],
+            "archived-local" => vec![duplicate, rs[1].pubkey.clone()],
+            _ => vec![duplicate],
+        };
+        if scenario == "foreign-binding" {
+            rs[1].device_host_binding = Some("copied-marker".into());
+        }
+        if scenario == "pending" {
+            c.readiness = EvidenceReadiness::Pending;
+        }
+        write(dir.path(), &rs);
+        let before = std::fs::read(dir.path().join("managed-agents.json")).unwrap();
+        let result =
+            migrate_device_homes_in_dir_with_archive(
+                dir.path(),
+                &c,
+                &archived,
+                |_| match scenario {
+                    "missing-key" => Ok(None),
+                    "wrong-key" => Ok(Some(nostr::Keys::generate())),
+                    _ => Ok(Some(key.clone())),
+                },
+            );
+        if scenario == "wrong-key" {
+            assert!(result.is_err());
+        } else {
+            assert!(!result.unwrap(), "{scenario}");
+        }
+        assert_eq!(
+            before,
+            std::fs::read(dir.path().join("managed-agents.json")).unwrap(),
+            "{scenario}"
+        );
+    }
+}
+#[test]
 fn legacy_claim_requires_available_key() {
     let dir = tempfile::tempdir().unwrap();
     let (rs, key) = records();

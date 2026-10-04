@@ -89,6 +89,12 @@ UUIDs and labels. Wait for successful scoped owner/relay history hydration;
    the device checkbox left off; verify definition-first creation and that its
    linked instance uses the recorded definition ID. Confirm the setting is
    creation-only and Edit cannot change it.
+   Open the definition profile on B: its home state matches the directory and
+   Start/Delete remain absent while Edit/Duplicate/Export remain available.
+   For legacy data with a previously archived duplicate, verify A claims its
+   existing local key after complete history plus a relay-signed archive read;
+   the public key stays unchanged. An active duplicate or unavailable/invalid
+   archive must still block automatic claim. An archived local key is not claimed.
 2. **Repeated B actions.** Restart B three times. Try Welcome/onboarding,
    profile Start, team activation/channel batch and direct relevant native
    command paths. Record refused/skipped IDs and synchronization versus remote

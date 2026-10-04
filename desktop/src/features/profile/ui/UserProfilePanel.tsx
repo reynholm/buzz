@@ -332,6 +332,8 @@ export function UserProfilePanel({
     !pubkey &&
     isOwner === true &&
     resolvedPersona !== undefined &&
+    resolvedPersona.home !== undefined &&
+    resolvedPersona.capabilities?.canCreateInstance === true &&
     managedAgent === undefined;
   const isAgentActionPending =
     createAgentMutation.isPending ||
@@ -716,11 +718,15 @@ export function UserProfilePanel({
   );
   const canManagePersona = isOwner === true && resolvedPersona !== undefined;
   const cardMint = useCardMint(resolvedPersona, managedAgent);
-  const canDeletePersona = canManagePersona && !resolvedPersona?.sourceTeam;
+  const canDeletePersona =
+    canManagePersona &&
+    !resolvedPersona?.sourceTeam &&
+    resolvedPersona?.home !== undefined &&
+    resolvedPersona.capabilities?.canDeleteDefinition === true;
   const canDeleteProfileAgent =
     isBot &&
     ((viewerIsOwner && managedAgent !== undefined) ||
-      (canInstantiateAgent && canDeletePersona));
+      (!pubkey && canDeletePersona));
   const handleDeleteProfileAgent =
     viewerIsOwner && managedAgent ? handleDeleteAgent : handleDeletePersona;
   const archiveActions = useIdentityArchive(effectivePubkey);
@@ -822,6 +828,7 @@ export function UserProfilePanel({
           instanceBuckets={instanceBuckets}
           activityAgent={activityAgent}
           managedAgent={managedAgent}
+          persona={resolvedPersona}
           agentInfoFields={agentInfoFields}
           archiveActions={archiveActions}
           agentSettingsFields={agentSettingsFields}

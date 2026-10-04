@@ -2,6 +2,7 @@ import * as React from "react";
 import { ChevronDown, ChevronUp, Pencil } from "lucide-react";
 
 import { OtherSetupAgentMarker } from "@/features/agents/ui/OtherSetupAgentMarker";
+import { PersonaRemoteRuntime } from "@/features/agents/ui/PersonaRemoteRuntime";
 import { useIsOtherSetupAgent } from "@/features/agents/useKnownAgentPubkeys";
 import { useAgentWorking } from "@/features/agents/agentWorkingSignal";
 import { agentPresenceStartBlockReason } from "@/features/agents/lib/useAgentAvailability";
@@ -43,7 +44,11 @@ import {
 } from "@/features/profile/ui/UserProfilePrimaryActions";
 import { StatusEmoji } from "@/features/user-status/ui/StatusEmoji";
 import { BotIdenticon } from "@/features/messages/ui/BotIdenticon";
-import type { ManagedAgent, RelayAgent } from "@/shared/api/types";
+import type {
+  AgentPersona,
+  ManagedAgent,
+  RelayAgent,
+} from "@/shared/api/types";
 import type {
   ProfileChannelLink,
   ProfilePanelTab,
@@ -92,6 +97,7 @@ export type ProfileSummaryViewProps = {
   isSelf: boolean;
   instanceBuckets: { live: ManagedAgent[]; archived: ManagedAgent[] };
   managedAgent: ManagedAgent | undefined;
+  persona?: AgentPersona;
   agentInfoFields: ProfileField[];
   archiveActions: IdentityArchiveActions;
   agentSettingsFields: ProfileField[];
@@ -168,6 +174,7 @@ export function ProfileSummaryView({
   isSelf,
   instanceBuckets,
   managedAgent,
+  persona,
   agentInfoFields,
   archiveActions,
   agentSettingsFields,
@@ -410,6 +417,11 @@ export function ProfileSummaryView({
         />
       </div>
 
+      {persona &&
+      managedAgent?.canStartOnDevice !== true &&
+      persona.capabilities?.canCreateInstance !== true ? (
+        <PersonaRemoteRuntime persona={persona} />
+      ) : null}
       {canInstantiateAgent ? (
         <ProfilePersonaPrimaryActions
           actionGroupRef={setPrimaryActionsElement}
@@ -434,7 +446,10 @@ export function ProfileSummaryView({
               : undefined
           }
           agentActionLabel={
-            isOwner === true && managedAgent
+            isOwner === true &&
+            managedAgent &&
+            (isManagedAgentActive(managedAgent) ||
+              managedAgent.canStartOnDevice === true)
               ? getManagedAgentPrimaryActionLabel(managedAgent)
               : undefined
           }
@@ -443,13 +458,17 @@ export function ProfileSummaryView({
             managedAgent?.status === "deployed"
           }
           onAgentPrimaryAction={
-            isOwner === true && managedAgent
+            isOwner === true &&
+            managedAgent &&
+            (isManagedAgentActive(managedAgent) ||
+              managedAgent.canStartOnDevice === true)
               ? handleAgentPrimaryAction
               : undefined
           }
           onAgentRestart={
             isOwner === true &&
             managedAgent?.backend.type === "local" &&
+            managedAgent.canStartOnDevice === true &&
             (managedAgent.status === "running" ||
               managedAgent.status === "deployed")
               ? handleAgentRestart
