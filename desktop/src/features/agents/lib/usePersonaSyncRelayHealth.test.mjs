@@ -17,7 +17,9 @@ function harness(
   t,
   {
     reply = () => "EOSE",
+    begin = (session) => session,
     hydrate = async () => ({ coveredEventIds: [] }),
+    reconcile = async () => {},
   } = {},
 ) {
   const oldWindow = globalThis.window;
@@ -45,13 +47,15 @@ function harness(
       async invoke(command, args) {
         calls.push({ command, args });
         if (command === "begin_device_home_sync")
-          return {
+          return begin({
             token: `health-${++sequence}`,
             ownerPubkey: "owner",
             relayUrl: "wss://health.invalid",
             workspaceGeneration: 1,
-          };
+          });
         if (command === "hydrate_device_home_history") return hydrate(args);
+        if (command === "reconcile_inbound_persona_event")
+          return reconcile(args);
         if (command === "plugin:websocket|send") {
           const frame = JSON.parse(args.message.data);
           if (frame[0] === "REQ") {
@@ -181,8 +185,8 @@ test("unconfirmed timeout cannot hydrate or finish and confirmed retry starts a 
   const h = harness(t, { reply: (attempt) => (attempt === 1 ? null : "EOSE") });
   await flush();
   assert.equal(h.count("finish_device_home_sync"), 0);
-  await h.advance(250);
-  assert.equal(h.count("invalidate_device_home_sync"), 1);
+  await h.advance(5000);
+  assert.equal(h.count("invalidate_device_home_sync"), 0);
   assert.equal(h.count("hydrate_device_home_history"), 0);
   assert.equal(h.count("finish_device_home_sync"), 0);
   await h.advance(500);
@@ -275,4 +279,265 @@ test("rate-limited CLOSED retires readiness and preserves shared admission coold
   assert.equal(h.requests.length, 2);
   assert.equal(h.count("hydrate_device_home_history"), 2);
   assert.equal(h.count("finish_device_home_sync"), 2);
+});
+
+function ownerEvent(id, kind = 30177) {
+  return {
+    id,
+    kind,
+    pubkey: "owner",
+    created_at: 1,
+    tags: [["d", id]],
+    content: "{}",
+    sig: "fixture",
+  };
+}
+
+test("300ms EOSE hydrates exhaustive history and keeps every owner live event kind", async (t) => {
+  const h = harness(t, { reply: () => null });
+  await flush();
+  await h.advance(300);
+  await h.deliver(["EOSE", h.requests[0]]);
+  await flush();
+  assert.equal(h.count("hydrate_device_home_history"), 1);
+  assert.equal(h.count("finish_device_home_sync"), 1);
+  for (const kind of [30175, 30176, 30177, 30178, 5]) {
+    await h.deliver(["EVENT", h.requests[0], ownerEvent(`live-${kind}`, kind)]);
+  }
+  await h.advance(16);
+  assert.equal(h.count("reconcile_inbound_persona_event"), 5);
+  assert.equal(relayClient.subscriptions.size, 1);
+});
+
+test("exhausted confirmation burst retains Pending live delivery and late EOSE recovers exhaustive history", async (t) => {
+  let releaseHistory;
+  const h = harness(t, {
+    reply: () => null,
+    hydrate: () =>
+      new Promise((resolve) => {
+        releaseHistory = resolve;
+      }),
+  });
+  await flush();
+  await h.advance(5000);
+  await h.advance(500);
+  await h.advance(5000);
+  await h.advance(1000);
+  await h.advance(5000);
+  assert.equal(
+    h.requests.length,
+    3,
+    "readiness retries have a bounded initial burst",
+  );
+  assert.equal(
+    relayClient.subscriptions.size,
+    1,
+    "fallback must retain live delivery during cooldown",
+  );
+  assert.equal(h.count("finish_device_home_sync"), 0);
+  await h.deliver(["EVENT", h.requests[2], ownerEvent("pending-runtime")]);
+  await h.deliver(["EVENT", h.requests[2], ownerEvent("pending-team", 30176)]);
+  await h.advance(16);
+  const applied = h.calls.filter(
+    (call) => call.command === "reconcile_inbound_persona_event",
+  );
+  assert.deepEqual(
+    applied.map((call) => JSON.parse(call.args.eventJson).id),
+    ["pending-runtime"],
+  );
+  await h.deliver(["EOSE", h.requests[2]]);
+  await flush();
+  assert.equal(h.count("hydrate_device_home_history"), 1);
+  assert.equal(
+    h.count("finish_device_home_sync"),
+    0,
+    "EOSE alone cannot replace successful full history",
+  );
+  await h.deliver(["EVENT", h.requests[2], ownerEvent("buffered-team", 30176)]);
+  await h.advance(16);
+  releaseHistory({ coveredEventIds: [] });
+  await flush();
+  assert.equal(h.count("finish_device_home_sync"), 1);
+  assert.ok(
+    h.calls.some(
+      (call) =>
+        call.command === "reconcile_inbound_persona_event" &&
+        JSON.parse(call.args.eventJson).id === "buffered-team",
+    ),
+  );
+  await h.advance(60000);
+  assert.equal(
+    h.requests.length,
+    3,
+    "successful recovery cancels cooldown retry",
+  );
+});
+
+test("confirmation exhaustion keeps a single live subscription until bounded cooldown recovery", async (t) => {
+  const h = harness(t, { reply: (attempt) => (attempt > 3 ? "EOSE" : null) });
+  await flush();
+  await h.advance(16500);
+  assert.equal(h.requests.length, 3);
+  assert.equal(relayClient.subscriptions.size, 1);
+  assert.equal(h.count("finish_device_home_sync"), 0);
+  await h.advance(30000);
+  assert.equal(h.requests.length, 4);
+  assert.equal(h.count("hydrate_device_home_history"), 1);
+  assert.equal(h.count("finish_device_home_sync"), 1);
+  assert.equal(relayClient.subscriptions.size, 1);
+});
+
+test("late EOSE recovery survives a failed native session renewal without abandoning live delivery", async (t) => {
+  let hydrateCalls = 0;
+  const h = harness(t, {
+    reply: (attempt) => (attempt === 1 ? null : "EOSE"),
+    begin: (session) => {
+      if (session.token === "health-2")
+        throw new Error("retention temporarily unavailable");
+      return session;
+    },
+    hydrate: async () => {
+      if (++hydrateCalls === 1)
+        throw new Error("history transport unavailable");
+      return { coveredEventIds: [] };
+    },
+  });
+  await flush();
+  await h.advance(5000);
+  await h.deliver(["EOSE", h.requests[0]]);
+  await flush();
+  await h.advance(500);
+  assert.equal(h.count("finish_device_home_sync"), 0);
+  assert.equal(relayClient.subscriptions.size, 1);
+  await h.advance(30000);
+  assert.equal(h.count("finish_device_home_sync"), 1);
+  assert.equal(relayClient.subscriptions.size, 1);
+});
+
+test("late EOSE keeps Pending after exhausted history attempts and recovers through cooldown", async (t) => {
+  let hydrateCalls = 0;
+  const h = harness(t, {
+    reply: (attempt) => (attempt === 1 ? null : "EOSE"),
+    hydrate: async () => {
+      if (++hydrateCalls <= 3) throw new Error("history transport unavailable");
+      return { coveredEventIds: [] };
+    },
+  });
+  await flush();
+  await h.advance(5000);
+  await h.deliver(["EOSE", h.requests[0]]);
+  await flush();
+  await h.advance(1500);
+  assert.equal(h.count("hydrate_device_home_history"), 3);
+  assert.equal(h.count("finish_device_home_sync"), 0);
+  assert.equal(relayClient.subscriptions.size, 1);
+  await h.advance(30000);
+  assert.equal(h.count("finish_device_home_sync"), 1);
+  assert.equal(relayClient.subscriptions.size, 1);
+});
+
+test("fresh backend token after late EOSE clears only the retired token's failed apply barrier", async (t) => {
+  let hydrated = 0;
+  const h = harness(t, {
+    reply: () => null,
+    reconcile: async () => {
+      throw new Error("temporary disk error");
+    },
+    hydrate: async () => {
+      if (++hydrated === 1)
+        throw new Error("device_home_sync_session_not_pending");
+      return { coveredEventIds: [] };
+    },
+  });
+  await flush();
+  await h.advance(5000);
+  await h.deliver(["EVENT", h.requests[0], ownerEvent("pending-runtime")]);
+  await h.advance(16);
+  await h.deliver(["EOSE", h.requests[0]]);
+  await flush();
+  await h.advance(500);
+  assert.equal(h.count("hydrate_device_home_history"), 2);
+  assert.equal(h.count("begin_device_home_sync"), 2);
+  assert.deepEqual(
+    h.calls
+      .filter((call) => call.command === "finish_device_home_sync")
+      .map((call) => call.args.sessionToken),
+    ["health-2"],
+  );
+  await h.advance(60000);
+  assert.equal(h.count("finish_device_home_sync"), 1);
+});
+
+test("late EOSE history renewal drains outstanding old-token applies before resetting the barrier", async (t) => {
+  let rejectApply;
+  let hydrated = 0;
+  const h = harness(t, {
+    reply: () => null,
+    reconcile: () =>
+      new Promise((_resolve, reject) => {
+        rejectApply = reject;
+      }),
+    hydrate: async () => {
+      if (++hydrated === 1) throw new Error("history transport unavailable");
+      return { coveredEventIds: [] };
+    },
+  });
+  await flush();
+  await h.advance(5000);
+  await h.deliver(["EVENT", h.requests[0], ownerEvent("pending-runtime")]);
+  await h.advance(16);
+  await h.deliver(["EOSE", h.requests[0]]);
+  await flush();
+  await h.advance(500);
+  assert.equal(
+    h.count("begin_device_home_sync"),
+    1,
+    "old token must keep owning its in-flight apply",
+  );
+  rejectApply(new Error("old apply failed"));
+  await flush();
+  assert.equal(h.count("begin_device_home_sync"), 2);
+  assert.deepEqual(
+    h.calls
+      .filter((call) => call.command === "finish_device_home_sync")
+      .map((call) => call.args.sessionToken),
+    ["health-2"],
+  );
+});
+
+test("failed apply in the current hydrated token refuses Ready and retains bounded fresh-session recovery", async (t) => {
+  let releaseHistory;
+  const h = harness(t, {
+    hydrate: (args) =>
+      args.sessionToken === "health-1"
+        ? new Promise((resolve) => {
+            releaseHistory = resolve;
+          })
+        : Promise.resolve({ coveredEventIds: [] }),
+    reconcile: async () => {
+      throw new Error("apply still unavailable");
+    },
+  });
+  await flush();
+  await h.deliver(["EVENT", h.requests[0], ownerEvent("buffered-runtime")]);
+  await h.advance(16);
+  releaseHistory({ coveredEventIds: [] });
+  await flush();
+  assert.equal(
+    h.count("finish_device_home_sync"),
+    0,
+    "successful history cannot erase a current-token apply failure",
+  );
+  await h.advance(30000);
+  assert.equal(
+    h.requests.length,
+    2,
+    "failed token must retain a bounded recovery affordance",
+  );
+  assert.deepEqual(
+    h.calls
+      .filter((call) => call.command === "finish_device_home_sync")
+      .map((call) => call.args.sessionToken),
+    ["health-2"],
+  );
 });

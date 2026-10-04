@@ -163,29 +163,6 @@ pub(crate) fn provider_phase_with<R: tauri::Runtime, T>(
 ) -> Result<T, String> {
     runtime_phase_locked_with(app, state, pubkey, expected, context, effect)
 }
-/// Access-policy inbound seam; receiving an owner head remains unrestricted.
-pub(crate) fn inbound_refresh_phase_with<R: tauri::Runtime, T>(
-    app: &tauri::AppHandle<R>,
-    state: &crate::app_state::AppState,
-    pubkey: &str,
-    expected: Option<&SyncScope>,
-    context: impl FnOnce(
-        &tauri::AppHandle<R>,
-        &crate::app_state::AppState,
-    ) -> Result<DevicePolicyContext, String>,
-    effect: impl FnOnce(ManagedAgentRecord, Vec<AgentDefinition>, SyncScope) -> Result<T, String>,
-) -> Result<Option<T>, String> {
-    match runtime_phase_locked_with(app, state, pubkey, expected, context, |r, d, s| {
-        Ok(effect(r, d, s))
-    }) {
-        Ok(result) => result.map(Some),
-        Err(error) => {
-            eprintln!("buzz-desktop: inbound runtime refresh skipped for {pubkey}: {error}");
-            Ok(None)
-        }
-    }
-}
-
 /// Keep untouched copied records and inline secrets byte-equivalent during a target update.
 pub(crate) fn save_runtime_record<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,

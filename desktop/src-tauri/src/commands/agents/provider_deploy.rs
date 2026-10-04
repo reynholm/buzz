@@ -29,8 +29,9 @@ pub(in crate::commands) struct ProviderStartScope<'a> {
 /// The protocol has no explicit `undeploy` operation or acknowledgement that an
 /// existing process stopped, so a successful redeploy delegates access-policy
 /// revocation semantics to the provider implementation (deferred to v2).
-/// Returns Ok(()) on success, Err(message) on failure. Either way the record is
-/// updated and saved before returning.
+/// Returns Ok(()) on success, Err(message) on failure. Provider results are
+/// saved only while the original scope, target incarnation and configuration
+/// remain current; a replaced target is left untouched.
 ///
 /// Callers with a captured tenant scope (Projects agent starts) pass
 /// relay / owner expectations and an original runtime fence; they are asserted against
@@ -96,64 +97,127 @@ pub(crate) async fn deploy_to_provider_scoped(
     let invoke_app = app.clone();
     let target = pubkey.to_string();
     let invoke_fence = fence.clone();
-    let (deploy_result, deployed_payload) = tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         use tauri::Manager;
         let state = invoke_app.state::<AppState>();
+        invoke_provider_with(
+            &invoke_app,
+            &state,
+            &target,
+            &invoke_fence,
+            load_device_policy_context,
+            |app, state, record| {
+                let mut payload = build_deploy_payload(app, state, record)?;
+                apply_replay_floor(&mut payload, replay_floor_unix);
+                Ok((resolve_deploy_binary(record)?, payload))
+            },
+            provider_deploy,
+        )
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+}
+
+fn resolve_deploy_binary(
+    record: &crate::managed_agents::ManagedAgentRecord,
+) -> Result<std::path::PathBuf, String> {
+    let BackendKind::Provider { id, .. } = &record.backend else {
+        return Err(format!("agent {} is not provider-backed", record.pubkey));
+    };
+    record
+        .provider_binary_path
+        .as_deref()
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.exists())
+        .map(|p| p.canonicalize().unwrap_or(p))
+        .filter(|canonical| {
+            discover_provider_candidates()
+                .iter()
+                .any(|(candidate_id, path)| {
+                    candidate_id == id && path.canonicalize().ok().as_ref() == Some(canonical)
+                })
+        })
+        .map_or_else(|| resolve_provider_binary(id), Ok)
+}
+
+/// Owning provider invocation/persistence seam. The caller serializes deployments
+/// for this agent. Capture exact authorized inputs under a short store lock,
+/// invoke outside it, then reauthorize and reject obsolete results before saving.
+/// Native payload, binary and process boundaries are injectable.
+fn invoke_provider_with<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    state: &AppState,
+    pubkey: &str,
+    fence: &crate::managed_agents::device_runtime::RuntimeFence,
+    mut context: impl FnMut(
+        &AppHandle<R>,
+        &AppState,
+    ) -> Result<
+        crate::managed_agents::persona_device_view::DevicePolicyContext,
+        String,
+    >,
+    mut prepare: impl FnMut(
+        &AppHandle<R>,
+        &AppState,
+        &crate::managed_agents::ManagedAgentRecord,
+    ) -> Result<(std::path::PathBuf, serde_json::Value), String>,
+    invoke: impl FnOnce(
+        &std::path::Path,
+        &serde_json::Value,
+        &serde_json::Value,
+    ) -> Result<String, String>,
+) -> Result<(), String> {
+    use crate::managed_agents::device_runtime;
+    let (deployed_record, binary, deployed_payload, config) = {
         let _store = state
             .managed_agents_store_lock
             .lock()
             .map_err(|e| e.to_string())?;
-        device_runtime::assert_runtime_fence(&state, &invoke_fence)?;
+        device_runtime::assert_runtime_fence(state, fence)?;
         device_runtime::provider_phase_with(
-            &invoke_app,
-            &state,
-            &target,
-            Some(&invoke_fence.scope),
-            load_device_policy_context,
+            app,
+            state,
+            pubkey,
+            Some(&fence.scope),
+            &mut context,
             |record, _, scope| {
-                let (id, config) = match &record.backend {
-                    BackendKind::Provider { id, config } => (id, config),
-                    BackendKind::Local => {
-                        return Err(format!("agent {target} is not provider-backed"))
-                    }
+                let BackendKind::Provider { config, .. } = &record.backend else {
+                    return Err(format!("agent {pubkey} is not provider-backed"));
                 };
-                let mut payload = build_deploy_payload(&invoke_app, &state, &record)?;
+                let (binary, payload) = prepare(app, state, &record)?;
                 assert_payload_scope(&payload, Some(&scope.relay_url), Some(&scope.owner_pubkey))?;
-                apply_replay_floor(&mut payload, replay_floor_unix);
-                let binary = record
-                    .provider_binary_path
-                    .as_deref()
-                    .map(std::path::PathBuf::from)
-                    .filter(|p| p.exists())
-                    .map(|p| p.canonicalize().unwrap_or(p))
-                    .filter(|canonical| {
-                        discover_provider_candidates()
-                            .iter()
-                            .any(|(candidate_id, path)| {
-                                candidate_id == id
-                                    && path.canonicalize().ok().as_ref() == Some(canonical)
-                            })
-                    })
-                    .map_or_else(|| resolve_provider_binary(id), Ok)?;
-                let result = provider_deploy(&binary, &payload, config);
-                Ok((result, payload))
+                device_runtime::assert_runtime_fence(state, fence)?;
+                let config = config.clone();
+                Ok((record, binary, payload, config))
             },
-        )
-    })
-    .await
-    .map_err(|e| format!("spawn_blocking failed: {e}"))??;
+        )?
+    };
+    let deploy_result = invoke(&binary, &deployed_payload, &config);
     let _store = state
         .managed_agents_store_lock
         .lock()
         .map_err(|e| e.to_string())?;
-    device_runtime::assert_runtime_fence(state, &fence)?;
+    device_runtime::assert_runtime_fence(state, fence)?;
     device_runtime::provider_phase_with(
         app,
         state,
         pubkey,
         Some(&fence.scope),
-        load_device_policy_context,
+        context,
         |mut record, _, _| {
+            // Full structural equality includes created_at (incarnation),
+            // backend/config, host binding and policy. A matching pubkey alone
+            // must never let an old deploy update a deleted/recreated instance.
+            if record != deployed_record {
+                return Err("provider_deploy_stale_target".into());
+            }
+            // Effective configuration also depends on definitions, teams and
+            // global defaults, which can change without editing this record.
+            let (current_binary, current_payload) = prepare(app, state, &record)?;
+            if current_binary != binary || current_payload != deployed_payload {
+                return Err("provider_deploy_stale_target".into());
+            }
+            device_runtime::assert_runtime_fence(state, fence)?;
             let result = apply_deploy_result(&mut record, deploy_result, &deployed_payload);
             device_runtime::save_runtime_record(app, &record)?;
             result
@@ -291,7 +355,7 @@ fn apply_deploy_result(
 mod tests {
     use super::*;
 
-    fn record() -> crate::managed_agents::ManagedAgentRecord {
+    pub(super) fn record() -> crate::managed_agents::ManagedAgentRecord {
         serde_json::from_value(serde_json::json!({
             "pubkey": "agent", "name": "Agent", "relay_url": "", "acp_command": "",
             "agent_command": "", "agent_args": [], "mcp_command": "",
@@ -495,3 +559,7 @@ mod tests {
         assert_eq!(record.last_error.as_deref(), Some("provider unavailable"));
     }
 }
+
+#[cfg(test)]
+#[path = "provider_deploy_tests.rs"]
+mod invocation_tests;

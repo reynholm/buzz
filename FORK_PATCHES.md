@@ -863,7 +863,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/personas/inbound.rs`
 
-Token-scoped live apply leases fence async reconciliation and record failures; Task6: Accept legitimate remote owner heads without local author proof; independently skip copied runtime refresh and secret effects while preserving hydration retry semantics; Task7: Merge optional device metadata only after accepted owner head; preserve proven local lineage; reject wrong author; apply accepted tombstones as receiver operations
+Token-scoped live apply leases fence async reconciliation and record failures; Task6: Accept legitimate remote owner heads without local author proof; independently skip copied runtime refresh and secret effects while preserving hydration retry semantics; Task7: Merge optional device metadata only after accepted owner head; preserve proven local lineage; reject wrong author; apply accepted tombstones as receiver operations; R1 stop Desktop-owned runtimes before accepting changed ACL, leave stop-failure head retryable, keep provider pending and guarded spawn
 
 New module: `false`.
 
@@ -878,35 +878,30 @@ New module: `false`.
             &state,
             refresh,
         )?`; behavior test `commands::personas::inbound::device_sync_tests::signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::inbound::device_sync_tests::signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation -- --exact`
-- Invocation: `desktop/src-tauri/src/commands/personas/inbound.rs` → `inbound_refresh_phase_with`; exact call `crate::managed_agents::device_runtime::inbound_refresh_phase_with(
-                    &app,
-                    &state,
-                    &d_tag,
-                    None,
-                    crate::managed_agents::persona_device_view::load_device_policy_context,`; behavior test `managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/personas/inbound.rs` → `start_local_agent_pairs_scoped`; exact call `super::super::agents::runtime_start::start_local_agent_pairs_scoped(
                 &app,
                 &state,
                 &pubkey,
                 &relay_urls,
-                Some(&fence),`; behavior test `managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects -- --exact`
+                Some(&fence),`; behavior test `commands::personas::inbound::access_policy_retry_tests`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
 - Invocation: `desktop/src-tauri/src/commands/personas/inbound.rs` → `deploy_to_provider_scoped`; exact call `super::super::agents::provider_deploy::deploy_to_provider_scoped(&app, &state, &pubkey,
                 super::super::agents::provider_deploy::ProviderStartScope { relay: Some(&fence.scope.relay_url), owner: Some(&fence.scope.owner_pubkey), replay_floor: None, fence: Some(&fence) })
             .await
             .map_err(|error| {
                 format!(
-                    "Inbound agent access was saved, but its provider deployment failed to refresh with the new policy: {error}"`; behavior test `managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects -- --exact`
+                    "Inbound agent access was saved, but its provider deployment failed to refresh with the new policy: {error}"`; behavior test `commands::personas::inbound::access_policy_retry_tests`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
 - Invocation: `desktop/src-tauri/src/commands/personas/inbound.rs` → `merge_inbound_device_metadata`; exact call `crate::managed_agents::device_inbound::merge_inbound_device_metadata(
                 local,
                 &mut inbound,
                 proven,
             );`; behavior test `commands::personas::inbound::device_metadata_tests`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib commands::personas::inbound::device_metadata_tests`
+- Invocation: `desktop/src-tauri/src/commands/personas/inbound.rs` → `stop`; exact call `stop(&app, record, &mut runtimes)?;`; behavior test `commands::personas::inbound::access_policy_retry_tests`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 - Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib device_workflow_tests`
 
 ## `desktop/src/features/agents/lib/usePersonaSync.ts`
 
-Live-first backend hydration, rejection-aware drain, bounded fresh-session retry and connection invalidation
+Live-first backend hydration, rejection-aware drain, bounded fresh-session retry and connection invalidation; R2 confirmed live deadline, degraded delivery and bounded recovery with late-EOSE hydration
 
 New module: `false`.
 
@@ -1393,6 +1388,7 @@ New module: `true`.
 - Required symbol: `load_existing_host_proof`
 - Required symbol: `recover_home_operations_locked`
 - Required symbol: `commit_new_pairs_locked`
+- Required symbol: `superseded_created_at`
 - Invocation: `desktop/src-tauri/src/commands/agents.rs` → `commit_home_claim_locked`; exact call `crate::managed_agents::device_home_operations::commit_home_claim_locked(`; behavior test `managed_agents::device_home_operations::tests::released_definition_is_claimed_without_restart`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_home_operations::tests::released_definition_is_claimed_without_restart -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `save_journal`; exact call `save_journal(dir, &operations)?;
     save(&raw)?;`; behavior test `managed_agents::device_home_operations::tests::failed_claim_save_never_publishes_uncommitted_intent`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_home_operations::tests::failed_claim_save_never_publishes_uncommitted_intent -- --exact`
@@ -1405,6 +1401,7 @@ New module: `true`.
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `enqueue_home_events_in_transaction`; exact call `enqueue_home_events_in_transaction(&tx, operation)?;`; behavior test `intent_save_and_each_sql_enqueue_failure_leave_no_partial_batch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace intent_save_and_each_sql_enqueue_failure_leave_no_partial_batch`
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `apply_delete`; exact call `delete::apply_delete(&mut raw, op, Some(&mut verify_binding))?`; behavior test `new_instance_cancels_obsolete_release`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace new_instance_cancels_obsolete_release`
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `prepare_label_retries`; exact call `label::prepare_label_retries(`; behavior test `premetadata_label_worklist_resolves_when_original_database_becomes_known`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace premetadata_label_worklist_resolves_when_original_database_becomes_known`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `coalesce_label_worklists`; exact call `label::coalesce_label_worklists(&mut operations, label)?;`; behavior test `managed_agents::device_home_operations::label_tests`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 - Verify: `just desktop-tauri-clippy`
 
@@ -1544,24 +1541,31 @@ New module: `true`.
 
 ## `desktop/src-tauri/src/commands/agents/provider_deploy.rs`
 
-Serialized synchronous provider invocation under authorized store lock, fresh payload identity, original runtime fence and target-only result writeback
+Serialized synchronous provider invocation under authorized store lock, fresh payload identity, original runtime fence and target-only result writeback; R3 external deploy outside global store lock, exact incarnation/effective configuration and scope writeback fence
 
 New module: `false`.
 
 - Required symbol: `struct ProviderStartScope`
 - Required symbol: `fn deploy_to_provider_scoped`
 - Invocation: `desktop/src-tauri/src/commands/agents/provider_deploy.rs` → `provider_phase_with`; exact call `device_runtime::provider_phase_with(
-            &invoke_app,
-            &state,
-            &target,
-            Some(&invoke_fence.scope),
-            load_device_policy_context,`; behavior test `managed_agents::device_runtime_tests::owning_provider_refuses_deploy_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_provider_refuses_deploy_effects -- --exact`
+            app,
+            state,
+            pubkey,
+            Some(&fence.scope),
+            &mut context,`; behavior test `commands::agents::provider_deploy`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
 - Invocation: `desktop/src-tauri/src/commands/agents/provider_deploy.rs` → `provider_phase_with`; exact call `device_runtime::provider_phase_with(
         app,
         state,
         pubkey,
         Some(&fence.scope),
-        load_device_policy_context,`; behavior test `managed_agents::device_runtime_tests::owning_provider_refuses_deploy_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_provider_refuses_deploy_effects -- --exact`
+        context,`; behavior test `commands::agents::provider_deploy`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
+- Invocation: `desktop/src-tauri/src/commands/agents/provider_deploy.rs` → `invoke_provider_with`; exact call `invoke_provider_with(
+            &invoke_app,
+            &state,
+            &target,
+            &invoke_fence,`; behavior test `delayed_provider_allows_independent_store_action`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
+- Invocation: `desktop/src-tauri/src/commands/agents/provider_deploy.rs` → `assert_runtime_fence`; exact call `assert_payload_scope(&payload, Some(&scope.relay_url), Some(&scope.owner_pubkey))?;
+                device_runtime::assert_runtime_fence(state, fence)?;`; behavior test `workspace_replacement_during_prepare_refuses_external_deploy`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 - Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace --features mesh-llm`
 - Verify: `just desktop-tauri-clippy`
@@ -1871,11 +1875,14 @@ New module: `true`.
 
 ## `desktop/src-tauri/src/managed_agents/device_home_operations/label.rs`
 
-Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage
+Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage; R5 coalesce all outstanding scope label worklists to latest intent with monotonic signed floors
 
 New module: `true`.
 
+- Required symbol: `fn coalesce_label_worklists`
 - Invocation: `desktop/src-tauri/src/commands/device_identity.rs` → `set_device_label_locked`; exact call `crate::managed_agents::device_home_operations::label::set_device_label_locked(`; behavior test `native_label_adapter_reports_queued_until_existing_event_sync_acknowledges`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace native_label_adapter_reports_queued_until_existing_event_sync_acknowledges`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations/label.rs` → `coalesce_label_worklists`; exact call `coalesce_label_worklists(&mut ops, label)?;`; behavior test `managed_agents::device_home_operations::label_tests`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations/label.rs` → `coalesce_label_worklists`; exact call `coalesce_label_worklists(&mut ops, &label)?;`; behavior test `managed_agents::device_home_operations::label_tests`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 - Verify: `just desktop-tauri-clippy`
 
@@ -2092,7 +2099,7 @@ New module: `false`.
 
 ## `desktop/src/features/agents/ui/useTeamActions.ts`
 
-Task10 authoritative device capability integration and owning action coverage
+Task10 authoritative device capability integration and owning action coverage; R6 capability checks only for cascading team definitions
 
 New module: `false`.
 
@@ -2318,7 +2325,7 @@ New module: `true`.
 
 ## `scripts/fork/tests/test_sync.py`
 
-Synthetic Git and GH release preparation, conflict reports, recovery and baseline failure regression coverage
+Synthetic Git and GH release preparation, conflict reports, recovery and baseline failure regression coverage; R4 isolated fixture Git identity and production identity guard regressions
 
 New module: `true`.
 
@@ -2486,3 +2493,34 @@ New module: `true`.
 
 - Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib device_workflow_tests`
 - Verify: `python3 scripts/fork/sync.py validate`
+
+## `desktop/src-tauri/src/commands/personas/inbound/access_policy_retry_tests.rs`
+
+R1 ACL proof/stop failure and identical-event retry regressions
+
+New module: `true`.
+
+- Required symbol: `fn access_revocation_stops_owned_child_despite_unavailable_proof`
+- Required symbol: `fn failed_access_stop_preserves_old_acl_and_same_head_retry`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
+
+## `desktop/src-tauri/src/commands/agents/provider_deploy_tests.rs`
+
+R3 delayed provider, independent store actions, stale target/config/payload/scope regressions
+
+New module: `true`.
+
+- Required symbol: `fn delayed_provider_allows_independent_store_action`
+- Required symbol: `fn recreated_same_pubkey_refuses_stale_provider_success_and_failure`
+- Required symbol: `fn workspace_replacement_during_prepare_refuses_external_deploy`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
+
+## `desktop/src-tauri/src/managed_agents/device_home_operations/label_tests.rs`
+
+R5 A-failed enqueue B-success recovery, cross-scope preservation and timestamp floor regressions
+
+New module: `true`.
+
+- Required symbol: `fn newer_successful_label_survives_older_sql_enqueue_failure_and_recovery`
+- Required symbol: `fn newer_label_preserves_other_relay_owner_and_unresolved_scope_worklists`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`

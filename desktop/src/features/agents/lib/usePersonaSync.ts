@@ -40,6 +40,9 @@ const PERSONA_SYNC_KINDS = [
 // the pipeline falls to degraded-live rather than looping forever.
 const BACKFILL_MAX_ATTEMPTS = 3;
 const BACKFILL_RETRY_BASE_DELAY_MS = 500;
+// Device readiness requires relay confirmation, not the generic UI fallback.
+const LIVE_CONFIRMATION_TIMEOUT_MS = 5_000;
+const LIVE_RECOVERY_COOLDOWN_MS = 30_000;
 
 // Thrown when `fetchOwnerHistoryToExhaustion` reaches a full page whose oldest
 // event cannot advance the time-only cursor: more than one page of events share
@@ -178,6 +181,7 @@ export function startPersonaSync(
     token: string;
     controller: AbortController;
     dispose: (() => Promise<void>) | null;
+    recoveryTimer: ReturnType<typeof setTimeout> | null;
   };
   let generation = 0;
   let disposed = false;
@@ -200,6 +204,8 @@ export function startPersonaSync(
   const current = (run: Run) =>
     !cancelled() && active === run && run.generation === generation;
   const invalidate = async (run: Run) => {
+    if (run.recoveryTimer !== null) clearTimeout(run.recoveryTimer);
+    run.recoveryTimer = null;
     // Send token-scoped invalidation immediately, before awaiting subscription teardown.
     const invalidation = invalidateDeviceHomeSync(run.token).catch((error) => {
       console.warn("[usePersonaSync] session invalidation failed:", error);
@@ -225,6 +231,7 @@ export function startPersonaSync(
         token: session.token,
         controller: new AbortController(),
         dispose: null,
+        recoveryTimer: null,
       };
       if (
         cancelled() ||
@@ -239,8 +246,35 @@ export function startPersonaSync(
       const sessionRun = run;
       let hydrated = false;
       let liveConfirmed = false;
+      let timedOut = false;
+      const scheduleRecovery = (delayMs: number) => {
+        if (!current(sessionRun) || sessionRun.recoveryTimer !== null) return;
+        // Retain degraded live delivery until recovery actually starts.
+        sessionRun.recoveryTimer = setTimeout(() => {
+          sessionRun.recoveryTimer = null;
+          if (current(sessionRun)) queueRestart();
+        }, delayMs);
+      };
       const unavailable = (health: string) => {
         if (!current(sessionRun)) return;
+        if (health === "timeout") {
+          // The relay keeps this live REQ after its readiness fallback. Do not
+          // discard delivery or claim Ready without EOSE and complete history.
+          if (timedOut) return;
+          timedOut = true;
+          degraded = true;
+          drain([]);
+          subscriptionFailures = Math.min(
+            subscriptionFailures + 1,
+            BACKFILL_MAX_ATTEMPTS,
+          );
+          scheduleRecovery(
+            subscriptionFailures < BACKFILL_MAX_ATTEMPTS
+              ? BACKFILL_RETRY_BASE_DELAY_MS * 2 ** (subscriptionFailures - 1)
+              : LIVE_RECOVERY_COOLDOWN_MS,
+          );
+          return;
+        }
         console.warn("[usePersonaSync] live subscription unavailable:", health);
         subscriptionFailures += 1;
         if (subscriptionFailures < BACKFILL_MAX_ATTEMPTS)
@@ -285,6 +319,90 @@ export function startPersonaSync(
         }
         buffer.length = 0;
       };
+      const drainApplies = async () => {
+        // Live events may extend the chain while an apply is still pending.
+        for (;;) {
+          const tail = chain;
+          await tail;
+          if (!current(sessionRun)) return false;
+          if (tail === chain) return true;
+        }
+      };
+      let hydrationRunning = false;
+      const hydrate = async () => {
+        if (!current(sessionRun) || hydrationRunning) return;
+        hydrationRunning = true;
+        try {
+          for (let attempt = 0; attempt < BACKFILL_MAX_ATTEMPTS; attempt += 1) {
+            try {
+              const history = await hydrateDeviceHomeHistory(sessionRun.token);
+              if (!current(sessionRun)) return;
+              drain(history.coveredEventIds);
+              if (!(await drainApplies())) return;
+              if (liveConfirmed && !degraded && !failed) {
+                await finishDeviceHomeSync(sessionRun.token);
+                if (current(sessionRun)) subscriptionFailures = 0;
+              } else if (failed) {
+                // A current-token failure stays authoritative. Recovery must
+                // establish a fresh backend session and complete history again.
+                degraded = true;
+                scheduleRecovery(LIVE_RECOVERY_COOLDOWN_MS);
+              }
+              return;
+            } catch (error) {
+              if (!current(sessionRun)) return;
+              const dense =
+                error instanceof PersonaHistoryDenseBoundaryError ||
+                String(error).includes(
+                  "device_home_sync_dense_history_boundary",
+                );
+              if (!dense && !hydrated && attempt < BACKFILL_MAX_ATTEMPTS - 1) {
+                console.warn(
+                  "[usePersonaSync] backfill failed, retrying:",
+                  error,
+                );
+                await backfillBackoff(attempt);
+                if (!(await drainApplies())) return;
+                const replacement = await beginDeviceHomeSync();
+                if (
+                  !current(sessionRun) ||
+                  replacement.ownerPubkey !== pubkey ||
+                  normalizeRelay(replacement.relayUrl) !==
+                    normalizeRelay(relayUrl)
+                ) {
+                  await invalidateDeviceHomeSync(replacement.token);
+                  return;
+                }
+                sessionRun.token = replacement.token;
+                // The old chain is settled and live dependencies remain buffered.
+                // This latch now belongs to the fresh backend token, whose full
+                // history must succeed before Ready can be installed.
+                failed = false;
+                continue;
+              }
+              console.warn(
+                "[usePersonaSync] backfill failed; entering degraded-live sync:",
+                error,
+              );
+              degraded = true;
+              drain([]);
+              if (!dense) scheduleRecovery(LIVE_RECOVERY_COOLDOWN_MS);
+              return;
+            }
+          }
+        } catch (error) {
+          if (!current(sessionRun)) return;
+          console.warn(
+            "[usePersonaSync] history session renewal failed:",
+            error,
+          );
+          degraded = true;
+          drain([]);
+          scheduleRecovery(LIVE_RECOVERY_COOLDOWN_MS);
+        } finally {
+          hydrationRunning = false;
+        }
+      };
       try {
         const dispose = await relayClient.subscribeLive(
           { kinds: PERSONA_SYNC_KINDS, authors: [pubkey], limit: 0 },
@@ -297,10 +415,26 @@ export function startPersonaSync(
             if (readiness === "eose") liveConfirmed = true;
             else unavailable(readiness);
           },
-          undefined,
+          LIVE_CONFIRMATION_TIMEOUT_MS,
           sessionRun.controller.signal,
           (health) => {
-            if (health !== "eose") unavailable(health);
+            if (!current(sessionRun)) return;
+            if (health !== "eose") {
+              unavailable(health);
+              return;
+            }
+            liveConfirmed = true;
+            if (timedOut) {
+              timedOut = false;
+              if (sessionRun.recoveryTimer !== null)
+                clearTimeout(sessionRun.recoveryTimer);
+              sessionRun.recoveryTimer = null;
+              // Late confirmation is recoverable on this same live REQ. Buffer
+              // again while exhaustive history restores the dropped dependencies.
+              hydrated = false;
+              degraded = false;
+              if (sessionRun.dispose) void hydrate();
+            }
           },
         );
         if (!current(sessionRun)) {
@@ -316,54 +450,7 @@ export function startPersonaSync(
           error,
         );
       }
-      for (let attempt = 0; attempt < BACKFILL_MAX_ATTEMPTS; attempt += 1) {
-        try {
-          const history = await hydrateDeviceHomeHistory(sessionRun.token);
-          if (!current(sessionRun)) return;
-          drain(history.coveredEventIds);
-          // Events arriving while we await an apply can extend the chain.
-          // Drain to a stable tail before asking the backend to install Ready.
-          for (;;) {
-            const tail = chain;
-            await tail;
-            if (!current(sessionRun)) return;
-            if (tail === chain) break;
-          }
-          if (liveConfirmed && !degraded && !failed) {
-            await finishDeviceHomeSync(sessionRun.token);
-            if (current(sessionRun)) subscriptionFailures = 0;
-          }
-          return;
-        } catch (error) {
-          if (!current(sessionRun)) return;
-          const dense =
-            error instanceof PersonaHistoryDenseBoundaryError ||
-            String(error).includes("device_home_sync_dense_history_boundary");
-          if (!dense && !hydrated && attempt < BACKFILL_MAX_ATTEMPTS - 1) {
-            console.warn("[usePersonaSync] backfill failed, retrying:", error);
-            await backfillBackoff(attempt);
-            if (!current(sessionRun)) return;
-            const replacement = await beginDeviceHomeSync();
-            if (
-              !current(sessionRun) ||
-              replacement.ownerPubkey !== pubkey ||
-              normalizeRelay(replacement.relayUrl) !== normalizeRelay(relayUrl)
-            ) {
-              await invalidateDeviceHomeSync(replacement.token);
-              return;
-            }
-            sessionRun.token = replacement.token;
-            continue;
-          }
-          console.warn(
-            "[usePersonaSync] backfill failed; entering degraded-live sync:",
-            error,
-          );
-          degraded = true;
-          drain([]);
-          return;
-        }
-      }
+      if (!timedOut) await hydrate();
     } catch (error) {
       console.warn("[usePersonaSync] sync initialization failed:", error);
       if (run && current(run)) await retire();

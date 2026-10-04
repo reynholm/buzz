@@ -1,5 +1,6 @@
 """Synthetic releases in disposable repositories exercise real Git preparation."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -15,6 +16,13 @@ class SyncTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.repo = Path(self.temp.name) / 'repo'
         self.repo.mkdir()
+        # Disposable identities are self-contained even on a clean CI runner.
+        global_config = Path(self.temp.name) / 'gitconfig'
+        global_config.write_text('[user]\n\tname = Fixture\n\temail = fixture@example.invalid\n')
+        env = patch.dict(os.environ, {'GIT_CONFIG_GLOBAL': str(global_config),
+                                      'GIT_CONFIG_NOSYSTEM': '1'})
+        env.start()
+        self.addCleanup(env.stop)
         self.git('init', '-q')
         # Match the required global author guard; this only changes the fixture config.
         self.git('config', 'user.name', self.git('config', '--global', 'user.name').strip())
@@ -63,6 +71,21 @@ class SyncTests(unittest.TestCase):
     def write_manifest(self):
         (self.repo / 'scripts/fork/patches.json').write_text(json.dumps(self.manifest, indent=2) + '\n')
         (self.repo / 'FORK_PATCHES.md').write_text(sync.render_registry(self.manifest))
+
+    def test_production_commit_guard_rejects_missing_author_or_signing(self):
+        for key, value in [('user.email', ''), ('commit.gpgsign', 'true')]:
+            with self.subTest(key=key):
+                self.git('config', key, value)
+                with self.assertRaisesRegex(RuntimeError, 'configured author/email'):
+                    sync.commit_owned(self.repo, [], 'must not commit')
+                self.git('config', '--unset', key)
+                self.git('config', 'user.email', 'fixture@example.invalid')
+
+    @unittest.skipUnless(sync.IDENTITY_WRAPPER.is_file(), 'local wrapper guard only')
+    def test_production_commit_guard_rejects_local_global_mismatch(self):
+        self.git('config', 'user.name', 'Different fixture')
+        with self.assertRaisesRegex(RuntimeError, 'trusted global identity guard'):
+            sync.commit_owned(self.repo, [], 'must not commit')
 
     def selection(self):
         self.assertTrue(hasattr(sync, 'select_update'), 'release selection is missing')

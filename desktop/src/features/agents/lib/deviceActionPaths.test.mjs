@@ -724,6 +724,8 @@ for (const owner of ["persona", "team", "profile"])
           surface.current().handleDeleteTeam({
             id: "team",
             name: "Team",
+            sourceDir: "/fixture/team",
+            catalogSource: null,
             personaIds: ["persona"],
           }),
         );
@@ -956,4 +958,46 @@ test("Welcome builder re-reads its exact definition before producing instance in
   );
   assert.deepEqual(effects(), []);
   assert.equal(commands.filter(([name]) => name === "list_personas").length, 1);
+});
+
+test("manual team deletion removes its container while leaving a remote private member intact", async () => {
+  setup([blocked()]);
+  const surface = mount("team");
+  await act(async () =>
+    surface.current().handleDeleteTeam({
+      id: "manual-team",
+      name: "Manual Team",
+      description: null,
+      instructions: null,
+      personaIds: ["persona"],
+      isBuiltin: false,
+      shared: false,
+      sourceDir: null,
+      catalogSource: null,
+      isSymlink: false,
+      symlinkTarget: null,
+      version: null,
+      createdAt: "now",
+      updatedAt: "now",
+    }),
+  );
+  assert.deepEqual(effects(), [["delete_team", { id: "manual-team" }]]);
+  assert.equal(errors.at(-1), null);
+  assert.equal(notices.at(-1), 'Deleted team "Manual Team".');
+});
+
+test("catalog team deletion retains member capability guards before any cascade", async () => {
+  setup([blocked()]);
+  const surface = mount("team");
+  await act(async () =>
+    surface.current().handleDeleteTeam({
+      id: "catalog-team",
+      name: "Catalog Team",
+      personaIds: ["persona"],
+      sourceDir: null,
+      catalogSource: { ownerPubkey: OWNER, teamDTag: "catalog-team" },
+    }),
+  );
+  assert.deepEqual(effects(), []);
+  assert.match(errors.at(-1), /definition_hosted_elsewhere/);
 });

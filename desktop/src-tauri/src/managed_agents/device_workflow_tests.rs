@@ -6,7 +6,7 @@ use super::{
     device_creation::{bind_new_instance, creation_phase_locked, stamp_new_definition},
     device_home_migration::tests::{app, definition},
     device_home_operations::{commit_claim_in_dir, commit_new_pairs_in_dir, enqueue_home_events},
-    device_runtime::{inbound_refresh_phase_with, start_pair_phase_with},
+    device_runtime::start_pair_phase_with,
     persona_device_view::{read_policy_records, read_remote_evidence, DevicePolicyContext},
     retention::{get_pending_sync, open_retention_db, scoped_retention_db_path},
     AgentDefinition, ManagedAgentRecord, RespondTo,
@@ -209,7 +209,7 @@ impl Device {
     fn refresh(&self, pubkey: &str, effects: &Cell<usize>) -> Option<()> {
         let state = self.app.state::<AppState>();
         let _lock = state.managed_agents_store_lock.lock().unwrap();
-        inbound_refresh_phase_with(
+        start_pair_phase_with(
             self.app.handle(),
             &state,
             pubkey,
@@ -220,7 +220,7 @@ impl Device {
                 Ok(())
             },
         )
-        .unwrap()
+        .ok()
     }
 }
 

@@ -42,8 +42,7 @@ fn shared_and_legacy_owning_adapters_need_no_host_proof() {
         run!(start_pair_phase_with);
         run!(restore_spawn_phase_with);
         run!(provider_phase_with);
-        run!(inbound_refresh_phase_with);
-        assert_eq!(effects.get(), 5);
+        assert_eq!(effects.get(), 4);
     }
 }
 
@@ -315,35 +314,6 @@ owning_refusal!(
     restore_spawn_phase_with
 );
 owning_refusal!(owning_provider_refuses_deploy_effects, provider_phase_with);
-#[test]
-fn owning_inbound_refuses_restart_effects() {
-    let dir = tempfile::tempdir().unwrap();
-    let app = app(dir.path());
-    let state = app.state::<crate::app_state::AppState>();
-    let (mut raw, _) = records();
-    raw[1].device_host_binding = Some("copied".into());
-    write(&super::managed_agents_base_dir(app.handle()).unwrap(), &raw);
-    let effects = Cell::new(0);
-    let refresh = inbound_refresh_phase_with(
-        app.handle(),
-        &state,
-        &raw[1].pubkey,
-        None,
-        |_, state| {
-            let mut c = context(EvidenceReadiness::Pending);
-            c.scope = super::device_home_sync::capture_scope(state)?;
-            Ok(c)
-        },
-        |_, _, _| {
-            effects.set(1);
-            Ok(())
-        },
-    )
-    .unwrap();
-    assert!(refresh.is_none());
-    assert_eq!(effects.get(), 0);
-}
-
 #[tokio::test]
 async fn preflight_rechecks_current_binding_after_await() {
     let dir = tempfile::tempdir().unwrap();

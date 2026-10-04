@@ -38,6 +38,8 @@ pub(crate) enum HomeOperationKind {
         affected_definition_ids: Vec<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         unresolved_scope: Option<String>,
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        superseded_created_at: std::collections::BTreeMap<String, i64>,
     },
     Claim {
         definition_id: String,
@@ -316,6 +318,10 @@ pub(crate) fn recover_in_dir(
         _ => None,
     });
     if let Some(label) = &latest_label {
+        // Upgrade interrupted older journals before applying or completing any scope.
+        // An unsigned foreign-owner worklist must survive with the newest choice.
+        label::coalesce_label_worklists(&mut operations, label)?;
+        save_journal(dir, &operations)?;
         label::apply_label(dir, &mut raw, label)?;
     }
     let mut completed = Vec::new();
@@ -377,14 +383,10 @@ pub(crate) fn recover_in_dir(
                 }
             }
             HomeOperationKind::Label {
-                new_label,
                 affected_definition_ids,
                 unresolved_scope,
+                ..
             } => {
-                if latest_label.as_deref() != Some(new_label) {
-                    completed.push(op.id.clone());
-                    continue;
-                }
                 if unresolved_scope.is_none()
                     && !affected_definition_ids.is_empty()
                     && op.signed_events.len() == affected_definition_ids.len()
@@ -549,5 +551,7 @@ pub(crate) mod delete;
 #[cfg(test)]
 mod durable_tests;
 pub(crate) mod label;
+#[cfg(test)]
+mod label_tests;
 #[cfg(test)]
 mod tests;

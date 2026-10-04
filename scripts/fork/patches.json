@@ -1350,7 +1350,7 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/personas/inbound.rs",
-      "responsibility": "Token-scoped live apply leases fence async reconciliation and record failures; Task6: Accept legitimate remote owner heads without local author proof; independently skip copied runtime refresh and secret effects while preserving hydration retry semantics; Task7: Merge optional device metadata only after accepted owner head; preserve proven local lineage; reject wrong author; apply accepted tombstones as receiver operations",
+      "responsibility": "Token-scoped live apply leases fence async reconciliation and record failures; Task6: Accept legitimate remote owner heads without local author proof; independently skip copied runtime refresh and secret effects while preserving hydration retry semantics; Task7: Merge optional device metadata only after accepted owner head; preserve proven local lineage; reject wrong author; apply accepted tombstones as receiver operations; R1 stop Desktop-owned runtimes before accepting changed ACL, leave stop-failure head retryable, keep provider pending and guarded spawn",
       "is_new": false,
       "required_symbols": [
         "session_token: Option<String>",
@@ -1368,26 +1368,18 @@
         },
         {
           "caller_path": "desktop/src-tauri/src/commands/personas/inbound.rs",
-          "callee_symbol": "inbound_refresh_phase_with",
-          "invocation": "crate::managed_agents::device_runtime::inbound_refresh_phase_with(\n                    &app,\n                    &state,\n                    &d_tag,\n                    None,\n                    crate::managed_agents::persona_device_view::load_device_policy_context,",
-          "behavior_test": "managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects",
-          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects -- --exact",
-          "coverage": "Task6 isolated production adapter behavior with injected effects; native Wry caller compiled and exact wiring fingerprint checked; native keychain/process/provider acceptance remains outstanding"
-        },
-        {
-          "caller_path": "desktop/src-tauri/src/commands/personas/inbound.rs",
           "callee_symbol": "start_local_agent_pairs_scoped",
           "invocation": "super::super::agents::runtime_start::start_local_agent_pairs_scoped(\n                &app,\n                &state,\n                &pubkey,\n                &relay_urls,\n                Some(&fence),",
-          "behavior_test": "managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects",
-          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects -- --exact",
+          "behavior_test": "commands::personas::inbound::access_policy_retry_tests",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace",
           "coverage": "Task6 isolated production adapter behavior with injected effects; native Wry caller compiled and exact wiring fingerprint checked; native keychain/process/provider acceptance remains outstanding"
         },
         {
           "caller_path": "desktop/src-tauri/src/commands/personas/inbound.rs",
           "callee_symbol": "deploy_to_provider_scoped",
           "invocation": "super::super::agents::provider_deploy::deploy_to_provider_scoped(&app, &state, &pubkey,\n                super::super::agents::provider_deploy::ProviderStartScope { relay: Some(&fence.scope.relay_url), owner: Some(&fence.scope.owner_pubkey), replay_floor: None, fence: Some(&fence) })\n            .await\n            .map_err(|error| {\n                format!(\n                    \"Inbound agent access was saved, but its provider deployment failed to refresh with the new policy: {error}\"",
-          "behavior_test": "managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects",
-          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects -- --exact",
+          "behavior_test": "commands::personas::inbound::access_policy_retry_tests",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace",
           "coverage": "Task6 isolated production adapter behavior with injected effects; native Wry caller compiled and exact wiring fingerprint checked; native keychain/process/provider acceptance remains outstanding"
         },
         {
@@ -1397,6 +1389,14 @@
           "behavior_test": "commands::personas::inbound::device_metadata_tests",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib commands::personas::inbound::device_metadata_tests",
           "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/personas/inbound.rs",
+          "callee_symbol": "stop",
+          "invocation": "stop(&app, record, &mut runtimes)?;",
+          "behavior_test": "commands::personas::inbound::access_policy_retry_tests",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace",
+          "coverage": "Review fix production seam; MockRuntime/injected external boundary; native/two-device acceptance open"
         }
       ],
       "verification_commands": [
@@ -1406,7 +1406,7 @@
     },
     {
       "path": "desktop/src/features/agents/lib/usePersonaSync.ts",
-      "responsibility": "Live-first backend hydration, rejection-aware drain, bounded fresh-session retry and connection invalidation",
+      "responsibility": "Live-first backend hydration, rejection-aware drain, bounded fresh-session retry and connection invalidation; R2 confirmed live deadline, degraded delivery and bounded recovery with late-EOSE hydration",
       "is_new": false,
       "required_symbols": [
         "export function startPersonaSync",
@@ -2337,7 +2337,8 @@
         "recover_in_dir",
         "load_existing_host_proof",
         "recover_home_operations_locked",
-        "commit_new_pairs_locked"
+        "commit_new_pairs_locked",
+        "superseded_created_at"
       ],
       "invocation_seams": [
         {
@@ -2427,6 +2428,14 @@
           "behavior_test": "premetadata_label_worklist_resolves_when_original_database_becomes_known",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace premetadata_label_worklist_resolves_when_original_database_becomes_known",
           "coverage": "Production generic/native adapter runtime with MockRuntime, isolated app data, injected authority/process/key effects and real SQLite; Wry IPC wiring compile only, native/two-device acceptance outstanding"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/device_home_operations.rs",
+          "callee_symbol": "coalesce_label_worklists",
+          "invocation": "label::coalesce_label_worklists(&mut operations, label)?;",
+          "behavior_test": "managed_agents::device_home_operations::label_tests",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace",
+          "coverage": "R5 latest intent and scoped retry/timestamp regressions"
         }
       ],
       "verification_commands": [
@@ -2631,7 +2640,7 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/agents/provider_deploy.rs",
-      "responsibility": "Serialized synchronous provider invocation under authorized store lock, fresh payload identity, original runtime fence and target-only result writeback",
+      "responsibility": "Serialized synchronous provider invocation under authorized store lock, fresh payload identity, original runtime fence and target-only result writeback; R3 external deploy outside global store lock, exact incarnation/effective configuration and scope writeback fence",
       "is_new": false,
       "required_symbols": [
         "struct ProviderStartScope",
@@ -2641,18 +2650,33 @@
         {
           "caller_path": "desktop/src-tauri/src/commands/agents/provider_deploy.rs",
           "callee_symbol": "provider_phase_with",
-          "invocation": "device_runtime::provider_phase_with(\n            &invoke_app,\n            &state,\n            &target,\n            Some(&invoke_fence.scope),\n            load_device_policy_context,",
-          "behavior_test": "managed_agents::device_runtime_tests::owning_provider_refuses_deploy_effects",
-          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_provider_refuses_deploy_effects -- --exact",
+          "invocation": "device_runtime::provider_phase_with(\n            app,\n            state,\n            pubkey,\n            Some(&fence.scope),\n            &mut context,",
+          "behavior_test": "commands::agents::provider_deploy",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace",
           "coverage": "Task6 isolated production adapter behavior with injected effects; native Wry caller compiled and exact wiring fingerprint checked; native keychain/process/provider acceptance remains outstanding"
         },
         {
           "caller_path": "desktop/src-tauri/src/commands/agents/provider_deploy.rs",
           "callee_symbol": "provider_phase_with",
-          "invocation": "device_runtime::provider_phase_with(\n        app,\n        state,\n        pubkey,\n        Some(&fence.scope),\n        load_device_policy_context,",
-          "behavior_test": "managed_agents::device_runtime_tests::owning_provider_refuses_deploy_effects",
-          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_provider_refuses_deploy_effects -- --exact",
+          "invocation": "device_runtime::provider_phase_with(\n        app,\n        state,\n        pubkey,\n        Some(&fence.scope),\n        context,",
+          "behavior_test": "commands::agents::provider_deploy",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace",
           "coverage": "Task6 isolated production adapter behavior with injected effects; native Wry caller compiled and exact wiring fingerprint checked; native keychain/process/provider acceptance remains outstanding"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/agents/provider_deploy.rs",
+          "callee_symbol": "invoke_provider_with",
+          "invocation": "invoke_provider_with(\n            &invoke_app,\n            &state,\n            &target,\n            &invoke_fence,",
+          "behavior_test": "delayed_provider_allows_independent_store_action",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace",
+          "coverage": "Review fix production seam; MockRuntime/injected external boundary; native/two-device acceptance open"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/agents/provider_deploy.rs",
+          "callee_symbol": "assert_runtime_fence",
+          "invocation": "assert_payload_scope(&payload, Some(&scope.relay_url), Some(&scope.owner_pubkey))?;\n                device_runtime::assert_runtime_fence(state, fence)?;",
+          "behavior_test": "workspace_replacement_during_prepare_refuses_external_deploy",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace"
         }
       ],
       "verification_commands": [
@@ -3135,9 +3159,11 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/device_home_operations/label.rs",
-      "responsibility": "Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage",
+      "responsibility": "Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage; R5 coalesce all outstanding scope label worklists to latest intent with monotonic signed floors",
       "is_new": true,
-      "required_symbols": [],
+      "required_symbols": [
+        "fn coalesce_label_worklists"
+      ],
       "invocation_seams": [
         {
           "caller_path": "desktop/src-tauri/src/commands/device_identity.rs",
@@ -3146,6 +3172,22 @@
           "behavior_test": "native_label_adapter_reports_queued_until_existing_event_sync_acknowledges",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace native_label_adapter_reports_queued_until_existing_event_sync_acknowledges",
           "coverage": "Production generic/native adapter runtime with MockRuntime, isolated app data, injected authority/process/key effects and real SQLite; Wry IPC wiring compile only, native/two-device acceptance outstanding"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/device_home_operations/label.rs",
+          "callee_symbol": "coalesce_label_worklists",
+          "invocation": "coalesce_label_worklists(&mut ops, label)?;",
+          "behavior_test": "managed_agents::device_home_operations::label_tests",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace",
+          "coverage": "R5 latest intent and scoped retry/timestamp regressions"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/device_home_operations/label.rs",
+          "callee_symbol": "coalesce_label_worklists",
+          "invocation": "coalesce_label_worklists(&mut ops, &label)?;",
+          "behavior_test": "managed_agents::device_home_operations::label_tests",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace",
+          "coverage": "R5 latest intent and scoped retry/timestamp regressions"
         }
       ],
       "verification_commands": [
@@ -3513,7 +3555,7 @@
     },
     {
       "path": "desktop/src/features/agents/ui/useTeamActions.ts",
-      "responsibility": "Task10 authoritative device capability integration and owning action coverage",
+      "responsibility": "Task10 authoritative device capability integration and owning action coverage; R6 capability checks only for cascading team definitions",
       "is_new": false,
       "required_symbols": [
         "      actions.setActionErrorMessage(\n        result.failures\n          .map(({ name, error }) => `${name}: ${error}`)\n          .join(\"\\n\"),\n      );",
@@ -3916,7 +3958,7 @@
     },
     {
       "path": "scripts/fork/tests/test_sync.py",
-      "responsibility": "Synthetic Git and GH release preparation, conflict reports, recovery and baseline failure regression coverage",
+      "responsibility": "Synthetic Git and GH release preparation, conflict reports, recovery and baseline failure regression coverage; R4 isolated fixture Git identity and production identity guard regressions",
       "is_new": true,
       "required_symbols": [],
       "invocation_seams": [],
@@ -4169,6 +4211,46 @@
       "verification_commands": [
         "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib device_workflow_tests",
         "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/inbound/access_policy_retry_tests.rs",
+      "responsibility": "R1 ACL proof/stop failure and identical-event retry regressions",
+      "is_new": true,
+      "required_symbols": [
+        "fn access_revocation_stops_owned_child_despite_unavailable_proof",
+        "fn failed_access_stop_preserves_old_acl_and_same_head_retry"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/agents/provider_deploy_tests.rs",
+      "responsibility": "R3 delayed provider, independent store actions, stale target/config/payload/scope regressions",
+      "is_new": true,
+      "required_symbols": [
+        "fn delayed_provider_allows_independent_store_action",
+        "fn recreated_same_pubkey_refuses_stale_provider_success_and_failure",
+        "fn workspace_replacement_during_prepare_refuses_external_deploy"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/device_home_operations/label_tests.rs",
+      "responsibility": "R5 A-failed enqueue B-success recovery, cross-scope preservation and timestamp floor regressions",
+      "is_new": true,
+      "required_symbols": [
+        "fn newer_successful_label_survives_older_sql_enqueue_failure_and_recovery",
+        "fn newer_label_preserves_other_relay_owner_and_unresolved_scope_worklists"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace"
       ]
     }
   ]

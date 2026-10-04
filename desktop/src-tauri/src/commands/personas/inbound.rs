@@ -15,6 +15,8 @@ use crate::{
 };
 
 #[cfg(test)]
+mod access_policy_retry_tests;
+#[cfg(test)]
 mod device_metadata_tests;
 #[cfg(test)]
 mod device_sync_tests;
@@ -167,6 +169,37 @@ fn reconcile_inbound_persona_event_blocking_with<R: tauri::Runtime>(
         String,
     >,
     refresh: impl FnOnce(),
+) -> Result<Option<InboundRuntimeRefresh>, String> {
+    reconcile_inbound_persona_event_blocking_with_stop(
+        event_json,
+        arrival_relay_url,
+        app,
+        context,
+        refresh,
+        crate::managed_agents::stop_managed_agent_process,
+    )
+}
+
+fn reconcile_inbound_persona_event_blocking_with_stop<R: tauri::Runtime>(
+    event_json: String,
+    arrival_relay_url: String,
+    app: AppHandle<R>,
+    context: impl FnOnce(
+        &AppHandle<R>,
+        &AppState,
+    ) -> Result<
+        crate::managed_agents::persona_device_view::DevicePolicyContext,
+        String,
+    >,
+    refresh: impl FnOnce(),
+    mut stop: impl FnMut(
+        &AppHandle<R>,
+        &mut ManagedAgentRecord,
+        &mut std::collections::HashMap<
+            crate::managed_agents::ManagedAgentRuntimeKey,
+            crate::managed_agents::ManagedAgentPairRuntime,
+        >,
+    ) -> Result<(), String>,
 ) -> Result<Option<InboundRuntimeRefresh>, String> {
     use crate::managed_agents::{
         agent_events::managed_agent_content_from_event,
@@ -403,78 +436,78 @@ fn reconcile_inbound_persona_event_blocking_with<R: tauri::Runtime>(
                 &d_tag,
                 inbound_managed_agent.expect("managed agent parsed above"),
             );
-            // Receiving a verified owner head never needs local authoring authority.
+            // Stopping a Desktop-owned child revokes access; it does not grant
+            // authority to spawn. Stop BEFORE persisting ACL or accepting the
+            // head, so a failed teardown leaves the same owner event retryable.
+            if access_changed {
+                let fence = crate::managed_agents::device_runtime::capture_runtime_fence(&state)?;
+                if let Some(record) = agents.iter_mut().find(|r| r.pubkey == d_tag) {
+                    runtime_refresh = match &record.backend {
+                        crate::managed_agents::BackendKind::Local => {
+                            let mut runtimes = state
+                                .managed_agent_processes
+                                .lock()
+                                .map_err(|e| e.to_string())?;
+                            let mut relay_urls: Vec<_> =
+                                crate::managed_agents::managed_agent_runtime_keys(
+                                    &runtimes, &d_tag,
+                                )
+                                .into_iter()
+                                .map(|key| key.relay_url)
+                                .collect();
+                            if relay_urls.is_empty() && record.runtime_pid.is_some() {
+                                relay_urls.push(crate::relay::relay_ws_url_with_override(&state));
+                            }
+                            if relay_urls.is_empty() {
+                                None
+                            } else {
+                                // The stop primitive uses tracked Child ownership or a
+                                // verified legacy process marker, never the host proof.
+                                stop(&app, record, &mut runtimes)?;
+                                Some(InboundRuntimeRefresh::Local {
+                                    pubkey: d_tag.clone(),
+                                    relay_urls,
+                                    fence,
+                                })
+                            }
+                        }
+                        crate::managed_agents::BackendKind::Provider { .. }
+                            if record.backend_agent_id.is_some() =>
+                        {
+                            // Durable retry survives accepted ACL bytes. Provider
+                            // redeploy continues to require private start authority.
+                            record.provider_policy_pending = true;
+                            match crate::managed_agents::device_runtime::provider_phase_with(
+                                &app,
+                                &state,
+                                &d_tag,
+                                Some(&fence.scope),
+                                context,
+                                |_, _, _| Ok(()),
+                            ) {
+                                Ok(()) => Some(InboundRuntimeRefresh::Provider {
+                                    pubkey: d_tag.clone(),
+                                    fence,
+                                }),
+                                Err(error) => {
+                                    // A verified owner projection is accepted even on a
+                                    // remote/copy or unreadable proof. Keep the retry flag;
+                                    // no new provider process is authorized by receiving it.
+                                    eprintln!("buzz-desktop: inbound provider policy pending for {d_tag}: {error}");
+                                    None
+                                }
+                            }
+                        }
+                        _ => None,
+                    };
+                }
+            }
             crate::managed_agents::storage::save_restore_records_with(
                 &app,
                 &agents,
                 &std::collections::HashSet::new(),
                 |_| {},
             )?;
-            if access_changed {
-                let refresh = crate::managed_agents::device_runtime::inbound_refresh_phase_with(
-                    &app,
-                    &state,
-                    &d_tag,
-                    None,
-                    crate::managed_agents::persona_device_view::load_device_policy_context,
-                    |mut record, _, _| {
-                        let fence =
-                            crate::managed_agents::device_runtime::capture_runtime_fence(&state)?;
-                        let next = match &record.backend {
-                            crate::managed_agents::BackendKind::Local => {
-                                let mut runtimes = state
-                                    .managed_agent_processes
-                                    .lock()
-                                    .map_err(|e| e.to_string())?;
-                                let mut relay_urls: Vec<_> =
-                                    crate::managed_agents::managed_agent_runtime_keys(
-                                        &runtimes, &d_tag,
-                                    )
-                                    .into_iter()
-                                    .map(|k| k.relay_url)
-                                    .collect();
-                                if relay_urls.is_empty() && record.runtime_pid.is_some() {
-                                    relay_urls
-                                        .push(crate::relay::relay_ws_url_with_override(&state));
-                                }
-                                if relay_urls.is_empty() {
-                                    None
-                                } else {
-                                    crate::managed_agents::stop_managed_agent_process(
-                                        &app,
-                                        &mut record,
-                                        &mut runtimes,
-                                    )?;
-                                    crate::managed_agents::device_runtime::save_runtime_record(
-                                        &app, &record,
-                                    )?;
-                                    Some(InboundRuntimeRefresh::Local {
-                                        pubkey: d_tag.clone(),
-                                        relay_urls,
-                                        fence,
-                                    })
-                                }
-                            }
-                            crate::managed_agents::BackendKind::Provider { .. }
-                                if record.backend_agent_id.is_some() =>
-                            {
-                                let next = InboundRuntimeRefresh::Provider {
-                                    pubkey: d_tag.clone(),
-                                    fence,
-                                };
-                                record.provider_policy_pending = true;
-                                crate::managed_agents::device_runtime::save_runtime_record(
-                                    &app, &record,
-                                )?;
-                                Some(next)
-                            }
-                            _ => None,
-                        };
-                        Ok(next)
-                    },
-                )?;
-                runtime_refresh = refresh.flatten();
-            }
             let outcome = retain_inbound_event(&conn, &inbound_retained_event)?;
             debug_assert_eq!(outcome, InboundOutcome::Applied);
         }

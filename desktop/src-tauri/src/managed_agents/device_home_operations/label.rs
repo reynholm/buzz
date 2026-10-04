@@ -6,6 +6,84 @@ use super::super::retention::{
 use super::*;
 use crate::device_identity::{load_existing_device_identity, DeviceIdentity};
 
+/// Replace older intent with the latest choice without discarding original scope work.
+pub(super) fn coalesce_label_worklists(
+    ops: &mut Vec<HomeOperation>,
+    label: &str,
+) -> Result<(), String> {
+    let mut labels: Vec<HomeOperation> = vec![];
+    let mut other = vec![];
+    for mut op in ops.drain(..).rev() {
+        let HomeOperationKind::Label {
+            new_label,
+            affected_definition_ids,
+            unresolved_scope,
+            superseded_created_at,
+        } = &mut op.kind
+        else {
+            other.push(op);
+            continue;
+        };
+        // Signed but unenqueued events may already have reached a relay. Preserve their
+        // timestamp floors even when that owner's keys are currently unavailable.
+        for event in &op.signed_events {
+            let id = event.tags.iter().find_map(|tag| {
+                let tag = tag.as_slice();
+                (tag.first().map(String::as_str) == Some("d"))
+                    .then(|| tag.get(1))
+                    .flatten()
+            });
+            if let Some(id) = id {
+                let created_at = i64::try_from(event.created_at.as_secs())
+                    .map_err(|e| format!("label timestamp: {e}"))?;
+                superseded_created_at
+                    .entry(id.clone())
+                    .and_modify(|prior| *prior = (*prior).max(created_at))
+                    .or_insert(created_at);
+            }
+        }
+        if new_label != label {
+            *new_label = label.into();
+            op.signed_events.clear();
+        }
+        let existing = labels.iter_mut().find(|other| {
+            matches!(&other.kind, HomeOperationKind::Label { unresolved_scope: other_file, .. }
+                if other.relay_url == op.relay_url && other.owner_pubkey == op.owner_pubkey
+                && other_file == &*unresolved_scope)
+        });
+        if let Some(existing) = existing {
+            let HomeOperationKind::Label {
+                affected_definition_ids: ids,
+                superseded_created_at: floors,
+                ..
+            } = &mut existing.kind
+            else {
+                return Err("label worklist missing".into());
+            };
+            for id in affected_definition_ids {
+                if !ids.contains(id) {
+                    ids.push(id.clone());
+                    existing.signed_events.clear();
+                }
+            }
+            ids.sort();
+            for (id, created_at) in superseded_created_at {
+                floors
+                    .entry(id.clone())
+                    .and_modify(|prior| *prior = (*prior).max(*created_at))
+                    .or_insert(*created_at);
+            }
+        } else {
+            labels.push(op);
+        }
+    }
+    other.reverse();
+    labels.reverse();
+    other.extend(labels);
+    *ops = other;
+    Ok(())
+}
+
 fn scoped_definitions(
     dir: &Path,
     relay: &str,
@@ -56,6 +134,7 @@ fn sign_label(
         new_label,
         affected_definition_ids,
         unresolved_scope,
+        superseded_created_at,
     } = &mut op.kind
     else {
         return Err("invalid label operation".into());
@@ -93,7 +172,12 @@ fn sign_label(
             .flatten();
         let event = super::super::persona_events::build_persona_event(&d)?
             .custom_created_at(super::super::persona_events::monotonic_created_at(
-                prior.as_ref().map(|r| r.created_at),
+                prior
+                    .as_ref()
+                    .map(|r| r.created_at)
+                    .into_iter()
+                    .chain(superseded_created_at.get(id).copied())
+                    .max(),
             ))
             .sign_with_keys(keys)
             .map_err(|e| e.to_string())?;
@@ -163,7 +247,7 @@ pub(crate) fn set_label_with_metadata(
         if ids.is_empty() && index != 0 {
             continue;
         }
-        let mut op = HomeOperation {
+        let op = HomeOperation {
             id: uuid::Uuid::new_v4().to_string(),
             relay_url: relay.clone(),
             owner_pubkey: owner.clone(),
@@ -171,10 +255,10 @@ pub(crate) fn set_label_with_metadata(
                 new_label: label.into(),
                 affected_definition_ids: ids,
                 unresolved_scope: None,
+                superseded_created_at: Default::default(),
             },
             signed_events: vec![],
         };
-        sign_label(dir, &mut op, &identity, keys, index == 0)?;
         ops.push(op);
     }
     for (file, scope) in known_retention_scopes(&dir.join("agents"))? {
@@ -187,6 +271,7 @@ pub(crate) fn set_label_with_metadata(
                     new_label: label.into(),
                     affected_definition_ids: vec![],
                     unresolved_scope: Some(file),
+                    superseded_created_at: Default::default(),
                 },
                 signed_events: vec![],
             });
@@ -201,9 +286,19 @@ pub(crate) fn set_label_with_metadata(
                 new_label: label.into(),
                 affected_definition_ids: vec![],
                 unresolved_scope: None,
+                superseded_created_at: Default::default(),
             },
             signed_events: vec![],
         });
+    }
+    coalesce_label_worklists(&mut ops, label)?;
+    for op in &mut ops {
+        if matches!(op.kind, HomeOperationKind::Label { .. }) {
+            let use_local = scopes
+                .first()
+                .is_some_and(|(relay, owner)| relay == &op.relay_url && owner == &op.owner_pubkey);
+            sign_label(dir, op, &identity, keys, use_local)?;
+        }
     }
     save_journal(dir, &ops)?;
     let mut raw = read_policy_records(&dir.join("agents/managed-agents.json"))?;
@@ -217,7 +312,10 @@ pub(crate) fn set_label_with_metadata(
         _ => false,
     });
     let mut done = vec![];
-    for op in &ops[first..] {
+    for op in &ops {
+        if !matches!(op.kind, HomeOperationKind::Label { .. }) {
+            continue;
+        }
         let empty_worklist = match &op.kind {
             HomeOperationKind::Label {
                 affected_definition_ids,
@@ -246,6 +344,13 @@ pub(crate) fn prepare_label_retries(dir: &Path, keys: &Keys) -> Result<(), Strin
     }
     let identity = load_existing_device_identity(&dir.join("device.json"))?;
     let original = serde_json::to_vec(&ops).map_err(|e| e.to_string())?;
+    let latest_label = ops.iter().rev().find_map(|op| match &op.kind {
+        HomeOperationKind::Label { new_label, .. } => Some(new_label.clone()),
+        _ => None,
+    });
+    if let Some(label) = latest_label {
+        coalesce_label_worklists(&mut ops, &label)?;
+    }
     for op in &mut ops {
         if let HomeOperationKind::Label {
             unresolved_scope,

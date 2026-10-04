@@ -161,8 +161,12 @@ export function useTeamActions(
     actions.setActionErrorMessage(null);
 
     try {
-      for (const id of team.personaIds) {
-        await getDefinitionForAction(id, "deleteDefinition");
+      // Manual teams only remove their container; directory/catalog teams
+      // can change member definitions and retain the device capability guard.
+      if (team.sourceDir != null || team.catalogSource != null) {
+        for (const id of team.personaIds) {
+          await getDefinitionForAction(id, "deleteDefinition");
+        }
       }
       await deleteTeamMutation.mutateAsync(team.id);
       actions.setActionNoticeMessage(`Deleted team "${team.name}".`);
