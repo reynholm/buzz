@@ -52,7 +52,8 @@
         "def prepare_update(",
         "def prepare_blocked_report(",
         "def select_update(",
-        "def run_clean_target("
+        "def run_clean_target(",
+        "def draft_body("
       ],
       "invocation_seams": [
         {
@@ -81,6 +82,13 @@
           "callee_symbol": "merge_target",
           "invocation": "merge = merge_target(worktree, report.target_sha)",
           "behavior_test": "test_clean_merge_uses_target_registry_and_preserves_patch",
+          "verification_command": "python3 -m unittest discover -s scripts/fork/tests -v"
+        },
+        {
+          "caller_path": "scripts/fork/sync.py",
+          "callee_symbol": "draft_body",
+          "invocation": "body.write(draft_body(report))",
+          "behavior_test": "test_draft_body_contains_handoff_requirements",
           "verification_command": "python3 -m unittest discover -s scripts/fork/tests -v"
         }
       ],
@@ -4072,6 +4080,63 @@
       ],
       "verification_commands": [
         "just desktop-tauri-test desktop-tauri-check desktop-tauri-clippy desktop-tauri-fmt-check"
+      ]
+    },
+    {
+      "path": "scripts/fork/promote.py",
+      "responsibility": "Owner-merged exact-tree promotion with immutable artifact/acceptance pins and resumable verified release cleanup",
+      "is_new": true,
+      "required_symbols": [
+        "def verify_promotion(",
+        "def publish_promotion(",
+        "def verify_owner_merge(",
+        "def verify_archive("
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "scripts/fork/promote.py",
+          "callee_symbol": "verify_promotion",
+          "invocation": "promotion = verify_promotion(repo, candidate_sha, merged_sha, manifest)",
+          "behavior_test": "test_changed_merge_tree_cannot_promote",
+          "verification_command": "python3 -m unittest discover -s scripts/fork/tests -v"
+        },
+        {
+          "caller_path": "scripts/fork/promote.py",
+          "callee_symbol": "verify_owner_merge",
+          "invocation": "verify_owner_merge(promotion, gh)",
+          "behavior_test": "test_authoritative_owner_merge_rejection_precedes_all_mutations",
+          "verification_command": "python3 -m unittest discover -s scripts/fork/tests -v"
+        },
+        {
+          "caller_path": "scripts/fork/promote.py",
+          "callee_symbol": "verify_archive",
+          "invocation": "verify_archive(directory / names[0], manifest)",
+          "behavior_test": "test_rechecks_archived_binary_bytes_even_with_resealed_checksums",
+          "verification_command": "python3 -m unittest discover -s scripts/fork/tests -v"
+        }
+      ],
+      "verification_commands": [
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "scripts/fork/tests/test_promote.py",
+      "responsibility": "Synthetic disposable Git and executable GH fixtures for acceptance/tree/checksum/tag/release/cleanup gates",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": ".github/workflows/fork-promote.yml",
+      "responsibility": "Manual owner-dispatched protected-environment promotion of exact tested candidate artifacts",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 -m unittest discover -s scripts/fork/tests -v"
       ]
     }
   ]

@@ -1,0 +1,34 @@
+{
+  "name": "Owner exact-tree fork promotion",
+  "on": {
+    "workflow_dispatch": {
+      "inputs": {
+        "candidate_sha": {"description": "Full tested candidate SHA", "required": true, "type": "string"},
+        "merged_sha": {"description": "Full owner-merged fork/main SHA", "required": true, "type": "string"},
+        "fork_revision": {"description": "Revision embedded in tested candidate", "required": true, "type": "string"},
+        "candidate_run_id": {"description": "Successful candidate artifact workflow run", "required": true, "type": "string"},
+        "candidate_artifact_id": {"description": "Exact immutable candidate artifact ID", "required": true, "type": "string"},
+        "acceptance_json": {"description": "Owner acceptance receipt from maintenance guide; real evidence only", "required": true, "type": "string"}
+      }
+    }
+  },
+  "concurrency": {"group": "fork-release-preparation", "cancel-in-progress": false},
+  "permissions": {"contents": "write", "pull-requests": "read", "actions": "read"},
+  "jobs": {
+    "promote": {
+      "runs-on": "ubuntu-latest",
+      "timeout-minutes": 30,
+      "environment": "fork-promotion",
+      "env": {"GH_TOKEN": "${{ github.token }}"},
+      "steps": [
+        {"name": "Require owner dispatch and protected environment", "env": {"ACTOR": "${{ github.actor }}"}, "run": "test \"$ACTOR\" = reynholm"},
+        {"uses": "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10", "with": {"ref": "fork/main", "fetch-depth": 0}},
+        {"name": "Full fork Python tooling suite", "run": "python3 -m unittest discover -s scripts/fork/tests -v"},
+        {"uses": "actions/download-artifact@v4", "with": {"artifact-ids": "${{ inputs.candidate_artifact_id }}", "run-id": "${{ inputs.candidate_run_id }}", "github-token": "${{ github.token }}", "path": "candidate-assets"}},
+        {"name": "Retain owner receipt and select one manifest", "env": {"ACCEPTANCE_JSON": "${{ inputs.acceptance_json }}"}, "run": "python3 - <<'PY'\nimport json, os\nfrom pathlib import Path\nreceipt = json.loads(os.environ['ACCEPTANCE_JSON'])\nif receipt.get('synthetic') is True:\n    raise SystemExit('synthetic acceptance cannot publish')\nPath('owner-acceptance.json').write_text(json.dumps(receipt, indent=2) + '\\n')\npaths = list(Path('candidate-assets').rglob('manifest.json'))\nif len(paths) != 1:\n    raise SystemExit('exactly one candidate manifest required')\nwith open(os.environ['GITHUB_ENV'], 'a') as stream:\n    stream.write('MANIFEST_PATH=' + str(paths[0]) + '\\n')\nPY"},
+        {"name": "Verify owner merge, tested tree and pinned assets then publish", "env": {"CANDIDATE_SHA": "${{ inputs.candidate_sha }}", "MERGED_SHA": "${{ inputs.merged_sha }}", "FORK_REVISION": "${{ inputs.fork_revision }}"}, "run": "python3 scripts/fork/promote.py --candidate \"$CANDIDATE_SHA\" --merged \"$MERGED_SHA\" --manifest \"$MANIFEST_PATH\" --fork-revision \"$FORK_REVISION\" --acceptance owner-acceptance.json --publish > promotion.json"},
+        {"name": "Preserve owner promotion receipt", "if": "${{ always() }}", "uses": "actions/upload-artifact@v4", "with": {"name": "fork-promotion-receipt", "path": "owner-acceptance.json\npromotion.json", "if-no-files-found": "error"}}
+      ]
+    }
+  }
+}

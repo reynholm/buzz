@@ -49,10 +49,12 @@ New module: `true`.
 - Required symbol: `def prepare_blocked_report(`
 - Required symbol: `def select_update(`
 - Required symbol: `def run_clean_target(`
+- Required symbol: `def draft_body(`
 - Invocation: `scripts/fork/sync.py` → `validate_patches`; exact call `errors = validate_patches(args.repo, manifest)`; behavior test `test_cli_rejects_unlisted_path`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
 - Invocation: `scripts/fork/sync.py` → `validate_patches`; exact call `report.missing_seams = validate_patches(worktree, candidate_manifest)`; behavior test `test_merge_success_missing_seam_blocks`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
 - Invocation: `scripts/fork/sync.py` → `prepare_update`; exact call `report = prepare_update(args.repo, selection, manifest, base=args.base, clean_target=baseline)`; behavior test `test_cli_prepare_runs_guarded_candidate`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
 - Invocation: `scripts/fork/sync.py` → `merge_target`; exact call `merge = merge_target(worktree, report.target_sha)`; behavior test `test_clean_merge_uses_target_registry_and_preserves_patch`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
+- Invocation: `scripts/fork/sync.py` → `draft_body`; exact call `body.write(draft_body(report))`; behavior test `test_draft_body_contains_handoff_requirements`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
 - Verify: `python3 scripts/fork/sync.py validate`
 
 ## `scripts/fork/patches.json`
@@ -2426,3 +2428,34 @@ New module: `false`.
 - Required symbol: `buzz_lib::print_fork_artifact_probe_if_requested()`
 - Invocation: `desktop/src-tauri/src/main.rs` → `print_fork_artifact_probe_if_requested`; exact call `if buzz_lib::print_fork_artifact_probe_if_requested() {`; behavior test `test_probe_uses_early_readonly_command`; verify `just desktop-tauri-test`
 - Verify: `just desktop-tauri-test desktop-tauri-check desktop-tauri-clippy desktop-tauri-fmt-check`
+
+## `scripts/fork/promote.py`
+
+Owner-merged exact-tree promotion with immutable artifact/acceptance pins and resumable verified release cleanup
+
+New module: `true`.
+
+- Required symbol: `def verify_promotion(`
+- Required symbol: `def publish_promotion(`
+- Required symbol: `def verify_owner_merge(`
+- Required symbol: `def verify_archive(`
+- Invocation: `scripts/fork/promote.py` → `verify_promotion`; exact call `promotion = verify_promotion(repo, candidate_sha, merged_sha, manifest)`; behavior test `test_changed_merge_tree_cannot_promote`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
+- Invocation: `scripts/fork/promote.py` → `verify_owner_merge`; exact call `verify_owner_merge(promotion, gh)`; behavior test `test_authoritative_owner_merge_rejection_precedes_all_mutations`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
+- Invocation: `scripts/fork/promote.py` → `verify_archive`; exact call `verify_archive(directory / names[0], manifest)`; behavior test `test_rechecks_archived_binary_bytes_even_with_resealed_checksums`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `scripts/fork/tests/test_promote.py`
+
+Synthetic disposable Git and executable GH fixtures for acceptance/tree/checksum/tag/release/cleanup gates
+
+New module: `true`.
+
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `.github/workflows/fork-promote.yml`
+
+Manual owner-dispatched protected-environment promotion of exact tested candidate artifacts
+
+New module: `true`.
+
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`

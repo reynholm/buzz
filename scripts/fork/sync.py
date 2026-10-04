@@ -395,11 +395,26 @@ def gh_command(argv: list[str]) -> str:
     return subprocess.run(argv, check=True, capture_output=True, text=True).stdout.strip()
 
 
+def draft_body(report: SyncReport) -> str:
+    """Make candidate provenance and pending owner checks reviewable in the draft."""
+    prior_tag = report.prior_base.get('base_tag', 'unknown')
+    return ('Fork update: ' + prior_tag + ' → ' + str(report.target_tag)
+            + '\nUpstream changelog: https://github.com/block/buzz/releases/tag/' + str(report.target_tag)
+            + '\nUpstream range: https://github.com/block/buzz/compare/' + prior_tag + '...' + str(report.target_tag)
+            + '\nReview persona, agent, device ownership and sync changes in the compare diff.'
+            + '\nCheck conflicts and protected invocation seams in the report below.'
+            + '\nRequired full tests and clean baseline receipts must match the exact candidate SHA.'
+            + '\nVerified manifest, baseline.json and SHA256SUMS accompany candidate artifacts.'
+            + '\nOwner acceptance: native About SHA, existing data, sidecar runtime, keychain prompt,'
+            + ' two physical devices and maintenance command; follow docs/fork/MAINTENANCE.md.'
+            + '\nKeep draft until owner review and acceptance; owner merges before exact-tree promotion.'
+            + '\n\n```json\n' + json.dumps(asdict(report), indent=2) + '\n```\n')
+
+
 def gh_body(argv: list[str], report: SyncReport, gh):
     """Pass exact multiline PR evidence via a private temporary file."""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json') as body:
-        json.dump(asdict(report), body, indent=2)
-        body.write('\n')
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.md') as body:
+        body.write(draft_body(report))
         body.flush()
         return gh([*argv, '--body-file', body.name])
 

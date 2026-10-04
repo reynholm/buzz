@@ -251,3 +251,129 @@ hosted workflow, default-branch schedule and next real upstream tag acceptance
 remain explicit external gates until their corresponding evidence exists. Native
 GUI exercises must use the existing named-demo build recipe and isolated fixtures;
 never launch the production candidate against the owner's data or keychain.
+
+## Owner merge and exact-tree promotion
+
+`promote.py` performs a read-only preflight by default. It consumes M3's existing
+`manifest.json`, `baseline.json`, archive, DMG and `SHA256SUMS` without rewriting
+any of them. A separate owner acceptance receipt pins the candidate SHA/tree,
+merged SHA, upstream baseline tag/SHA and SHA256 digests of the manifest and
+checksum file. All acceptance references share that immutable receipt scope.
+A checkbox or synthetic test fixture never substitutes for actual owner review,
+native acceptance or two physical devices.
+
+The owner first reviews the draft's baseline/candidate SHAs, skipped tags,
+upstream range/changelog, persona/agent/device/sync diff, conflict/seam report,
+full tests and candidate artifact run. Follow
+[device acceptance](DEVICE_AGENT_ACCEPTANCE.md) for the physical checks.
+Record independently accessible evidence for every item below, using the actual
+candidate artifacts. Keep the PR draft until the repository's review and human
+acceptance requirements hold; do not add `buzz-review-completed` early. Owner
+`reynholm` merges into `fork/main`; automation never merges a PR.
+
+Create `owner-acceptance.json` outside the producer output directory. This
+incomplete schema example is deliberately rejected until actual owner evidence
+and exact hashes are supplied:
+
+```json
+{
+  "synthetic": false,
+  "owner_login": "reynholm",
+  "pr_url": "https://github.com/reynholm/buzz/pull/<number>",
+  "candidate_sha": "<full tested candidate SHA>",
+  "candidate_tree": "<git rev-parse candidate^{tree}>",
+  "merged_sha": "<full owner-merged SHA>",
+  "base_tag": "desktop-v0.5.26",
+  "upstream_sha": "2b4b138dc5cf2d9cc1a0ceb21d9063ff56fe8bf4",
+  "manifest_sha256": "<SHA256 of unchanged M3 manifest.json>",
+  "checksums_sha256": "<SHA256 of unchanged M3 SHA256SUMS>",
+  "evidence": {
+    "owner_review": {"accepted": false, "reference": ""},
+    "full_tests": {"accepted": false, "reference": ""},
+    "native_about": {"accepted": false, "reference": ""},
+    "existing_data": {"accepted": false, "reference": ""},
+    "sidecar_runtime": {"accepted": false, "reference": ""},
+    "keychain_prompt": {"accepted": false, "reference": ""},
+    "two_physical_devices": {"accepted": false, "reference": ""},
+    "maintenance_command": {"accepted": false, "reference": ""}
+  }
+}
+```
+
+An owner records `accepted: true` only after that check passed for the pinned
+candidate. `full_tests` references the complete candidate Python/companion/CI
+receipts and successful clean upstream baseline; `owner_review` references the
+owner's completed review. The remaining records reference actual native About
+identity, isolated existing-data migration, full sidecar runtime, keychain prompt,
+two physical devices and the owner's maintenance command exercise. Evidence
+references are reviewed human attestations; the script does not independently
+perform physical tests or authenticate a hand-written receipt. Publication checks
+GitHub's authoritative owner merge actor and exact head/base/merged SHAs again.
+
+Fetch the owner's accepted merge and base tag into the maintenance checkout
+without changing its checked-out source, ensure local `fork/main` contains the
+merge, then run:
+
+```sh
+python3 scripts/fork/promote.py --candidate <tested-sha> --merged <owner-merged-sha> \
+  --manifest <candidate-directory>/manifest.json --fork-revision <tested-N> \
+  --acceptance owner-acceptance.json
+```
+
+Preflight requires candidate and merged Git trees to match exactly. The embedded
+artifact identity remains the tested candidate SHA, even if the owner's merge
+commit has a different SHA. It checks upstream tag/config/baseline provenance,
+all four producer checksum entries, DMG size/hash and archived plist, actual
+binary/resource bytes, modes and arm64 Mach-O headers; it rejects updater config
+and archive links/traversal. BSD tar's regular AppleDouble metadata is accepted
+only with safe normalized paths, an existing associated app entry, bounded size
+and valid header/table/entry bounds. Metadata can inherit executable modes; it
+never substitutes for a real binary/resource record. M3's native probe remains the source of embedded
+identity/config evidence, cryptographically pinned by the unchanged owner-reviewed
+manifest; promotion does not start an app. If any merge changes the tree, rebuild,
+retest and reaccept a new exact-SHA candidate. Never relabel earlier assets.
+
+Only after owner authorization, append `--publish`. It requires the existing
+`reynholm/buzz` origin, remote `fork/main` at the exact merged SHA and GitHub's
+PR record attesting the owner merge of this candidate branch. It copies and
+reverifies a private asset snapshot before external calls, so producer-directory
+changes cannot change published bytes. It creates `fork-vX.Y.Z-N` on the merged
+commit with an ordinary nonforce tag push. A same-name tag on any other commit,
+even with the same tree, is an error. Existing release provenance and asset bytes
+must match; missing assets of an identical draft resume without overwriting.
+The release initially stays draft, includes exact candidate/merged/tree/checksum
+provenance and the unchanged candidate assets, and becomes public only after all
+downloaded asset hashes verify.
+
+After successful final tag/release verification, cleanup targets only the exact
+merged `fork/sync-vX.Y.Z` remote branch. A deletion-only compare-and-swap lease
+pins its current SHA to the candidate; it never force-updates a branch or rewrites
+history. A concurrent replacement refuses deletion and preserves the branch for
+owner handoff. No other branch or local worktree is removed. Repeating the same
+accepted promotion verifies the same tag/release/bytes and safely resumes; wrong
+release provenance, altered uploaded bytes or moved accepted refs require owner
+handoff. Command/API errors propagate; a partial tag/draft remains inspectable.
+
+The separate JSON-form YAML [owner promotion workflow](../../.github/workflows/fork-promote.yml)
+is manual only. It requires owner dispatch plus environment `fork-promotion`, runs
+the full Python suite, downloads the exact supplied candidate artifact/run IDs,
+retains the owner's acceptance JSON and invokes the same explicit publication CLI.
+Before enabling it, the owner must configure that environment with owner-only
+required approval and branch restrictions. Source configuration does not prove
+hosted execution or environment protection exists. It shares sync concurrency,
+never auto-merges, never installs, and never changes the default branch.
+
+Disposable bare-Git/executable-GH fixtures use `synthetic: true` only for tooling
+correctness. `--fixture --publish` accepts only an absolute local bare origin;
+synthetic receipts cannot publish to a network remote. Tests cover exact-tree
+rejection, stale/missing acceptance, corrupt assets, GitHub merge actor, tag
+conflicts, byte-preserving publication/resume and concurrent cleanup refusal.
+They do not provide owner or physical acceptance.
+
+M3's locally built `fcbe5c649594e323b94224ab0634a81e884a6251` artifacts remain
+exactly that earlier scoped candidate. M4 and subsequent implementation commits
+require a later exact-SHA rebuild/reverification before delivery as the final
+candidate. Current owner instructions authorize local commits only: no real tag,
+release, push, merge, promotion, installation or workflow activation has occurred.
+Owner review/native/physical acceptance and the next actual upstream tag remain
+pending external gates.
