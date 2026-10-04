@@ -937,3 +937,31 @@ mod mixed_restore_tests {
         assert_eq!(selected[0].pubkey, key);
     }
 }
+
+/// Test access to production restore selection, hydration and snapshot sequencing.
+#[cfg(test)]
+pub(crate) fn prepare_restore_workflow_with<R: tauri::Runtime>(
+    expected: Option<&super::device_runtime::RuntimeFence>,
+    app: &tauri::AppHandle<R>,
+    shutdown_started: &AtomicBool,
+    context: impl FnOnce(
+        &tauri::AppHandle<R>,
+        &AppState,
+    ) -> Result<super::persona_device_view::DevicePolicyContext, String>,
+    hydrate: impl FnOnce(&mut [super::ManagedAgentRecord]),
+    persist: impl FnOnce(&mut [super::ManagedAgentRecord]),
+    processes: impl FnOnce(
+        &mut [super::ManagedAgentRecord],
+        &std::collections::HashSet<String>,
+    ) -> Result<(bool, Vec<String>), String>,
+) -> Result<Vec<super::ManagedAgentRecord>, String> {
+    prepare_restore_phase_a_with(
+        expected,
+        app,
+        shutdown_started,
+        context,
+        hydrate,
+        persist,
+        processes,
+    )
+}

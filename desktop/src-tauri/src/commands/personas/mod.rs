@@ -460,3 +460,6 @@ fn complete_cascade_home_operations<R: tauri::Runtime>(
 }
 #[cfg(test)]
 mod home_delete_tests;
+
+#[cfg(test)]
+pub(crate) use inbound::reconcile_inbound_workflow_with;

@@ -138,3 +138,6 @@ pub use window_chrome::*;
 pub use window_vibrancy::*;
 pub use workflows::*;
 pub use workspace::*;
+
+#[cfg(test)]
+pub(crate) use personas::reconcile_inbound_workflow_with;

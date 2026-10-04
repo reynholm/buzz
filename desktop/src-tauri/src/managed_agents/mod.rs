@@ -170,3 +170,6 @@ pub(crate) mod device_inbound;
 
 #[cfg(test)]
 mod device_inbound_tests;
+
+#[cfg(test)]
+mod device_workflow_tests;

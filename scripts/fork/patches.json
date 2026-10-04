@@ -610,7 +610,8 @@
       ],
       "invocation_seams": [],
       "verification_commands": [
-        "just desktop-tauri-test desktop-tauri-check"
+        "just desktop-tauri-test desktop-tauri-check",
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib device_workflow_tests"
       ]
     },
     {
@@ -932,7 +933,8 @@
       ],
       "invocation_seams": [],
       "verification_commands": [
-        "just desktop-tauri-test desktop-tauri-check"
+        "just desktop-tauri-test desktop-tauri-check",
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib device_workflow_tests"
       ]
     },
     {
@@ -1280,7 +1282,8 @@
         }
       ],
       "verification_commands": [
-        "just desktop-tauri-test desktop-tauri-check"
+        "just desktop-tauri-test desktop-tauri-check",
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib device_workflow_tests"
       ]
     },
     {
@@ -1397,7 +1400,8 @@
         }
       ],
       "verification_commands": [
-        "just desktop-tauri-test desktop-tauri-check"
+        "just desktop-tauri-test desktop-tauri-check",
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib device_workflow_tests"
       ]
     },
     {
@@ -1884,7 +1888,8 @@
         }
       ],
       "verification_commands": [
-        "just desktop-tauri-test desktop-tauri-check"
+        "just desktop-tauri-test desktop-tauri-check",
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib device_workflow_tests"
       ]
     },
     {
@@ -4137,6 +4142,33 @@
       "invocation_seams": [],
       "verification_commands": [
         "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/device_workflow_tests.rs",
+      "responsibility": "Two-store production-seam device workflows and complete Desktop access projection matrix",
+      "is_new": true,
+      "required_symbols": [
+        "fn private_two_device_single_pubkey(",
+        "fn release_then_reclaim(",
+        "fn shared_two_device_baseline(",
+        "fn device_policy_access_matrix("
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib device_workflow_tests",
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "docs/fork/DEVICE_AGENT_ACCEPTANCE.md",
+      "responsibility": "Exact-candidate owner native and physical device acceptance procedure",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib device_workflow_tests",
+        "python3 scripts/fork/sync.py validate"
       ]
     }
   ]

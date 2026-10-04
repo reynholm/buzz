@@ -969,3 +969,28 @@ fn apply_inbound_team(teams: &mut Vec<TeamRecord>, d_tag: String, inbound: TeamE
         }),
     }
 }
+
+/// Test access to the production signed inbound dispatcher, with isolated authority.
+#[cfg(test)]
+pub(crate) fn reconcile_inbound_workflow_with<R: tauri::Runtime>(
+    event_json: String,
+    arrival_relay_url: String,
+    app: AppHandle<R>,
+    context: impl FnOnce(
+        &AppHandle<R>,
+        &AppState,
+    ) -> Result<
+        crate::managed_agents::persona_device_view::DevicePolicyContext,
+        String,
+    >,
+    refresh: impl FnOnce(),
+) -> Result<(), String> {
+    reconcile_inbound_persona_event_blocking_with(
+        event_json,
+        arrival_relay_url,
+        app,
+        context,
+        refresh,
+    )
+    .map(|_| ())
+}

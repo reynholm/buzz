@@ -415,6 +415,7 @@ New module: `false`.
 - Required symbol: `mod device_runtime;`
 - Required symbol: `mod device_runtime_tests;`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib device_workflow_tests`
 
 ## `desktop/src-tauri/src/managed_agents/nest/render_tests.rs`
 
@@ -652,6 +653,7 @@ New module: `false`.
 - Required symbol: `pub use device_identity::*;`
 - Required symbol: `pub use device_home_sync::*;`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib device_workflow_tests`
 
 ## `desktop/src-tauri/src/lib.rs`
 
@@ -829,6 +831,7 @@ New module: `false`.
                 &id,`; behavior test `local_definition_delete_device_guard_precedes_every_cascade_effect`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib local_definition_delete_device_guard_precedes_every_cascade_effect`
 - Invocation: `desktop/src-tauri/src/commands/personas/mod.rs` → `complete_cascade_home_operations`; exact call `complete_cascade_home_operations(&app, &home_operations)?;`; behavior test `definition_cascade_retry_keeps_instance_tombstone_archive_without_release_resurrection`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace definition_cascade_retry_keeps_instance_tombstone_archive_without_release_resurrection`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib device_workflow_tests`
 
 ## `desktop/src-tauri/src/app_state.rs`
 
@@ -899,6 +902,7 @@ New module: `false`.
                 proven,
             );`; behavior test `commands::personas::inbound::device_metadata_tests`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib commands::personas::inbound::device_metadata_tests`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib device_workflow_tests`
 
 ## `desktop/src/features/agents/lib/usePersonaSync.ts`
 
@@ -1141,6 +1145,7 @@ New module: `false`.
         super::persona_device_view::load_device_policy_context,
         super::storage::hydrate_keys,`; behavior test `managed_agents::restore::device_home_restore_tests::restore_phase_a_authority_scope_switch_refuses_before_key_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::restore::device_home_restore_tests::restore_phase_a_authority_scope_switch_refuses_before_key_effects -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib device_workflow_tests`
 
 ## `desktop/src-tauri/src/managed_agents/runtime_commands.rs`
 
@@ -2459,3 +2464,25 @@ Manual owner-dispatched protected-environment promotion of exact tested candidat
 New module: `true`.
 
 - Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `desktop/src-tauri/src/managed_agents/device_workflow_tests.rs`
+
+Two-store production-seam device workflows and complete Desktop access projection matrix
+
+New module: `true`.
+
+- Required symbol: `fn private_two_device_single_pubkey(`
+- Required symbol: `fn release_then_reclaim(`
+- Required symbol: `fn shared_two_device_baseline(`
+- Required symbol: `fn device_policy_access_matrix(`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib device_workflow_tests`
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `docs/fork/DEVICE_AGENT_ACCEPTANCE.md`
+
+Exact-candidate owner native and physical device acceptance procedure
+
+New module: `true`.
+
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib device_workflow_tests`
+- Verify: `python3 scripts/fork/sync.py validate`
