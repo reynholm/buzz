@@ -5257,3 +5257,28 @@ New module: `false`.
 - Required symbol: `github.repository == 'block/buzz'`
 - Verify: `python3 scripts/fork/sync.py validate`
 - Verify: `gh run list --repo github.com/reynholm/buzz --workflow sprig-image.yml`
+
+## `desktop/tests/e2e/project-conversation-load-failure.spec.ts`
+
+Keep historical reply fixtures outside the inclusive live subscription so terminal fetch failure and Retry recovery remain exercised
+
+New module: `false`.
+
+- Required symbol: `historyTimestamp`
+- Required symbol: `Math.floor(Date.now() / 1000) - 60`
+- Required symbol: `message-thread-replies-error`
+- Required symbol: `REPLY_CONTENT`
+- Verify: `pnpm -C desktop exec playwright test --project=smoke tests/e2e/project-conversation-load-failure.spec.ts`
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `desktop/tests/e2e/empty-edit-delete.spec.ts`
+
+Exercise an open channel suggestion and await its cleared-query settlement before keyboard Enter submits an empty edit
+
+New module: `false`.
+
+- Required symbol: `#general stream`
+- Required symbol: `wait for the cleared query first`
+- Required symbol: `await page.keyboard.press("Enter")`
+- Verify: `pnpm -C desktop exec playwright test --project=smoke tests/e2e/empty-edit-delete.spec.ts`
+- Verify: `python3 scripts/fork/sync.py validate`

@@ -7677,6 +7677,37 @@
         "python3 scripts/fork/sync.py validate",
         "gh run list --repo github.com/reynholm/buzz --workflow sprig-image.yml"
       ]
+    },
+    {
+      "path": "desktop/tests/e2e/project-conversation-load-failure.spec.ts",
+      "responsibility": "Keep historical reply fixtures outside the inclusive live subscription so terminal fetch failure and Retry recovery remain exercised",
+      "is_new": false,
+      "required_symbols": [
+        "historyTimestamp",
+        "Math.floor(Date.now() / 1000) - 60",
+        "message-thread-replies-error",
+        "REPLY_CONTENT"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm -C desktop exec playwright test --project=smoke tests/e2e/project-conversation-load-failure.spec.ts",
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "desktop/tests/e2e/empty-edit-delete.spec.ts",
+      "responsibility": "Exercise an open channel suggestion and await its cleared-query settlement before keyboard Enter submits an empty edit",
+      "is_new": false,
+      "required_symbols": [
+        "#general stream",
+        "wait for the cleared query first",
+        "await page.keyboard.press(\"Enter\")"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm -C desktop exec playwright test --project=smoke tests/e2e/empty-edit-delete.spec.ts",
+        "python3 scripts/fork/sync.py validate"
+      ]
     }
   ]
 }

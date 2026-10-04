@@ -38,6 +38,11 @@ async function submitEmptyEdit(
   await page.keyboard.press("ControlOrMeta+A");
   await page.keyboard.press("Backspace");
   await expect(input).toBeEmpty();
+  // Clearing the original #general reference debounces its suggestions. Enter
+  // selects a suggestion while it is open; wait for the cleared query first.
+  await expect(
+    page.getByRole("button", { name: "#general stream", exact: true }),
+  ).toBeHidden();
   await page.keyboard.press("Enter");
 }
 

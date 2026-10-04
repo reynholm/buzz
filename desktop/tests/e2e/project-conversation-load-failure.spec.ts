@@ -77,15 +77,13 @@ test.describe("project conversation load failure", () => {
     await installMockBridge(page);
     await page.goto("/", { waitUntil: "domcontentloaded" });
 
-    // Seed the conversation BEFORE opening general — i.e. before its live
-    // subscription exists — so the reply lands in the mock store (searchable,
-    // and returnable by a successful get_thread_replies) but is never live
-    // pushed into the thread-replies cache. If general were open first, the
-    // live handler would seed that cache and the panel would render the list
-    // branch, masking the error card. The root carries the repository discovery
-    // token so it surfaces as the channel's latest discussion hit (what the
-    // Channels-tab row opens); its reply omits the token so it never competes
-    // to be the opened hit.
+    // Seed historical conversation events before opening general. The panel's
+    // live subscription replays stored events matching its inclusive since=now
+    // filter, so same-second or future replies would populate the thread cache
+    // and correctly render the list instead of the error card. Keep these events
+    // older than that filter so only a successful get_thread_replies loads the
+    // reply. The root carries the repository discovery token so the Channels-tab
+    // row opens it; the reply omits the token so it never competes as a hit.
     //
     // Wait for the emitter first: emitting before the app boots is a silent
     // no-op (the helper is undefined), which would leave the store empty.
@@ -103,7 +101,7 @@ test.describe("project conversation load failure", () => {
       .toBe(true);
     const rootId = await page.evaluate(
       ({ author, rootContent, replyContent }) => {
-        const now = Math.floor(Date.now() / 1000);
+        const historyTimestamp = Math.floor(Date.now() / 1000) - 60;
         const emit = (
           window as typeof window & {
             __BUZZ_E2E_EMIT_MOCK_MESSAGE__: (input: {
@@ -119,14 +117,14 @@ test.describe("project conversation load failure", () => {
           channelName: "general",
           content: rootContent,
           pubkey: author,
-          createdAt: now,
+          createdAt: historyTimestamp,
         });
         emit({
           channelName: "general",
           content: replyContent,
           parentEventId: root.id,
           pubkey: author,
-          createdAt: now + 1,
+          createdAt: historyTimestamp + 1,
         });
         return root.id;
       },
