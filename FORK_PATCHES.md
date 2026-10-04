@@ -901,7 +901,7 @@ New module: `false`.
 
 ## `desktop/src/features/agents/lib/usePersonaSync.ts`
 
-Live-first backend hydration, rejection-aware drain, bounded fresh-session retry and connection invalidation; R2 confirmed live deadline, degraded delivery and bounded recovery with late-EOSE hydration
+Live-first backend hydration, rejection-aware drain, bounded fresh-session retry and connection invalidation; R2 confirmed live deadline, degraded delivery and bounded recovery with late-EOSE hydration; pre-Run begin failure cooldown recovery fenced by generation and disposal
 
 New module: `false`.
 
@@ -913,9 +913,12 @@ New module: `false`.
 - Required symbol: `liveConfirmed && !degraded && !failed`
 - Required symbol: `const queueRestart`
 - Required symbol: `clearTimeout(restartDelay.timer);`
+- Required symbol: `const cancelBeginRecovery`
+- Required symbol: `epoch === generation &&`
 - Invocation: `desktop/src/features/agents/lib/usePersonaSync.ts` → `finishDeviceHomeSync`; exact call `await finishDeviceHomeSync(sessionRun.token);`; behavior test `backend sync waits for buffered live applies before finish and carries its token`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern="backend sync waits for buffered" src/features/agents/lib/usePersonaSync.test.mjs`
 - Invocation: `desktop/src/features/agents/lib/usePersonaSync.ts` → `invalidateDeviceHomeSync`; exact call `invalidateDeviceHomeSync(run.token)`; behavior test `connection loss invalidates readiness and reconnect starts a fresh complete session`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern="connection loss invalidates" src/features/agents/lib/usePersonaSync.test.mjs`
 - Invocation: `desktop/src/features/agents/lib/usePersonaSync.ts` → `abort`; exact call `run.controller.abort();`; behavior test `terminal CLOSED after Ready immediately invalidates and replacement exhaustively hydrates`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern="terminal CLOSED after Ready" src/features/agents/lib/usePersonaSyncRelayHealth.test.mjs`
+- Invocation: `desktop/src/features/agents/lib/usePersonaSync.ts` → `cancelBeginRecovery`; exact call `cancelBeginRecovery();`; behavior test `reconnect supersedes a begin recovery timer without a duplicate subscription`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern="reconnect supersedes a begin recovery" src/features/agents/lib/usePersonaSyncRelayHealth.test.mjs`
 - Verify: `just desktop-test desktop-typecheck`
 
 ## `desktop/src/features/agents/lib/usePersonaSync.test.mjs`
@@ -995,7 +998,7 @@ New module: `false`.
 
 ## `desktop/src/features/agents/lib/usePersonaSyncRelayHealth.test.mjs`
 
-Actual hook plus real RelayClient CLOSED/EOSE/timeout recovery and immediate timer disposal tests
+Actual hook plus real RelayClient CLOSED/EOSE/timeout recovery and immediate timer disposal tests; pre-Run begin failure recovery, bounded retries, Ready barrier and generation/disposal cancellation
 
 New module: `true`.
 
@@ -1004,6 +1007,9 @@ New module: `true`.
 - Required symbol: `unconfirmed timeout`
 - Required symbol: `disposal after retryable CLOSED`
 - Required symbol: `rate-limited CLOSED retires readiness`
+- Required symbol: `cooldown begin failure recovers`
+- Required symbol: `repeated begin failures have bounded frequency`
+- Required symbol: `late begin rejection from a superseded generation`
 - Verify: `just desktop-test desktop-typecheck`
 
 ## `desktop/src-tauri/src/managed_agents/device_home_migration.rs`

@@ -192,7 +192,14 @@ export function startPersonaSync(
     resolve: () => void;
   } | null = null;
   let subscriptionFailures = 0;
+  // begin may fail before there is a Run to own its recovery timer.
+  let beginRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+  const cancelBeginRecovery = () => {
+    if (beginRecoveryTimer !== null) clearTimeout(beginRecoveryTimer);
+    beginRecoveryTimer = null;
+  };
   const cancelRestart = () => {
+    cancelBeginRecovery();
     restartQueued = null;
     if (restartDelay) {
       clearTimeout(restartDelay.timer);
@@ -214,6 +221,7 @@ export function startPersonaSync(
     await Promise.all([invalidation, run.dispose?.()]);
   };
   const retire = () => {
+    cancelBeginRecovery();
     generation += 1;
     const old = active;
     active = null;
@@ -454,6 +462,19 @@ export function startPersonaSync(
     } catch (error) {
       console.warn("[usePersonaSync] sync initialization failed:", error);
       if (run && current(run)) await retire();
+      else if (
+        !run &&
+        !cancelled() &&
+        epoch === generation &&
+        beginRecoveryTimer === null
+      ) {
+        // No token or live REQ exists yet. Bound persistent native failures by
+        // the same cooldown, and let retirement cancel this generation's retry.
+        beginRecoveryTimer = setTimeout(() => {
+          beginRecoveryTimer = null;
+          if (!cancelled() && epoch === generation) queueRestart();
+        }, LIVE_RECOVERY_COOLDOWN_MS);
+      }
     }
   };
   const queueRestart = (delayAttempt?: number) => {

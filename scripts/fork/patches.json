@@ -1406,7 +1406,7 @@
     },
     {
       "path": "desktop/src/features/agents/lib/usePersonaSync.ts",
-      "responsibility": "Live-first backend hydration, rejection-aware drain, bounded fresh-session retry and connection invalidation; R2 confirmed live deadline, degraded delivery and bounded recovery with late-EOSE hydration",
+      "responsibility": "Live-first backend hydration, rejection-aware drain, bounded fresh-session retry and connection invalidation; R2 confirmed live deadline, degraded delivery and bounded recovery with late-EOSE hydration; pre-Run begin failure cooldown recovery fenced by generation and disposal",
       "is_new": false,
       "required_symbols": [
         "export function startPersonaSync",
@@ -1416,7 +1416,9 @@
         "sessionRun.controller.signal",
         "liveConfirmed && !degraded && !failed",
         "const queueRestart",
-        "clearTimeout(restartDelay.timer);"
+        "clearTimeout(restartDelay.timer);",
+        "const cancelBeginRecovery",
+        "epoch === generation &&"
       ],
       "invocation_seams": [
         {
@@ -1439,6 +1441,13 @@
           "invocation": "run.controller.abort();",
           "behavior_test": "terminal CLOSED after Ready immediately invalidates and replacement exhaustively hydrates",
           "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern=\"terminal CLOSED after Ready\" src/features/agents/lib/usePersonaSyncRelayHealth.test.mjs"
+        },
+        {
+          "caller_path": "desktop/src/features/agents/lib/usePersonaSync.ts",
+          "callee_symbol": "cancelBeginRecovery",
+          "invocation": "cancelBeginRecovery();",
+          "behavior_test": "reconnect supersedes a begin recovery timer without a duplicate subscription",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern=\"reconnect supersedes a begin recovery\" src/features/agents/lib/usePersonaSyncRelayHealth.test.mjs"
         }
       ],
       "verification_commands": [
@@ -1576,14 +1585,17 @@
     },
     {
       "path": "desktop/src/features/agents/lib/usePersonaSyncRelayHealth.test.mjs",
-      "responsibility": "Actual hook plus real RelayClient CLOSED/EOSE/timeout recovery and immediate timer disposal tests",
+      "responsibility": "Actual hook plus real RelayClient CLOSED/EOSE/timeout recovery and immediate timer disposal tests; pre-Run begin failure recovery, bounded retries, Ready barrier and generation/disposal cancellation",
       "is_new": true,
       "required_symbols": [
         "terminal CLOSED before confirmation",
         "terminal CLOSED after Ready",
         "unconfirmed timeout",
         "disposal after retryable CLOSED",
-        "rate-limited CLOSED retires readiness"
+        "rate-limited CLOSED retires readiness",
+        "cooldown begin failure recovers",
+        "repeated begin failures have bounded frequency",
+        "late begin rejection from a superseded generation"
       ],
       "invocation_seams": [],
       "verification_commands": [

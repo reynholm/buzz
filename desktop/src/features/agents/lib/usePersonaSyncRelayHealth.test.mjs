@@ -541,3 +541,139 @@ test("failed apply in the current hydrated token refuses Ready and retains bound
     ["health-2"],
   );
 });
+
+test("cooldown begin failure recovers a fresh subscription and exhaustive history before Ready", async (t) => {
+  let hydrated = 0;
+  let releaseHistory;
+  const h = harness(t, {
+    begin: (session) => {
+      if (session.token === "health-4")
+        throw new Error("retention unavailable");
+      return session;
+    },
+    hydrate: async () => {
+      if (++hydrated <= 3) throw new Error("history unavailable");
+      return new Promise((resolve) => {
+        releaseHistory = resolve;
+      });
+    },
+  });
+  await flush();
+  await h.advance(1500);
+  assert.equal(h.count("hydrate_device_home_history"), 3);
+  assert.equal(relayClient.subscriptions.size, 1);
+  await h.advance(30000);
+  assert.equal(h.count("begin_device_home_sync"), 4);
+  assert.equal(relayClient.subscriptions.size, 0);
+  await h.advance(29999);
+  assert.equal(
+    h.count("begin_device_home_sync"),
+    4,
+    "begin failures wait for cooldown",
+  );
+  await h.advance(1);
+  assert.equal(h.count("begin_device_home_sync"), 5);
+  assert.equal(relayClient.subscriptions.size, 1);
+  assert.equal(h.count("hydrate_device_home_history"), 4);
+  assert.equal(
+    h.count("finish_device_home_sync"),
+    0,
+    "EOSE cannot bypass exhaustive history",
+  );
+  releaseHistory({ coveredEventIds: [] });
+  await flush();
+  assert.deepEqual(
+    h.calls
+      .filter((c) => c.command === "finish_device_home_sync")
+      .map((c) => c.args.sessionToken),
+    ["health-5"],
+  );
+  await h.advance(120000);
+  assert.equal(
+    h.count("begin_device_home_sync"),
+    5,
+    "successful recovery stops retrying",
+  );
+});
+
+test("repeated begin failures have bounded frequency and disposal cancels recovery", async (t) => {
+  const h = harness(t, {
+    begin: () => {
+      throw new Error("retention unavailable");
+    },
+  });
+  await flush();
+  assert.equal(h.count("begin_device_home_sync"), 1);
+  await h.advance(120000);
+  assert.equal(
+    h.count("begin_device_home_sync"),
+    5,
+    "at most one new begin per cooldown",
+  );
+  assert.equal(h.pendingTimers(), 1);
+  assert.equal(h.count("finish_device_home_sync"), 0);
+  await h.dispose();
+  assert.equal(h.pendingTimers(), 0);
+  await h.advance(120000);
+  assert.equal(h.count("begin_device_home_sync"), 5);
+  assert.equal(relayClient.subscriptions.size, 0);
+});
+
+test("begin rejection arriving after disposal cannot schedule recovery", async (t) => {
+  let rejectBegin;
+  const h = harness(t, {
+    begin: () =>
+      new Promise((_resolve, reject) => {
+        rejectBegin = reject;
+      }),
+  });
+  await flush();
+  await h.dispose();
+  rejectBegin(new Error("late retention failure"));
+  await flush();
+  assert.equal(h.pendingTimers(), 0);
+  await h.advance(120000);
+  assert.equal(h.count("begin_device_home_sync"), 1);
+  assert.equal(h.count("finish_device_home_sync"), 0);
+});
+
+test("reconnect supersedes a begin recovery timer without a duplicate subscription", async (t) => {
+  const h = harness(t, {
+    begin: (session) => {
+      if (session.token === "health-1")
+        throw new Error("retention unavailable");
+      return session;
+    },
+  });
+  await flush();
+  assert.equal(h.pendingTimers(), 1);
+  for (const listener of relayClient.reconnectListeners) listener();
+  await flush();
+  assert.equal(h.count("finish_device_home_sync"), 1);
+  assert.equal(relayClient.subscriptions.size, 1);
+  await h.advance(120000);
+  assert.equal(h.count("begin_device_home_sync"), 2);
+  assert.equal(h.requests.length, 1);
+});
+
+test("late begin rejection from a superseded generation cannot restart the current Run", async (t) => {
+  let rejectBegin;
+  const h = harness(t, {
+    begin: (session) =>
+      session.token === "health-1"
+        ? new Promise((_resolve, reject) => {
+            rejectBegin = reject;
+          })
+        : session,
+  });
+  await flush();
+  for (const listener of relayClient.reconnectListeners) listener();
+  await flush();
+  assert.equal(h.count("finish_device_home_sync"), 1);
+  rejectBegin(new Error("stale retention failure"));
+  await flush();
+  assert.equal(h.pendingTimers(), 0);
+  await h.advance(120000);
+  assert.equal(h.count("begin_device_home_sync"), 2);
+  assert.equal(relayClient.subscriptions.size, 1);
+});
