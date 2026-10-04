@@ -7659,6 +7659,20 @@
         "pnpm -C desktop exec playwright test --project=smoke tests/e2e/scroll-history.spec.ts",
         "python3 scripts/fork/sync.py validate"
       ]
+    },
+    {
+      "path": ".github/workflows/sprig-image.yml",
+      "responsibility": "Preserve Sprig image PR builds and gate unconfigured upstream registry publication",
+      "is_new": false,
+      "required_symbols": [
+        "vars.GHCR_SPRIG_IMAGE",
+        "github.repository == 'block/buzz'"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate",
+        "gh run list --repo github.com/reynholm/buzz --workflow sprig-image.yml"
+      ]
     }
   ]
 }

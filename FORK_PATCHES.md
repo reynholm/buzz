@@ -5243,3 +5243,14 @@ New module: `false`.
 - Required symbol: `viewportCoverage`
 - Verify: `pnpm -C desktop exec playwright test --project=smoke tests/e2e/scroll-history.spec.ts`
 - Verify: `python3 scripts/fork/sync.py validate`
+
+## `.github/workflows/sprig-image.yml`
+
+Preserve Sprig image PR builds and gate unconfigured upstream registry publication
+
+New module: `false`.
+
+- Required symbol: `vars.GHCR_SPRIG_IMAGE`
+- Required symbol: `github.repository == 'block/buzz'`
+- Verify: `python3 scripts/fork/sync.py validate`
+- Verify: `gh run list --repo github.com/reynholm/buzz --workflow sprig-image.yml`
