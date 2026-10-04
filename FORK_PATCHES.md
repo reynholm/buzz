@@ -82,7 +82,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/agents.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery; Task6: Carry original create/manual runtime fence through local/provider tails, guard summaries and persist only authorized target records; Task7: Guard exact instance deletion before assignment, process, key, store and journal effects; preserve unrelated raw rows; pin create profile continuation to original runtime fence
+Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery; Task6: Carry original create/manual runtime fence through local/provider tails, guard summaries and persist only authorized target records; Task7: Guard exact instance deletion before assignment, process, key, store and journal effects; preserve unrelated raw rows; pin create profile continuation to original runtime fence; Task8 durable original-scope home deletion/label publication and retry
 
 New module: `false`.
 
@@ -622,12 +622,15 @@ New module: `true`.
 
 ## `desktop/src-tauri/src/commands/device_identity.rs`
 
-Expose public device metadata using app data directory and hostname; storage behavior covered below IPC routing, isolated native UI routing remains later acceptance
+Expose public device metadata using app data directory and hostname; storage behavior covered below IPC routing, isolated native UI routing remains later acceptance; Task8 durable original-scope home deletion/label publication and retry
 
 New module: `true`.
 
 - Required symbol: `pub fn get_device_identity`
 - Required symbol: `load_or_create_device_identity(&directory.join("device.json"), label)`
+- Required symbol: `pub fn set_device_label`
+- Required symbol: `pub struct DeviceLabelResult`
+- Required symbol: `DeviceLabelPublication`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/commands/mod.rs`
@@ -653,6 +656,7 @@ New module: `false`.
 - Required symbol: `commands::finish_device_home_sync,`
 - Required symbol: `commands::invalidate_device_home_sync,`
 - Required symbol: `device_identity::initialize_device_authority(&app_handle)`
+- Required symbol: `commands::set_device_label,`
 - Invocation: `desktop/src-tauri/src/lib.rs` → `run_boot_backfill_with`; exact call `managed_agents::restore::run_boot_backfill_with(recovery_mode, || {
                 backfill_persona_snapshots(&app_handle)
             }) {
@@ -791,7 +795,7 @@ New module: `true`.
 
 ## `desktop/src-tauri/src/commands/personas/mod.rs`
 
-Read-only flattened list views with shared capability fast path on explicit unavailable context; Task7: Atomically authorize local definition deletion and cascade targets before effects; restrict housekeeping and persistence to selected targets
+Read-only flattened list views with shared capability fast path on explicit unavailable context; Task7: Atomically authorize local definition deletion and cascade targets before effects; restrict housekeeping and persistence to selected targets; Task8 durable original-scope home deletion/label publication and retry
 
 New module: `false`.
 
@@ -808,6 +812,7 @@ New module: `false`.
                 &app,
                 &state,
                 &id,`; behavior test `local_definition_delete_device_guard_precedes_every_cascade_effect`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib local_definition_delete_device_guard_precedes_every_cascade_effect`
+- Invocation: `desktop/src-tauri/src/commands/personas/mod.rs` → `complete_cascade_home_operations`; exact call `complete_cascade_home_operations(&app, &home_operations)?;`; behavior test `definition_cascade_retry_keeps_instance_tombstone_archive_without_release_resurrection`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace definition_cascade_retry_keeps_instance_tombstone_archive_without_release_resurrection`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/app_state.rs`
@@ -823,7 +828,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/workspace.rs`
 
-Invalidate backend home evidence on workspace apply; Migrate proven homes before scoped event sync without waiting for frontend history; top-level Wry entry wiring is compile coverage with native acceptance outstanding; initialize captured scoped retention schema before read-only policy, propagating open/schema errors while retaining Pending; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery
+Invalidate backend home evidence on workspace apply; Migrate proven homes before scoped event sync without waiting for frontend history; top-level Wry entry wiring is compile coverage with native acceptance outstanding; initialize captured scoped retention schema before read-only policy, propagating open/schema errors while retaining Pending; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery; Task8 durable original-scope home deletion/label publication and retry
 
 New module: `false`.
 
@@ -1351,7 +1356,7 @@ New module: `true`.
 
 ## `desktop/src-tauri/src/managed_agents/device_home_operations.rs`
 
-Device creation policy, default-private sources, atomic claim and durable recovery regression coverage
+Device creation policy, default-private sources, atomic claim and durable recovery regression coverage; Task8 durable original-scope home deletion/label publication and retry
 
 New module: `true`.
 
@@ -1371,6 +1376,9 @@ New module: `true`.
 - Invocation: `desktop/src-tauri/src/commands/workspace.rs` → `recover_home_operations_locked`; exact call `crate::managed_agents::device_home_operations::recover_home_operations_locked(app)`; behavior test `commands::workspace::device_home_preparation_tests::recovery_precedes_migration_and_replays_original_scope_after_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::workspace::device_home_preparation_tests::recovery_precedes_migration_and_replays_original_scope_after_switch -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `commit_new_pairs_locked`; exact call `crate::managed_agents::device_home_operations::commit_new_pairs_locked(`; behavior test `managed_agents::device_home_operations::tests::new_import_pair_preserves_foreign_records_and_persists_only_new_keys`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_home_operations::tests::new_import_pair_preserves_foreign_records_and_persists_only_new_keys -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/team_snapshot.rs` → `commit_new_pairs_locked`; exact call `crate::managed_agents::device_home_operations::commit_new_pairs_locked(`; behavior test `managed_agents::device_home_operations::tests::new_import_pair_preserves_foreign_records_and_persists_only_new_keys`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_home_operations::tests::new_import_pair_preserves_foreign_records_and_persists_only_new_keys -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `enqueue_home_events_in_transaction`; exact call `enqueue_home_events_in_transaction(&tx, operation)?;`; behavior test `intent_save_and_each_sql_enqueue_failure_leave_no_partial_batch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace intent_save_and_each_sql_enqueue_failure_leave_no_partial_batch`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `apply_delete`; exact call `delete::apply_delete(&mut raw, op, Some(&mut verify_binding))?`; behavior test `new_instance_cancels_obsolete_release`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace new_instance_cancels_obsolete_release`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `prepare_label_retries`; exact call `label::prepare_label_retries(`; behavior test `premetadata_label_worklist_resolves_when_original_database_becomes_known`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace premetadata_label_worklist_resolves_when_original_database_becomes_known`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 - Verify: `just desktop-tauri-clippy`
 
@@ -1654,7 +1662,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/agents_pending.rs`
 
-Task7: Authorize native instance head before signing and require pre-removal deletion authority for kind5/archive enqueue in captured scope
+Task7: Authorize native instance head before signing and require pre-removal deletion authority for kind5/archive enqueue in captured scope; Task8 durable original-scope home deletion/label publication and retry
 
 New module: `false`.
 
@@ -1665,6 +1673,7 @@ New module: `false`.
         None,
         crate::managed_agents::device_authority::InstanceAuthorityAction::PublishHead,`; behavior test `copied_common_head_and_deletion_preparation_have_zero_kind0_30177_5_9035_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib copied_common_head_and_deletion_preparation_have_zero_kind0_30177_5_9035_effects`
 - Invocation: `desktop/src-tauri/src/commands/agents_pending.rs` → `validate_deletion_authority`; exact call `validate_deletion_authority(state, permit, InstanceAuthorityAction::Tombstone)?;`; behavior test `prepared_shared_deletion_can_enqueue_after_removal_but_never_in_changed_scope`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib prepared_shared_deletion_can_enqueue_after_removal_but_never_in_changed_scope`
+- Invocation: `desktop/src-tauri/src/commands/agents_pending.rs` → `complete_home_delete_locked`; exact call `crate::managed_agents::device_home_operations::delete::complete_home_delete_locked(`; behavior test `prepared_shared_deletion_can_enqueue_after_removal_but_never_in_changed_scope`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace prepared_shared_deletion_can_enqueue_after_removal_but_never_in_changed_scope`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/commands/agents_profile.rs`
@@ -1789,3 +1798,82 @@ New module: `true`.
 
 - Required symbol: `merge_inbound_device_metadata`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/agents_delete.rs`
+
+Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage
+
+New module: `true`.
+
+- Invocation: `desktop/src-tauri/src/commands/agents.rs` → `commit_prepared_agent_delete_with`; exact call `commit_prepared_agent_delete_with(`; behavior test `prepared_last_instance_command_queues_release_and_stop_error_preserves_record`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace prepared_last_instance_command_queues_release_and_stop_error_preserves_record`
+- Invocation: `desktop/src-tauri/src/commands/agents_delete.rs` → `commit_home_delete_snapshot_locked`; exact call `crate::managed_agents::device_home_operations::delete::commit_home_delete_snapshot_locked(`; behavior test `prepared_private_command_failure_replays_original_scope_and_preserves_copied_sibling`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace prepared_private_command_failure_replays_original_scope_and_preserves_copied_sibling`
+- Invocation: `desktop/src-tauri/src/commands/agents_delete.rs` → `tombstone_managed_agent_pending`; exact call `tombstone_managed_agent_pending(app, state, permit, &replay)`; behavior test `prepared_private_command_failure_replays_original_scope_and_preserves_copied_sibling`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace prepared_private_command_failure_replays_original_scope_and_preserves_copied_sibling`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/commands/agents_delete/tests.rs`
+
+Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage
+
+New module: `true`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/commands/personas/home_delete_tests.rs`
+
+Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage
+
+New module: `true`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/managed_agents/device_home_operations/delete.rs`
+
+Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage
+
+New module: `true`.
+
+- Invocation: `desktop/src-tauri/src/commands/agents.rs` → `prepare_home_delete_locked`; exact call `crate::managed_agents::device_home_operations::delete::prepare_home_delete_locked(`; behavior test `copied_instance_never_creates_home_operation`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace copied_instance_never_creates_home_operation`
+- Invocation: `desktop/src-tauri/src/commands/personas/mod.rs` → `prepare_home_delete_authorized_locked`; exact call `crate::managed_agents::device_home_operations::delete::prepare_home_delete_authorized_locked(`; behavior test `definition_cascade_retry_keeps_instance_tombstone_archive_without_release_resurrection`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace definition_cascade_retry_keeps_instance_tombstone_archive_without_release_resurrection`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/managed_agents/device_home_operations/label.rs`
+
+Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage
+
+New module: `true`.
+
+- Invocation: `desktop/src-tauri/src/commands/device_identity.rs` → `set_device_label_locked`; exact call `crate::managed_agents::device_home_operations::label::set_device_label_locked(`; behavior test `native_label_adapter_reports_queued_until_existing_event_sync_acknowledges`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace native_label_adapter_reports_queued_until_existing_event_sync_acknowledges`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/managed_agents/device_home_operations/durable_tests.rs`
+
+Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage
+
+New module: `true`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/managed_agents/retention/known_scopes.rs`
+
+Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage
+
+New module: `true`.
+
+- Invocation: `desktop/src-tauri/src/commands/workspace.rs` → `remember_retention_scope`; exact call `crate::managed_agents::retention::remember_retention_scope(`; behavior test `premetadata_label_worklist_resolves_when_original_database_becomes_known`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace premetadata_label_worklist_resolves_when_original_database_becomes_known`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/managed_agents/retention.rs`
+
+Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage; Task8 durable original-scope home deletion/label publication and retry
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `just desktop-tauri-clippy`

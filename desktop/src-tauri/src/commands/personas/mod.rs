@@ -298,6 +298,13 @@ pub async fn delete_persona(id: String, app: AppHandle) -> Result<(), String> {
                             crate::managed_agents::persona_device_view::load_device_policy_context,
                         )
                     }).collect::<Result<_, _>>()?;
+                    let home_operations: Vec<_> = deletion_authorities.iter()
+                        .map(|permit| {
+                            crate::managed_agents::device_home_operations::delete::prepare_home_delete_authorized_locked(
+                                &app, permit,
+                            )
+                        })
+                        .collect::<Result<_, _>>()?;
                     // ── Phase 2: Stop ───────────────────────────────────────────────
                     //
                     // Best-effort stop each running cascade instance. Lock ordering:
@@ -354,8 +361,9 @@ pub async fn delete_persona(id: String, app: AppHandle) -> Result<(), String> {
                 delete_agent_key(pk);
                 // Tombstone + NIP-IA kind:9035 archive enqueue atomically; the
                 // archive's `persona_id` is derived from the retained 30177 head.
-                if let Some(permit)=deletion_authorities.iter().find(|p|p.pubkey()==pk){super::agents::tombstone_managed_agent_pending(&app, &state, permit);}
+
             }
+            complete_cascade_home_operations(&app, &home_operations)?;
             tombstone_persona_pending(&app, &state, &d_tag);
 
             Ok(())
@@ -437,3 +445,18 @@ pub(crate) use snapshot::import::{
 };
 pub use snapshot::{confirm_agent_snapshot_import, preview_agent_snapshot_import};
 pub use snapshot::{encode_agent_snapshot_for_send, export_agent_snapshot};
+
+/// Complete pre-removal instance intents after the definition leaves the unified snapshot.
+fn complete_cascade_home_operations<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    operations: &[crate::managed_agents::device_home_operations::HomeOperation],
+) -> Result<(), String> {
+    for operation in operations {
+        crate::managed_agents::device_home_operations::delete::finish_home_delete_locked(
+            app, operation,
+        )?;
+    }
+    Ok(())
+}
+#[cfg(test)]
+mod home_delete_tests;

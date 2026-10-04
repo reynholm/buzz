@@ -105,7 +105,7 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/agents.rs",
-      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery; Task6: Carry original create/manual runtime fence through local/provider tails, guard summaries and persist only authorized target records; Task7: Guard exact instance deletion before assignment, process, key, store and journal effects; preserve unrelated raw rows; pin create profile continuation to original runtime fence",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery; Task6: Carry original create/manual runtime fence through local/provider tails, guard summaries and persist only authorized target records; Task7: Guard exact instance deletion before assignment, process, key, store and journal effects; preserve unrelated raw rows; pin create profile continuation to original runtime fence; Task8 durable original-scope home deletion/label publication and retry",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [
@@ -874,11 +874,14 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/device_identity.rs",
-      "responsibility": "Expose public device metadata using app data directory and hostname; storage behavior covered below IPC routing, isolated native UI routing remains later acceptance",
+      "responsibility": "Expose public device metadata using app data directory and hostname; storage behavior covered below IPC routing, isolated native UI routing remains later acceptance; Task8 durable original-scope home deletion/label publication and retry",
       "is_new": true,
       "required_symbols": [
         "pub fn get_device_identity",
-        "load_or_create_device_identity(&directory.join(\"device.json\"), label)"
+        "load_or_create_device_identity(&directory.join(\"device.json\"), label)",
+        "pub fn set_device_label",
+        "pub struct DeviceLabelResult",
+        "DeviceLabelPublication"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -909,7 +912,8 @@
         "commands::hydrate_device_home_history,",
         "commands::finish_device_home_sync,",
         "commands::invalidate_device_home_sync,",
-        "device_identity::initialize_device_authority(&app_handle)"
+        "device_identity::initialize_device_authority(&app_handle)",
+        "commands::set_device_label,"
       ],
       "invocation_seams": [
         {
@@ -1185,7 +1189,7 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/personas/mod.rs",
-      "responsibility": "Read-only flattened list views with shared capability fast path on explicit unavailable context; Task7: Atomically authorize local definition deletion and cascade targets before effects; restrict housekeeping and persistence to selected targets",
+      "responsibility": "Read-only flattened list views with shared capability fast path on explicit unavailable context; Task7: Atomically authorize local definition deletion and cascade targets before effects; restrict housekeeping and persistence to selected targets; Task8 durable original-scope home deletion/label publication and retry",
       "is_new": false,
       "required_symbols": [
         "fn list_personas_inner"
@@ -1226,6 +1230,14 @@
           "behavior_test": "local_definition_delete_device_guard_precedes_every_cascade_effect",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib local_definition_delete_device_guard_precedes_every_cascade_effect",
           "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/personas/mod.rs",
+          "callee_symbol": "complete_cascade_home_operations",
+          "invocation": "complete_cascade_home_operations(&app, &home_operations)?;",
+          "behavior_test": "definition_cascade_retry_keeps_instance_tombstone_archive_without_release_resurrection",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace definition_cascade_retry_keeps_instance_tombstone_archive_without_release_resurrection",
+          "coverage": "Production generic/native adapter runtime with MockRuntime, isolated app data, injected authority/process/key effects and real SQLite; Wry IPC wiring compile only, native/two-device acceptance outstanding"
         }
       ],
       "verification_commands": [
@@ -1248,7 +1260,7 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/workspace.rs",
-      "responsibility": "Invalidate backend home evidence on workspace apply; Migrate proven homes before scoped event sync without waiting for frontend history; top-level Wry entry wiring is compile coverage with native acceptance outstanding; initialize captured scoped retention schema before read-only policy, propagating open/schema errors while retaining Pending; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery",
+      "responsibility": "Invalidate backend home evidence on workspace apply; Migrate proven homes before scoped event sync without waiting for frontend history; top-level Wry entry wiring is compile coverage with native acceptance outstanding; initialize captured scoped retention schema before read-only policy, propagating open/schema errors while retaining Pending; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery; Task8 durable original-scope home deletion/label publication and retry",
       "is_new": false,
       "required_symbols": [
         "device_home_sync::reset(&state)?;",
@@ -2248,7 +2260,7 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/device_home_operations.rs",
-      "responsibility": "Device creation policy, default-private sources, atomic claim and durable recovery regression coverage",
+      "responsibility": "Device creation policy, default-private sources, atomic claim and durable recovery regression coverage; Task8 durable original-scope home deletion/label publication and retry",
       "is_new": true,
       "required_symbols": [
         "commit_home_claim_locked",
@@ -2323,6 +2335,30 @@
           "behavior_test": "managed_agents::device_home_operations::tests::new_import_pair_preserves_foreign_records_and_persists_only_new_keys",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_home_operations::tests::new_import_pair_preserves_foreign_records_and_persists_only_new_keys -- --exact",
           "coverage": "Wry import wrapper wiring/compile; unified native directory commit behavior"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/device_home_operations.rs",
+          "callee_symbol": "enqueue_home_events_in_transaction",
+          "invocation": "enqueue_home_events_in_transaction(&tx, operation)?;",
+          "behavior_test": "intent_save_and_each_sql_enqueue_failure_leave_no_partial_batch",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace intent_save_and_each_sql_enqueue_failure_leave_no_partial_batch",
+          "coverage": "Production generic/native adapter runtime with MockRuntime, isolated app data, injected authority/process/key effects and real SQLite; Wry IPC wiring compile only, native/two-device acceptance outstanding"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/device_home_operations.rs",
+          "callee_symbol": "apply_delete",
+          "invocation": "delete::apply_delete(&mut raw, op, Some(&mut verify_binding))?",
+          "behavior_test": "new_instance_cancels_obsolete_release",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace new_instance_cancels_obsolete_release",
+          "coverage": "Production generic/native adapter runtime with MockRuntime, isolated app data, injected authority/process/key effects and real SQLite; Wry IPC wiring compile only, native/two-device acceptance outstanding"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/device_home_operations.rs",
+          "callee_symbol": "prepare_label_retries",
+          "invocation": "label::prepare_label_retries(",
+          "behavior_test": "premetadata_label_worklist_resolves_when_original_database_becomes_known",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace premetadata_label_worklist_resolves_when_original_database_becomes_known",
+          "coverage": "Production generic/native adapter runtime with MockRuntime, isolated app data, injected authority/process/key effects and real SQLite; Wry IPC wiring compile only, native/two-device acceptance outstanding"
         }
       ],
       "verification_commands": [
@@ -2715,7 +2751,7 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/agents_pending.rs",
-      "responsibility": "Task7: Authorize native instance head before signing and require pre-removal deletion authority for kind5/archive enqueue in captured scope",
+      "responsibility": "Task7: Authorize native instance head before signing and require pre-removal deletion authority for kind5/archive enqueue in captured scope; Task8 durable original-scope home deletion/label publication and retry",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [
@@ -2734,6 +2770,14 @@
           "behavior_test": "prepared_shared_deletion_can_enqueue_after_removal_but_never_in_changed_scope",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib prepared_shared_deletion_can_enqueue_after_removal_but_never_in_changed_scope",
           "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/agents_pending.rs",
+          "callee_symbol": "complete_home_delete_locked",
+          "invocation": "crate::managed_agents::device_home_operations::delete::complete_home_delete_locked(",
+          "behavior_test": "prepared_shared_deletion_can_enqueue_after_removal_but_never_in_changed_scope",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace prepared_shared_deletion_can_enqueue_after_removal_but_never_in_changed_scope",
+          "coverage": "Production generic/native adapter runtime with MockRuntime, isolated app data, injected authority/process/key effects and real SQLite; Wry IPC wiring compile only, native/two-device acceptance outstanding"
         }
       ],
       "verification_commands": [
@@ -2924,6 +2968,154 @@
       "invocation_seams": [],
       "verification_commands": [
         "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/agents_delete.rs",
+      "responsibility": "Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/commands/agents.rs",
+          "callee_symbol": "commit_prepared_agent_delete_with",
+          "invocation": "commit_prepared_agent_delete_with(",
+          "behavior_test": "prepared_last_instance_command_queues_release_and_stop_error_preserves_record",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace prepared_last_instance_command_queues_release_and_stop_error_preserves_record",
+          "coverage": "Production generic/native adapter runtime with MockRuntime, isolated app data, injected authority/process/key effects and real SQLite; Wry IPC wiring compile only, native/two-device acceptance outstanding"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/agents_delete.rs",
+          "callee_symbol": "commit_home_delete_snapshot_locked",
+          "invocation": "crate::managed_agents::device_home_operations::delete::commit_home_delete_snapshot_locked(",
+          "behavior_test": "prepared_private_command_failure_replays_original_scope_and_preserves_copied_sibling",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace prepared_private_command_failure_replays_original_scope_and_preserves_copied_sibling",
+          "coverage": "Production generic/native adapter runtime with MockRuntime, isolated app data, injected authority/process/key effects and real SQLite; Wry IPC wiring compile only, native/two-device acceptance outstanding"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/agents_delete.rs",
+          "callee_symbol": "tombstone_managed_agent_pending",
+          "invocation": "tombstone_managed_agent_pending(app, state, permit, &replay)",
+          "behavior_test": "prepared_private_command_failure_replays_original_scope_and_preserves_copied_sibling",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace prepared_private_command_failure_replays_original_scope_and_preserves_copied_sibling",
+          "coverage": "Production generic/native adapter runtime with MockRuntime, isolated app data, injected authority/process/key effects and real SQLite; Wry IPC wiring compile only, native/two-device acceptance outstanding"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check",
+        "just desktop-tauri-clippy"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/agents_delete/tests.rs",
+      "responsibility": "Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check",
+        "just desktop-tauri-clippy"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/home_delete_tests.rs",
+      "responsibility": "Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check",
+        "just desktop-tauri-clippy"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/device_home_operations/delete.rs",
+      "responsibility": "Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/commands/agents.rs",
+          "callee_symbol": "prepare_home_delete_locked",
+          "invocation": "crate::managed_agents::device_home_operations::delete::prepare_home_delete_locked(",
+          "behavior_test": "copied_instance_never_creates_home_operation",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace copied_instance_never_creates_home_operation",
+          "coverage": "Wry command compiled/fingerprinted; generic production preparation runtime independently tested; native host-proof invocation remains external"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/personas/mod.rs",
+          "callee_symbol": "prepare_home_delete_authorized_locked",
+          "invocation": "crate::managed_agents::device_home_operations::delete::prepare_home_delete_authorized_locked(",
+          "behavior_test": "definition_cascade_retry_keeps_instance_tombstone_archive_without_release_resurrection",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace definition_cascade_retry_keeps_instance_tombstone_archive_without_release_resurrection",
+          "coverage": "Production generic/native adapter runtime with MockRuntime, isolated app data, injected authority/process/key effects and real SQLite; Wry IPC wiring compile only, native/two-device acceptance outstanding"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check",
+        "just desktop-tauri-clippy"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/device_home_operations/label.rs",
+      "responsibility": "Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/commands/device_identity.rs",
+          "callee_symbol": "set_device_label_locked",
+          "invocation": "crate::managed_agents::device_home_operations::label::set_device_label_locked(",
+          "behavior_test": "native_label_adapter_reports_queued_until_existing_event_sync_acknowledges",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace native_label_adapter_reports_queued_until_existing_event_sync_acknowledges",
+          "coverage": "Production generic/native adapter runtime with MockRuntime, isolated app data, injected authority/process/key effects and real SQLite; Wry IPC wiring compile only, native/two-device acceptance outstanding"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check",
+        "just desktop-tauri-clippy"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/device_home_operations/durable_tests.rs",
+      "responsibility": "Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check",
+        "just desktop-tauri-clippy"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/retention/known_scopes.rs",
+      "responsibility": "Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/commands/workspace.rs",
+          "callee_symbol": "remember_retention_scope",
+          "invocation": "crate::managed_agents::retention::remember_retention_scope(",
+          "behavior_test": "premetadata_label_worklist_resolves_when_original_database_becomes_known",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace premetadata_label_worklist_resolves_when_original_database_becomes_known",
+          "coverage": "Production generic/native adapter runtime with MockRuntime, isolated app data, injected authority/process/key effects and real SQLite; Wry IPC wiring compile only, native/two-device acceptance outstanding"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check",
+        "just desktop-tauri-clippy"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/retention.rs",
+      "responsibility": "Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage; Task8 durable original-scope home deletion/label publication and retry",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check",
+        "just desktop-tauri-clippy"
       ]
     }
   ]

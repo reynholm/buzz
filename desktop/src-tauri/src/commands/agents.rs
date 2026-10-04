@@ -30,7 +30,10 @@ pub(super) fn workspace_owner_hex(state: &AppState) -> Result<String, String> {
 mod pending;
 #[cfg(test)]
 use pending::build_agent_archive_request;
-pub(crate) use pending::{retain_managed_agent_pending, tombstone_managed_agent_pending};
+pub(crate) use pending::{
+    enqueue_agent_delete_events, prepare_agent_delete_events, retain_managed_agent_pending,
+    tombstone_managed_agent_pending,
+};
 
 /// Build a summary from fresh disk state (personas, teams, global config).
 /// For one-shot command paths only — the 5s list poll calls
@@ -985,9 +988,7 @@ pub async fn delete_managed_agent(
                         &targets,
                         |selected| Ok(sync_managed_agent_processes(selected, &mut runtimes, &current_instance_id(&app))),
                     )?;
-                    if sync_changed {
-                        crate::managed_agents::device_authority::save_deletion_snapshot(&app, &records)?;
-                    }
+                    let _ = sync_changed; // Selected target is removed by the one durable deletion snapshot.
                     for pubkey in &exited_pubkeys {
                         state.clear_agent_session_caches(pubkey);
                     }
@@ -1011,23 +1012,44 @@ pub async fn delete_managed_agent(
                     if !records.iter().any(|record| record.pubkey == pubkey) {
                         return Err(format!("agent {pubkey} not found"));
                     }
-                    run_managed_agent_deletion(&base_dir, &pubkey, &mut records, |records| {
-                        if let Some(record) =
-                            records.iter_mut().find(|record| record.pubkey == pubkey)
-                        {
-                            stop_managed_agent_process(&app, record, &mut runtimes)?;
-                        }
-                        state.clear_agent_session_caches(&pubkey);
-                        records.retain(|record| record.pubkey != pubkey);
-                        crate::managed_agents::device_authority::save_deletion_snapshot(&app, records)
-                    })?;
-                    crate::managed_agents::delete_agent_key(&pubkey);
-                    // Tombstone after confirmed removal (inside lock; every published
-                    // agent tombstones). The NIP-IA kind:9035 archive request — which
-                    // stops the identity appearing in member pickers and autocomplete —
-                    // is enqueued in the SAME transaction, its `persona_id` derived from
-                    // the retained 30177 head.
-                    tombstone_managed_agent_pending(&app, &state, &deletion_authority);
+                    let private_definition = records.iter()
+                        .filter(|record| record.pubkey.is_empty())
+                        .filter_map(ManagedAgentRecord::to_definition_view)
+                        .any(|definition| {
+                            definition.share_across_devices != Some(true)
+                                && records.iter().any(|record| {
+                                    record.pubkey == pubkey
+                                        && record.persona_id.as_deref()
+                                            == Some(definition.id.as_str())
+                                })
+                        });
+                    let operation = if private_definition {
+                        let context = crate::managed_agents::persona_device_view::load_device_policy_context(
+                            &app, &state,
+                        )?;
+                        crate::managed_agents::device_home_operations::delete::prepare_home_delete_locked(
+                            &app, &context, &pubkey,
+                        )?
+                    } else {
+                        crate::managed_agents::device_home_operations::delete::prepare_home_delete_authorized_locked(
+                            &app, &deletion_authority,
+                        )?
+                    };
+                    commit_prepared_agent_delete_with(
+                        &app,
+                        &state,
+                        &deletion_authority,
+                        &operation,
+                        &mut records,
+                        |records| {
+                            if let Some(record) = records.iter_mut().find(|record| record.pubkey == pubkey) {
+                                stop_managed_agent_process(&app, record, &mut runtimes)?;
+                            }
+                            state.clear_agent_session_caches(&pubkey);
+                            Ok(())
+                        },
+                        || crate::managed_agents::delete_agent_key(&pubkey),
+                    )?;
                     Ok(())
                 },
             )?;
@@ -1038,6 +1060,10 @@ pub async fn delete_managed_agent(
     .await
     .map_err(|e| format!("spawn_blocking failed: {e}"))?
 }
+
+#[path = "agents_delete.rs"]
+mod durable_delete;
+use durable_delete::commit_prepared_agent_delete_with;
 
 // Remote agent shutdown is handled entirely by the frontend:
 // 1. Frontend sends "!shutdown" @mention via WebSocket (signed by user's key)

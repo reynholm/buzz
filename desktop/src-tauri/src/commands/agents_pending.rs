@@ -71,39 +71,27 @@ pub(crate) fn retain_managed_agent_pending_with<R: tauri::Runtime>(
     )
 }
 
-/// Purge a deleted agent's pending row and enqueue a NIP-09 tombstone, both
-/// inside the `managed_agents_store_lock`-held delete body and NEVER across an
-/// `.await`.
-///
-/// Mirrors `commands::personas::tombstone_persona_pending`: the agent row at
-/// `(30177, owner, agent_pubkey)` is purged first so an unpublished edit can
-/// never resurrect it after the tombstone publishes, then the kind:5 tombstone
-/// is retained at its own `(5, owner, agent_pubkey)` coordinate with
-/// `pending_sync = 1`. The `d_tag` is the agent's pubkey. Best-effort: a
-/// failure is logged and swallowed so a retention hiccup never blocks the
-/// disk-authoritative delete.
+/// Finish a durable deletion's pre-signed batch. Failure propagates with its intent intact.
+/// The opaque authority was captured before removal, retaining the original scope.
 pub(crate) fn tombstone_managed_agent_pending<R: tauri::Runtime>(
     app: &AppHandle<R>,
     state: &AppState,
     permit: &crate::managed_agents::device_authority::DeletionAuthority,
-) {
-    let result = (|| -> Result<(), String> {
-        use crate::managed_agents::device_authority::{
-            validate_deletion_authority, InstanceAuthorityAction,
-        };
-        validate_deletion_authority(state, permit, InstanceAuthorityAction::Tombstone)?;
-        validate_deletion_authority(state, permit, InstanceAuthorityAction::Archive)?;
-        let scope = crate::managed_agents::retention::active_retention_scope(app, state)?;
-        if scope.relay_url != permit.scope().relay_url
-            || scope.owner_keys.public_key().to_hex() != permit.scope().owner_pubkey
-        {
-            return Err("device_home_sync_stale_session".into());
-        }
-        tombstone_managed_agent_at(&scope.db_path, &scope.owner_keys, permit.pubkey())
-    })();
-    if let Err(e) = result {
-        eprintln!("buzz-desktop: agent-tombstone: {e}");
+    operation: &crate::managed_agents::device_home_operations::HomeOperation,
+) -> Result<(), String> {
+    use crate::managed_agents::device_authority::{
+        validate_deletion_authority, InstanceAuthorityAction,
+    };
+    validate_deletion_authority(state, permit, InstanceAuthorityAction::Tombstone)?;
+    validate_deletion_authority(state, permit, InstanceAuthorityAction::Archive)?;
+    if operation.relay_url != permit.scope().relay_url
+        || operation.owner_pubkey != permit.scope().owner_pubkey
+    {
+        return Err("device_home_sync_stale_session".into());
     }
+    crate::managed_agents::device_home_operations::delete::complete_home_delete_locked(
+        app, operation,
+    )
 }
 
 /// Scope-free core of [`tombstone_managed_agent_pending`], so the atomic
@@ -124,88 +112,111 @@ pub(crate) fn tombstone_managed_agent_pending<R: tauri::Runtime>(
 /// after the disk-authoritative record is removed but before this
 /// tombstone+archive transaction commits leaves agent deletion-retry a
 /// pre-existing gap owned by this direct delete path alone.
-pub(crate) fn tombstone_managed_agent_at(
+#[cfg(test)]
+fn tombstone_managed_agent_at(
     db_path: &std::path::Path,
     keys: &nostr::Keys,
     agent_pubkey: &str,
 ) -> Result<(), String> {
+    let mut conn = crate::managed_agents::retention::open_retention_db(db_path)?;
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
+    let events = prepare_agent_delete_events(&tx, keys, agent_pubkey, None)?;
+    enqueue_agent_delete_events(
+        &tx,
+        keys.public_key().to_hex().as_str(),
+        agent_pubkey,
+        &events,
+    )?;
+    tx.commit()
+        .map_err(|e| format!("managed-agent deletion commit: {e}"))
+}
+
+/// Sign the existing tombstone/archive pair without starting a transaction.
+/// Caller owns the store lock and keeps these exact events for crash recovery.
+pub(crate) fn prepare_agent_delete_events(
+    conn: &rusqlite::Connection,
+    keys: &nostr::Keys,
+    agent_pubkey: &str,
+    persona_id: Option<&str>,
+) -> Result<Vec<nostr::Event>, String> {
     use crate::managed_agents::{
-        agent_events::build_agent_delete,
-        persona_events::monotonic_created_at,
-        retention::{
-            delete_retained_event, get_retained_event, open_retention_db, retain_event,
-            tombstone_retention_d_tag, RetainedEvent,
-        },
+        agent_events::build_agent_delete, persona_events::monotonic_created_at,
+        retention::get_retained_event,
     };
-    use buzz_core_pkg::kind::{KIND_IA_ARCHIVE_REQUEST, KIND_MANAGED_AGENT};
+    let owner = keys.public_key().to_hex();
+    let prior = get_retained_event(conn, 30177, &owner, agent_pubkey)?;
+    let tombstone = build_agent_delete(agent_pubkey, &owner)?
+        .custom_created_at(monotonic_created_at(prior.as_ref().map(|r| r.created_at)))
+        .sign_with_keys(keys)
+        .map_err(|e| e.to_string())?;
+    let alias = prior
+        .as_ref()
+        .and_then(|r| persona_id_from_head(&r.content));
+    let archive = build_agent_archive_request(keys, agent_pubkey, persona_id.or(alias.as_deref()))?;
+    Ok(vec![tombstone, archive])
+}
+
+/// Enqueue a pre-signed pair inside the caller's transaction; failures propagate.
+pub(crate) fn enqueue_agent_delete_events(
+    conn: &rusqlite::Connection,
+    owner: &str,
+    target: &str,
+    events: &[nostr::Event],
+) -> Result<(), String> {
+    use crate::managed_agents::retention::{
+        delete_retained_event, get_retained_event, retain_event, tombstone_retention_d_tag,
+        RetainedEvent,
+    };
     use nostr::JsonUtil;
-
-    const KIND_DELETE: u32 = 5;
-
-    let owner_pubkey = keys.public_key().to_hex();
-    let conn = open_retention_db(db_path)?;
-    // Single transaction: a kill between the head purge and the tombstone
-    // enqueue would otherwise leave the 30177 head live with no local retry
-    // witness. Reading the head's `created_at` inside the same `BEGIN
-    // IMMEDIATE` closes both the crash window and the read-then-sign race —
-    // and lets the kind:5 be signed strictly past a future-dated head
-    // (`retain_agent_record` bumps a same-second re-publish past the prior
-    // head) so it cannot survive its own tombstone once the head row is
-    // purged. Mirrors the persona/team tombstone helpers.
-    conn.execute_batch("BEGIN IMMEDIATE")
-        .map_err(|e| format!("failed to begin managed-agent tombstone transaction: {e}"))?;
-    let result = (|| -> Result<(), String> {
-        let prior_head =
-            get_retained_event(&conn, KIND_MANAGED_AGENT, &owner_pubkey, agent_pubkey)?;
-        let event = build_agent_delete(agent_pubkey, &owner_pubkey)?
-            .custom_created_at(monotonic_created_at(
-                prior_head.as_ref().map(|row| row.created_at),
-            ))
-            .sign_with_keys(keys)
-            .map_err(|e| format!("failed to sign managed-agent tombstone: {e}"))?;
-        // Recover the archive's `persona_id` from the head that is about to be
-        // purged, where it survives as owner-signed historical alias data.
-        let persona_id = prior_head
-            .as_ref()
-            .and_then(|row| persona_id_from_head(&row.content));
-        let archive = build_agent_archive_request(keys, agent_pubkey, persona_id.as_deref())?;
-        delete_retained_event(&conn, KIND_MANAGED_AGENT, &owner_pubkey, agent_pubkey)?;
+    if events.len() != 2 {
+        return Err("invalid delete event count".into());
+    }
+    for (event, kind) in events.iter().zip([5, 9035]) {
+        event
+            .verify()
+            .map_err(|e| format!("delete signature: {e}"))?;
+        if event.kind.as_u16() != kind || event.pubkey.to_hex() != owner {
+            return Err("invalid delete signed scope".into());
+        }
+    }
+    let coordinate = format!("30177:{owner}:{target}");
+    if !events[0].tags.iter().any(|t| {
+        t.as_slice().first().map(String::as_str) == Some("a")
+            && t.as_slice().get(1) == Some(&coordinate)
+    }) {
+        return Err("invalid delete coordinate".into());
+    }
+    if !events[1].tags.iter().any(|t| {
+        t.as_slice().first().map(String::as_str) == Some("p")
+            && t.as_slice().get(1).map(String::as_str) == Some(target)
+    }) {
+        return Err("invalid archive target".into());
+    }
+    if get_retained_event(conn, 30177, owner, target)?
+        .is_none_or(|r| r.created_at <= events[0].created_at.as_secs() as i64)
+    {
+        delete_retained_event(conn, 30177, owner, target)?;
+    }
+    for (event, kind, d_tag) in [
+        (&events[0], 5, tombstone_retention_d_tag(30177, target)),
+        (&events[1], 9035, target.to_string()),
+    ] {
         retain_event(
-            &conn,
+            conn,
             &RetainedEvent {
-                kind: KIND_DELETE,
-                pubkey: owner_pubkey.clone(),
-                // Key by the target coordinate so cross-kind d-tag tombstones
-                // occupy distinct rows (F2c).
-                d_tag: tombstone_retention_d_tag(KIND_MANAGED_AGENT, agent_pubkey),
-                content: event.content.to_string(),
+                kind,
+                pubkey: owner.into(),
+                d_tag,
+                content: event.content.clone(),
                 created_at: event.created_at.as_secs() as i64,
                 raw_event: event.as_json(),
                 pending_sync: true,
             },
         )?;
-        retain_event(
-            &conn,
-            &RetainedEvent {
-                kind: KIND_IA_ARCHIVE_REQUEST,
-                pubkey: owner_pubkey.clone(),
-                d_tag: agent_pubkey.to_string(),
-                content: archive.content.to_string(),
-                created_at: archive.created_at.as_secs() as i64,
-                raw_event: archive.as_json(),
-                pending_sync: true,
-            },
-        )
-    })();
-    match result {
-        Ok(()) => conn
-            .execute_batch("COMMIT")
-            .map_err(|e| format!("failed to commit managed-agent tombstone transaction: {e}")),
-        Err(e) => {
-            let _ = conn.execute_batch("ROLLBACK");
-            Err(e)
-        }
     }
+    Ok(())
 }
 
 /// Extract `persona_id` from a retained kind:30177 head's content projection.
@@ -539,9 +550,10 @@ mod device_authoring_tests {
                 |_, _| panic!("shared proof read"),
             )
             .unwrap();
+        let operation=crate::managed_agents::device_home_operations::delete::prepare_home_delete_authorized_locked(app.handle(),&permit).unwrap();
+        let operation=crate::managed_agents::device_home_operations::delete::commit_home_delete_snapshot_locked(app.handle(),&operation).unwrap();
         raw.pop();
-        write(&base, &raw);
-        tombstone_managed_agent_pending(app.handle(), &state, &permit);
+        tombstone_managed_agent_pending(app.handle(), &state, &permit, &operation).unwrap();
         let path = scoped_retention_db_path(
             &base,
             "wss://test",
@@ -557,7 +569,9 @@ mod device_authoring_tests {
         );
         *state.keys.lock().unwrap() = nostr::Keys::generate();
         *state.relay_url_override.lock().unwrap() = Some("wss://other".into());
-        tombstone_managed_agent_pending(app.handle(), &state, &permit);
+        assert!(
+            tombstone_managed_agent_pending(app.handle(), &state, &permit, &operation).is_err()
+        );
         let path = scoped_retention_db_path(
             &base,
             "wss://other",

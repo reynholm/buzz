@@ -537,6 +537,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_device_identity,
+            commands::set_device_label,
             commands::begin_device_home_sync,
             commands::hydrate_device_home_history,
             commands::finish_device_home_sync,

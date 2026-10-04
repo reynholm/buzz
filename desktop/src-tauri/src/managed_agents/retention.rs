@@ -14,6 +14,10 @@ use tauri::AppHandle;
 
 use crate::app_state::AppState;
 
+mod known_scopes;
+pub(crate) use known_scopes::{
+    known_retention_scopes, read_retention_scope, remember_retention_scope,
+};
 mod legacy_migration;
 pub use legacy_migration::migrate_legacy_retention_db;
 

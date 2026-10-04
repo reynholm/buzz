@@ -100,7 +100,12 @@ fn prepare_workspace_event_sync_with_recovery<R: tauri::Runtime>(
     migrate_legacy_retention_into(app, scope);
     // Scope adoption can be a no-op when there is no legacy DB. Establish the
     // schema before the policy reader opens this captured path read-only.
-    crate::managed_agents::retention::open_retention_db(&scope.db_path)?;
+    let conn = crate::managed_agents::retention::open_retention_db(&scope.db_path)?;
+    crate::managed_agents::retention::remember_retention_scope(
+        &conn,
+        &scope.relay_url,
+        &scope.owner_keys.public_key().to_hex(),
+    )?;
     recover()?;
     migrate()
 }

@@ -16,7 +16,7 @@ use std::path::Path;
 use tauri::Manager;
 
 /// Original owner/relay scope and already signed public events; never an instance secret.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct HomeOperation {
     pub id: String,
     pub relay_url: String,
@@ -26,8 +26,19 @@ pub(crate) struct HomeOperation {
 }
 /// Target revision is a digest of the definition, instance public projection and binding.
 /// Unrelated rows, key hydration and process state do not invalidate a committed claim.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) enum HomeOperationKind {
+    Delete {
+        target_pubkey: String,
+        persona_id: Option<String>,
+        expected_store_revision: String,
+    },
+    Label {
+        new_label: String,
+        affected_definition_ids: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unresolved_scope: Option<String>,
+    },
     Claim {
         definition_id: String,
         target_pubkey: String,
@@ -183,52 +194,110 @@ pub(crate) fn enqueue_home_events(
     conn: &mut Connection,
     operation: &HomeOperation,
 ) -> Result<(), String> {
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let HomeOperationKind::Claim {
-        definition_id,
-        target_pubkey,
-        ..
-    } = &operation.kind;
-    if operation.signed_events.len() != 2 {
-        return Err("invalid home claim event count".into());
-    }
-    for (event, kind, coordinate) in [
-        (&operation.signed_events[0], 30175, definition_id),
-        (&operation.signed_events[1], 30177, target_pubkey),
-    ] {
-        event
-            .verify()
-            .map_err(|e| format!("home claim event signature: {e}"))?;
-        if event.kind.as_u16() != kind || event.pubkey.to_hex() != operation.owner_pubkey {
-            return Err("invalid home claim signed scope".into());
-        }
-        let d = event
-            .tags
-            .iter()
-            .find_map(|t| {
-                let t = t.as_slice();
-                (t.first().map(String::as_str) == Some("d"))
-                    .then(|| t.get(1))
-                    .flatten()
-            })
-            .ok_or_else(|| "home claim event coordinate missing".to_string())?;
-        if d != coordinate {
-            return Err("invalid home claim coordinate".into());
-        }
-        retain_event(
-            &tx,
-            &RetainedEvent {
-                kind: kind as u32,
-                pubkey: operation.owner_pubkey.clone(),
-                d_tag: d.clone(),
-                content: event.content.clone(),
-                created_at: event.created_at.as_secs() as i64,
-                raw_event: event.as_json(),
-                pending_sync: true,
-            },
-        )?;
-    }
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
+    enqueue_home_events_in_transaction(&tx, operation)?;
     tx.commit().map_err(|e| format!("home events commit: {e}"))
+}
+/// All event kinds share the caller-owned transaction; no helper opens nested BEGIN.
+fn enqueue_home_events_in_transaction(
+    conn: &Connection,
+    operation: &HomeOperation,
+) -> Result<(), String> {
+    match &operation.kind {
+        HomeOperationKind::Claim {
+            definition_id,
+            target_pubkey,
+            ..
+        } => {
+            if operation.signed_events.len() != 2 {
+                return Err("invalid home claim event count".into());
+            }
+            for (event, kind, coordinate) in [
+                (&operation.signed_events[0], 30175, definition_id.as_str()),
+                (&operation.signed_events[1], 30177, target_pubkey.as_str()),
+            ] {
+                enqueue_head(conn, operation, event, kind, coordinate)?;
+            }
+        }
+        HomeOperationKind::Delete {
+            target_pubkey,
+            persona_id,
+            ..
+        } => {
+            let events = &operation.signed_events;
+            if events.len() == 3 {
+                let id = persona_id
+                    .as_deref()
+                    .ok_or_else(|| "release missing definition".to_string())?;
+                enqueue_head(conn, operation, &events[0], 30175, id)?;
+            } else if events.len() != 2 {
+                return Err("invalid home delete event count".into());
+            }
+            crate::commands::enqueue_agent_delete_events(
+                conn,
+                &operation.owner_pubkey,
+                target_pubkey,
+                &events[events.len() - 2..],
+            )?;
+        }
+        HomeOperationKind::Label {
+            affected_definition_ids,
+            unresolved_scope,
+            ..
+        } => {
+            if unresolved_scope.is_some()
+                || operation.signed_events.len() != affected_definition_ids.len()
+            {
+                return Err("unprepared device label worklist".into());
+            }
+            for (event, id) in operation.signed_events.iter().zip(affected_definition_ids) {
+                enqueue_head(conn, operation, event, 30175, id)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn enqueue_head(
+    conn: &Connection,
+    operation: &HomeOperation,
+    event: &Event,
+    kind: u16,
+    coordinate: &str,
+) -> Result<(), String> {
+    event
+        .verify()
+        .map_err(|e| format!("home event signature: {e}"))?;
+    let d = event
+        .tags
+        .iter()
+        .find_map(|t| {
+            let t = t.as_slice();
+            (t.first().map(String::as_str) == Some("d"))
+                .then(|| t.get(1))
+                .flatten()
+        })
+        .ok_or_else(|| "home event coordinate missing".to_string())?;
+    if event.kind.as_u16() != kind
+        || event.pubkey.to_hex() != operation.owner_pubkey
+        || d != coordinate
+    {
+        return Err("invalid home event signed scope or coordinate".into());
+    }
+    retain_event(
+        conn,
+        &RetainedEvent {
+            kind: kind as u32,
+            pubkey: operation.owner_pubkey.clone(),
+            d_tag: d.clone(),
+            content: event.content.clone(),
+            created_at: event.created_at.as_secs() as i64,
+            raw_event: event.as_json(),
+            pending_sync: true,
+        },
+    )
 }
 /// Recover only claims whose matching bound target and definition were committed.
 /// Failed saves leave intent intact and never publish or mint an uncommitted target.
@@ -241,40 +310,97 @@ pub(crate) fn recover_in_dir(
     if operations.is_empty() {
         return Ok(());
     }
-    let raw = read_policy_records(&dir.join("agents/managed-agents.json"))?;
+    let mut raw = read_policy_records(&dir.join("agents/managed-agents.json"))?;
+    let latest_label = operations.iter().rev().find_map(|op| match &op.kind {
+        HomeOperationKind::Label { new_label, .. } => Some(new_label.clone()),
+        _ => None,
+    });
+    if let Some(label) = &latest_label {
+        label::apply_label(dir, &mut raw, label)?;
+    }
     let mut completed = Vec::new();
     for op in &operations {
-        let HomeOperationKind::Claim {
-            definition_id,
-            target_pubkey,
-            expected_store_revision,
-        } = &op.kind;
-        let d = raw
-            .iter()
-            .find(|r| r.pubkey.is_empty() && r.slug.as_deref() == Some(definition_id.as_str()))
-            .and_then(|r| r.to_definition_view());
-        let i = raw.iter().find(|r| {
-            r.pubkey == *target_pubkey
-                && r.persona_id.as_deref() == Some(definition_id.as_str())
-                && r.device_host_binding.is_some()
-        });
-        if let (Some(d), Some(i)) = (d, i) {
-            if revision(&d, i)? == *expected_store_revision {
-                let binding = i
-                    .device_host_binding
-                    .as_deref()
-                    .ok_or_else(|| "home claim binding unavailable".to_string())?;
-                if !verify_binding(binding)? {
-                    return Err("home claim belongs to another host".into());
+        match &op.kind {
+            HomeOperationKind::Claim {
+                definition_id,
+                target_pubkey,
+                expected_store_revision,
+            } => {
+                let d = raw
+                    .iter()
+                    .find(|r| {
+                        r.pubkey.is_empty() && r.slug.as_deref() == Some(definition_id.as_str())
+                    })
+                    .and_then(ManagedAgentRecord::to_definition_view);
+                let i = raw.iter().find(|r| {
+                    r.pubkey == *target_pubkey
+                        && r.persona_id.as_deref() == Some(definition_id.as_str())
+                        && r.device_host_binding.is_some()
+                });
+                if let (Some(d), Some(i)) = (d, i) {
+                    if revision(&d, i)? == *expected_store_revision {
+                        let binding = i
+                            .device_host_binding
+                            .as_deref()
+                            .ok_or_else(|| "home claim binding unavailable".to_string())?;
+                        if !verify_binding(binding)? {
+                            return Err("home claim belongs to another host".into());
+                        }
+                        enqueue(op)?;
+                        completed.push(op.id.clone());
+                    }
                 }
-                enqueue(op)?;
-                completed.push(op.id.clone());
+            }
+            HomeOperationKind::Delete { .. } => {
+                let before = serde_json::to_vec(&raw).map_err(|e| e.to_string())?;
+                if let Some(replay) = delete::apply_delete(&mut raw, op, Some(&mut verify_binding))?
+                {
+                    let base = dir.join("agents");
+                    super::bestie_assignment::recover_pending_assignment_cleanup(&base, |pk| {
+                        raw.iter().any(|r| r.pubkey == pk)
+                    })?;
+                    let HomeOperationKind::Delete { target_pubkey, .. } = &op.kind else {
+                        return Err("delete operation disappeared".into());
+                    };
+                    super::bestie_assignment::with_agent_assignments_cleared(
+                        &base,
+                        target_pubkey,
+                        || {
+                            if serde_json::to_vec(&raw).map_err(|e| e.to_string())? != before {
+                                save_unified(dir, &raw)?;
+                            }
+                            Ok(())
+                        },
+                    )?;
+                    enqueue(&replay)?;
+                    completed.push(op.id.clone());
+                }
+            }
+            HomeOperationKind::Label {
+                new_label,
+                affected_definition_ids,
+                unresolved_scope,
+            } => {
+                if latest_label.as_deref() != Some(new_label) {
+                    completed.push(op.id.clone());
+                    continue;
+                }
+                if unresolved_scope.is_none()
+                    && !affected_definition_ids.is_empty()
+                    && op.signed_events.len() == affected_definition_ids.len()
+                {
+                    enqueue(op)?;
+                    completed.push(op.id.clone());
+                } else if unresolved_scope.is_none() && affected_definition_ids.is_empty() {
+                    completed.push(op.id.clone());
+                }
             }
         }
     }
     operations.retain(|op| !completed.contains(&op.id));
     save_journal(dir, &operations)
 }
+
 /// Native Phase3 adapter, already under the managed store lock.
 pub(crate) fn commit_home_claim_locked<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
@@ -337,7 +463,15 @@ fn enqueue_in_scope(dir: &Path, operation: &HomeOperation) -> Result<(), String>
         &operation.relay_url,
         &operation.owner_pubkey,
     );
+    if let Some(parent) = db.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
     let mut conn = super::retention::open_retention_db(&db)?;
+    super::retention::remember_retention_scope(
+        &conn,
+        &operation.relay_url,
+        &operation.owner_pubkey,
+    )?;
     enqueue_home_events(&mut conn, operation)
 }
 /// Save new imported definitions and instances together, preserving unrelated rows and keys.
@@ -402,10 +536,18 @@ pub(crate) fn recover_home_operations_locked_with<R: tauri::Runtime>(
     verify_binding: impl FnMut(&str) -> Result<bool, String>,
 ) -> Result<(), String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    label::prepare_label_retries(
+        &dir,
+        &app.state::<crate::app_state::AppState>().signing_keys()?,
+    )?;
     recover_in_dir(&dir, verify_binding, |operation| {
         enqueue_in_scope(&dir, operation)
     })
 }
 
+pub(crate) mod delete;
+#[cfg(test)]
+mod durable_tests;
+pub(crate) mod label;
 #[cfg(test)]
 mod tests;

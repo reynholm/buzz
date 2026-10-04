@@ -7,7 +7,7 @@ use super::super::{
 };
 use super::*;
 use std::cell::Cell;
-fn setup() -> (
+pub(super) fn setup() -> (
     tempfile::TempDir,
     DevicePolicyContext,
     ManagedAgentRecord,
@@ -28,7 +28,7 @@ fn setup() -> (
     let _ = key;
     (dir, c, i, owner)
 }
-fn save(dir: &Path, rs: &[ManagedAgentRecord]) -> Result<(), String> {
+pub(super) fn save(dir: &Path, rs: &[ManagedAgentRecord]) -> Result<(), String> {
     atomic_write_json_restricted(
         &dir.join("agents/managed-agents.json"),
         &serde_json::to_vec_pretty(rs).unwrap(),

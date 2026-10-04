@@ -20,7 +20,7 @@ mod channel_window;
 mod channels;
 mod clipboard;
 mod device_home_sync;
-mod device_identity;
+pub(crate) mod device_identity;
 mod dms;
 mod engrams;
 mod export_util;
