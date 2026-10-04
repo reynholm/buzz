@@ -212,3 +212,40 @@ fn remote_deployed_cascade_target_blocks_delete() {
         "only the deployed provider agent blocks the cascade"
     );
 }
+
+#[test]
+fn local_definition_delete_device_guard_precedes_every_cascade_effect() {
+    use crate::managed_agents::{
+        definition_home::EvidenceReadiness,
+        device_home_migration::tests::{app, context, records, write},
+        device_home_sync,
+    };
+    use tauri::Manager;
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let state = app.state::<crate::app_state::AppState>();
+    let (mut raw, _) = records();
+    raw[0].origin_device_id = Some("foreign".into());
+    raw[1].device_host_binding = Some("foreign".into());
+    write(
+        &crate::managed_agents::managed_agents_base_dir(app.handle()).unwrap(),
+        &raw,
+    );
+    let effects = std::cell::Cell::new(0);
+    let result = super::delete_persona_phase_with(
+        app.handle(),
+        &state,
+        "one",
+        |_, state| {
+            let mut c = context(EvidenceReadiness::Ready);
+            c.scope = device_home_sync::capture_scope(state)?;
+            Ok(c)
+        },
+        || {
+            effects.set(1);
+            Ok(())
+        },
+    );
+    assert!(result.is_err());
+    assert_eq!(effects.get(), 0);
+}

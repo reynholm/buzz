@@ -20,7 +20,6 @@ use crate::{
         },
         load_managed_agents, ManagedAgentRecord, RespondTo,
     },
-    relay::{effective_agent_relay_url, relay_ws_url_with_override},
     util::now_iso,
 };
 
@@ -544,12 +543,15 @@ pub async fn confirm_agent_snapshot_import(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AgentSnapshotImportResult, String> {
-    let context = {
+    let (context, import_fence) = {
         let _guard = state
             .managed_agents_store_lock
             .lock()
             .map_err(|e| e.to_string())?;
-        crate::managed_agents::persona_device_view::load_device_policy_context(&app, &state)?
+        (
+            crate::managed_agents::persona_device_view::load_device_policy_context(&app, &state)?,
+            crate::managed_agents::device_runtime::capture_runtime_fence(&state)?,
+        )
     };
     // ── Phase 1: validate (no writes) ────────────────────────────────────────
     // Locked cards unlock only via this machine's exact key endpoints;
@@ -620,7 +622,7 @@ pub async fn confirm_agent_snapshot_import(
         &crate::managed_agents::device_home_sync::capture_scope(&state)?,
         &context.scope,
     )?;
-    let (agent_keys, private_key_nsec, pubkey, auth_tag, owner_pubkey_hex) = {
+    let (agent_keys, private_key_nsec, pubkey, auth_tag) = {
         let owner_keys = state.signing_keys()?;
         let agent_keys = nostr::Keys::generate();
         let pubkey = agent_keys.public_key().to_hex();
@@ -638,14 +640,7 @@ pub async fn confirm_agent_snapshot_import(
             buzz_sdk_pkg::nip_oa::compute_auth_tag(&compat_owner, &compat_agent, "")
                 .map_err(|e| format!("failed to compute NIP-OA auth tag: {e}"))?,
         );
-        let owner_pubkey_hex = owner_keys.public_key().to_hex();
-        (
-            agent_keys,
-            private_key_nsec,
-            pubkey,
-            auth_tag,
-            owner_pubkey_hex,
-        )
+        (agent_keys, private_key_nsec, pubkey, auth_tag)
     };
 
     // ── Phase 3a: create AgentDefinition + ManagedAgentRecord (sync lock) ──────
@@ -782,10 +777,11 @@ pub async fn confirm_agent_snapshot_import(
     };
 
     // ── Phase 3b: publish kind:0 profile (async, outside lock) ───────────────
-    let relay_url =
-        effective_agent_relay_url(&record.relay_url, &relay_ws_url_with_override(&state));
     let profile_sync_error = crate::commands::agents::publish_persona_profile(
+        &app,
         &state,
+        &record.pubkey,
+        &import_fence,
         &record.relay_url,
         &agent_keys,
         &display_name,
@@ -801,9 +797,6 @@ pub async fn confirm_agent_snapshot_import(
     let mut memory_errors: Vec<String> = Vec::new();
 
     if memory_total > 0 {
-        let owner_pubkey = nostr::PublicKey::from_hex(&owner_pubkey_hex)
-            .map_err(|e| format!("failed to parse owner pubkey: {e}"))?;
-
         // Monotonic timestamp seed: use current time, bumped by 1 per entry
         // so no two events land at the same second.
         let base_ts = nostr::Timestamp::now().as_secs();
@@ -821,27 +814,26 @@ pub async fn confirm_agent_snapshot_import(
             };
 
             let created_at = base_ts + idx as u64;
-            match buzz_core_pkg::engram::build_event(&agent_keys, &owner_pubkey, &body, created_at)
+            match crate::commands::agents::snapshot_publication::publish_snapshot_memory_entry_with(
+                &app,
+                &state,
+                &record.pubkey,
+                &import_fence,
+                &agent_keys,
+                &body,
+                created_at,
+                crate::managed_agents::persona_device_view::load_device_policy_context,
+                |url, bytes| {
+                    let state = &state;
+                    let agent_keys = &agent_keys;
+                    let auth_tag = auth_tag.as_deref();
+                    async move { submit_engram_event(state, agent_keys, &bytes, &url, auth_tag).await }
+                },
+            )
+            .await
             {
-                Ok(event) => {
-                    let event_json = nostr::JsonUtil::as_json(&event).into_bytes();
-                    let url = format!("{}/events", crate::relay::relay_http_base_url(&relay_url));
-                    match submit_engram_event(
-                        &state,
-                        &agent_keys,
-                        &event_json,
-                        &url,
-                        auth_tag.as_deref(),
-                    )
-                    .await
-                    {
-                        Ok(()) => memory_written += 1,
-                        Err(e) => memory_errors.push(format!("slug {:?}: {e}", entry.slug)),
-                    }
-                }
-                Err(e) => {
-                    memory_errors.push(format!("slug {:?}: build failed: {e}", entry.slug));
-                }
+                Ok(()) => memory_written += 1,
+                Err(e) => memory_errors.push(format!("slug {:?}: {e}", entry.slug)),
             }
         }
     }
@@ -857,53 +849,9 @@ pub async fn confirm_agent_snapshot_import(
     })
 }
 
-/// Inline retention for the managed-agent kind:30177 event — mirrors
-/// `agents::retain_managed_agent_pending` without requiring cross-module
-/// private function access.
+/// Use the common authorized retention adapter.
 fn retain_agent_pending(app: &AppHandle, state: &AppState, record: &ManagedAgentRecord) {
-    use crate::managed_agents::{
-        agent_events::{agent_event_content, build_agent_event},
-        persona_events::monotonic_created_at,
-        retention::{get_retained_event, open_retention_db, retain_event, RetainedEvent},
-    };
-    use buzz_core_pkg::kind::KIND_MANAGED_AGENT;
-    use nostr::JsonUtil;
-
-    let result = (|| -> Result<(), String> {
-        let scope = crate::managed_agents::retention::active_retention_scope(app, state)?;
-        let conn = open_retention_db(&scope.db_path)?;
-        let content = serde_json::to_string(&agent_event_content(record))
-            .map_err(|e| format!("failed to serialize agent content: {e}"))?;
-        let (owner_pubkey, event) = {
-            let keys = &scope.owner_keys;
-            let owner_pubkey = keys.public_key().to_hex();
-            let existing =
-                get_retained_event(&conn, KIND_MANAGED_AGENT, &owner_pubkey, &record.pubkey)?;
-            if existing.as_ref().is_some_and(|row| row.content == content) {
-                return Ok(());
-            }
-            let event = build_agent_event(record)?
-                .custom_created_at(monotonic_created_at(existing.map(|row| row.created_at)))
-                .sign_with_keys(keys)
-                .map_err(|e| format!("failed to sign agent event: {e}"))?;
-            (owner_pubkey, event)
-        };
-        retain_event(
-            &conn,
-            &RetainedEvent {
-                kind: KIND_MANAGED_AGENT,
-                pubkey: owner_pubkey,
-                d_tag: record.pubkey.clone(),
-                content: event.content.to_string(),
-                created_at: event.created_at.as_secs() as i64,
-                raw_event: event.as_json(),
-                pending_sync: true,
-            },
-        )
-    })();
-    if let Err(e) = result {
-        eprintln!("buzz-desktop: snapshot-import retain-agent: {e}");
-    }
+    crate::commands::agents::retain_managed_agent_pending(app, state, record);
 }
 
 /// POST a pre-built signed engram event to the relay, authenticating as the

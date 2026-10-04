@@ -434,8 +434,11 @@ pub async fn update_managed_agent(
     // the complete pre-edit record so Desktop and the relay keep one
     // authoritative name.
     if let Some((agent_keys, relay_url, display_name, avatar_url, about, auth_tag)) = sync_params {
-        if let Err(sync_error) = sync_managed_agent_profile(
+        if let Some(sync_error) = super::super::agents::publish_agent_profile_with_about(
+            &app,
             &state,
+            &summary.pubkey,
+            &runtime_fence,
             &relay_url,
             &agent_keys,
             &display_name,
@@ -506,7 +509,7 @@ pub async fn update_managed_agent(
 mod tests;
 
 /// Authorize the whole locked restart effect before any key, process or store operation.
-fn model_update_phase_with<R: tauri::Runtime, T>(
+pub(crate) fn model_update_phase_with<R: tauri::Runtime, T>(
     app: &tauri::AppHandle<R>,
     state: &crate::app_state::AppState,
     pubkey: &str,
@@ -527,11 +530,12 @@ fn model_update_phase_with<R: tauri::Runtime, T>(
     if let Some(expected) = expected {
         crate::managed_agents::device_runtime::assert_runtime_fence(state, expected)?;
     }
-    crate::managed_agents::device_runtime::runtime_phase_locked_with(
+    crate::managed_agents::device_authority::instance_phase_locked_with(
         app,
         state,
         pubkey,
-        expected.map(|e| &e.scope),
+        expected,
+        crate::managed_agents::device_authority::InstanceAuthorityAction::Update,
         context,
         effect,
     )

@@ -25,7 +25,7 @@ use crate::{
         AgentModelsResponse, ManagedAgentRecord, UpdateManagedAgentRequest,
         UpdateManagedAgentResponse, DEFAULT_ACP_COMMAND,
     },
-    relay::{relay_ws_url_with_override, sync_managed_agent_profile},
+    relay::relay_ws_url_with_override,
 };
 
 /// Query available models from an agent via `buzz-acp models --json`.

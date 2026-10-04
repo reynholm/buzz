@@ -162,3 +162,11 @@ mod device_policy_types_tests;
 pub(crate) mod device_runtime;
 #[cfg(test)]
 mod device_runtime_tests;
+
+pub(crate) mod device_authority;
+#[cfg(test)]
+mod device_authority_tests;
+pub(crate) mod device_inbound;
+
+#[cfg(test)]
+mod device_inbound_tests;

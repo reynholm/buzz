@@ -4,9 +4,9 @@ use crate::{
     app_state::AppState,
     managed_agents::{
         current_instance_id, delete_agent_key, load_managed_agents, load_personas, load_teams,
-        save_managed_agents, save_personas, stop_managed_agent_process,
-        sync_managed_agent_processes, try_regenerate_nest, validate_persona_activation_change,
-        validate_persona_deletion, AgentDefinition, ManagedAgentRecord,
+        save_personas, stop_managed_agent_process, sync_managed_agent_processes,
+        try_regenerate_nest, validate_persona_activation_change, validate_persona_deletion,
+        AgentDefinition, ManagedAgentRecord,
     },
     util::now_iso,
 };
@@ -193,6 +193,25 @@ fn commit_cascade_agents(
     save(agents)
 }
 
+/// Local definition deletion's native adapter, before cascade/key/signing effects.
+fn delete_persona_phase_with<R: tauri::Runtime, T>(
+    app: &AppHandle<R>,
+    state: &AppState,
+    id: &str,
+    context: impl FnOnce(
+        &AppHandle<R>,
+        &AppState,
+    ) -> Result<
+        crate::managed_agents::persona_device_view::DevicePolicyContext,
+        String,
+    >,
+    effect: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    crate::managed_agents::device_authority::definition_delete_phase_locked_with(
+        app, state, id, context, effect,
+    )
+}
+
 #[tauri::command]
 pub async fn delete_persona(id: String, app: AppHandle) -> Result<(), String> {
     use tauri::Manager;
@@ -207,104 +226,117 @@ pub async fn delete_persona(id: String, app: AppHandle) -> Result<(), String> {
                 .lock()
                 .map_err(|error| error.to_string())?;
 
-            // Load and validate the persona before any destructive work.
-            let mut personas = load_personas(&app)?;
-            let persona = personas
-                .iter()
-                .find(|record| record.id == id)
-                .ok_or_else(|| format!("persona {id} not found"))?;
-            let referenced_by_team = load_teams(&app)?.iter().any(|team| {
-                team.persona_ids
-                    .iter()
-                    .any(|persona_id| persona_id == id.as_str())
-            });
-            validate_persona_deletion(persona, referenced_by_team)?;
-            // Capture the coordinate before the record might leave the list. Only
-            // reached for non-builtin, non-team personas (both rejected above),
-            // so every deleted persona here is one this owner published.
-            let d_tag = crate::managed_agents::persona_events::persona_d_tag(persona);
+            delete_persona_phase_with(
+                &app,
+                &state,
+                &id,
+                crate::managed_agents::persona_device_view::load_device_policy_context,
+                || {
+                    // Load and validate the persona before any destructive work.
+                    let mut personas = load_personas(&app)?;
+                    let persona = personas
+                        .iter()
+                        .find(|record| record.id == id)
+                        .ok_or_else(|| format!("persona {id} not found"))?;
+                    let referenced_by_team = load_teams(&app)?.iter().any(|team| {
+                        team.persona_ids
+                            .iter()
+                            .any(|persona_id| persona_id == id.as_str())
+                    });
+                    validate_persona_deletion(persona, referenced_by_team)?;
+                    // Capture the coordinate before the record might leave the list. Only
+                    // reached for non-builtin, non-team personas (both rejected above),
+                    // so every deleted persona here is one this owner published.
+                    let d_tag = crate::managed_agents::persona_events::persona_d_tag(persona);
 
-            // ── Phase 1: Stage ─────────────────────────────────────────────
-            //
-            // Load agents, sync process state, and build the cascade set. Lock
-            // ordering: store lock (held) → process lock (acquired for sync,
-            // then released before Phase 2 stops). Every fallible read/lock is
-            // here; an error leaves all state intact and the command is retryable.
-            let mut agents = load_managed_agents(&app)?;
-            {
-                let mut runtimes = state
-                    .managed_agent_processes
-                    .lock()
-                    .map_err(|error| error.to_string())?;
-                let (sync_changed, exited_pubkeys) = sync_managed_agent_processes(
-                    &mut agents,
-                    &mut runtimes,
-                    &current_instance_id(&app),
-                );
-                if sync_changed {
-                    save_managed_agents(&app, &agents)?;
-                }
-                for pk in &exited_pubkeys {
-                    state.clear_agent_session_caches(pk);
-                }
-                // runtimes drops here (process lock released before Phase 2).
-            }
-
-            // Build the cascade set. HashSet for O(1) membership in Phase 3.
-            let cascade: std::collections::HashSet<String> =
-                collect_cascade_pubkeys(&agents, &id).into_iter().collect();
-
-            // Remote-agent pre-flight: refuse the cascade before any destructive
-            // work while any target is provider-deployed. Nothing in
-            // create_managed_agent forbids a persona-linked provider agent, so
-            // this must be a runtime guard, not an assumed invariant.
-            let remote_deployed = collect_remote_deployed(&agents, &cascade);
-            if !remote_deployed.is_empty() {
-                return Err(format!(
-                    "persona {id} has provider-deployed agent instances ({}); delete those agent instances first",
-                    remote_deployed.join(", ")
-                ));
-            }
-
-            // ── Phase 2: Stop ───────────────────────────────────────────────
-            //
-            // Best-effort stop each running cascade instance. Lock ordering:
-            // store lock (held) → process lock acquired per-agent and released
-            // between stops so the process lock is not held across the full poll
-            // cycle (stop_managed_agent_process polls 100ms×10 before SIGKILL).
-            //
-            // Per-agent stop errors are swallowed — these records are deleted in
-            // Phase 3 regardless. Intentional difference from delete_managed_agent
-            // (single-agent, fatal on stop failure); here the cascade is multi-agent
-            // and deletion must proceed even if one instance cannot be stopped.
-            for pk in &cascade {
-                if let Some(rec) = agents.iter_mut().find(|a| a.pubkey == *pk) {
-                    let mut runtimes = state
-                        .managed_agent_processes
-                        .lock()
-                        .map_err(|error| error.to_string())?;
-                    if let Err(e) = stop_managed_agent_process(&app, rec, &mut runtimes) {
-                        eprintln!("buzz-desktop: delete_persona: failed to stop agent {pk}: {e}");
+                    // ── Phase 1: Stage ─────────────────────────────────────────────
+                    //
+                    // Load agents, sync process state, and build the cascade set. Lock
+                    // ordering: store lock (held) → process lock (acquired for sync,
+                    // then released before Phase 2 stops). Every fallible read/lock is
+                    // here; an error leaves all state intact and the command is retryable.
+                    let mut agents = crate::managed_agents::persona_device_view::read_policy_records(
+                        &crate::managed_agents::managed_agents_store_path(&app)?,
+                    )?;
+                    let cascade: std::collections::HashSet<String> = collect_cascade_pubkeys(&agents, &id).into_iter().collect();
+                    {
+                        let mut runtimes = state
+                            .managed_agent_processes
+                            .lock()
+                            .map_err(|error| error.to_string())?;
+                        let (sync_changed, exited_pubkeys) = crate::managed_agents::device_authority::selected_deletion_records_with(
+                            &mut agents,
+                            &cascade,
+                            |selected| Ok(sync_managed_agent_processes(selected, &mut runtimes, &current_instance_id(&app))),
+                        )?;
+                        if sync_changed {
+                            crate::managed_agents::device_authority::save_deletion_snapshot(&app, &agents)?;
+                        }
+                        for pk in &exited_pubkeys {
+                            state.clear_agent_session_caches(pk);
+                        }
+                        // runtimes drops here (process lock released before Phase 2).
                     }
-                    // runtimes drops here (per-agent, process lock not held across stops).
-                }
-            }
 
-            // ── Phase 3: Commit ─────────────────────────────────────────────
-            //
-            // Disk-authoritative writes first, side effects strictly after.
-            // commit_cascade_agents is an injectable seam so unit tests can
-            // verify retry-safety: a failing save propagates before any keyring
-            // deletion or tombstone occurs.
-            //
-            // Failure semantics:
-            //   agent save fails   → nothing destroyed; full cascade retries cleanly
-            //   persona save fails → cascade agents gone, persona survives; a retry
-            //                        finds an empty cascade and proceeds cleanly
-            // Keys and tombstones are enqueued only after their records leave disk.
-            if !cascade.is_empty() {
-                commit_cascade_agents(&mut agents, &cascade, |recs| {
-                    save_managed_agents(&app, recs)
+                    // Remote-agent pre-flight: refuse the cascade before any destructive
+                    // work while any target is provider-deployed. Nothing in
+                    // create_managed_agent forbids a persona-linked provider agent, so
+                    // this must be a runtime guard, not an assumed invariant.
+                    let remote_deployed = collect_remote_deployed(&agents, &cascade);
+                    if !remote_deployed.is_empty() {
+                        return Err(format!(
+                            "persona {id} has provider-deployed agent instances ({}); delete those agent instances first",
+                            remote_deployed.join(", ")
+                        ));
+                    }
+
+                    let deletion_authorities: Vec<_> = cascade.iter().map(|pk| {
+                        crate::managed_agents::device_authority::prepare_deletion_authority_locked_with(
+                            &app,
+                            &state,
+                            pk,
+                            crate::managed_agents::persona_device_view::load_device_policy_context,
+                        )
+                    }).collect::<Result<_, _>>()?;
+                    // ── Phase 2: Stop ───────────────────────────────────────────────
+                    //
+                    // Best-effort stop each running cascade instance. Lock ordering:
+                    // store lock (held) → process lock acquired per-agent and released
+                    // between stops so the process lock is not held across the full poll
+                    // cycle (stop_managed_agent_process polls 100ms×10 before SIGKILL).
+                    //
+                    // Per-agent stop errors are swallowed — these records are deleted in
+                    // Phase 3 regardless. Intentional difference from delete_managed_agent
+                    // (single-agent, fatal on stop failure); here the cascade is multi-agent
+                    // and deletion must proceed even if one instance cannot be stopped.
+                    for pk in &cascade {
+                        if let Some(rec) = agents.iter_mut().find(|a| a.pubkey == *pk) {
+                            let mut runtimes = state
+                                .managed_agent_processes
+                                .lock()
+                                .map_err(|error| error.to_string())?;
+                            if let Err(e) = stop_managed_agent_process(&app, rec, &mut runtimes) {
+                                eprintln!("buzz-desktop: delete_persona: failed to stop agent {pk}: {e}");
+                            }
+                            // runtimes drops here (per-agent, process lock not held across stops).
+                        }
+                    }
+
+                    // ── Phase 3: Commit ─────────────────────────────────────────────
+                    //
+                    // Disk-authoritative writes first, side effects strictly after.
+                    // commit_cascade_agents is an injectable seam so unit tests can
+                    // verify retry-safety: a failing save propagates before any keyring
+                    // deletion or tombstone occurs.
+                    //
+                    // Failure semantics:
+                    //   agent save fails   → nothing destroyed; full cascade retries cleanly
+                    //   persona save fails → cascade agents gone, persona survives; a retry
+                    //                        finds an empty cascade and proceeds cleanly
+                    // Keys and tombstones are enqueued only after their records leave disk.
+                    if !cascade.is_empty() {
+                        commit_cascade_agents(&mut agents, &cascade, |recs| {
+                            crate::managed_agents::device_authority::save_deletion_snapshot(&app,recs)
                 })?;
             }
 
@@ -322,9 +354,12 @@ pub async fn delete_persona(id: String, app: AppHandle) -> Result<(), String> {
                 delete_agent_key(pk);
                 // Tombstone + NIP-IA kind:9035 archive enqueue atomically; the
                 // archive's `persona_id` is derived from the retained 30177 head.
-                super::agents::tombstone_managed_agent_pending(&app, &state, pk);
+                if let Some(permit)=deletion_authorities.iter().find(|p|p.pubkey()==pk){super::agents::tombstone_managed_agent_pending(&app, &state, permit);}
             }
             tombstone_persona_pending(&app, &state, &d_tag);
+
+            Ok(())
+            })?;
 
             // _store_guard drops here, before try_regenerate_nest.
         }

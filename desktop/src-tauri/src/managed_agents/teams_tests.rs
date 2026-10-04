@@ -882,3 +882,58 @@ fn test_delete_catalog_team_team_save_failure_rolls_back_both_stores() {
         "teams must be restored to original bytes"
     );
 }
+
+#[test]
+fn remote_definition_team_cascade_refuses_before_any_store_or_directory_effect() {
+    use crate::managed_agents::{
+        definition_home::EvidenceReadiness,
+        device_home_migration::tests::{app, context, records, write},
+        device_home_sync,
+    };
+    use crate::managed_agents::{delete_team_with_cascade_with, save_teams, teams_store_path};
+    use tauri::Manager;
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let state = app.state::<crate::app_state::AppState>();
+    let (mut raw, _) = records();
+    raw.truncate(1);
+    raw[0].source_team = Some("pack".into());
+    raw[0].origin_device_id = Some("foreign".into());
+    raw[0].origin_device_label = Some("Home A".into());
+    let base = crate::managed_agents::managed_agents_base_dir(app.handle()).unwrap();
+    write(&base, &raw);
+    let source = dir.path().join("pack");
+    std::fs::create_dir(&source).unwrap();
+    std::fs::write(source.join("keep"), "keep").unwrap();
+    let team:TeamRecord=serde_json::from_value(serde_json::json!({"id":"pack","name":"Pack","description":"","source_dir":source,"persona_ids":["one"],"created_at":"now","updated_at":"now"})).unwrap();
+    save_teams(app.handle(), &[team]).unwrap();
+    let agent_bytes = std::fs::read(base.join("managed-agents.json")).unwrap();
+    let team_bytes = std::fs::read(teams_store_path(app.handle()).unwrap()).unwrap();
+    let result = delete_team_with_cascade_with(app.handle(), "pack", |_, state| {
+        let mut c = context(EvidenceReadiness::Ready);
+        c.scope = device_home_sync::capture_scope(state)?;
+        Ok(c)
+    });
+    assert!(result.unwrap_err().contains("definition_hosted_elsewhere"));
+    assert_eq!(
+        std::fs::read(base.join("managed-agents.json")).unwrap(),
+        agent_bytes
+    );
+    assert_eq!(
+        std::fs::read(teams_store_path(app.handle()).unwrap()).unwrap(),
+        team_bytes
+    );
+    assert!(source.join("keep").exists());
+    assert!(crate::managed_agents::retention::get_pending_sync(
+        &crate::managed_agents::retention::open_retention_db(
+            &crate::managed_agents::retention::scoped_retention_db_path(
+                &base,
+                "wss://test",
+                &state.signing_keys().unwrap().public_key().to_hex()
+            )
+        )
+        .unwrap()
+    )
+    .unwrap()
+    .is_empty());
+}

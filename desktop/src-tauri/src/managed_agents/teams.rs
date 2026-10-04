@@ -245,6 +245,55 @@ fn agents_referencing_team<'a>(
 /// copies matching this publication's provenance are deactivated (re-activatable
 /// on re-add), not deleted.
 pub fn delete_team_with_cascade(app: &AppHandle, team_id: &str) -> Result<Vec<String>, String> {
+    delete_team_with_cascade_with(
+        app,
+        team_id,
+        super::persona_device_view::load_device_policy_context,
+    )
+}
+
+/// Native team cascade adapter; all requested definition removals authorize before effects.
+pub(crate) fn delete_team_with_cascade_with<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    team_id: &str,
+    context: impl FnOnce(
+        &AppHandle<R>,
+        &crate::app_state::AppState,
+    ) -> Result<super::persona_device_view::DevicePolicyContext, String>,
+) -> Result<Vec<String>, String> {
+    use tauri::Manager;
+    let state = app.state::<crate::app_state::AppState>();
+    let fence = super::device_runtime::capture_runtime_fence(&state)?;
+    let teams_raw = load_teams_readonly(&teams_store_path(app)?)?;
+    let target = teams_raw
+        .iter()
+        .find(|t| t.id == team_id)
+        .ok_or_else(|| format!("team {team_id} not found"))?;
+    let raw =
+        super::persona_device_view::read_policy_records(&super::managed_agents_store_path(app)?)?;
+    let definitions: Vec<_> = raw
+        .iter()
+        .filter(|r| r.pubkey.is_empty())
+        .filter_map(super::ManagedAgentRecord::to_definition_view)
+        .collect();
+    let cascaded: Vec<_> = definitions
+        .iter()
+        .filter(|d| {
+            target.source_dir.is_some()
+                && d.source_team.as_deref() == Some(team_persona_key(target))
+        })
+        .collect();
+    if cascaded
+        .iter()
+        .any(|d| d.share_across_devices != Some(true))
+    {
+        let c = context(app, &state)?;
+        super::device_creation::assert_creation_scope(&fence.scope, &c.scope)?;
+        for definition in cascaded {
+            super::device_authority::authorize_definition_deletion(definition, &raw, &c)?;
+        }
+    }
+    super::device_runtime::assert_runtime_fence(&state, &fence)?;
     let mut teams = load_teams(app)?;
     let team = teams
         .iter()
@@ -253,7 +302,11 @@ pub fn delete_team_with_cascade(app: &AppHandle, team_id: &str) -> Result<Vec<St
 
     validate_team_deletion(team)?;
 
-    let agents = crate::managed_agents::load_managed_agents(app)?;
+    let agents: Vec<_> = raw
+        .iter()
+        .filter(|r| !r.pubkey.is_empty())
+        .cloned()
+        .collect();
     let referencing = agents_referencing_team(&agents, team);
     if !referencing.is_empty() {
         return Err(format!(
@@ -305,7 +358,11 @@ pub fn delete_team_with_cascade(app: &AppHandle, team_id: &str) -> Result<Vec<St
         // managed agent depends on — a copy backing an agent must stay active
         // so the agent keeps working.
         let mut personas = super::load_personas(app)?;
-        let managed_agents = crate::managed_agents::load_managed_agents(app)?;
+        let managed_agents: Vec<_> = raw
+            .iter()
+            .filter(|r| !r.pubkey.is_empty())
+            .cloned()
+            .collect();
 
         // The teams remaining AFTER this one is removed — used to check
         // whether any copy is still referenced before deactivating it.

@@ -20,7 +20,6 @@ use crate::{
         load_managed_agents, load_personas, load_teams, load_teams_readonly, save_teams,
         AgentDefinition, ManagedAgentRecord, TeamRecord,
     },
-    relay::{effective_agent_relay_url, relay_ws_url_with_override, sync_managed_agent_profile},
     util::now_iso,
 };
 
@@ -526,12 +525,15 @@ pub async fn confirm_team_snapshot_import(
     let now = now_iso();
 
     // Resolve behavioral defaults for every member before any key generation.
-    let context = {
+    let (context, import_fence) = {
         let _guard = state
             .managed_agents_store_lock
             .lock()
             .map_err(|e| e.to_string())?;
-        crate::managed_agents::persona_device_view::load_device_policy_context(&app, &state)?
+        (
+            crate::managed_agents::persona_device_view::load_device_policy_context(&app, &state)?,
+            crate::managed_agents::device_runtime::capture_runtime_fence(&state)?,
+        )
     };
     let definitions =
         build_import_definitions(&snapshot, input.keep_allowlist, &now, &context.device)?;
@@ -540,10 +542,6 @@ pub async fn confirm_team_snapshot_import(
 
     // ── Phase 2: mint keys + auth tags (sync, outside lock) ─────────────────
     // All mints must succeed before we enter the store. If any fails, zero writes.
-    let owner_pubkey_hex = {
-        let keys = state.signing_keys()?;
-        keys.public_key().to_hex()
-    };
 
     let mut minted: Vec<MintedMember> = Vec::with_capacity(snapshot.members.len());
     for (member, definition) in snapshot.members.iter().zip(definitions) {
@@ -794,26 +792,25 @@ pub async fn confirm_team_snapshot_import(
     };
 
     // ── Phase 4 & 5: profile sync + memory restore (async, outside lock) ────
-    let relay_ws = relay_ws_url_with_override(&state);
     let mut member_results: Vec<TeamSnapshotImportMemberResult> = Vec::with_capacity(minted.len());
 
     for (m, snap_member) in minted.iter().zip(snapshot.members.iter()) {
-        let relay_url = effective_agent_relay_url(&m.record.relay_url, &relay_ws);
-
         // Phase 4: profile sync (best-effort).
         let profile_about =
             crate::managed_agents::effective_agent_description(m.definition.description.as_deref());
-        let profile_sync_error = sync_managed_agent_profile(
+        let profile_sync_error = crate::commands::agents::publish_agent_profile_with_about(
+            &app,
             &state,
-            &relay_url,
+            &m.pubkey,
+            &import_fence,
+            &m.record.relay_url,
             &m.agent_keys,
             &m.display_name,
             m.effective_avatar.as_deref(),
             profile_about.as_deref(),
             m.auth_tag.as_deref(),
         )
-        .await
-        .err();
+        .await;
 
         // Phase 5: memory restore (best-effort).
         let memory_total = snap_member.memory.entries.len();
@@ -821,8 +818,6 @@ pub async fn confirm_team_snapshot_import(
         let mut memory_errors: Vec<String> = Vec::new();
 
         if memory_total > 0 {
-            let owner_pubkey = nostr::PublicKey::from_hex(&owner_pubkey_hex)
-                .map_err(|e| format!("failed to parse owner pubkey: {e}"))?;
             let base_ts = nostr::Timestamp::now().as_secs();
 
             for (idx, entry) in snap_member.memory.entries.iter().enumerate() {
@@ -838,33 +833,20 @@ pub async fn confirm_team_snapshot_import(
                 };
 
                 let created_at = base_ts + idx as u64;
-                match buzz_core_pkg::engram::build_event(
+                match crate::commands::agents::snapshot_publication::publish_snapshot_memory_entry(
+                    &app,
+                    &state,
+                    &m.pubkey,
+                    &import_fence,
                     &m.agent_keys,
-                    &owner_pubkey,
                     &body,
                     created_at,
-                ) {
-                    Ok(event) => {
-                        use nostr::JsonUtil;
-                        let event_json = event.as_json().into_bytes();
-                        let url =
-                            format!("{}/events", crate::relay::relay_http_base_url(&relay_url));
-                        match submit_engram_event(
-                            &state,
-                            &m.agent_keys,
-                            &event_json,
-                            &url,
-                            m.auth_tag.as_deref(),
-                        )
-                        .await
-                        {
-                            Ok(()) => memory_written += 1,
-                            Err(e) => memory_errors.push(format!("slug {:?}: {e}", entry.slug)),
-                        }
-                    }
-                    Err(e) => {
-                        memory_errors.push(format!("slug {:?}: build failed: {e}", entry.slug));
-                    }
+                    m.auth_tag.as_deref(),
+                )
+                .await
+                {
+                    Ok(()) => memory_written += 1,
+                    Err(e) => memory_errors.push(format!("slug {:?}: {e}", entry.slug)),
                 }
             }
         }

@@ -82,7 +82,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/agents.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery; Task6: Carry original create/manual runtime fence through local/provider tails, guard summaries and persist only authorized target records
+Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery; Task6: Carry original create/manual runtime fence through local/provider tails, guard summaries and persist only authorized target records; Task7: Guard exact instance deletion before assignment, process, key, store and journal effects; preserve unrelated raw rows; pin create profile continuation to original runtime fence
 
 New module: `false`.
 
@@ -110,11 +110,20 @@ New module: `false`.
                 fence: Some(&create_fence),
             },
         )`; behavior test `managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/agents.rs` → `publish_agent_profile_with_about`; exact call `profile::publish_agent_profile_with_about(
+        &app,
+        &state,
+        &agent.pubkey,
+        &create_fence,`; behavior test `create_import_profile_invocation_never_redirects_after_owner_relay_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib create_import_profile_invocation_never_redirects_after_owner_relay_switch`
+- Invocation: `desktop/src-tauri/src/commands/agents.rs` → `delete_managed_agent_phase_with`; exact call `delete_managed_agent_phase_with(
+                &app,
+                &state,
+                &pubkey,`; behavior test `direct_delete_device_guard_precedes_assignment_key_process_store_and_journal_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib direct_delete_device_guard_precedes_assignment_key_process_store_and_journal_effects`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/commands/agents_tests.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None
+Mechanical struct-literal compatibility repair: new device fields default to None; Task7: Isolated owning device authority and original publication regressions
 
 New module: `false`.
 
@@ -131,7 +140,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/personas/delete_cascade_tests.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None
+Mechanical struct-literal compatibility repair: new device fields default to None; Task7: Isolated owning device authority and original publication regressions
 
 New module: `false`.
 
@@ -155,7 +164,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/personas/pending.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None; Read-only catalog projection for list without creating retained databases
+Mechanical struct-literal compatibility repair: new device fields default to None; Read-only catalog projection for list without creating retained databases; Task7: Generic retention projection used by native isolated definition-edit transaction
 
 New module: `false`.
 
@@ -180,7 +189,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/personas/snapshot/import.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery
+Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery; Task7: Carry original import runtime fence through profile and each memory signing/dispatch continuation
 
 New module: `false`.
 
@@ -198,6 +207,16 @@ New module: `false`.
 - Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `resolve_key`; exact call `let keys = resolve_key(record)?.ok_or_else(|| LOCKED_CARD_REFUSAL.to_string())?;`; behavior test `commands::personas::snapshot::tests::locked_import::confirm_readonly_proven_local_endpoint_reads_only_exact_recipient`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::tests::locked_import::confirm_readonly_proven_local_endpoint_reads_only_exact_recipient -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `decode_snapshot_for_import`; exact call `decode_snapshot_for_import(file_bytes, owner_keys, &[recipient])`; behavior test `commands::personas::snapshot::tests::locked_import::confirm_readonly_definitionless_legacy_endpoint_unlocks`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::tests::locked_import::confirm_readonly_definitionless_legacy_endpoint_unlocks -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `read_policy_records`; exact call `crate::managed_agents::persona_device_view::read_policy_records(store_path)?;`; behavior test `commands::personas::snapshot::tests::locked_import::confirm_readonly_structural_and_key_errors_fail_closed`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::tests::locked_import::confirm_readonly_structural_and_key_errors_fail_closed -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `publish_persona_profile`; exact call `crate::commands::agents::publish_persona_profile(
+        &app,
+        &state,
+        &record.pubkey,
+        &import_fence,`; behavior test `create_import_profile_invocation_never_redirects_after_owner_relay_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib create_import_profile_invocation_never_redirects_after_owner_relay_switch`
+- Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `publish_snapshot_memory_entry_with`; exact call `crate::commands::agents::snapshot_publication::publish_snapshot_memory_entry_with(
+                &app,
+                &state,
+                &record.pubkey,
+                &import_fence,`; behavior test `original_snapshot_memory_invocation_never_signs_or_sends_into_switched_scope`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib original_snapshot_memory_invocation_never_signs_or_sends_into_switched_scope`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/commands/personas/snapshot/tests.rs`
@@ -218,11 +237,21 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/team_snapshot.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery
+Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery; Task7: Carry original team import runtime fence through member profile and memory publication
 
 New module: `false`.
 
 - Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `definition_from_snapshot`; exact call `crate::commands::team_snapshot::definition_from_snapshot(`; behavior test `commands::personas::snapshot::tests::imported_snapshot_constructor_defaults_private_with_own_origin`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::tests::imported_snapshot_constructor_defaults_private_with_own_origin -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/team_snapshot.rs` → `publish_agent_profile_with_about`; exact call `crate::commands::agents::publish_agent_profile_with_about(
+            &app,
+            &state,
+            &m.pubkey,
+            &import_fence,`; behavior test `create_import_profile_invocation_never_redirects_after_owner_relay_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib create_import_profile_invocation_never_redirects_after_owner_relay_switch`
+- Invocation: `desktop/src-tauri/src/commands/team_snapshot.rs` → `publish_snapshot_memory_entry`; exact call `crate::commands::agents::snapshot_publication::publish_snapshot_memory_entry(
+                    &app,
+                    &state,
+                    &m.pubkey,
+                    &import_fence,`; behavior test `original_snapshot_memory_invocation_never_signs_or_sends_into_switched_scope`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib original_snapshot_memory_invocation_never_signs_or_sends_into_switched_scope`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/commands/team_snapshot/tests.rs`
@@ -364,7 +393,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/managed_agents/mod.rs`
 
-Register the device policy compatibility test module; Register home policy, sync and projection modules; Register device-home migration production module; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery; Task6: Register runtime authorization module and owning test module
+Register the device policy compatibility test module; Register home policy, sync and projection modules; Register device-home migration production module; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery; Task6: Register runtime authorization module and owning test module; Task7: Register device metadata merge and local authoring authority modules and isolated owning regressions
 
 New module: `false`.
 
@@ -483,7 +512,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/managed_agents/teams_tests.rs`
 
-Mechanical struct-literal compatibility repair: new device fields default to None
+Mechanical struct-literal compatibility repair: new device fields default to None; Task7: Isolated owning device authority and original publication regressions
 
 New module: `false`.
 
@@ -762,7 +791,7 @@ New module: `true`.
 
 ## `desktop/src-tauri/src/commands/personas/mod.rs`
 
-Read-only flattened list views with shared capability fast path on explicit unavailable context
+Read-only flattened list views with shared capability fast path on explicit unavailable context; Task7: Atomically authorize local definition deletion and cascade targets before effects; restrict housekeeping and persistence to selected targets
 
 New module: `false`.
 
@@ -775,6 +804,10 @@ New module: `false`.
         )?;`; behavior test `commands::personas::device_view_tests::list_projects_retained_catalog_sharing_without_writing_or_requiring_host_proof`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::device_view_tests::list_projects_retained_catalog_sharing_without_writing_or_requiring_host_proof -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/personas/mod.rs` → `unavailable`; exact call `PersonaDeviceView::unavailable(definition, error.clone())`; behavior test `commands::personas::device_view_tests::list_context_errors_are_explicit_and_preserve_only_shared_capabilities`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::device_view_tests::list_context_errors_are_explicit_and_preserve_only_shared_capabilities -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/personas/mod.rs` → `capture_scope`; exact call `device_home_sync::capture_scope(&state).and_then(|scope| {`; behavior test `commands::personas::device_view_tests::identity_recovery_preserves_visible_list_without_scope_or_signing`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::device_view_tests::identity_recovery_preserves_visible_list_without_scope_or_signing -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/personas/mod.rs` → `delete_persona_phase_with`; exact call `delete_persona_phase_with(
+                &app,
+                &state,
+                &id,`; behavior test `local_definition_delete_device_guard_precedes_every_cascade_effect`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib local_definition_delete_device_guard_precedes_every_cascade_effect`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/app_state.rs`
@@ -807,7 +840,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/personas/inbound.rs`
 
-Token-scoped live apply leases fence async reconciliation and record failures; Task6: Accept legitimate remote owner heads without local author proof; independently skip copied runtime refresh and secret effects while preserving hydration retry semantics
+Token-scoped live apply leases fence async reconciliation and record failures; Task6: Accept legitimate remote owner heads without local author proof; independently skip copied runtime refresh and secret effects while preserving hydration retry semantics; Task7: Merge optional device metadata only after accepted owner head; preserve proven local lineage; reject wrong author; apply accepted tombstones as receiver operations
 
 New module: `false`.
 
@@ -815,9 +848,13 @@ New module: `false`.
 - Required symbol: `lease.complete(&result)?;`
 - Required symbol: `fn reconcile_inbound_tombstone_with_refresh`
 - Required symbol: `enum InboundRuntimeRefresh`
-- Invocation: `desktop/src-tauri/src/commands/personas/inbound.rs` → `reconcile_inbound_tombstone_with_refresh`; exact call `reconcile_inbound_tombstone_with_refresh(event, arrival_relay_url, app, state, || {
-        try_regenerate_nest(app);
-    })`; behavior test `commands::personas::inbound::device_sync_tests::signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::inbound::device_sync_tests::signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/personas/inbound.rs` → `reconcile_inbound_tombstone_with_refresh`; exact call `reconcile_inbound_tombstone_with_refresh(
+            &event,
+            &arrival_relay_url,
+            &app,
+            &state,
+            refresh,
+        )?`; behavior test `commands::personas::inbound::device_sync_tests::signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::inbound::device_sync_tests::signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/personas/inbound.rs` → `inbound_refresh_phase_with`; exact call `crate::managed_agents::device_runtime::inbound_refresh_phase_with(
                     &app,
                     &state,
@@ -836,6 +873,11 @@ New module: `false`.
             .map_err(|error| {
                 format!(
                     "Inbound agent access was saved, but its provider deployment failed to refresh with the new policy: {error}"`; behavior test `managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects -- --exact`
+- Invocation: `desktop/src-tauri/src/commands/personas/inbound.rs` → `merge_inbound_device_metadata`; exact call `crate::managed_agents::device_inbound::merge_inbound_device_metadata(
+                local,
+                &mut inbound,
+                proven,
+            );`; behavior test `commands::personas::inbound::device_metadata_tests`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib commands::personas::inbound::device_metadata_tests`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src/features/agents/lib/usePersonaSync.ts`
@@ -941,7 +983,7 @@ New module: `true`.
 
 ## `desktop/src-tauri/src/managed_agents/device_home_migration.rs`
 
-Atomic legacy binding/origin snapshot, read-only key verification, prewrite scope fence, shared bypass and durable signed-head retry
+Atomic legacy binding/origin snapshot, read-only key verification, prewrite scope fence, shared bypass and durable signed-head retry; Task7: Delegate common publication authority to canonical exact target checks
 
 New module: `true`.
 
@@ -951,7 +993,12 @@ New module: `true`.
 - Required symbol: `fn publication_allowed`
 - Required symbol: `fn needs_private_authority`
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_migration.rs` → `resolve`; exact call `resolve(&records[i])?`; behavior test `managed_agents::device_home_migration::tests::legacy_claim_requires_available_key`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::legacy_claim_requires_available_key -- --exact`
-- Invocation: `desktop/src-tauri/src/managed_agents/device_home_migration.rs` → `matches`; exact call `context.proof.matches(b)`; behavior test `managed_agents::device_home_migration::tests::json_copy_does_not_publish`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::json_copy_does_not_publish -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_home_migration.rs` → `authorize_instance_authority`; exact call `super::device_authority::authorize_instance_authority(
+        record,
+        definition,
+        context,
+        super::device_authority::InstanceAuthorityAction::PublishHead,
+    )`; behavior test `managed_agents::device_authority_tests::direct_update_or_delete_copied_instance_has_no_side_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_authority_tests::direct_update_or_delete_copied_instance_has_no_side_effects`
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_migration.rs` → `atomic_write_json_restricted`; exact call `atomic_write_json_restricted(&path, &bytes)?;`; behavior test `managed_agents::device_home_migration::tests::legacy_claim_requires_available_key`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::legacy_claim_requires_available_key -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_migration.rs` → `migrate_device_homes_locked_with`; exact call `migrate_device_homes_locked_with(app, &context, resolve)`; behavior test `managed_agents::device_home_migration::tests::workspace_hook_defers_legacy_but_reclaims_proven_origin_before_sync`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::workspace_hook_defers_legacy_but_reclaims_proven_origin_before_sync -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_migration.rs` → `queue_device_home_events`; exact call `queue_device_home_events(&base, &keys, &db, context)?;`; behavior test `managed_agents::device_home_migration::tests::workspace_hook_defers_legacy_but_reclaims_proven_origin_before_sync`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::workspace_hook_defers_legacy_but_reclaims_proven_origin_before_sync -- --exact`
@@ -984,12 +1031,16 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/managed_agents/reconcile.rs`
 
-Guard each30177 instance publication; proof/context failure propagates in private scopes, shared-only best effort preserved
+Guard each30177 instance publication; proof/context failure propagates in private scopes, shared-only best effort preserved; Task7: Guard canonical instance boot heads, publish explicit shared rows even when mixed private proof fails, and verify captured retention owner/relay
 
 New module: `false`.
 
 - Required symbol: `fn reconcile_agents_in_dir_with_context`
-- Invocation: `desktop/src-tauri/src/managed_agents/reconcile.rs` → `publication_allowed`; exact call `super::device_home_migration::publication_allowed(record, definition.as_ref(), context)?`; behavior test `managed_agents::device_home_migration::tests::copy_suppresses_both_outbound_kinds_and_restore_candidates`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::copy_suppresses_both_outbound_kinds_and_restore_candidates -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/reconcile.rs` → `publication_allowed`; exact call `super::device_home_migration::publication_allowed(
+            record,
+            definition.as_ref(),
+            context,
+        )`; behavior test `managed_agents::device_home_migration::tests::copy_suppresses_both_outbound_kinds_and_restore_candidates`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::copy_suppresses_both_outbound_kinds_and_restore_candidates -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/reconcile.rs` → `identity_event_sync_leg`; exact call `crate::event_sync::identity_event_sync_leg(records, |private| {`; behavior test `event_sync::home_publication_adapter_tests::private_and_unknown_event_sync_errors_propagate`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml event_sync::home_publication_adapter_tests::private_and_unknown_event_sync_errors_propagate -- --exact`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
@@ -1115,7 +1166,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/managed_agents/reconcile/tests.rs`
 
-Existing linked-instance slim event/idempotence fixture injects matching host proof through guarded production reconcile engine
+Existing linked-instance slim event/idempotence fixture injects matching host proof through guarded production reconcile engine; Task7: Canonical linked definition fixture preserves slimming reconciliation regression assertions
 
 New module: `false`.
 
@@ -1527,7 +1578,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/agent_models_update.rs`
 
-Fence and authorize model update before stop/key/store effects and carry original runtime scope through restarts
+Fence and authorize model update before stop/key/store effects and carry original runtime scope through restarts; Task7: Authorize exact target updates and rename profile publication before instance effects
 
 New module: `false`.
 
@@ -1592,3 +1643,149 @@ New module: `true`.
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 - Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace --features mesh-llm`
 - Verify: `just desktop-tauri-clippy`
+
+## `desktop/src-tauri/src/commands/agent_models.rs`
+
+Task7: Use guarded profile publication adapter for model updates
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/agents_pending.rs`
+
+Task7: Authorize native instance head before signing and require pre-removal deletion authority for kind5/archive enqueue in captured scope
+
+New module: `false`.
+
+- Invocation: `desktop/src-tauri/src/commands/agents_pending.rs` → `instance_phase_locked_with`; exact call `crate::managed_agents::device_authority::instance_phase_locked_with(
+        app,
+        state,
+        &record.pubkey,
+        None,
+        crate::managed_agents::device_authority::InstanceAuthorityAction::PublishHead,`; behavior test `copied_common_head_and_deletion_preparation_have_zero_kind0_30177_5_9035_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib copied_common_head_and_deletion_preparation_have_zero_kind0_30177_5_9035_effects`
+- Invocation: `desktop/src-tauri/src/commands/agents_pending.rs` → `validate_deletion_authority`; exact call `validate_deletion_authority(state, permit, InstanceAuthorityAction::Tombstone)?;`; behavior test `prepared_shared_deletion_can_enqueue_after_removal_but_never_in_changed_scope`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib prepared_shared_deletion_can_enqueue_after_removal_but_never_in_changed_scope`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/agents_profile.rs`
+
+Task7: Guard common profile and startup publication before key/media/signing; retain captured original operation scope and canonical exact target
+
+New module: `false`.
+
+- Invocation: `desktop/src-tauri/src/commands/agents_profile.rs` → `original_publication_with`; exact call `crate::managed_agents::device_authority::original_publication_with(
+        app,
+        state,
+        pubkey,
+        fence,`; behavior test `create_import_profile_invocation_never_redirects_after_owner_relay_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib create_import_profile_invocation_never_redirects_after_owner_relay_switch`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/personas/update.rs`
+
+Task7: Allow definition edit while skipping unauthorized linked instance rename, key resolution, head and profile publication
+
+New module: `false`.
+
+- Invocation: `desktop/src-tauri/src/commands/personas/update.rs` → `authorize_instance_authority`; exact call `crate::managed_agents::device_authority::authorize_instance_authority(
+                                record,`; behavior test `remote_definition_rename_does_not_publish_copied_instance`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib remote_definition_rename_does_not_publish_copied_instance`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/egress_guard_tests.rs`
+
+Task7: Maintain exact events URL and egress guard inventory for extracted snapshot publication adapter
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/teams.rs`
+
+Task7: Authorize all requested definition removals before team cascade effects and avoid unrelated secret hydration
+
+New module: `false`.
+
+- Invocation: `desktop/src-tauri/src/managed_agents/teams.rs` → `authorize_definition_deletion`; exact call `super::device_authority::authorize_definition_deletion(definition, &raw, &c)?;`; behavior test `remote_definition_team_cascade_refuses_before_any_store_or_directory_effect`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib remote_definition_team_cascade_refuses_before_any_store_or_directory_effect`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/agents/snapshot_publication.rs`
+
+Task7: Common original-operation snapshot memory authority, plaintext egress guard before encryption, captured owner/relay signing and dispatch
+
+New module: `true`.
+
+- Required symbol: `fn publish_snapshot_memory_entry_with`
+- Invocation: `desktop/src-tauri/src/commands/agents/snapshot_publication.rs` → `original_publication_with`; exact call `original_publication_with(
+        app,
+        state,
+        pubkey,
+        fence,`; behavior test `original_snapshot_memory_invocation_never_signs_or_sends_into_switched_scope`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib original_snapshot_memory_invocation_never_signs_or_sends_into_switched_scope`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/agents_profile/device_publication_tests.rs`
+
+Task7: Isolated native device authoring, metadata or original publication regression tests
+
+New module: `true`.
+
+- Required symbol: `create_import_profile_invocation_never_redirects_after_owner_relay_switch`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/personas/inbound/device_metadata_tests.rs`
+
+Task7: Isolated native device authoring, metadata or original publication regression tests
+
+New module: `true`.
+
+- Required symbol: `accepted_release_updates_remote_card`
+- Required symbol: `stale_tombstone_cannot_remove_newer_home_and_valid_owner_removal_is_receiver_only`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/commands/personas/update/device_edit_tests.rs`
+
+Task7: Isolated native device authoring, metadata or original publication regression tests
+
+New module: `true`.
+
+- Required symbol: `remote_definition_rename_does_not_publish_copied_instance`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/device_authority.rs`
+
+Task7: Exact canonical instance and atomic definition cascade authority; captured deletion permit and original publication adapter; selected raw deletion persistence
+
+New module: `true`.
+
+- Required symbol: `fn authorize_instance_authority`
+- Required symbol: `fn original_publication_with`
+- Required symbol: `struct DeletionAuthority`
+- Required symbol: `fn selected_deletion_records_with`
+- Required symbol: `fn save_deletion_snapshot`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_authority.rs` → `authorize_instance_authority`; exact call `authorize_instance_authority(&record, definition, &c, action)?;`; behavior test `direct_update_or_delete_copied_instance_has_no_side_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib direct_update_or_delete_copied_instance_has_no_side_effects`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/device_authority_tests.rs`
+
+Task7: Isolated native device authoring, metadata or original publication regression tests
+
+New module: `true`.
+
+- Required symbol: `allowed_shared_deletion_housekeeping_preserves_copied_siblings_and_canonical_definition`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/device_inbound.rs`
+
+Task7: Optional inbound metadata merge preserves old-writer fields and proven local home lineage while accepting explicit sharing
+
+New module: `true`.
+
+- Required symbol: `fn merge_inbound_device_metadata`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/device_inbound_tests.rs`
+
+Task7: Isolated native device authoring, metadata or original publication regression tests
+
+New module: `true`.
+
+- Required symbol: `merge_inbound_device_metadata`
+- Verify: `just desktop-tauri-test desktop-tauri-check`

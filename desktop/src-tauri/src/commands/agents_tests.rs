@@ -802,3 +802,36 @@ fn owner_only_access_deploy_payload_clamps_stale_access() {
         "owner-only-access deploy payload retained a stale allowlist"
     );
 }
+
+#[test]
+fn direct_delete_device_guard_precedes_assignment_key_process_store_and_journal_effects() {
+    use crate::managed_agents::{
+        definition_home::EvidenceReadiness,
+        device_home_migration::tests::{app, context, records, write},
+        device_home_sync,
+    };
+    use tauri::Manager;
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let state = app.state::<AppState>();
+    let (mut raw, _) = records();
+    raw[1].device_host_binding = Some("foreign".into());
+    write(&managed_agents_base_dir(app.handle()).unwrap(), &raw);
+    let effects = std::cell::Cell::new(0);
+    let result = delete_managed_agent_phase_with(
+        app.handle(),
+        &state,
+        &raw[1].pubkey,
+        |_, state| {
+            let mut c = context(EvidenceReadiness::Ready);
+            c.scope = device_home_sync::capture_scope(state)?;
+            Ok(c)
+        },
+        |_, _, _| {
+            effects.set(1);
+            Ok(())
+        },
+    );
+    assert!(result.is_err());
+    assert_eq!(effects.get(), 0);
+}

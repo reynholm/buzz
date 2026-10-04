@@ -22,24 +22,53 @@ use crate::{app_state::AppState, managed_agents::ManagedAgentRecord};
 /// only runtime fields produces an identical row and never re-enqueues a
 /// publish. Best-effort: a failure here is logged and swallowed so a retention
 /// hiccup never blocks the disk-authoritative write.
-pub(crate) fn retain_managed_agent_pending(
-    app: &AppHandle,
+pub(crate) fn retain_managed_agent_pending<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     state: &AppState,
     record: &ManagedAgentRecord,
 ) {
-    use crate::managed_agents::{reconcile::retain_agent_record, retention::open_retention_db};
-
-    let result = (|| -> Result<(), String> {
-        let scope = crate::managed_agents::retention::active_retention_scope(app, state)?;
-        let conn = open_retention_db(&scope.db_path)?;
-        // Shared engine with the boot-time reconcile: projection content diff
-        // (no republish for runtime-only churn) + monotonic created_at bump
-        // past the retained head (NIP-AP step 3).
-        retain_agent_record(&conn, &scope.owner_keys, record).map(|_| ())
-    })();
+    let result = retain_managed_agent_pending_with(
+        app,
+        state,
+        record,
+        crate::managed_agents::persona_device_view::load_device_policy_context,
+    );
     if let Err(e) = result {
         eprintln!("buzz-desktop: agent-retain: {e}");
     }
+}
+
+/// Shared native head adapter; authorization precedes owner signing and database writes.
+pub(crate) fn retain_managed_agent_pending_with<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    state: &AppState,
+    record: &ManagedAgentRecord,
+    context: impl FnOnce(
+        &AppHandle<R>,
+        &AppState,
+    ) -> Result<
+        crate::managed_agents::persona_device_view::DevicePolicyContext,
+        String,
+    >,
+) -> Result<(), String> {
+    crate::managed_agents::device_authority::instance_phase_locked_with(
+        app,
+        state,
+        &record.pubkey,
+        None,
+        crate::managed_agents::device_authority::InstanceAuthorityAction::PublishHead,
+        context,
+        |current, _, _| {
+            let scope = crate::managed_agents::retention::active_retention_scope(app, state)?;
+            let conn = crate::managed_agents::retention::open_retention_db(&scope.db_path)?;
+            crate::managed_agents::reconcile::retain_agent_record(
+                &conn,
+                &scope.owner_keys,
+                &current,
+            )
+            .map(|_| ())
+        },
+    )
 }
 
 /// Purge a deleted agent's pending row and enqueue a NIP-09 tombstone, both
@@ -53,14 +82,24 @@ pub(crate) fn retain_managed_agent_pending(
 /// `pending_sync = 1`. The `d_tag` is the agent's pubkey. Best-effort: a
 /// failure is logged and swallowed so a retention hiccup never blocks the
 /// disk-authoritative delete.
-pub(crate) fn tombstone_managed_agent_pending(
-    app: &AppHandle,
+pub(crate) fn tombstone_managed_agent_pending<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     state: &AppState,
-    agent_pubkey: &str,
+    permit: &crate::managed_agents::device_authority::DeletionAuthority,
 ) {
     let result = (|| -> Result<(), String> {
+        use crate::managed_agents::device_authority::{
+            validate_deletion_authority, InstanceAuthorityAction,
+        };
+        validate_deletion_authority(state, permit, InstanceAuthorityAction::Tombstone)?;
+        validate_deletion_authority(state, permit, InstanceAuthorityAction::Archive)?;
         let scope = crate::managed_agents::retention::active_retention_scope(app, state)?;
-        tombstone_managed_agent_at(&scope.db_path, &scope.owner_keys, agent_pubkey)
+        if scope.relay_url != permit.scope().relay_url
+            || scope.owner_keys.public_key().to_hex() != permit.scope().owner_pubkey
+        {
+            return Err("device_home_sync_stale_session".into());
+        }
+        tombstone_managed_agent_at(&scope.db_path, &scope.owner_keys, permit.pubkey())
     })();
     if let Err(e) = result {
         eprintln!("buzz-desktop: agent-tombstone: {e}");
@@ -433,6 +472,100 @@ mod tests {
                 .iter()
                 .all(|row| row.kind != 5),
             "no kind:5 tombstone may be committed when the archive enqueue fails"
+        );
+    }
+}
+
+#[cfg(test)]
+mod device_authoring_tests {
+    use super::*;
+    use crate::managed_agents::{
+        definition_home::EvidenceReadiness,
+        device_home_migration::tests::{app, context, records, write},
+        device_home_sync,
+        retention::*,
+    };
+    use tauri::Manager;
+    #[test]
+    fn copied_common_head_and_deletion_preparation_have_zero_kind0_30177_5_9035_effects() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app(dir.path());
+        let state = app.state::<AppState>();
+        let (mut raw, _) = records();
+        raw[1].device_host_binding = Some("foreign".into());
+        let base = crate::managed_agents::managed_agents_base_dir(app.handle()).unwrap();
+        write(&base, &raw);
+        let path = scoped_retention_db_path(
+            &base,
+            "wss://test",
+            &state.signing_keys().unwrap().public_key().to_hex(),
+        );
+        let context_provider = |_: &AppHandle<tauri::test::MockRuntime>, state: &AppState| {
+            let mut c = context(EvidenceReadiness::Ready);
+            c.scope = device_home_sync::capture_scope(state)?;
+            Ok(c)
+        };
+        assert!(
+            retain_managed_agent_pending_with(app.handle(), &state, &raw[1], context_provider)
+                .is_err()
+        );
+        assert!(
+            crate::managed_agents::device_authority::prepare_deletion_authority_locked_with(
+                app.handle(),
+                &state,
+                &raw[1].pubkey,
+                context_provider
+            )
+            .is_err()
+        );
+        assert!(get_pending_sync(&open_retention_db(&path).unwrap())
+            .unwrap()
+            .is_empty());
+    }
+    #[test]
+    fn prepared_shared_deletion_can_enqueue_after_removal_but_never_in_changed_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app(dir.path());
+        let state = app.state::<AppState>();
+        let (mut raw, _) = records();
+        raw[0].share_across_devices = Some(true);
+        let base = crate::managed_agents::managed_agents_base_dir(app.handle()).unwrap();
+        write(&base, &raw);
+        let permit =
+            crate::managed_agents::device_authority::prepare_deletion_authority_locked_with(
+                app.handle(),
+                &state,
+                &raw[1].pubkey,
+                |_, _| panic!("shared proof read"),
+            )
+            .unwrap();
+        raw.pop();
+        write(&base, &raw);
+        tombstone_managed_agent_pending(app.handle(), &state, &permit);
+        let path = scoped_retention_db_path(
+            &base,
+            "wss://test",
+            &state.signing_keys().unwrap().public_key().to_hex(),
+        );
+        let pending = get_pending_sync(&open_retention_db(&path).unwrap()).unwrap();
+        assert_eq!(
+            pending
+                .iter()
+                .map(|r| r.kind)
+                .collect::<std::collections::HashSet<_>>(),
+            [5, 9035].into_iter().collect()
+        );
+        *state.keys.lock().unwrap() = nostr::Keys::generate();
+        *state.relay_url_override.lock().unwrap() = Some("wss://other".into());
+        tombstone_managed_agent_pending(app.handle(), &state, &permit);
+        let path = scoped_retention_db_path(
+            &base,
+            "wss://other",
+            &state.signing_keys().unwrap().public_key().to_hex(),
+        );
+        assert!(
+            !path.exists(),
+            "post-removal tombstone redirected into changed scope"
         );
     }
 }

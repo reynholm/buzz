@@ -234,7 +234,9 @@ fn slimming_republish_wave_is_one_time() {
     record.device_host_binding = Some(context.proof.binding().to_string());
     record.persona_id = Some("persona-1".to_string());
     record.persona_source_version = Some("abc123".to_string());
-    write_store(&dir, &[record]);
+    let mut definition = crate::managed_agents::device_home_migration::tests::definition();
+    definition.id = "persona-1".into();
+    write_store(&dir, &[definition.into_agent_record(), record]);
 
     // Seed a SYNCED legacy-fat retained row — the pre-upgrade state — so the
     // first-boot republish below is distinctly the fat→slim content change,

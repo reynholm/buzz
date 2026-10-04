@@ -65,11 +65,29 @@ pub(crate) fn reconcile_agents_to_events_with<R: tauri::Runtime>(
     let records =
         super::persona_device_view::read_policy_records(&base_dir.join("managed-agents.json"));
     crate::event_sync::identity_event_sync_leg(records, |private| {
+        let scope = super::device_home_sync::capture_scope(&state)?;
+        if scope.owner_pubkey != keys.public_key().to_hex()
+            || *db_path
+                != super::retention::scoped_retention_db_path(
+                    &base_dir,
+                    &scope.relay_url,
+                    &scope.owner_pubkey,
+                )
+        {
+            return Err("device_home_sync_stale_session".into());
+        }
         let context = if private {
-            Some(context_provider(app, &state)?)
+            context_provider(app, &state).ok()
         } else {
             None
         };
+        super::device_creation::assert_creation_scope(
+            &scope,
+            &super::device_home_sync::capture_scope(&state)?,
+        )?;
+        if let Some(context) = &context {
+            super::device_creation::assert_creation_scope(&scope, &context.scope)?;
+        }
         reconcile_agents_in_dir_with_context(&base_dir, keys, db_path, context.as_ref())?;
         Ok(())
     })
@@ -127,6 +145,7 @@ pub(crate) fn reconcile_agents_in_dir_with_context(
         open_retention_db(db_path).map_err(|e| format!("failed to open retention db: {e}"))?;
 
     let mut reconciled = 0u32;
+    let mut authority_error = None;
 
     for record in &records {
         // A record without a pubkey has no event coordinate yet (key-less
@@ -139,15 +158,26 @@ pub(crate) fn reconcile_agents_in_dir_with_context(
             .iter()
             .find(|d| d.pubkey.is_empty() && d.slug.as_deref() == record.persona_id.as_deref())
             .and_then(ManagedAgentRecord::to_definition_view);
-        if !super::device_home_migration::publication_allowed(record, definition.as_ref(), context)?
-        {
-            continue;
+        match super::device_home_migration::publication_allowed(
+            record,
+            definition.as_ref(),
+            context,
+        ) {
+            Ok(true) => {}
+            Ok(false) => continue,
+            Err(error) => {
+                authority_error.get_or_insert(error);
+                continue;
+            }
         }
         if retain_agent_record(&conn, keys, record)? {
             reconciled += 1;
         }
     }
 
+    if let Some(error) = authority_error {
+        return Err(error);
+    }
     Ok(reconciled)
 }
 

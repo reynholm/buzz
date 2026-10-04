@@ -15,6 +15,8 @@ use crate::{
 };
 
 #[cfg(test)]
+mod device_metadata_tests;
+#[cfg(test)]
 mod device_sync_tests;
 #[cfg(test)]
 mod inbound_tests;
@@ -144,15 +146,37 @@ fn reconcile_inbound_persona_event_blocking<R: tauri::Runtime>(
     arrival_relay_url: String,
     app: AppHandle<R>,
 ) -> Result<Option<InboundRuntimeRefresh>, String> {
+    reconcile_inbound_persona_event_blocking_with(
+        event_json,
+        arrival_relay_url,
+        app.clone(),
+        crate::managed_agents::persona_device_view::load_device_policy_context,
+        || try_regenerate_nest(&app),
+    )
+}
+
+fn reconcile_inbound_persona_event_blocking_with<R: tauri::Runtime>(
+    event_json: String,
+    arrival_relay_url: String,
+    app: AppHandle<R>,
+    context: impl FnOnce(
+        &AppHandle<R>,
+        &AppState,
+    ) -> Result<
+        crate::managed_agents::persona_device_view::DevicePolicyContext,
+        String,
+    >,
+    refresh: impl FnOnce(),
+) -> Result<Option<InboundRuntimeRefresh>, String> {
     use crate::managed_agents::{
         agent_events::managed_agent_content_from_event,
-        load_managed_agents, load_teams,
+        load_teams,
         persona_events::persona_from_event,
         retention::{
             commit_inbound_with_store, inbound_event_outcome, open_retention_db,
             retain_inbound_event, InboundOutcome, RetainedEvent,
         },
-        save_managed_agents, save_teams,
+        save_teams,
         team_events::team_content_from_event,
     };
     use buzz_core_pkg::kind::{
@@ -173,7 +197,13 @@ fn reconcile_inbound_persona_event_blocking<R: tauri::Runtime>(
     // in its `a` tag (`<target_kind>:<owner>:<d_tag>`). Handled before the
     // upsert dispatch because its coordinate and retention key differ.
     if kind == KIND_DELETION {
-        reconcile_inbound_tombstone(&event, &arrival_relay_url, &app, &state)?;
+        reconcile_inbound_tombstone_with_refresh(
+            &event,
+            &arrival_relay_url,
+            &app,
+            &state,
+            refresh,
+        )?;
         return Ok(None);
     }
 
@@ -227,6 +257,9 @@ fn reconcile_inbound_persona_event_blocking<R: tauri::Runtime>(
     else {
         return Ok(None);
     };
+    if event.pubkey.to_hex() != scope.owner_keys.public_key().to_hex() {
+        return Ok(None);
+    }
     let conn = open_retention_db(&scope.db_path)?;
     let inbound_retained_event = RetainedEvent {
         kind,
@@ -261,9 +294,34 @@ fn reconcile_inbound_persona_event_blocking<R: tauri::Runtime>(
             let outcome = commit_inbound_with_store(&conn, &inbound_retained_event, || {
                 let mut personas = load_personas(&app)?;
                 // `inbound_persona` is `Some` for KIND_PERSONA (set above).
-                apply_inbound_persona(
+                let raw = crate::managed_agents::persona_device_view::read_policy_records(
+                    &crate::managed_agents::managed_agents_store_path(&app)?,
+                )?;
+                let local = personas.iter().find(|d| persona_d_tag(d) == d_tag);
+                let linked: Vec<_> = raw
+                    .iter()
+                    .filter(|r| {
+                        !r.pubkey.is_empty()
+                            && local.is_some_and(|d| r.persona_id.as_deref() == Some(d.id.as_str()))
+                    })
+                    .collect();
+                let proven = if linked.iter().any(|r| r.device_host_binding.is_some()) {
+                    match context(&app, &state) {
+                        Ok(c) => linked.iter().any(|r| {
+                            r.device_host_binding
+                                .as_deref()
+                                .is_some_and(|b| c.proof.matches(b))
+                        }),
+                        // Unreadable local authority never moves a potentially proven home.
+                        Err(_) => true,
+                    }
+                } else {
+                    false
+                };
+                apply_inbound_persona_with_proof(
                     &mut personas,
-                    inbound_persona.expect("persona parsed above"),
+                    inbound_persona.ok_or("persona not parsed")?,
+                    proven,
                 );
                 save_personas(&app, &personas)
             })?;
@@ -301,8 +359,19 @@ fn reconcile_inbound_persona_event_blocking<R: tauri::Runtime>(
                     d_tag,
                     team_content_from_event(&event)?,
                     |teams| save_teams(&app, teams),
-                    || load_managed_agents(&app),
-                    |records| save_managed_agents(&app, records),
+                    || {
+                        crate::managed_agents::persona_device_view::read_policy_records(
+                            &crate::managed_agents::managed_agents_store_path(&app)?,
+                        )
+                    },
+                    |records| {
+                        crate::managed_agents::storage::save_restore_records_with(
+                            &app,
+                            records,
+                            &std::collections::HashSet::new(),
+                            |_| {},
+                        )
+                    },
                 )
             })?;
             if outcome == InboundOutcome::Skipped {
@@ -411,7 +480,7 @@ fn reconcile_inbound_persona_event_blocking<R: tauri::Runtime>(
         }
         _ => unreachable!("kind gated above"),
     }
-    try_regenerate_nest(&app);
+    refresh();
 
     // Signal the live UI to refetch agents data — inbound relay events otherwise
     // land on disk silently, leaving the Agents tab stale until restart.
@@ -524,23 +593,6 @@ fn parse_deletion_coordinate(event: &nostr::Event) -> Option<(u32, String)> {
     })
 }
 
-/// Apply an inbound kind:5 NIP-09 deletion: remove the local record at the
-/// tombstone's target coordinate, scoped per-kind. Mirrors the upsert spine —
-/// arrival-scoped retention resolution under the store lock, then a per-kind
-/// store mutation — but removes rather than patches. Unknown/malformed
-/// coordinates no-op, as does a tombstone whose arrival community is no longer
-/// active.
-fn reconcile_inbound_tombstone<R: tauri::Runtime>(
-    event: &nostr::Event,
-    arrival_relay_url: &str,
-    app: &AppHandle<R>,
-    state: &AppState,
-) -> Result<(), String> {
-    reconcile_inbound_tombstone_with_refresh(event, arrival_relay_url, app, state, || {
-        try_regenerate_nest(app);
-    })
-}
-
 /// The post-commit nest refresh is injectable so isolated deletion tests never
 /// write the user's workspace. Coordinate routing/store/retention are unchanged.
 fn reconcile_inbound_tombstone_with_refresh<R: tauri::Runtime>(
@@ -551,12 +603,12 @@ fn reconcile_inbound_tombstone_with_refresh<R: tauri::Runtime>(
     refresh_nest: impl FnOnce(),
 ) -> Result<(), String> {
     use crate::managed_agents::{
-        load_managed_agents, load_teams,
+        load_teams,
         retention::{
             commit_inbound_tombstone_with_store, open_retention_db, tombstone_retention_d_tag,
             InboundOutcome, RetainedEvent,
         },
-        save_managed_agents, save_teams,
+        save_teams,
     };
     use buzz_core_pkg::kind::{
         KIND_DELETION, KIND_MANAGED_AGENT, KIND_PERSONA, KIND_TEAM, KIND_TEAM_CATALOG,
@@ -588,6 +640,9 @@ fn reconcile_inbound_tombstone_with_refresh<R: tauri::Runtime>(
     else {
         return Ok(());
     };
+    if event.pubkey.to_hex() != scope.owner_keys.public_key().to_hex() {
+        return Ok(());
+    }
     let conn = open_retention_db(&scope.db_path)?;
     let owner_hex = event.pubkey.to_hex();
     let inbound_tombstone = RetainedEvent {
@@ -638,9 +693,13 @@ fn reconcile_inbound_tombstone_with_refresh<R: tauri::Runtime>(
                 save_teams(app, &teams)
             }
             KIND_MANAGED_AGENT => {
-                let mut agents = load_managed_agents(app)?;
+                let path = crate::managed_agents::managed_agents_store_path(app)?;
+                let mut agents =
+                    crate::managed_agents::persona_device_view::read_policy_records(&path)?;
                 agents.retain(|record| record.pubkey != target_d_tag);
-                save_managed_agents(app, &agents)
+                let bytes = serde_json::to_vec_pretty(&agents)
+                    .map_err(|e| format!("inbound deletion store: {e}"))?;
+                crate::managed_agents::storage::atomic_write_json_restricted(&path, &bytes)
             }
             // A 30178 catalog head has no local JSON record — it lives only in
             // the retention store as this device's publication witness. The
@@ -708,13 +767,31 @@ fn event_d_tag(event: &nostr::Event) -> Result<String, String> {
 /// record is inserted as-is; since
 /// `persona_from_event` sets `id = d_tag`, an in-app persona reuses its d-tag as
 /// the id and a re-received event stays idempotent (no duplicate row).
+#[cfg(test)]
 fn apply_inbound_persona(personas: &mut Vec<AgentDefinition>, inbound: AgentDefinition) {
+    apply_inbound_persona_with_proof(personas, inbound, false)
+}
+
+fn apply_inbound_persona_with_proof(
+    personas: &mut Vec<AgentDefinition>,
+    mut inbound: AgentDefinition,
+    proven: bool,
+) {
     let d_tag = persona_d_tag(&inbound);
     match personas
         .iter_mut()
         .find(|record| persona_d_tag(record) == d_tag)
     {
         Some(local) => {
+            crate::managed_agents::device_inbound::merge_inbound_device_metadata(
+                local,
+                &mut inbound,
+                proven,
+            );
+            local.share_across_devices = inbound.share_across_devices;
+            local.origin_device_id = inbound.origin_device_id;
+            local.origin_device_label = inbound.origin_device_label;
+            local.origin_released = inbound.origin_released;
             local.display_name = inbound.display_name;
             local.avatar_url = inbound.avatar_url;
             local.description = inbound.description;

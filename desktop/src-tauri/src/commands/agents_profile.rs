@@ -123,8 +123,30 @@ pub(crate) fn load_pending_profile_reconciliations(
 
     let relay_key = crate::migration::profile_reconcile_relay_key(workspace_relay)?;
     let pending = crate::migration::read_profile_reconcile_queue(&queue_path)?;
-    let records = crate::managed_agents::load_managed_agents(app)?;
-    let personas = crate::managed_agents::load_personas(app).unwrap_or_default();
+    let mut records = crate::managed_agents::persona_device_view::read_policy_records(&store_path)?;
+    let personas: Vec<_> = records
+        .iter()
+        .filter(|r| r.pubkey.is_empty())
+        .filter_map(crate::managed_agents::ManagedAgentRecord::to_definition_view)
+        .collect();
+    let context = if crate::managed_agents::device_home_migration::needs_private_authority(&records)
+    {
+        crate::managed_agents::persona_device_view::load_device_policy_context(app, &state).ok()
+    } else {
+        None
+    };
+    records.retain(|r| {
+        !r.pubkey.is_empty()
+            && crate::managed_agents::device_home_migration::publication_allowed(
+                r,
+                personas
+                    .iter()
+                    .find(|d| r.persona_id.as_deref() == Some(d.id.as_str())),
+                context.as_ref(),
+            )
+            .unwrap_or(false)
+    });
+    crate::managed_agents::storage::hydrate_keys(&mut records);
     Ok(records
         .iter()
         // A queue write deliberately precedes the migrated agent-store write.
@@ -197,6 +219,9 @@ pub(crate) async fn reconcile_agent_profile(
     data: &ProfileReconcileData,
 ) -> Result<ProfileReconcileOutcome, String> {
     use crate::relay::query_agent_profile;
+    if data.pubkey != agent_pubkey {
+        return Err("profile target mismatch".into());
+    }
 
     // Resolved ONCE and used for both the read and the write-back. A pinned
     // `target_relay_url` wins unconditionally — see `resolve_reconcile_relay`.
@@ -212,6 +237,27 @@ pub(crate) async fn reconcile_agent_profile(
     {
         return Ok(ProfileReconcileOutcome::SkippedDisabled);
     }
+
+    let fence = {
+        let _store = state
+            .managed_agents_store_lock
+            .lock()
+            .map_err(|e| e.to_string())?;
+        let fence = crate::managed_agents::device_runtime::capture_runtime_fence(state)?;
+        crate::managed_agents::device_authority::instance_phase_locked_with(
+            app,
+            state,
+            agent_pubkey,
+            Some(&fence),
+            crate::managed_agents::device_authority::InstanceAuthorityAction::PublishProfile,
+            crate::managed_agents::persona_device_view::load_device_policy_context,
+            |_, _, _| Ok(()),
+        )?;
+        if relay_url != fence.scope.relay_url {
+            return Err("device_home_sync_stale_session".into());
+        }
+        fence
+    };
 
     // Query the relay for the agent's existing kind:0 profile.
     let existing = query_agent_profile(state, &relay_url, agent_pubkey).await?;
@@ -244,11 +290,18 @@ pub(crate) async fn reconcile_agent_profile(
                     .managed_agents_store_lock
                     .lock()
                     .map_err(|e| e.to_string())?;
-                let mut records = load_managed_agents(app)?;
-                if let Some(record) = records.iter_mut().find(|r| r.pubkey == data.pubkey) {
-                    record.avatar_url = Some(backfilled.clone());
-                    save_managed_agents(app, &records)?;
-                }
+                crate::managed_agents::device_authority::instance_phase_locked_with(
+                    app,
+                    state,
+                    agent_pubkey,
+                    Some(&fence),
+                    crate::managed_agents::device_authority::InstanceAuthorityAction::Update,
+                    crate::managed_agents::persona_device_view::load_device_policy_context,
+                    |mut record, _, _| {
+                        record.avatar_url = Some(backfilled.clone());
+                        crate::managed_agents::device_runtime::save_runtime_record(app, &record)
+                    },
+                )?;
             }
 
             backfilled
@@ -261,12 +314,22 @@ pub(crate) async fn reconcile_agent_profile(
         Some(expected_avatar)
     };
 
-    reconcile_profile_at(
+    crate::managed_agents::device_authority::original_publication_with(
+        app,
         state,
-        &relay_url,
-        data,
-        expected_avatar.as_deref(),
-        existing.as_ref(),
+        agent_pubkey,
+        &fence,
+        crate::managed_agents::device_authority::InstanceAuthorityAction::PublishProfile,
+        crate::managed_agents::persona_device_view::load_device_policy_context,
+        |_| {
+            reconcile_profile_at(
+                state,
+                &relay_url,
+                data,
+                expected_avatar.as_deref(),
+                existing.as_ref(),
+            )
+        },
     )
     .await
 }
@@ -356,7 +419,10 @@ pub(super) fn profile_needs_sync(
 /// create and snapshot-import flows that share this helper.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn publish_agent_profile_with_about(
+    app: &AppHandle,
     state: &AppState,
+    pubkey: &str,
+    fence: &crate::managed_agents::device_runtime::RuntimeFence,
     record_relay_url: &str,
     agent_keys: &nostr::Keys,
     display_name: &str,
@@ -364,18 +430,25 @@ pub(crate) async fn publish_agent_profile_with_about(
     about: Option<&str>,
     auth_tag: Option<&str>,
 ) -> Option<String> {
-    let relay_url = crate::relay::effective_agent_relay_url(
-        record_relay_url,
-        &relay_ws_url_with_override(state),
-    );
-    crate::relay::sync_managed_agent_profile(
+    publish_profile_with(
+        app,
         state,
-        &relay_url,
-        agent_keys,
-        display_name,
-        avatar_url,
-        about,
-        auth_tag,
+        pubkey,
+        fence,
+        record_relay_url,
+        crate::managed_agents::persona_device_view::load_device_policy_context,
+        |relay_url| async move {
+            crate::relay::sync_managed_agent_profile(
+                state,
+                &relay_url,
+                agent_keys,
+                display_name,
+                avatar_url,
+                about,
+                auth_tag,
+            )
+            .await
+        },
     )
     .await
     .err()
@@ -384,8 +457,12 @@ pub(crate) async fn publish_agent_profile_with_about(
 /// Publish a fresh persona-backed agent's kind:0 profile, computing the
 /// effective public `about` from the persona itself.
 /// Shared by flows in files at the size ratchet (snapshot import).
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn publish_persona_profile(
+    app: &AppHandle,
     state: &AppState,
+    pubkey: &str,
+    fence: &crate::managed_agents::device_runtime::RuntimeFence,
     record_relay_url: &str,
     agent_keys: &nostr::Keys,
     display_name: &str,
@@ -395,7 +472,10 @@ pub(crate) async fn publish_persona_profile(
 ) -> Option<String> {
     let about = crate::managed_agents::effective_agent_description(persona.description.as_deref());
     publish_agent_profile_with_about(
+        app,
         state,
+        pubkey,
+        fence,
         record_relay_url,
         agent_keys,
         display_name,
@@ -409,3 +489,42 @@ pub(crate) async fn publish_persona_profile(
 // Async so the blocking body (disk reads/writes + process termination) runs off
 // the main UI thread via spawn_blocking. State is re-derived from the owned
 // AppHandle inside the closure (`State<'_, _>` is borrowed, MutexGuard is !Send).
+
+/// Profile adapter shared by original-operation and current-workspace callers.
+pub(crate) async fn publish_profile_with<
+    R: tauri::Runtime,
+    Fut: std::future::Future<Output = Result<(), String>>,
+>(
+    app: &AppHandle<R>,
+    state: &AppState,
+    pubkey: &str,
+    fence: &crate::managed_agents::device_runtime::RuntimeFence,
+    record_relay_url: &str,
+    context: impl FnOnce(
+        &AppHandle<R>,
+        &AppState,
+    ) -> Result<
+        crate::managed_agents::persona_device_view::DevicePolicyContext,
+        String,
+    >,
+    publish: impl FnOnce(String) -> Fut,
+) -> Result<(), String> {
+    crate::managed_agents::device_authority::original_publication_with(
+        app,
+        state,
+        pubkey,
+        fence,
+        crate::managed_agents::device_authority::InstanceAuthorityAction::PublishProfile,
+        context,
+        |scope| {
+            publish(crate::relay::effective_agent_relay_url(
+                record_relay_url,
+                &scope.relay_url,
+            ))
+        },
+    )
+    .await
+}
+#[cfg(test)]
+#[path = "agents_profile/device_publication_tests.rs"]
+mod device_publication_tests;

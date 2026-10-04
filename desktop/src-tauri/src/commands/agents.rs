@@ -590,7 +590,10 @@ pub async fn create_managed_agent(
     // Use the avatar persisted on the record so the published profile and any
     // later reconciliation agree on the same value.
     let mut profile_sync_error = profile::publish_agent_profile_with_about(
+        &app,
         &state,
+        &agent.pubkey,
+        &create_fence,
         &resolved_relay_url,
         &agent_keys,
         &name,
@@ -907,6 +910,35 @@ fn run_managed_agent_deletion<T>(
     with_agent_assignments_cleared(base_dir, pubkey, || delete(records))
 }
 
+/// Deletion's native authority adapter: guard precedes cleanup recovery and stop.
+pub(crate) fn delete_managed_agent_phase_with<R: tauri::Runtime, T>(
+    app: &AppHandle<R>,
+    state: &AppState,
+    pubkey: &str,
+    context: impl FnOnce(
+        &AppHandle<R>,
+        &AppState,
+    ) -> Result<
+        crate::managed_agents::persona_device_view::DevicePolicyContext,
+        String,
+    >,
+    effect: impl FnOnce(
+        ManagedAgentRecord,
+        Vec<crate::managed_agents::AgentDefinition>,
+        crate::managed_agents::device_home_sync::SyncScope,
+    ) -> Result<T, String>,
+) -> Result<T, String> {
+    crate::managed_agents::device_authority::instance_phase_locked_with(
+        app,
+        state,
+        pubkey,
+        None,
+        crate::managed_agents::device_authority::InstanceAuthorityAction::Delete,
+        context,
+        effect,
+    )
+}
+
 #[tauri::command]
 pub async fn delete_managed_agent(
     pubkey: String,
@@ -921,64 +953,84 @@ pub async fn delete_managed_agent(
                 .managed_agents_store_lock
                 .lock()
                 .map_err(|error| error.to_string())?;
-            let mut records = load_managed_agents(&app)?;
-            let base_dir = managed_agents_base_dir(&app)?;
-            recover_pending_assignment_cleanup(&base_dir, |pending_pubkey| {
-                records
-                    .iter()
-                    .any(|record| record.pubkey.eq_ignore_ascii_case(pending_pubkey))
-            })?;
-            let mut runtimes = state
-                .managed_agent_processes
-                .lock()
-                .map_err(|error| error.to_string())?;
+            delete_managed_agent_phase_with(
+                &app,
+                &state,
+                &pubkey,
+                crate::managed_agents::persona_device_view::load_device_policy_context,
+                |_, _, _| {
+                    let deletion_authority = crate::managed_agents::device_authority::prepare_deletion_authority_locked_with(
+                        &app,
+                        &state,
+                        &pubkey,
+                        crate::managed_agents::persona_device_view::load_device_policy_context,
+                    )?;
+                    let mut records = crate::managed_agents::persona_device_view::read_policy_records(
+                        &crate::managed_agents::managed_agents_store_path(&app)?,
+                    )?;
+                    let base_dir = managed_agents_base_dir(&app)?;
+                    recover_pending_assignment_cleanup(&base_dir, |pending_pubkey| {
+                        records
+                            .iter()
+                            .any(|record| record.pubkey.eq_ignore_ascii_case(pending_pubkey))
+                    })?;
+                    let mut runtimes = state
+                        .managed_agent_processes
+                        .lock()
+                        .map_err(|error| error.to_string())?;
 
-            let (sync_changed, exited_pubkeys) = sync_managed_agent_processes(
-                &mut records,
-                &mut runtimes,
-                &current_instance_id(&app),
-            );
-            if sync_changed {
-                save_managed_agents(&app, &records)?;
-            }
-            for pubkey in &exited_pubkeys {
-                state.clear_agent_session_caches(pubkey);
-            }
-            // Guard: reject deletion of deployed remote agents unless explicitly forced.
-            // This turns "don't orphan remote infra" from a UI convention into a backend
-            // invariant — a buggy or compromised IPC caller cannot silently orphan a live
-            // remote deployment. The frontend sends force_remote_delete: true only after
-            // the user confirms the orphan warning.
-            if let Some(record) = records.iter().find(|r| r.pubkey == pubkey) {
-                if record.backend != BackendKind::Local
-                    && record.backend_agent_id.is_some()
-                    && !force_remote_delete.unwrap_or(false)
-                {
-                    return Err(
+                    let targets = [pubkey.clone()].into_iter().collect();
+                    let (sync_changed, exited_pubkeys) = crate::managed_agents::device_authority::selected_deletion_records_with(
+                        &mut records,
+                        &targets,
+                        |selected| Ok(sync_managed_agent_processes(selected, &mut runtimes, &current_instance_id(&app))),
+                    )?;
+                    if sync_changed {
+                        crate::managed_agents::device_authority::save_deletion_snapshot(&app, &records)?;
+                    }
+                    for pubkey in &exited_pubkeys {
+                        state.clear_agent_session_caches(pubkey);
+                    }
+                    // Guard: reject deletion of deployed remote agents unless explicitly forced.
+                    // This turns "don't orphan remote infra" from a UI convention into a backend
+                    // invariant — a buggy or compromised IPC caller cannot silently orphan a live
+                    // remote deployment. The frontend sends force_remote_delete: true only after
+                    // the user confirms the orphan warning.
+                    if let Some(record) = records.iter().find(|r| r.pubkey == pubkey) {
+                        if record.backend != BackendKind::Local
+                            && record.backend_agent_id.is_some()
+                            && !force_remote_delete.unwrap_or(false)
+                        {
+                            return Err(
                         "cannot delete a deployed remote agent without force_remote_delete: true"
                             .to_string(),
                     );
-                }
-            }
+                        }
+                    }
 
-            if !records.iter().any(|record| record.pubkey == pubkey) {
-                return Err(format!("agent {pubkey} not found"));
-            }
-            run_managed_agent_deletion(&base_dir, &pubkey, &mut records, |records| {
-                if let Some(record) = records.iter_mut().find(|record| record.pubkey == pubkey) {
-                    stop_managed_agent_process(&app, record, &mut runtimes)?;
-                }
-                state.clear_agent_session_caches(&pubkey);
-                records.retain(|record| record.pubkey != pubkey);
-                save_managed_agents(&app, records)
-            })?;
-            crate::managed_agents::delete_agent_key(&pubkey);
-            // Tombstone after confirmed removal (inside lock; every published
-            // agent tombstones). The NIP-IA kind:9035 archive request — which
-            // stops the identity appearing in member pickers and autocomplete —
-            // is enqueued in the SAME transaction, its `persona_id` derived from
-            // the retained 30177 head.
-            tombstone_managed_agent_pending(&app, &state, &pubkey);
+                    if !records.iter().any(|record| record.pubkey == pubkey) {
+                        return Err(format!("agent {pubkey} not found"));
+                    }
+                    run_managed_agent_deletion(&base_dir, &pubkey, &mut records, |records| {
+                        if let Some(record) =
+                            records.iter_mut().find(|record| record.pubkey == pubkey)
+                        {
+                            stop_managed_agent_process(&app, record, &mut runtimes)?;
+                        }
+                        state.clear_agent_session_caches(&pubkey);
+                        records.retain(|record| record.pubkey != pubkey);
+                        crate::managed_agents::device_authority::save_deletion_snapshot(&app, records)
+                    })?;
+                    crate::managed_agents::delete_agent_key(&pubkey);
+                    // Tombstone after confirmed removal (inside lock; every published
+                    // agent tombstones). The NIP-IA kind:9035 archive request — which
+                    // stops the identity appearing in member pickers and autocomplete —
+                    // is enqueued in the SAME transaction, its `persona_id` derived from
+                    // the retained 30177 head.
+                    tombstone_managed_agent_pending(&app, &state, &deletion_authority);
+                    Ok(())
+                },
+            )?;
         }
         try_regenerate_nest(&app);
         Ok(())
@@ -1011,3 +1063,5 @@ use profile::{profile_needs_sync, resolve_legacy_avatar};
 #[cfg(test)]
 #[path = "agents_tests.rs"]
 mod tests;
+
+pub(crate) mod snapshot_publication;

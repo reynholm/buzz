@@ -91,15 +91,16 @@ pub(crate) fn may_publish_local_instance(
     definition: Option<&AgentDefinition>,
     context: &DevicePolicyContext,
 ) -> Result<bool, String> {
-    if record.persona_id.is_none()
-        || definition.is_some_and(|d| d.share_across_devices == Some(true))
-    {
-        return Ok(true);
+    match super::device_authority::authorize_instance_authority(
+        record,
+        definition,
+        context,
+        super::device_authority::InstanceAuthorityAction::PublishHead,
+    ) {
+        Ok(()) => Ok(true),
+        Err(error) if error.starts_with("definition_hosted_elsewhere") => Ok(false),
+        Err(error) => Err(error),
     }
-    Ok(record
-        .device_host_binding
-        .as_deref()
-        .is_some_and(|b| context.proof.matches(b)))
 }
 
 /// Publication guard shared by both event kinds. Missing private authority errors.
@@ -108,14 +109,18 @@ pub(crate) fn publication_allowed(
     definition: Option<&AgentDefinition>,
     context: Option<&DevicePolicyContext>,
 ) -> Result<bool, String> {
-    if record.persona_id.is_none()
-        || definition.is_some_and(|d| d.share_across_devices == Some(true))
-    {
+    let Some(id) = record.persona_id.as_deref() else {
+        return Ok(true);
+    };
+    let definition = definition
+        .filter(|d| d.id == id)
+        .ok_or(super::effective_config::ORPHANED_INSTANCE_ERROR)?;
+    if definition.share_across_devices == Some(true) {
         return Ok(true);
     }
     may_publish_local_instance(
         record,
-        definition,
+        Some(definition),
         context.ok_or("device home publication authority unavailable")?,
     )
 }

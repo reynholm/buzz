@@ -105,7 +105,7 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/agents.rs",
-      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery; Task6: Carry original create/manual runtime fence through local/provider tails, guard summaries and persist only authorized target records",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery; Task6: Carry original create/manual runtime fence through local/provider tails, guard summaries and persist only authorized target records; Task7: Guard exact instance deletion before assignment, process, key, store and journal effects; preserve unrelated raw rows; pin create profile continuation to original runtime fence",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [
@@ -132,6 +132,22 @@
           "behavior_test": "managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await -- --exact",
           "coverage": "Task6 isolated production adapter behavior with injected effects; native Wry caller compiled and exact wiring fingerprint checked; native keychain/process/provider acceptance remains outstanding"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/agents.rs",
+          "callee_symbol": "publish_agent_profile_with_about",
+          "invocation": "profile::publish_agent_profile_with_about(\n        &app,\n        &state,\n        &agent.pubkey,\n        &create_fence,",
+          "behavior_test": "create_import_profile_invocation_never_redirects_after_owner_relay_switch",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib create_import_profile_invocation_never_redirects_after_owner_relay_switch",
+          "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/agents.rs",
+          "callee_symbol": "delete_managed_agent_phase_with",
+          "invocation": "delete_managed_agent_phase_with(\n                &app,\n                &state,\n                &pubkey,",
+          "behavior_test": "direct_delete_device_guard_precedes_assignment_key_process_store_and_journal_effects",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib direct_delete_device_guard_precedes_assignment_key_process_store_and_journal_effects",
+          "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
         }
       ],
       "verification_commands": [
@@ -140,7 +156,7 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/agents_tests.rs",
-      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None; Task7: Isolated owning device authority and original publication regressions",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -169,7 +185,7 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/personas/delete_cascade_tests.rs",
-      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None; Task7: Isolated owning device authority and original publication regressions",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -199,7 +215,7 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/personas/pending.rs",
-      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None; Read-only catalog projection for list without creating retained databases",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None; Read-only catalog projection for list without creating retained databases; Task7: Generic retention projection used by native isolated definition-edit transaction",
       "is_new": false,
       "required_symbols": [
         "fn project_persona_sharing_read_only"
@@ -231,7 +247,7 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/personas/snapshot/import.rs",
-      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery; Task7: Carry original import runtime fence through profile and each memory signing/dispatch continuation",
       "is_new": false,
       "required_symbols": [
         "materialize_import_avatar_scoped",
@@ -286,6 +302,22 @@
           "behavior_test": "commands::personas::snapshot::tests::locked_import::confirm_readonly_structural_and_key_errors_fail_closed",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::tests::locked_import::confirm_readonly_structural_and_key_errors_fail_closed -- --exact",
           "coverage": "R1 command owning wiring/compile plus production readonly selection/hydration/decode seam; real locked-envelope decryption and injected readonly vault/temp files"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/personas/snapshot/import.rs",
+          "callee_symbol": "publish_persona_profile",
+          "invocation": "crate::commands::agents::publish_persona_profile(\n        &app,\n        &state,\n        &record.pubkey,\n        &import_fence,",
+          "behavior_test": "create_import_profile_invocation_never_redirects_after_owner_relay_switch",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib create_import_profile_invocation_never_redirects_after_owner_relay_switch",
+          "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/personas/snapshot/import.rs",
+          "callee_symbol": "publish_snapshot_memory_entry_with",
+          "invocation": "crate::commands::agents::snapshot_publication::publish_snapshot_memory_entry_with(\n                &app,\n                &state,\n                &record.pubkey,\n                &import_fence,",
+          "behavior_test": "original_snapshot_memory_invocation_never_signs_or_sends_into_switched_scope",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib original_snapshot_memory_invocation_never_signs_or_sends_into_switched_scope",
+          "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
         }
       ],
       "verification_commands": [
@@ -314,7 +346,7 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/team_snapshot.rs",
-      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery; Task7: Carry original team import runtime fence through member profile and memory publication",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [
@@ -325,6 +357,22 @@
           "behavior_test": "commands::personas::snapshot::tests::imported_snapshot_constructor_defaults_private_with_own_origin",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::tests::imported_snapshot_constructor_defaults_private_with_own_origin -- --exact",
           "coverage": "Wry import wrapper wiring/compile; shared portable constructor behavior"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/team_snapshot.rs",
+          "callee_symbol": "publish_agent_profile_with_about",
+          "invocation": "crate::commands::agents::publish_agent_profile_with_about(\n            &app,\n            &state,\n            &m.pubkey,\n            &import_fence,",
+          "behavior_test": "create_import_profile_invocation_never_redirects_after_owner_relay_switch",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib create_import_profile_invocation_never_redirects_after_owner_relay_switch",
+          "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/team_snapshot.rs",
+          "callee_symbol": "publish_snapshot_memory_entry",
+          "invocation": "crate::commands::agents::snapshot_publication::publish_snapshot_memory_entry(\n                    &app,\n                    &state,\n                    &m.pubkey,\n                    &import_fence,",
+          "behavior_test": "original_snapshot_memory_invocation_never_signs_or_sends_into_switched_scope",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib original_snapshot_memory_invocation_never_signs_or_sends_into_switched_scope",
+          "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
         }
       ],
       "verification_commands": [
@@ -515,7 +563,7 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/mod.rs",
-      "responsibility": "Register the device policy compatibility test module; Register home policy, sync and projection modules; Register device-home migration production module; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery; Task6: Register runtime authorization module and owning test module",
+      "responsibility": "Register the device policy compatibility test module; Register home policy, sync and projection modules; Register device-home migration production module; enforce/test creation policy, private defaults, atomic claims or pre-migration recovery; Task6: Register runtime authorization module and owning test module; Task7: Register device metadata merge and local authoring authority modules and isolated owning regressions",
       "is_new": false,
       "required_symbols": [
         "mod device_policy_types_tests;",
@@ -665,7 +713,7 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/teams_tests.rs",
-      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None",
+      "responsibility": "Mechanical struct-literal compatibility repair: new device fields default to None; Task7: Isolated owning device authority and original publication regressions",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -1137,7 +1185,7 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/personas/mod.rs",
-      "responsibility": "Read-only flattened list views with shared capability fast path on explicit unavailable context",
+      "responsibility": "Read-only flattened list views with shared capability fast path on explicit unavailable context; Task7: Atomically authorize local definition deletion and cascade targets before effects; restrict housekeeping and persistence to selected targets",
       "is_new": false,
       "required_symbols": [
         "fn list_personas_inner"
@@ -1170,6 +1218,14 @@
           "invocation": "device_home_sync::capture_scope(&state).and_then(|scope| {",
           "behavior_test": "commands::personas::device_view_tests::identity_recovery_preserves_visible_list_without_scope_or_signing",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::device_view_tests::identity_recovery_preserves_visible_list_without_scope_or_signing -- --exact"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/personas/mod.rs",
+          "callee_symbol": "delete_persona_phase_with",
+          "invocation": "delete_persona_phase_with(\n                &app,\n                &state,\n                &id,",
+          "behavior_test": "local_definition_delete_device_guard_precedes_every_cascade_effect",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib local_definition_delete_device_guard_precedes_every_cascade_effect",
+          "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
         }
       ],
       "verification_commands": [
@@ -1240,7 +1296,7 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/personas/inbound.rs",
-      "responsibility": "Token-scoped live apply leases fence async reconciliation and record failures; Task6: Accept legitimate remote owner heads without local author proof; independently skip copied runtime refresh and secret effects while preserving hydration retry semantics",
+      "responsibility": "Token-scoped live apply leases fence async reconciliation and record failures; Task6: Accept legitimate remote owner heads without local author proof; independently skip copied runtime refresh and secret effects while preserving hydration retry semantics; Task7: Merge optional device metadata only after accepted owner head; preserve proven local lineage; reject wrong author; apply accepted tombstones as receiver operations",
       "is_new": false,
       "required_symbols": [
         "session_token: Option<String>",
@@ -1252,7 +1308,7 @@
         {
           "caller_path": "desktop/src-tauri/src/commands/personas/inbound.rs",
           "callee_symbol": "reconcile_inbound_tombstone_with_refresh",
-          "invocation": "reconcile_inbound_tombstone_with_refresh(event, arrival_relay_url, app, state, || {\n        try_regenerate_nest(app);\n    })",
+          "invocation": "reconcile_inbound_tombstone_with_refresh(\n            &event,\n            &arrival_relay_url,\n            &app,\n            &state,\n            refresh,\n        )?",
           "behavior_test": "commands::personas::inbound::device_sync_tests::signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::personas::inbound::device_sync_tests::signed_multi_coordinate_deletion_keeps_unselected_remote_head_and_newer_recreation -- --exact"
         },
@@ -1279,6 +1335,14 @@
           "behavior_test": "managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_inbound_refuses_restart_effects -- --exact",
           "coverage": "Task6 isolated production adapter behavior with injected effects; native Wry caller compiled and exact wiring fingerprint checked; native keychain/process/provider acceptance remains outstanding"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/personas/inbound.rs",
+          "callee_symbol": "merge_inbound_device_metadata",
+          "invocation": "crate::managed_agents::device_inbound::merge_inbound_device_metadata(\n                local,\n                &mut inbound,\n                proven,\n            );",
+          "behavior_test": "commands::personas::inbound::device_metadata_tests",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib commands::personas::inbound::device_metadata_tests",
+          "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
         }
       ],
       "verification_commands": [
@@ -1449,7 +1513,7 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/device_home_migration.rs",
-      "responsibility": "Atomic legacy binding/origin snapshot, read-only key verification, prewrite scope fence, shared bypass and durable signed-head retry",
+      "responsibility": "Atomic legacy binding/origin snapshot, read-only key verification, prewrite scope fence, shared bypass and durable signed-head retry; Task7: Delegate common publication authority to canonical exact target checks",
       "is_new": true,
       "required_symbols": [
         "fn migrate_device_homes_locked",
@@ -1469,10 +1533,10 @@
         },
         {
           "caller_path": "desktop/src-tauri/src/managed_agents/device_home_migration.rs",
-          "callee_symbol": "matches",
-          "invocation": "context.proof.matches(b)",
-          "behavior_test": "managed_agents::device_home_migration::tests::json_copy_does_not_publish",
-          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::json_copy_does_not_publish -- --exact",
+          "callee_symbol": "authorize_instance_authority",
+          "invocation": "super::device_authority::authorize_instance_authority(\n        record,\n        definition,\n        context,\n        super::device_authority::InstanceAuthorityAction::PublishHead,\n    )",
+          "behavior_test": "managed_agents::device_authority_tests::direct_update_or_delete_copied_instance_has_no_side_effects",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_authority_tests::direct_update_or_delete_copied_instance_has_no_side_effects",
           "coverage": "behavior"
         },
         {
@@ -1554,7 +1618,7 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/reconcile.rs",
-      "responsibility": "Guard each30177 instance publication; proof/context failure propagates in private scopes, shared-only best effort preserved",
+      "responsibility": "Guard each30177 instance publication; proof/context failure propagates in private scopes, shared-only best effort preserved; Task7: Guard canonical instance boot heads, publish explicit shared rows even when mixed private proof fails, and verify captured retention owner/relay",
       "is_new": false,
       "required_symbols": [
         "fn reconcile_agents_in_dir_with_context"
@@ -1563,7 +1627,7 @@
         {
           "caller_path": "desktop/src-tauri/src/managed_agents/reconcile.rs",
           "callee_symbol": "publication_allowed",
-          "invocation": "super::device_home_migration::publication_allowed(record, definition.as_ref(), context)?",
+          "invocation": "super::device_home_migration::publication_allowed(\n            record,\n            definition.as_ref(),\n            context,\n        )",
           "behavior_test": "managed_agents::device_home_migration::tests::copy_suppresses_both_outbound_kinds_and_restore_candidates",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml managed_agents::device_home_migration::tests::copy_suppresses_both_outbound_kinds_and_restore_candidates -- --exact",
           "coverage": "behavior"
@@ -1826,7 +1890,7 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/reconcile/tests.rs",
-      "responsibility": "Existing linked-instance slim event/idempotence fixture injects matching host proof through guarded production reconcile engine",
+      "responsibility": "Existing linked-instance slim event/idempotence fixture injects matching host proof through guarded production reconcile engine; Task7: Canonical linked definition fixture preserves slimming reconciliation regression assertions",
       "is_new": false,
       "required_symbols": [
         "fn slimming_republish_wave_is_one_time"
@@ -2549,7 +2613,7 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/agent_models_update.rs",
-      "responsibility": "Fence and authorize model update before stop/key/store effects and carry original runtime scope through restarts",
+      "responsibility": "Fence and authorize model update before stop/key/store effects and carry original runtime scope through restarts; Task7: Authorize exact target updates and rename profile publication before instance effects",
       "is_new": false,
       "required_symbols": [
         "fn model_update_phase_with"
@@ -2637,6 +2701,229 @@
         "just desktop-tauri-test desktop-tauri-check",
         "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace --features mesh-llm",
         "just desktop-tauri-clippy"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/agent_models.rs",
+      "responsibility": "Task7: Use guarded profile publication adapter for model updates",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/agents_pending.rs",
+      "responsibility": "Task7: Authorize native instance head before signing and require pre-removal deletion authority for kind5/archive enqueue in captured scope",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/commands/agents_pending.rs",
+          "callee_symbol": "instance_phase_locked_with",
+          "invocation": "crate::managed_agents::device_authority::instance_phase_locked_with(\n        app,\n        state,\n        &record.pubkey,\n        None,\n        crate::managed_agents::device_authority::InstanceAuthorityAction::PublishHead,",
+          "behavior_test": "copied_common_head_and_deletion_preparation_have_zero_kind0_30177_5_9035_effects",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib copied_common_head_and_deletion_preparation_have_zero_kind0_30177_5_9035_effects",
+          "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/commands/agents_pending.rs",
+          "callee_symbol": "validate_deletion_authority",
+          "invocation": "validate_deletion_authority(state, permit, InstanceAuthorityAction::Tombstone)?;",
+          "behavior_test": "prepared_shared_deletion_can_enqueue_after_removal_but_never_in_changed_scope",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib prepared_shared_deletion_can_enqueue_after_removal_but_never_in_changed_scope",
+          "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/agents_profile.rs",
+      "responsibility": "Task7: Guard common profile and startup publication before key/media/signing; retain captured original operation scope and canonical exact target",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/commands/agents_profile.rs",
+          "callee_symbol": "original_publication_with",
+          "invocation": "crate::managed_agents::device_authority::original_publication_with(\n        app,\n        state,\n        pubkey,\n        fence,",
+          "behavior_test": "create_import_profile_invocation_never_redirects_after_owner_relay_switch",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib create_import_profile_invocation_never_redirects_after_owner_relay_switch",
+          "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/update.rs",
+      "responsibility": "Task7: Allow definition edit while skipping unauthorized linked instance rename, key resolution, head and profile publication",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/commands/personas/update.rs",
+          "callee_symbol": "authorize_instance_authority",
+          "invocation": "crate::managed_agents::device_authority::authorize_instance_authority(\n                                record,",
+          "behavior_test": "remote_definition_rename_does_not_publish_copied_instance",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib remote_definition_rename_does_not_publish_copied_instance",
+          "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/egress_guard_tests.rs",
+      "responsibility": "Task7: Maintain exact events URL and egress guard inventory for extracted snapshot publication adapter",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/teams.rs",
+      "responsibility": "Task7: Authorize all requested definition removals before team cascade effects and avoid unrelated secret hydration",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/teams.rs",
+          "callee_symbol": "authorize_definition_deletion",
+          "invocation": "super::device_authority::authorize_definition_deletion(definition, &raw, &c)?;",
+          "behavior_test": "remote_definition_team_cascade_refuses_before_any_store_or_directory_effect",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib remote_definition_team_cascade_refuses_before_any_store_or_directory_effect",
+          "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/agents/snapshot_publication.rs",
+      "responsibility": "Task7: Common original-operation snapshot memory authority, plaintext egress guard before encryption, captured owner/relay signing and dispatch",
+      "is_new": true,
+      "required_symbols": [
+        "fn publish_snapshot_memory_entry_with"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/commands/agents/snapshot_publication.rs",
+          "callee_symbol": "original_publication_with",
+          "invocation": "original_publication_with(\n        app,\n        state,\n        pubkey,\n        fence,",
+          "behavior_test": "original_snapshot_memory_invocation_never_signs_or_sends_into_switched_scope",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib original_snapshot_memory_invocation_never_signs_or_sends_into_switched_scope",
+          "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/agents_profile/device_publication_tests.rs",
+      "responsibility": "Task7: Isolated native device authoring, metadata or original publication regression tests",
+      "is_new": true,
+      "required_symbols": [
+        "create_import_profile_invocation_never_redirects_after_owner_relay_switch"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/inbound/device_metadata_tests.rs",
+      "responsibility": "Task7: Isolated native device authoring, metadata or original publication regression tests",
+      "is_new": true,
+      "required_symbols": [
+        "accepted_release_updates_remote_card",
+        "stale_tombstone_cannot_remove_newer_home_and_valid_owner_removal_is_receiver_only"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/personas/update/device_edit_tests.rs",
+      "responsibility": "Task7: Isolated native device authoring, metadata or original publication regression tests",
+      "is_new": true,
+      "required_symbols": [
+        "remote_definition_rename_does_not_publish_copied_instance"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/device_authority.rs",
+      "responsibility": "Task7: Exact canonical instance and atomic definition cascade authority; captured deletion permit and original publication adapter; selected raw deletion persistence",
+      "is_new": true,
+      "required_symbols": [
+        "fn authorize_instance_authority",
+        "fn original_publication_with",
+        "struct DeletionAuthority",
+        "fn selected_deletion_records_with",
+        "fn save_deletion_snapshot"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/device_authority.rs",
+          "callee_symbol": "authorize_instance_authority",
+          "invocation": "authorize_instance_authority(&record, definition, &c, action)?;",
+          "behavior_test": "direct_update_or_delete_copied_instance_has_no_side_effects",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib direct_update_or_delete_copied_instance_has_no_side_effects",
+          "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/device_authority_tests.rs",
+      "responsibility": "Task7: Isolated native device authoring, metadata or original publication regression tests",
+      "is_new": true,
+      "required_symbols": [
+        "allowed_shared_deletion_housekeeping_preserves_copied_siblings_and_canonical_definition"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/device_inbound.rs",
+      "responsibility": "Task7: Optional inbound metadata merge preserves old-writer fields and proven local home lineage while accepting explicit sharing",
+      "is_new": true,
+      "required_symbols": [
+        "fn merge_inbound_device_metadata"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/device_inbound_tests.rs",
+      "responsibility": "Task7: Isolated native device authoring, metadata or original publication regression tests",
+      "is_new": true,
+      "required_symbols": [
+        "merge_inbound_device_metadata"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
       ]
     }
   ]
