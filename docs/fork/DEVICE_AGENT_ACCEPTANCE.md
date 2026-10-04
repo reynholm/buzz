@@ -95,6 +95,9 @@ UUIDs and labels. Wait for successful scoped owner/relay history hydration;
    existing local key after complete history plus a relay-signed archive read;
    the public key stays unchanged. An active duplicate or unavailable/invalid
    archive must still block automatic claim. An archived local key is not claimed.
+   While WS/history remain healthy, stall NIP-11 headers/body or fail NIP-11/query.
+   Completion must time out within 30 seconds and retain recovery; restore HTTP
+   without reconnect/restart and confirm cooldown retry binds the same local key.
 2. **Repeated B actions.** Restart B three times. Try Welcome/onboarding,
    profile Start, team activation/channel batch and direct relevant native
    command paths. Record refused/skipped IDs and synchronization versus remote

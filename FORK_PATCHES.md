@@ -785,7 +785,7 @@ New module: `true`.
 - Required symbol: `async fn retry_device_home_restore_with`
 - Required symbol: `async fn finish_device_home_sync_after_archive`
 - Required symbol: `fn finish_device_home_sync_inner_with_archive`
-- Required symbol: `super::identity_archive::fetch_archived_pubkeys_at(state_ref, &target).await`
+- Required symbol: `super::identity_archive::fetch_verified_archived_pubkeys_at(state_ref, &target).await`
 - Required symbol: `device_home_sync::capture_scope(state)? != expected`
 - Invocation: `desktop/src-tauri/src/commands/device_home_sync.rs` → `reset`; exact call `device_home_sync::reset(state)?;`; behavior test `commands::device_home_sync::tests::begin_retention_error_revokes_previous_readiness`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::device_home_sync::tests::begin_retention_error_revokes_previous_readiness -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/device_home_sync.rs` → `finish_session_with`; exact call `device_home_sync::finish_session_with(state, session_token, migrate)?;`; behavior test `commands::device_home_sync::migration_tests::finish_adapter_key_error_latches_failed_and_preserves_store`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml commands::device_home_sync::migration_tests::finish_adapter_key_error_latches_failed_and_preserves_store -- --exact`
@@ -1014,6 +1014,7 @@ New module: `true`.
 - Required symbol: `cooldown begin failure recovers`
 - Required symbol: `repeated begin failures have bounded frequency`
 - Required symbol: `late begin rejection from a superseded generation`
+- Required symbol: `retries completion without a WebSocket reconnect`
 - Verify: `just desktop-test desktop-typecheck`
 
 ## `desktop/src-tauri/src/managed_agents/device_home_migration.rs`
@@ -2554,11 +2555,15 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/identity_archive.rs`
 
-Device agent profile and archived duplicate migration regression protection
+Verified relay archive acquisition with total deadline and explicit errors for scoped migration recovery; presentation remains fail-open
 
 New module: `false`.
 
 - Required symbol: `snapshot.kind.as_u16() != 13535`
+- Required symbol: `fn fetch_verified_archived_pubkeys_at`
+- Required symbol: `tokio::time::timeout(deadline, read_verified_archive_at(state, target))`
+- Required symbol: `device_home_archive_timeout`
+- Required symbol: `device_home_archive_unavailable`
 - Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
 
 ## `desktop/src-tauri/src/commands/device_home_sync_archive_tests.rs`
@@ -2567,4 +2572,6 @@ Device agent profile and archived duplicate migration regression protection
 
 New module: `true`.
 
+- Required symbol: `archive_transport_failures_and_invalid_kind_never_complete_as_empty_evidence`
+- Required symbol: `stalled_archive_headers_or_body_are_bounded_and_recover_same_identity_and_token`
 - Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`

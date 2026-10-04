@@ -1165,7 +1165,7 @@
         "async fn retry_device_home_restore_with",
         "async fn finish_device_home_sync_after_archive",
         "fn finish_device_home_sync_inner_with_archive",
-        "super::identity_archive::fetch_archived_pubkeys_at(state_ref, &target).await",
+        "super::identity_archive::fetch_verified_archived_pubkeys_at(state_ref, &target).await",
         "device_home_sync::capture_scope(state)? != expected"
       ],
       "invocation_seams": [
@@ -1599,7 +1599,8 @@
         "rate-limited CLOSED retires readiness",
         "cooldown begin failure recovers",
         "repeated begin failures have bounded frequency",
-        "late begin rejection from a superseded generation"
+        "late begin rejection from a superseded generation",
+        "retries completion without a WebSocket reconnect"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -4292,10 +4293,14 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/identity_archive.rs",
-      "responsibility": "Device agent profile and archived duplicate migration regression protection",
+      "responsibility": "Verified relay archive acquisition with total deadline and explicit errors for scoped migration recovery; presentation remains fail-open",
       "is_new": false,
       "required_symbols": [
-        "snapshot.kind.as_u16() != 13535"
+        "snapshot.kind.as_u16() != 13535",
+        "fn fetch_verified_archived_pubkeys_at",
+        "tokio::time::timeout(deadline, read_verified_archive_at(state, target))",
+        "device_home_archive_timeout",
+        "device_home_archive_unavailable"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -4306,7 +4311,10 @@
       "path": "desktop/src-tauri/src/commands/device_home_sync_archive_tests.rs",
       "responsibility": "Device agent profile and archived duplicate migration regression protection",
       "is_new": true,
-      "required_symbols": [],
+      "required_symbols": [
+        "archive_transport_failures_and_invalid_kind_never_complete_as_empty_evidence",
+        "stalled_archive_headers_or_body_are_bounded_and_recover_same_identity_and_token"
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace"

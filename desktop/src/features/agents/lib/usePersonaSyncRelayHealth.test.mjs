@@ -20,6 +20,7 @@ function harness(
     begin = (session) => session,
     hydrate = async () => ({ coveredEventIds: [] }),
     reconcile = async () => {},
+    finish = async () => {},
   } = {},
 ) {
   const oldWindow = globalThis.window;
@@ -56,6 +57,7 @@ function harness(
         if (command === "hydrate_device_home_history") return hydrate(args);
         if (command === "reconcile_inbound_persona_event")
           return reconcile(args);
+        if (command === "finish_device_home_sync") return finish(args);
         if (command === "plugin:websocket|send") {
           const frame = JSON.parse(args.message.data);
           if (frame[0] === "REQ") {
@@ -677,3 +679,46 @@ test("late begin rejection from a superseded generation cannot restart the curre
   assert.equal(h.count("begin_device_home_sync"), 2);
   assert.equal(relayClient.subscriptions.size, 1);
 });
+
+for (const failure of [
+  "device_home_archive_timeout",
+  "device_home_archive_unavailable",
+]) {
+  test(`${failure} retries completion without a WebSocket reconnect`, async (t) => {
+    let attempts = 0;
+    const h = harness(t, {
+      finish: async () => {
+        if (++attempts === 1) throw new Error(failure);
+      },
+    });
+    await flush();
+    await flush();
+    assert.ok(
+      h.warnings.some((args) =>
+        String(args[0]).includes("entering degraded-live sync"),
+      ),
+      "completion rejection reached recovery before advancing clock",
+    );
+    assert.equal(attempts, 1);
+    assert.equal(relayClient.wsId, 7);
+    assert.equal(relayClient.subscriptions.size, 1);
+    await h.advance(29999);
+    assert.equal(attempts, 1, "failure waits for bounded cooldown");
+    await h.advance(1);
+    assert.equal(
+      attempts,
+      2,
+      JSON.stringify({
+        calls: h.calls,
+        warnings: h.warnings,
+        requests: h.requests,
+      }),
+    );
+    assert.equal(h.count("begin_device_home_sync"), 2);
+    assert.equal(h.count("hydrate_device_home_history"), 2);
+    assert.equal(relayClient.wsId, 7);
+    assert.equal(h.count("plugin:websocket|disconnect"), 0);
+    await h.advance(120000);
+    assert.equal(attempts, 2, "successful recovery stops retries");
+  });
+}

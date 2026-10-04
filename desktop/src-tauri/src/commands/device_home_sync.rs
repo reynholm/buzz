@@ -78,7 +78,7 @@ pub async fn finish_device_home_sync(
     let expected = finish_device_home_sync_after_archive(
         &state,
         |target| async move {
-            super::identity_archive::fetch_archived_pubkeys_at(state_ref, &target).await
+            super::identity_archive::fetch_verified_archived_pubkeys_at(state_ref, &target).await
         },
         |archived| {
             finish_device_home_sync_inner_with_archive(&session_token, &app, &state, archived)
@@ -107,14 +107,14 @@ async fn finish_device_home_sync_after_archive<Fut>(
     finish: impl FnOnce(&[String]) -> Result<device_home_sync::SyncScope, String>,
 ) -> Result<device_home_sync::SyncScope, String>
 where
-    Fut: std::future::Future<Output = Vec<String>>,
+    Fut: std::future::Future<Output = Result<Vec<String>, String>>,
 {
     let expected = device_home_sync::capture_scope(state)?;
     let target = super::identity_archive::capture_relay_target(state);
     if target.ws_url.trim().trim_end_matches('/') != expected.relay_url {
         return Err("device_home_sync_stale_session".into());
     }
-    let archived = fetch(target).await;
+    let archived = fetch(target).await?;
     let _apply = state.workspace_apply_lock.clone().lock_owned().await;
     if device_home_sync::capture_scope(state)? != expected {
         return Err("device_home_sync_stale_session".into());

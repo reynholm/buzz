@@ -446,38 +446,65 @@ pub(crate) async fn fetch_archived_pubkeys_at(
     state: &AppState,
     target: &RelayTarget,
 ) -> Vec<String> {
-    let Ok(Some(relay_self)) = fetch_relay_self_at(state, &target.ws_url).await else {
-        return vec![];
-    };
+    fetch_verified_archived_pubkeys_at(state, target)
+        .await
+        .unwrap_or_default()
+}
 
-    let query = query_relay_at(
+/// Read migration evidence with a total deadline covering NIP-11 headers/body
+/// and the snapshot query. Failures stay explicit so the sync owner can retry.
+pub(crate) async fn fetch_verified_archived_pubkeys_at(
+    state: &AppState,
+    target: &RelayTarget,
+) -> Result<Vec<String>, String> {
+    fetch_verified_archived_pubkeys_at_with_timeout(
+        state,
+        target,
+        std::time::Duration::from_secs(30),
+    )
+    .await
+}
+
+// Deadline is a boundary injection for transport tests; production uses 30 seconds.
+pub(crate) async fn fetch_verified_archived_pubkeys_at_with_timeout(
+    state: &AppState,
+    target: &RelayTarget,
+    deadline: std::time::Duration,
+) -> Result<Vec<String>, String> {
+    tokio::time::timeout(deadline, read_verified_archive_at(state, target))
+        .await
+        .map_err(|_| "device_home_archive_timeout".to_string())?
+        .map_err(|error| format!("device_home_archive_unavailable: {error}"))
+}
+
+async fn read_verified_archive_at(
+    state: &AppState,
+    target: &RelayTarget,
+) -> Result<Vec<String>, String> {
+    let relay_self = fetch_relay_self_at(state, &target.ws_url)
+        .await?
+        .ok_or_else(|| "relay did not advertise a valid NIP-11 self".to_string())?;
+    let events = query_relay_at(
         state,
         &target.api_base_url,
         &[serde_json::json!({
-            "authors": [relay_self.clone()],
-            "kinds": [13535],
-            "limit": 1,
+            "authors": [relay_self.clone()], "kinds": [13535], "limit": 1,
         })],
     )
-    .await;
-    let Ok(events) = query else {
-        return vec![];
-    };
-
+    .await?;
+    // A successful authenticated query may confirm no archive exists yet.
+    // This carries no conflict exclusions; transport failures never use this arm.
     let Some(snapshot) = events.into_iter().next() else {
-        return vec![];
+        return Ok(vec![]);
     };
-
-    // Defense-in-depth: the filter should already restrict author, but the
-    // client must still reject malformed or wrongly signed relay state.
-    if !snapshot.verify_id() || !snapshot.verify_signature() {
-        return vec![];
+    if snapshot.kind.as_u16() != 13535
+        || !snapshot.verify_id()
+        || !snapshot.verify_signature()
+        || !snapshot.pubkey.to_hex().eq_ignore_ascii_case(&relay_self)
+    {
+        return Err("invalid relay archive snapshot".into());
     }
-    if !snapshot.pubkey.to_hex().eq_ignore_ascii_case(&relay_self) {
-        return vec![];
-    }
-
-    archived_pubkeys_from_snapshot(&snapshot)
+    Ok(archived_pubkeys_from_snapshot(&snapshot))
 }
 
 /// Read the relay's latest valid `kind:13535` archive snapshot. The frontend
