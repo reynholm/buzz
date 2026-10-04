@@ -188,6 +188,61 @@ test("reconcile rejection is latched and cannot finish despite a later successfu
   await dispose();
 });
 
+test("deferred apply rejection remains failed and disposal invalidates exactly its backend token", async (t) => {
+  let releaseHistory;
+  let rejectApply;
+  const native = nativeSync(t, {
+    hydrate: () =>
+      new Promise((resolve) => {
+        releaseHistory = resolve;
+      }),
+    reconcile: () =>
+      new Promise((_resolve, reject) => {
+        rejectApply = reject;
+      }),
+  });
+  const dispose = startPersonaSync(
+    "owner-pubkey",
+    "wss://relay.example",
+    () => false,
+  );
+  await settleSync();
+  native.live(event({ id: "deferred", createdAt: 1 }));
+  releaseHistory({ coveredEventIds: [] });
+  await settleSync();
+  const apply = native.calls.find(
+    (call) => call.cmd === "reconcile_inbound_persona_event",
+  );
+  assert.equal(apply.args.sessionToken, "token-1");
+  assert.equal(
+    native.calls.filter((call) => call.cmd === "finish_device_home_sync")
+      .length,
+    0,
+  );
+  rejectApply("deferred apply failed");
+  await settleSync();
+  assert.equal(
+    native.calls.filter((call) => call.cmd === "finish_device_home_sync")
+      .length,
+    0,
+  );
+  assert.equal(
+    native.warnings.filter(
+      (warning) =>
+        warning[0].includes("reconcile failed") &&
+        String(warning[1]).includes("deferred apply failed"),
+    ).length,
+    1,
+  );
+  await dispose();
+  assert.deepEqual(
+    native.calls
+      .filter((call) => call.cmd === "invalidate_device_home_sync")
+      .map((call) => call.args),
+    [{ sessionToken: "token-1" }],
+  );
+});
+
 test("connection loss invalidates readiness and reconnect starts a fresh complete session", async (t) => {
   const native = nativeSync(t);
   const dispose = startPersonaSync(

@@ -1404,7 +1404,7 @@
     },
     {
       "path": "desktop/src/features/agents/lib/usePersonaSync.test.mjs",
-      "responsibility": "Preserved coalescing/catalog/gap/degraded/retry behavior plus IPC token, completion, cancellation and reconnect tests",
+      "responsibility": "Preserved coalescing/catalog/gap/degraded/retry behavior plus IPC token, completion, cancellation and reconnect tests; Task9 deferred apply rejection plus exact token disposal invalidation",
       "is_new": false,
       "required_symbols": [
         "backend sync waits for buffered live applies",
@@ -1417,12 +1417,15 @@
     },
     {
       "path": "desktop/src/shared/api/tauriPersonas.ts",
-      "responsibility": "Backend sync IPC client and optional live reconciliation token",
+      "responsibility": "Backend sync IPC client and optional live reconciliation token; Task9 maps public snake_case policy/origin and actual camelCase nullable computed projection without invented authority; create sends false default, edit omits device metadata",
       "is_new": false,
       "required_symbols": [
         "export async function beginDeviceHomeSync",
         "export async function hydrateDeviceHomeHistory",
-        "sessionToken?: string"
+        "sessionToken?: string",
+        "shareAcrossDevices: input.shareAcrossDevices ?? false",
+        "home?: DefinitionHome | null",
+        "invokeTauri<DeviceHomeHistoryResult>"
       ],
       "invocation_seams": [
         {
@@ -1431,6 +1434,27 @@
           "invocation": "await invokeTauri(\"reconcile_inbound_persona_event\", {\n    eventJson,\n    arrivalRelayUrl,\n    sessionToken,\n  });",
           "behavior_test": "backend sync waits for buffered live applies before finish and carries its token",
           "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern=\"backend sync waits for buffered\" src/features/agents/lib/usePersonaSync.test.mjs"
+        },
+        {
+          "caller_path": "desktop/src/shared/api/tauriPersonas.ts",
+          "callee_symbol": "fromRawPersona",
+          "invocation": "return (await invokeTauri<RawPersona[]>(\"list_personas\")).map(fromRawPersona);",
+          "behavior_test": "raw_home_maps_pubkeys_and_capabilities",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/shared/api/tauriPersonas.test.mjs"
+        },
+        {
+          "caller_path": "desktop/src/shared/api/tauriPersonas.ts",
+          "callee_symbol": "updatePersonaPayload",
+          "invocation": "input: updatePersonaPayload(input),",
+          "behavior_test": "edit_payload_does_not_change_policy",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/shared/api/tauriPersonas.test.mjs"
+        },
+        {
+          "caller_path": "desktop/src/shared/api/tauriPersonas.ts",
+          "callee_symbol": "invokeTauri",
+          "invocation": "await invokeTauri(\"invalidate_device_home_sync\", { sessionToken });",
+          "behavior_test": "deferred apply rejection remains failed and disposal invalidates exactly its backend token",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/usePersonaSync.test.mjs"
         }
       ],
       "verification_commands": [
@@ -3116,6 +3140,153 @@
       "verification_commands": [
         "just desktop-tauri-test desktop-tauri-check",
         "just desktop-tauri-clippy"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/api/deviceTypes.ts",
+      "responsibility": "Authoritative definition home/capabilities, public device metadata, honest label publication and backend sync result types",
+      "is_new": true,
+      "required_symbols": [
+        "export type DefinitionHome",
+        "export type DeviceLabelResult",
+        "export type DeviceHomeHistoryResult"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/api/personaTypes.ts",
+      "responsibility": "Optional backend policy/origin and nullable/absent computed projection; creation-only false-default device sharing",
+      "is_new": false,
+      "required_symbols": [
+        "shareAcrossDevices?: boolean",
+        "home?: DefinitionHome | null",
+        "capabilities?: DefinitionCapabilities"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/api/types.ts",
+      "responsibility": "Expose authoritative device and definition capability types through existing shared API imports",
+      "is_new": false,
+      "required_symbols": [
+        "} from \"./deviceTypes\";"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/api/tauriPersonas.test.mjs",
+      "responsibility": "Actual list/create/edit/sync native IPC coverage for policy default, immutable metadata and computed projection",
+      "is_new": false,
+      "required_symbols": [
+        "raw_home_maps_pubkeys_and_capabilities",
+        "create_payload_default_false",
+        "edit_payload_does_not_change_policy"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/api/tauriDevice.ts",
+      "responsibility": "Typed device IPC maps snake_case identity and preserves queued/complete publication and backend failures",
+      "is_new": true,
+      "required_symbols": [
+        "export async function getDeviceIdentity",
+        "export async function setDeviceLabel"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/shared/api/tauriDevice.ts",
+          "callee_symbol": "fromRawDeviceIdentity",
+          "invocation": "identity: fromRawDeviceIdentity(result.identity),",
+          "behavior_test": "device IPC maps snake_case identity and preserves queued or complete publication",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/shared/api/tauriDevice.test.mjs"
+        },
+        {
+          "caller_path": "desktop/src/shared/api/tauriDevice.ts",
+          "callee_symbol": "invokeTauri",
+          "invocation": "const result = await invokeTauri<{\n    identity: RawDeviceIdentity;\n    publication: DeviceLabelResult[\"publication\"];\n  }>(\"set_device_label\", { label });",
+          "behavior_test": "device IPC propagates validation and durable-publication failures",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/shared/api/tauriDevice.test.mjs"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/api/tauriDevice.test.mjs",
+      "responsibility": "Actual device invoke payload, queued/complete response mapping and propagated validation/enqueue failure coverage",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/lib/definitionCapabilities.ts",
+      "responsibility": "Fresh backend list/action getter and fail-closed required projection; retain exact refusal code and reported label",
+      "is_new": true,
+      "required_symbols": [
+        "export class DefinitionCapabilityError",
+        "export function requireDefinitionCapability",
+        "export async function getDefinitionForAction"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/agents/lib/definitionCapabilities.ts",
+          "callee_symbol": "listPersonas",
+          "invocation": "(await listPersonas()).find((item) => item.id === id)",
+          "behavior_test": "getter re-reads each action and propagates missing definition or failed list",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/definitionCapabilities.test.mjs"
+        },
+        {
+          "caller_path": "desktop/src/features/agents/lib/definitionCapabilities.ts",
+          "callee_symbol": "requireDefinitionCapability",
+          "invocation": "requireDefinitionCapability(persona, action);",
+          "behavior_test": "getter refresh after raw create observes backend refusal before any mutation",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/definitionCapabilities.test.mjs"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/lib/definitionCapabilities.test.mjs",
+      "responsibility": "Owning real getter/list IPC tests for missing/stale/raw projection, exact ID, action-specific refusal and shared backend fast path",
+      "is_new": true,
+      "required_symbols": [
+        "missing_projection_never_authorizes_start",
+        "getter refresh after raw create observes backend refusal"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/useKnownAgentPubkeys.test.mjs",
+      "responsibility": "Bounded React/query render settlement preserves all three exact-key provenance and failed-cached-read assertions",
+      "is_new": false,
+      "required_symbols": [
+        "waitFor(() => assert.deepEqual(result.current, [false, true, true]))",
+        "waitFor(() => assert.deepEqual(result.current, [false, false, false]))"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
       ]
     }
   ]

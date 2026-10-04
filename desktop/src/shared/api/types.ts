@@ -717,6 +717,15 @@ export type {
   UpdatePersonaInput,
 } from "./personaTypes";
 
+export type {
+  DefinitionCapabilities,
+  DefinitionHome,
+  DeviceHomeHistoryResult,
+  DeviceHomeSyncSession,
+  DeviceIdentity,
+  DeviceLabelResult,
+} from "./deviceTypes";
+
 // ── Team types ────────────────────────────────────────────────────────────────
 export type {
   AgentTeam,

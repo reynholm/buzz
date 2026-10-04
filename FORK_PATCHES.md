@@ -906,7 +906,7 @@ New module: `false`.
 
 ## `desktop/src/features/agents/lib/usePersonaSync.test.mjs`
 
-Preserved coalescing/catalog/gap/degraded/retry behavior plus IPC token, completion, cancellation and reconnect tests
+Preserved coalescing/catalog/gap/degraded/retry behavior plus IPC token, completion, cancellation and reconnect tests; Task9 deferred apply rejection plus exact token disposal invalidation
 
 New module: `false`.
 
@@ -916,18 +916,24 @@ New module: `false`.
 
 ## `desktop/src/shared/api/tauriPersonas.ts`
 
-Backend sync IPC client and optional live reconciliation token
+Backend sync IPC client and optional live reconciliation token; Task9 maps public snake_case policy/origin and actual camelCase nullable computed projection without invented authority; create sends false default, edit omits device metadata
 
 New module: `false`.
 
 - Required symbol: `export async function beginDeviceHomeSync`
 - Required symbol: `export async function hydrateDeviceHomeHistory`
 - Required symbol: `sessionToken?: string`
+- Required symbol: `shareAcrossDevices: input.shareAcrossDevices ?? false`
+- Required symbol: `home?: DefinitionHome | null`
+- Required symbol: `invokeTauri<DeviceHomeHistoryResult>`
 - Invocation: `desktop/src/shared/api/tauriPersonas.ts` → `invokeTauri`; exact call `await invokeTauri("reconcile_inbound_persona_event", {
     eventJson,
     arrivalRelayUrl,
     sessionToken,
   });`; behavior test `backend sync waits for buffered live applies before finish and carries its token`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern="backend sync waits for buffered" src/features/agents/lib/usePersonaSync.test.mjs`
+- Invocation: `desktop/src/shared/api/tauriPersonas.ts` → `fromRawPersona`; exact call `return (await invokeTauri<RawPersona[]>("list_personas")).map(fromRawPersona);`; behavior test `raw_home_maps_pubkeys_and_capabilities`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/shared/api/tauriPersonas.test.mjs`
+- Invocation: `desktop/src/shared/api/tauriPersonas.ts` → `updatePersonaPayload`; exact call `input: updatePersonaPayload(input),`; behavior test `edit_payload_does_not_change_policy`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/shared/api/tauriPersonas.test.mjs`
+- Invocation: `desktop/src/shared/api/tauriPersonas.ts` → `invokeTauri`; exact call `await invokeTauri("invalidate_device_home_sync", { sessionToken });`; behavior test `deferred apply rejection remains failed and disposal invalidates exactly its backend token`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/usePersonaSync.test.mjs`
 - Verify: `just desktop-test desktop-typecheck`
 
 ## `desktop/src/shared/api/relayClientShared.ts`
@@ -1877,3 +1883,101 @@ New module: `false`.
 
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 - Verify: `just desktop-tauri-clippy`
+
+## `desktop/src/shared/api/deviceTypes.ts`
+
+Authoritative definition home/capabilities, public device metadata, honest label publication and backend sync result types
+
+New module: `true`.
+
+- Required symbol: `export type DefinitionHome`
+- Required symbol: `export type DeviceLabelResult`
+- Required symbol: `export type DeviceHomeHistoryResult`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/shared/api/personaTypes.ts`
+
+Optional backend policy/origin and nullable/absent computed projection; creation-only false-default device sharing
+
+New module: `false`.
+
+- Required symbol: `shareAcrossDevices?: boolean`
+- Required symbol: `home?: DefinitionHome | null`
+- Required symbol: `capabilities?: DefinitionCapabilities`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/shared/api/types.ts`
+
+Expose authoritative device and definition capability types through existing shared API imports
+
+New module: `false`.
+
+- Required symbol: `} from "./deviceTypes";`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/shared/api/tauriPersonas.test.mjs`
+
+Actual list/create/edit/sync native IPC coverage for policy default, immutable metadata and computed projection
+
+New module: `false`.
+
+- Required symbol: `raw_home_maps_pubkeys_and_capabilities`
+- Required symbol: `create_payload_default_false`
+- Required symbol: `edit_payload_does_not_change_policy`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/shared/api/tauriDevice.ts`
+
+Typed device IPC maps snake_case identity and preserves queued/complete publication and backend failures
+
+New module: `true`.
+
+- Required symbol: `export async function getDeviceIdentity`
+- Required symbol: `export async function setDeviceLabel`
+- Invocation: `desktop/src/shared/api/tauriDevice.ts` → `fromRawDeviceIdentity`; exact call `identity: fromRawDeviceIdentity(result.identity),`; behavior test `device IPC maps snake_case identity and preserves queued or complete publication`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/shared/api/tauriDevice.test.mjs`
+- Invocation: `desktop/src/shared/api/tauriDevice.ts` → `invokeTauri`; exact call `const result = await invokeTauri<{
+    identity: RawDeviceIdentity;
+    publication: DeviceLabelResult["publication"];
+  }>("set_device_label", { label });`; behavior test `device IPC propagates validation and durable-publication failures`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/shared/api/tauriDevice.test.mjs`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/shared/api/tauriDevice.test.mjs`
+
+Actual device invoke payload, queued/complete response mapping and propagated validation/enqueue failure coverage
+
+New module: `true`.
+
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/lib/definitionCapabilities.ts`
+
+Fresh backend list/action getter and fail-closed required projection; retain exact refusal code and reported label
+
+New module: `true`.
+
+- Required symbol: `export class DefinitionCapabilityError`
+- Required symbol: `export function requireDefinitionCapability`
+- Required symbol: `export async function getDefinitionForAction`
+- Invocation: `desktop/src/features/agents/lib/definitionCapabilities.ts` → `listPersonas`; exact call `(await listPersonas()).find((item) => item.id === id)`; behavior test `getter re-reads each action and propagates missing definition or failed list`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/definitionCapabilities.test.mjs`
+- Invocation: `desktop/src/features/agents/lib/definitionCapabilities.ts` → `requireDefinitionCapability`; exact call `requireDefinitionCapability(persona, action);`; behavior test `getter refresh after raw create observes backend refusal before any mutation`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/definitionCapabilities.test.mjs`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/lib/definitionCapabilities.test.mjs`
+
+Owning real getter/list IPC tests for missing/stale/raw projection, exact ID, action-specific refusal and shared backend fast path
+
+New module: `true`.
+
+- Required symbol: `missing_projection_never_authorizes_start`
+- Required symbol: `getter refresh after raw create observes backend refusal`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/useKnownAgentPubkeys.test.mjs`
+
+Bounded React/query render settlement preserves all three exact-key provenance and failed-cached-read assertions
+
+New module: `false`.
+
+- Required symbol: `waitFor(() => assert.deepEqual(result.current, [false, true, true]))`
+- Required symbol: `waitFor(() => assert.deepEqual(result.current, [false, false, false]))`
+- Verify: `just desktop-test desktop-typecheck`

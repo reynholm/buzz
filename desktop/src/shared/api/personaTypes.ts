@@ -2,6 +2,7 @@
 // file inside the repo-wide size ratchet. Consumers import these through
 // `@/shared/api/types`, which re-exports everything here.
 import type { AcpSessionPolicy, RespondToMode } from "./types";
+import type { DefinitionCapabilities, DefinitionHome } from "./deviceTypes";
 
 export type AgentPersona = {
   id: string;
@@ -26,6 +27,15 @@ export type AgentPersona = {
   isActive: boolean;
   /** Whether this persona is discoverable in the active community catalog. */
   shared: boolean;
+  /** Creation-only execution policy, independent of community catalog sharing. */
+  shareAcrossDevices?: boolean | null;
+  originDeviceId?: string | null;
+  originDeviceLabel?: string | null;
+  originReleased?: boolean | null;
+  /** Computed by list_personas; raw mutation responses may omit projection. */
+  home?: DefinitionHome | null;
+  homeError?: string;
+  capabilities?: DefinitionCapabilities;
   /** Team ID if this persona was imported from a team directory. Team personas are non-editable. */
   sourceTeam?: string | null;
   /**
@@ -69,6 +79,8 @@ export type PersonaBehaviorInput = {
 
 export type CreatePersonaInput = {
   displayName: string;
+  /** Defaults to false; origin and local binding are assigned only by Rust. */
+  shareAcrossDevices?: boolean;
   avatarUrl?: string;
   /** Optional short, PUBLIC description (max 280 chars). Empty string clears. */
   description?: string | null;

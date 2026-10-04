@@ -2,6 +2,10 @@ import { invokeTauri } from "@/shared/api/tauri";
 import type {
   AgentPersona,
   CreatePersonaInput,
+  DefinitionCapabilities,
+  DefinitionHome,
+  DeviceHomeHistoryResult,
+  DeviceHomeSyncSession,
   RespondToMode,
   UpdatePersonaInput,
 } from "@/shared/api/types";
@@ -21,6 +25,14 @@ export type RawPersona = {
   is_builtin: boolean;
   is_active?: boolean;
   shared?: boolean;
+  share_across_devices?: boolean | null;
+  origin_device_id?: string | null;
+  origin_device_label?: string | null;
+  origin_released?: boolean | null;
+  /** Computed nested fields use camelCase, as serialized by Rust. */
+  home?: DefinitionHome | null;
+  homeError?: string;
+  capabilities?: DefinitionCapabilities;
   source_team?: string | null;
   /**
    * Provenance of a local copy of another owner's catalog entry. Serialized by
@@ -54,6 +66,36 @@ export function fromRawPersona(persona: RawPersona): AgentPersona {
     isBuiltIn: persona.is_builtin,
     isActive: persona.is_active ?? true,
     shared: persona.shared ?? false,
+    ...(persona.share_across_devices !== undefined && {
+      shareAcrossDevices: persona.share_across_devices,
+    }),
+    ...(persona.origin_device_id !== undefined && {
+      originDeviceId: persona.origin_device_id,
+    }),
+    ...(persona.origin_device_label !== undefined && {
+      originDeviceLabel: persona.origin_device_label,
+    }),
+    ...(persona.origin_released !== undefined && {
+      originReleased: persona.origin_released,
+    }),
+    ...(persona.home !== undefined && {
+      home:
+        persona.home === null
+          ? null
+          : {
+              kind: persona.home.kind,
+              label: persona.home.label,
+              remoteInstancePubkeys: persona.home.remoteInstancePubkeys,
+            },
+    }),
+    ...(persona.homeError !== undefined && { homeError: persona.homeError }),
+    ...(persona.capabilities !== undefined && {
+      capabilities: {
+        canCreateInstance: persona.capabilities.canCreateInstance,
+        canDeleteDefinition: persona.capabilities.canDeleteDefinition,
+        blockedReason: persona.capabilities.blockedReason,
+      },
+    }),
     sourceTeam: persona.source_team ?? null,
     catalogSource: persona.catalog_source
       ? {
@@ -98,6 +140,7 @@ export async function createPersona(
     await invokeTauri<RawPersona>("create_persona", {
       input: {
         displayName: input.displayName,
+        shareAcrossDevices: input.shareAcrossDevices ?? false,
         avatarUrl: input.avatarUrl,
         description: normalizeDescription(input.description),
         systemPrompt: input.systemPrompt,
@@ -487,30 +530,30 @@ export async function reconcileInboundPersonaEvent(
   });
 }
 
-export type DeviceHomeSyncSession = {
-  token: string;
-  ownerPubkey: string;
-  relayUrl: string;
-  workspaceGeneration: number;
-};
+export type { DeviceHomeSyncSession } from "./deviceTypes";
 
+/** Begin a backend-owned hydration session; no client readiness is invented. */
 export async function beginDeviceHomeSync(): Promise<DeviceHomeSyncSession> {
-  return invokeTauri("begin_device_home_sync");
+  return invokeTauri<DeviceHomeSyncSession>("begin_device_home_sync");
 }
 
 /** IDs covered by successful exhaustive history, including superseded heads. */
 export async function hydrateDeviceHomeHistory(
   sessionToken: string,
-): Promise<{ coveredEventIds: string[] }> {
-  return invokeTauri("hydrate_device_home_history", { sessionToken });
+): Promise<DeviceHomeHistoryResult> {
+  return invokeTauri<DeviceHomeHistoryResult>("hydrate_device_home_history", {
+    sessionToken,
+  });
 }
 
+/** Ask Rust to finalize only after exhaustive history and successful applies. */
 export async function finishDeviceHomeSync(
   sessionToken: string,
 ): Promise<void> {
   await invokeTauri("finish_device_home_sync", { sessionToken });
 }
 
+/** Revoke only the named backend session, including late/disposed runs. */
 export async function invalidateDeviceHomeSync(
   sessionToken: string,
 ): Promise<void> {
