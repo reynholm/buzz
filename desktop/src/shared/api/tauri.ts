@@ -110,6 +110,7 @@ type RawRelayAgent = {
 };
 import type { RestartDiffEntry as RawRestartDiffEntry } from "./restartDiff";
 export type RawManagedAgent = {
+  can_start_on_device?: boolean;
   pubkey: string;
   name: string;
   persona_id: string | null;
@@ -623,6 +624,7 @@ export function fromRawManagedAgent(agent: RawManagedAgent): ManagedAgent {
     lastError: agent.last_error,
     lastErrorCode: agent.last_error_code ?? null,
     logPath: agent.log_path,
+    canStartOnDevice: agent.can_start_on_device,
     startOnAppLaunch: agent.start_on_app_launch,
     autoRestartOnConfigChange: agent.auto_restart_on_config_change ?? true,
     backend: agent.backend,

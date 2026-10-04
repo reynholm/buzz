@@ -145,8 +145,8 @@ fn persona_drift_state(
 /// pin is ignored — see `effective_agent_relay_url`). Returns `None` for
 /// records that cannot form a valid pair key yet (e.g. key-less agents that
 /// mint keys on first start).
-pub(crate) fn workspace_pair_key(
-    app: &AppHandle,
+pub(crate) fn workspace_pair_key<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     record: &ManagedAgentRecord,
 ) -> Option<ManagedAgentRuntimeKey> {
     let state = app.state::<crate::app_state::AppState>();
@@ -170,13 +170,40 @@ pub(crate) fn resolve_workspace_pair_key(
     ManagedAgentRuntimeKey::new(pubkey.to_string(), &effective_relay).ok()
 }
 
-pub fn build_managed_agent_summary(
-    app: &AppHandle,
+pub fn build_managed_agent_summary<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     record: &ManagedAgentRecord,
     runtimes: &HashMap<ManagedAgentRuntimeKey, ManagedAgentPairRuntime>,
     personas: &[crate::managed_agents::types::AgentDefinition],
     teams: &[crate::managed_agents::TeamRecord],
     global_config: &crate::managed_agents::GlobalAgentConfig,
+) -> Result<ManagedAgentSummary, String> {
+    build_managed_agent_summary_with(
+        app,
+        record,
+        runtimes,
+        personas,
+        teams,
+        global_config,
+        || {
+            super::persona_device_view::load_device_policy_context(
+                app,
+                &app.state::<crate::app_state::AppState>(),
+            )
+            .ok()
+        },
+    )
+}
+
+/// Summary projection with an injectable read-only authority source.
+pub(crate) fn build_managed_agent_summary_with<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    record: &ManagedAgentRecord,
+    runtimes: &HashMap<ManagedAgentRuntimeKey, ManagedAgentPairRuntime>,
+    personas: &[crate::managed_agents::types::AgentDefinition],
+    teams: &[crate::managed_agents::TeamRecord],
+    global_config: &crate::managed_agents::GlobalAgentConfig,
+    context: impl FnOnce() -> Option<super::persona_device_view::DevicePolicyContext>,
 ) -> Result<ManagedAgentSummary, String> {
     use crate::managed_agents::BackendKind;
 
@@ -235,6 +262,16 @@ pub fn build_managed_agent_summary(
             )
         }
     };
+
+    let definition = record
+        .persona_id
+        .as_deref()
+        .and_then(|id| personas.iter().find(|d| d.id == id));
+    let needs_context = definition.is_some_and(|d| d.share_across_devices != Some(true));
+    let policy_context = if needs_context { context() } else { None };
+    let can_start_on_device =
+        super::device_runtime::runtime_start_refusal(record, personas, policy_context.as_ref())
+            .is_none();
 
     let (persona_out_of_date, persona_orphaned) = persona_drift_state(record, personas);
 
@@ -329,6 +366,7 @@ pub fn build_managed_agent_summary(
         .to_string();
 
     Ok(ManagedAgentSummary {
+        can_start_on_device,
         pubkey: record.pubkey.clone(),
         name: record.name.clone(),
         persona_id: record.persona_id.clone(),

@@ -1,4 +1,9 @@
 import {
+  canReuseManagedAgentOnDevice,
+  getDefinitionForAction,
+  DefinitionCapabilityError,
+} from "./lib/definitionCapabilities";
+import {
   commandsMatch,
   findReusableGenericAgent,
   findReusablePersonaAgent,
@@ -172,6 +177,16 @@ export async function attachManagedAgentToChannel(
   channelId: string,
   input: AttachManagedAgentToChannelInput,
 ) {
+  const fresh = (await listManagedAgents()).find(
+    (agent) =>
+      normalizePubkey(agent.pubkey) === normalizePubkey(input.agent.pubkey),
+  );
+  if (!fresh) throw new Error("instance_not_found");
+  if (fresh.personaId)
+    await getDefinitionForAction(fresh.personaId, "createInstance");
+  if (!canReuseManagedAgentOnDevice(fresh.canStartOnDevice))
+    throw new DefinitionCapabilityError("instance_not_runnable_on_device");
+  input = { ...input, agent: fresh };
   const role = input.role ?? "bot";
   const ensureRunning = input.ensureRunning ?? true;
   const agentPubkey = normalizePubkey(input.agent.pubkey);
@@ -326,6 +341,12 @@ export async function provisionChannelManagedAgent(
     throw new Error("Agent name is required.");
   }
 
+  const definition = input.personaId
+    ? await getDefinitionForAction(input.personaId, "createInstance")
+    : undefined;
+  // Refresh actual instance eligibility instead of trusting a batch/caller cache.
+  const managedAgents = context ? await listManagedAgents() : undefined;
+
   // Smart reuse: if a managed agent with the same personaId already exists
   // and is not already in this channel, attach it instead of creating a new one.
   if (
@@ -335,14 +356,13 @@ export async function provisionChannelManagedAgent(
     context.channelMemberPubkeys
   ) {
     const reusable = findReusablePersonaAgent(
-      context.managedAgents,
+      managedAgents ?? [],
       input.personaId,
       context.channelMemberPubkeys,
     );
     if (reusable) {
-      const definition = context.personas.find(
-        (persona) => persona.id === input.personaId,
-      );
+      if (!canReuseManagedAgentOnDevice(reusable.canStartOnDevice))
+        throw new DefinitionCapabilityError("instance_not_runnable_on_device");
       const { agent: updatedAgent } = await applyReusableAgentAccessPolicy(
         reusable,
         input,
@@ -367,11 +387,13 @@ export async function provisionChannelManagedAgent(
     context.channelMemberPubkeys
   ) {
     const reusable = findReusableGenericAgent(
-      context.managedAgents,
+      managedAgents ?? [],
       input.runtime.command,
       context.channelMemberPubkeys,
     );
     if (reusable) {
+      if (!canReuseManagedAgentOnDevice(reusable.canStartOnDevice))
+        throw new DefinitionCapabilityError("instance_not_runnable_on_device");
       const { agent: updatedAgent } = await applyReusableAgentAccessPolicy(
         reusable,
         input,

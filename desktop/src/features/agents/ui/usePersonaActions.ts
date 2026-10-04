@@ -1,3 +1,4 @@
+import { getDefinitionForAction } from "@/features/agents/lib/definitionCapabilities";
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -237,7 +238,7 @@ export function usePersonaActions() {
           return true;
         }
         const agentInput = await buildInstanceInputForDefinition(
-          persona,
+          await getDefinitionForAction(persona.id, "createInstance"),
           runtime,
           undefined,
           startIntent ?? undefined,
@@ -282,6 +283,7 @@ export function usePersonaActions() {
   async function handleDelete(persona: AgentPersona) {
     clearFeedback("library");
     try {
+      await getDefinitionForAction(persona.id, "deleteDefinition");
       await deletePersonaMutation.mutateAsync(persona.id);
       setPersonaNoticeMessage(`Deleted ${persona.displayName}.`);
       setPersonaToDelete(null);

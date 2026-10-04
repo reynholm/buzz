@@ -9,7 +9,17 @@ export class DefinitionCapabilityError extends Error {
   readonly homeLabel: string | null;
 
   constructor(code: string, homeLabel: string | null = null) {
-    super(homeLabel ? `${code}: ${homeLabel}` : code);
+    const reason =
+      code === "device_home_sync_pending" ||
+      code === "device_home_sync_failed" ||
+      code === "definition_capabilities_unavailable"
+        ? `${code}: Device history is not ready. Wait for synchronization and retry.`
+        : code;
+    super(
+      homeLabel && code === "definition_hosted_elsewhere"
+        ? `${reason}: ${homeLabel}`
+        : reason,
+    );
     this.name = "DefinitionCapabilityError";
     this.code = code;
     this.homeLabel = homeLabel;
@@ -45,4 +55,11 @@ export async function getDefinitionForAction(
   if (!persona) throw new DefinitionCapabilityError("definition_not_found");
   requireDefinitionCapability(persona, action);
   return persona;
+}
+
+/** Reuse requires the backend permission for this exact instance. */
+export function canReuseManagedAgentOnDevice(
+  canStartOnDevice: boolean | undefined,
+): boolean {
+  return canStartOnDevice === true;
 }

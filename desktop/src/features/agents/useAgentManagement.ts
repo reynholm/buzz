@@ -1,3 +1,4 @@
+import { getDefinitionForAction } from "@/features/agents/lib/definitionCapabilities";
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -184,7 +185,7 @@ export function useAgentManagement() {
       if (intent === "definition_start") {
         const created = await createAgentMutation.mutateAsync(
           await buildInstanceInputForDefinition(
-            persona,
+            await getDefinitionForAction(persona.id, "createInstance"),
             runtime,
             undefined,
             backendIntent ?? undefined,

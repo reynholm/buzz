@@ -1,4 +1,9 @@
 import {
+  canReuseManagedAgentOnDevice,
+  DefinitionCapabilityError,
+  getDefinitionForAction,
+} from "@/features/agents/lib/definitionCapabilities";
+import {
   buildInstanceInputForDefinition,
   resolveStartRuntimeForDefinition,
 } from "@/features/agents/lib/instanceInputForDefinition";
@@ -163,11 +168,22 @@ async function ensureWelcomeTeamPersonasActive() {
     personas.map((persona) => [persona.id, persona]),
   );
 
+  const skipped: string[] = [];
   for (const starter of WELCOME_TEAM_STARTERS) {
+    try {
+      await getDefinitionForAction(starter.personaId, "createInstance");
+    } catch (error) {
+      skipped.push(
+        `${starter.name}: ${error instanceof Error ? error.message : "Device permission unavailable"}`,
+      );
+    }
     if (!personasById.has(starter.personaId)) {
       throw new Error(`${starter.name} agent not found.`);
     }
   }
+
+  if (skipped.length)
+    throw new Error(`Welcome Team skipped: ${skipped.join("; ")}`);
 
   // Persona activation is a read-modify-write operation over one shared file.
   // Run these sequentially so concurrent writes cannot lose a teammate's
@@ -215,6 +231,7 @@ export async function buildWelcomeStarterCreateInput(
   preferredRuntimeId: string | null,
   relayUrl?: string | null,
 ): Promise<CreateManagedAgentInput> {
+  persona = await getDefinitionForAction(persona.id, "createInstance");
   const { runtime } = resolveStartRuntimeForDefinition(
     persona,
     runtimes,
@@ -358,6 +375,8 @@ async function provisionWelcomeTeam(
       relayUrl,
     );
     if (existing) {
+      if (!canReuseManagedAgentOnDevice(existing.canStartOnDevice))
+        throw new DefinitionCapabilityError("instance_not_runnable_on_device");
       const runtimeUpdate = welcomeStarterRuntimeUpdate(existing, desired);
       agents.push(
         runtimeUpdate

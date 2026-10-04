@@ -569,6 +569,8 @@ pub struct ManagedAgentProcess {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ManagedAgentSummary {
+    /// Read-only authorization for this exact instance on the current device.
+    pub can_start_on_device: bool,
     pub pubkey: String,
     pub name: String,
     pub persona_id: Option<String>,

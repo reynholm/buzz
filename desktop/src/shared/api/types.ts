@@ -300,6 +300,8 @@ export type AcpSessionPolicy = "channel" | "thread";
 import type { RestartDiffEntry } from "./restartDiff";
 export type { JsonValue, RestartChange, RestartDiffEntry } from "./restartDiff";
 export type ManagedAgent = {
+  /** Backend-computed exact-instance authority; absent remains unknown. */
+  canStartOnDevice?: boolean;
   pubkey: string;
   name: string;
   personaId: string | null;

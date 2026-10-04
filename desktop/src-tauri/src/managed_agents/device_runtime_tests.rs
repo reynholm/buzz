@@ -546,3 +546,84 @@ async fn private_preflight_refuses_before_any_probe() {
     .is_err());
     assert_eq!(probes.get(), 0);
 }
+
+#[test]
+fn summary_reports_exact_instance_capability_without_spawning_or_persisting() {
+    for (mode, readiness, want) in [
+        ("own", EvidenceReadiness::Ready, true),
+        ("own", EvidenceReadiness::Pending, true),
+        ("copied", EvidenceReadiness::Ready, false),
+        ("unbound", EvidenceReadiness::Pending, false),
+        ("unbound", EvidenceReadiness::Failed, false),
+        ("orphan", EvidenceReadiness::Ready, false),
+        ("readfail", EvidenceReadiness::Ready, false),
+        ("shared", EvidenceReadiness::Failed, true),
+        ("legacy", EvidenceReadiness::Failed, true),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let app = app(dir.path());
+        let (mut raw, _) = records();
+        let c = context(readiness);
+        raw[1].runtime_pid = None;
+        raw[1].device_host_binding = match mode {
+            "own" => Some(c.proof.binding().into()),
+            "copied" => Some("foreign-binding".into()),
+            _ => None,
+        };
+        if mode == "shared" {
+            raw[0].share_across_devices = Some(true);
+        }
+        if mode == "legacy" {
+            raw[1].persona_id = None;
+        }
+        if mode == "orphan" {
+            raw[1].persona_id = Some("missing".into());
+        }
+        let definitions = super::persona_definitions_for_policy(&raw[..1]);
+        let base = super::managed_agents_base_dir(app.handle()).unwrap();
+        write(&base, &raw);
+        let bytes = std::fs::read(base.join("managed-agents.json")).unwrap();
+        let reads = Cell::new(0);
+        let summary = super::runtime::build_managed_agent_summary_with(
+            app.handle(),
+            &raw[1],
+            &Default::default(),
+            &definitions,
+            &[],
+            &Default::default(),
+            || {
+                reads.set(reads.get() + 1);
+                assert!(
+                    mode != "shared" && mode != "legacy",
+                    "fast path read host authority"
+                );
+                if mode == "readfail" {
+                    None
+                } else {
+                    Some(c)
+                }
+            },
+        )
+        .unwrap();
+        let value = serde_json::to_value(summary).unwrap();
+        assert_eq!(
+            value.get("can_start_on_device"),
+            Some(&serde_json::json!(want)),
+            "{mode}/{readiness:?}"
+        );
+        assert_eq!(
+            std::fs::read(base.join("managed-agents.json")).unwrap(),
+            bytes
+        );
+        assert!(app
+            .state::<crate::app_state::AppState>()
+            .managed_agent_processes
+            .lock()
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            reads.get(),
+            usize::from(mode != "shared" && mode != "legacy" && mode != "orphan")
+        );
+    }
+}

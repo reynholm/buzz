@@ -752,6 +752,7 @@ fn summary_fixture(
     restart_diff: Vec<crate::managed_agents::spawn_snapshot::RestartDiffEntry>,
 ) -> super::ManagedAgentSummary {
     super::ManagedAgentSummary {
+        can_start_on_device: true,
         session_policy: Default::default(),
         pubkey: "aa".repeat(32),
         name: "test".into(),

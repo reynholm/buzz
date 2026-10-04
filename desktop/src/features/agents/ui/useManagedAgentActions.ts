@@ -1,3 +1,4 @@
+import { getDefinitionForAction } from "@/features/agents/lib/definitionCapabilities";
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -231,6 +232,7 @@ export function useManagedAgentActions() {
     setPersonaStartPending(persona.id, true);
     clearFeedback();
     try {
+      persona = await getDefinitionForAction(persona.id, "createInstance");
       const runtimes = await availableRuntimesForStart(availableRuntimesQuery);
       const { runtime, warnings } = resolveStartRuntimeForDefinition(
         persona,

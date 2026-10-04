@@ -531,6 +531,7 @@ New module: `false`.
 - Required symbol: `pub device_host_binding: Option<String>`
 - Required symbol: `pub fn into_agent_record`
 - Required symbol: `pub fn to_definition_view`
+- Required symbol: `pub can_start_on_device: bool,`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/managed_agents/types/requests.rs`
@@ -1465,12 +1466,13 @@ New module: `true`.
 
 ## `desktop/src-tauri/src/managed_agents/runtime.rs`
 
-Authorize fresh exact target before logs, receipt reuse and process spawn; use fresh signer/scope and fail closed persona reads
+Authorize fresh exact target before logs, receipt reuse and process spawn; use fresh signer/scope and fail closed persona reads; read-only computed exact-instance can_start_on_device summary with shared/legacy no-authority-read fast path
 
 New module: `false`.
 
 - Required symbol: `fn spawn_agent_child`
 - Required symbol: `fn start_managed_agent_process`
+- Required symbol: `let policy_context = if needs_context { context() } else { None };`
 - Invocation: `desktop/src-tauri/src/managed_agents/runtime.rs` → `spawn_child_phase_with`; exact call `super::device_runtime::spawn_child_phase_with(
         app,
         &state,
@@ -1483,6 +1485,8 @@ New module: `false`.
         &record.pubkey,
         None,
         super::persona_device_view::load_device_policy_context,`; behavior test `managed_agents::device_runtime_tests::start_refuses_before_terminating_existing_receipt`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::start_refuses_before_terminating_existing_receipt -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/runtime.rs` → `runtime_start_refusal`; exact call `        super::device_runtime::runtime_start_refusal(record, personas, policy_context.as_ref())
+            .is_none();`; behavior test `managed_agents::device_runtime_tests::summary_reports_exact_instance_capability_without_spawning_or_persisting`; verify `CARGO_INCREMENTAL=0 cargo test --manifest-path desktop/src-tauri/Cargo.toml summary_reports_exact_instance_capability --lib`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 - Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace --features mesh-llm`
 - Verify: `just desktop-tauri-clippy`
@@ -1913,6 +1917,7 @@ Expose authoritative device and definition capability types through existing sha
 New module: `false`.
 
 - Required symbol: `} from "./deviceTypes";`
+- Required symbol: `canStartOnDevice?: boolean;`
 - Verify: `just desktop-test desktop-typecheck`
 
 ## `desktop/src/shared/api/tauriPersonas.test.mjs`
@@ -1951,13 +1956,15 @@ New module: `true`.
 
 ## `desktop/src/features/agents/lib/definitionCapabilities.ts`
 
-Fresh backend list/action getter and fail-closed required projection; retain exact refusal code and reported label
+Fresh backend list/action getter and fail-closed required projection; retain exact refusal code and reported label; strict backend instance reuse permission and retryable hydration explanation
 
 New module: `true`.
 
 - Required symbol: `export class DefinitionCapabilityError`
 - Required symbol: `export function requireDefinitionCapability`
 - Required symbol: `export async function getDefinitionForAction`
+- Required symbol: `return canStartOnDevice === true;`
+- Required symbol: ``${code}: Device history is not ready. Wait for synchronization and retry.``
 - Invocation: `desktop/src/features/agents/lib/definitionCapabilities.ts` → `listPersonas`; exact call `(await listPersonas()).find((item) => item.id === id)`; behavior test `getter re-reads each action and propagates missing definition or failed list`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/definitionCapabilities.test.mjs`
 - Invocation: `desktop/src/features/agents/lib/definitionCapabilities.ts` → `requireDefinitionCapability`; exact call `requireDefinitionCapability(persona, action);`; behavior test `getter refresh after raw create observes backend refusal before any mutation`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/definitionCapabilities.test.mjs`
 - Verify: `just desktop-test desktop-typecheck`
@@ -1980,4 +1987,161 @@ New module: `false`.
 
 - Required symbol: `waitFor(() => assert.deepEqual(result.current, [false, true, true]))`
 - Required symbol: `waitFor(() => assert.deepEqual(result.current, [false, false, false]))`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/channelAgents.accessPolicy.test.mjs`
+
+Task10 authoritative device capability integration and owning action coverage
+
+New module: `false`.
+
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/channelAgents.ts`
+
+Task10 authoritative device capability integration and owning action coverage
+
+New module: `false`.
+
+- Invocation: `desktop/src/features/agents/channelAgents.ts` → `getDefinitionForAction`; exact call `  if (fresh.personaId)
+    await getDefinitionForAction(fresh.personaId, "createInstance");`; behavior test `channel capability refuses direct-attach before every mutation (definition_hosted_elsewhere)`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs`
+- Invocation: `desktop/src/features/agents/channelAgents.ts` → `canReuseManagedAgentOnDevice`; exact call `  if (!canReuseManagedAgentOnDevice(fresh.canStartOnDevice))
+    throw new DefinitionCapabilityError("instance_not_runnable_on_device");`; behavior test `channel_reuse_never_attaches_copied_instance (direct-attach)`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs`
+- Invocation: `desktop/src/features/agents/channelAgents.ts` → `listManagedAgents`; exact call `  const fresh = (await listManagedAgents()).find(
+    (agent) =>
+      normalizePubkey(agent.pubkey) === normalizePubkey(input.agent.pubkey),
+  );`; behavior test `a vanished exact instance cannot attach a cached identity`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs`
+- Invocation: `desktop/src/features/agents/channelAgents.ts` → `getDefinitionForAction`; exact call `  const definition = input.personaId
+    ? await getDefinitionForAction(input.personaId, "createInstance")
+    : undefined;`; behavior test `channel capability refuses direct-provision before every mutation (definition_hosted_elsewhere)`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs`
+- Invocation: `desktop/src/features/agents/channelAgents.ts` → `listManagedAgents`; exact call `const managedAgents = context ? await listManagedAgents() : undefined;`; behavior test `channel refresh refuses stale allowed instance before access policy (false)`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs`
+- Invocation: `desktop/src/features/agents/channelAgents.ts` → `canReuseManagedAgentOnDevice`; exact call `    const reusable = findReusablePersonaAgent(
+      managedAgents ?? [],
+      input.personaId,
+      context.channelMemberPubkeys,
+    );
+    if (reusable) {
+      if (!canReuseManagedAgentOnDevice(reusable.canStartOnDevice))
+        throw new DefinitionCapabilityError("instance_not_runnable_on_device");`; behavior test `channel_reuse_never_attaches_copied_instance (reuse)`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/channelAgents.accessPolicy.test.mjs`
+- Invocation: `desktop/src/features/agents/channelAgents.ts` → `canReuseManagedAgentOnDevice`; exact call `    const reusable = findReusableGenericAgent(
+      managedAgents ?? [],
+      input.runtime.command,
+      context.channelMemberPubkeys,
+    );
+    if (reusable) {
+      if (!canReuseManagedAgentOnDevice(reusable.canStartOnDevice))
+        throw new DefinitionCapabilityError("instance_not_runnable_on_device");`; behavior test `generic reuse also refuses missing exact-instance authority before access write`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/channelAgents.accessPolicy.test.mjs`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/lib/instanceInputForDefinition.test.mjs`
+
+Task10 authoritative device capability integration and owning action coverage
+
+New module: `false`.
+
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/lib/instanceInputForDefinition.ts`
+
+Task10 authoritative device capability integration and owning action coverage
+
+New module: `false`.
+
+- Invocation: `desktop/src/features/agents/lib/instanceInputForDefinition.ts` → `requireDefinitionCapability`; exact call `  requireDefinitionCapability(persona, "createInstance");`; behavior test `builder refuses before avatar upload even with provider intent`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/ui/useManagedAgentActions.ts`
+
+Task10 authoritative device capability integration and owning action coverage
+
+New module: `false`.
+
+- Invocation: `desktop/src/features/agents/ui/useManagedAgentActions.ts` → `getDefinitionForAction`; exact call `      persona = await getDefinitionForAction(persona.id, "createInstance");`; behavior test `managed: all_builder_callers_observe_remote_refusal / pending_history_blocks_every_creation_path (definition_hosted_elsewhere)`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/ui/usePersonaActions.ts`
+
+Task10 authoritative device capability integration and owning action coverage
+
+New module: `false`.
+
+- Invocation: `desktop/src/features/agents/ui/usePersonaActions.ts` → `getDefinitionForAction`; exact call `await getDefinitionForAction(persona.id, "createInstance")`; behavior test `persona: all_builder_callers_observe_remote_refusal / pending_history_blocks_every_creation_path (definition_hosted_elsewhere)`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs`
+- Invocation: `desktop/src/features/agents/ui/usePersonaActions.ts` → `getDefinitionForAction`; exact call `      await getDefinitionForAction(persona.id, "deleteDefinition");`; behavior test `persona: definition deletion refuses before team/cascade mutations (definition_hosted_elsewhere)`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/ui/useTeamActions.ts`
+
+Task10 authoritative device capability integration and owning action coverage
+
+New module: `false`.
+
+- Required symbol: `      actions.setActionErrorMessage(
+        result.failures
+          .map(({ name, error }) => `${name}: ${error}`)
+          .join("\n"),
+      );`
+- Required symbol: `    if (failures.length) actions.setActionErrorMessage(failures.join("\n"));`
+- Invocation: `desktop/src/features/agents/ui/useTeamActions.ts` → `getDefinitionForAction`; exact call `        await getDefinitionForAction(id, "deleteDefinition");`; behavior test `team: definition deletion refuses before team/cascade mutations (definition_hosted_elsewhere)`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/useAgentManagement.ts`
+
+Task10 authoritative device capability integration and owning action coverage
+
+New module: `false`.
+
+- Invocation: `desktop/src/features/agents/useAgentManagement.ts` → `getDefinitionForAction`; exact call `await getDefinitionForAction(persona.id, "createInstance")`; behavior test `management: all_builder_callers_observe_remote_refusal / pending_history_blocks_every_creation_path (definition_hosted_elsewhere)`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/onboarding/welcomeGuide.test.mjs`
+
+Task10 authoritative device capability integration and owning action coverage
+
+New module: `false`.
+
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/onboarding/welcomeGuide.ts`
+
+Task10 authoritative device capability integration and owning action coverage
+
+New module: `false`.
+
+- Invocation: `desktop/src/features/onboarding/welcomeGuide.ts` → `getDefinitionForAction`; exact call `  persona = await getDefinitionForAction(persona.id, "createInstance");`; behavior test `Welcome builder re-reads its exact definition before producing instance input`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs`
+- Invocation: `desktop/src/features/onboarding/welcomeGuide.ts` → `getDefinitionForAction`; exact call `      await getDefinitionForAction(starter.personaId, "createInstance");`; behavior test `onboarding_and_team_skip_with_reason (definition_hosted_elsewhere)`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs`
+- Invocation: `desktop/src/features/onboarding/welcomeGuide.ts` → `canReuseManagedAgentOnDevice`; exact call `      if (!canReuseManagedAgentOnDevice(existing.canStartOnDevice))
+        throw new DefinitionCapabilityError("instance_not_runnable_on_device");`; behavior test `Welcome refuses copied existing instance before runtime or access repair and membership`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/profile/ui/UserProfilePanel.tsx`
+
+Task10 authoritative device capability integration and owning action coverage
+
+New module: `false`.
+
+- Invocation: `desktop/src/features/profile/ui/UserProfilePanel.tsx` → `getDefinitionForAction`; exact call `      personaToStart = await getDefinitionForAction(
+        personaToStart.id,
+        "createInstance",
+      );`; behavior test `profile: all_builder_callers_observe_remote_refusal / pending_history_blocks_every_creation_path (definition_hosted_elsewhere)`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs`
+- Invocation: `desktop/src/features/profile/ui/UserProfilePanel.tsx` → `getDefinitionForAction`; exact call `        await getDefinitionForAction(personaToConfirm.id, "deleteDefinition");`; behavior test `profile: definition deletion refuses before team/cascade mutations (definition_hosted_elsewhere)`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs`
+- Invocation: `desktop/src/features/profile/ui/UserProfilePanel.tsx` → `getDefinitionForAction`; exact call `        await getDefinitionForAction(resolvedPersona.id, "deleteDefinition");`; behavior test `built-in profile removal checks delete capability before cascade and deactivation`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/shared/api/tauri.ts`
+
+Task10 authoritative device capability integration and owning action coverage
+
+New module: `false`.
+
+- Required symbol: `canStartOnDevice: agent.can_start_on_device,`
+- Required symbol: `can_start_on_device?: boolean;`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/agents/lib/deviceActionPaths.test.mjs`
+
+Task10 authoritative device capability integration and owning action coverage
+
+New module: `true`.
+
+- Required symbol: `production builder caller inventory is exact`
 - Verify: `just desktop-test desktop-typecheck`

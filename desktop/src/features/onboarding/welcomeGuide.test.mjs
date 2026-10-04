@@ -158,7 +158,36 @@ test("starter persona activation is serialized to protect the shared store", asy
   assert.deepEqual(calls, ["builtin:fizz", "builtin:honey", "builtin:bumble"]);
 });
 
-test("all Welcome starters use the onboarding runtime preference", async () => {
+test("all Welcome starters use the onboarding runtime preference", async (t) => {
+  const priorWindow = globalThis.window;
+  globalThis.window = {
+    __TAURI_INTERNALS__: {
+      invoke: async (command) => {
+        assert.equal(command, "list_personas");
+        return WELCOME_TEAM_STARTERS.map((starter) => ({
+          id: starter.personaId,
+          display_name: starter.name,
+          system_prompt: `${starter.name} prompt`,
+          model: null,
+          provider: null,
+          runtime: null,
+          avatar_url: null,
+          env_vars: {},
+          is_builtin: true,
+          is_active: true,
+          home: { kind: "local", label: "Here", instancePubkeys: [] },
+          capabilities: {
+            canCreateInstance: true,
+            canDeleteDefinition: true,
+            blockedReason: null,
+          },
+        }));
+      },
+    },
+  };
+  t.after(() => {
+    globalThis.window = priorWindow;
+  });
   const claude = {
     id: "claude",
     label: "Claude",

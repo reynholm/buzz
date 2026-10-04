@@ -1,3 +1,4 @@
+import { getDefinitionForAction } from "../lib/definitionCapabilities";
 import * as React from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -160,6 +161,9 @@ export function useTeamActions(
     actions.setActionErrorMessage(null);
 
     try {
+      for (const id of team.personaIds) {
+        await getDefinitionForAction(id, "deleteDefinition");
+      }
       await deleteTeamMutation.mutateAsync(team.id);
       actions.setActionNoticeMessage(`Deleted team "${team.name}".`);
       setTeamToDelete(null);
@@ -183,7 +187,12 @@ export function useTeamActions(
       );
     } else {
       actions.setActionNoticeMessage(
-        `Deployed ${successCount} ${successCount === 1 ? "agent" : "agents"} to ${channel.name}. ${failCount} failed.`,
+        `Deployed ${successCount} ${successCount === 1 ? "agent" : "agents"} to ${channel.name}. ${failCount} skipped.`,
+      );
+      actions.setActionErrorMessage(
+        result.failures
+          .map(({ name, error }) => `${name}: ${error}`)
+          .join("\n"),
       );
     }
     setTeamToAddToChannel(null);
@@ -222,13 +231,18 @@ export function useTeamActions(
   }
 
   async function handleDeleteRemovedPersonas(personaIds: string[]) {
+    const failures: string[] = [];
     for (const id of personaIds) {
       try {
+        await getDefinitionForAction(id, "deleteDefinition");
         await deletePersona(id);
-      } catch {
-        // Best-effort: persona may already be deleted or in use elsewhere.
+      } catch (error) {
+        failures.push(
+          `${id}: ${error instanceof Error ? error.message : "Failed to delete agent."}`,
+        );
       }
     }
+    if (failures.length) actions.setActionErrorMessage(failures.join("\n"));
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: personasQueryKey }),
       queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey }),

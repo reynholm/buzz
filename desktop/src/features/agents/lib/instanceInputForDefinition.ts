@@ -1,3 +1,4 @@
+import { requireDefinitionCapability } from "./definitionCapabilities";
 import type {
   AcpRuntime,
   AcpRuntimeCatalogEntry,
@@ -113,6 +114,7 @@ export async function buildInstanceInputForDefinition(
   upload?: UploadMediaBytes,
   backendIntent?: BackendIntent,
 ): Promise<CreateManagedAgentInput> {
+  requireDefinitionCapability(persona, "createInstance");
   const avatarUrl = await resolveManagedAgentAvatarUrl(
     persona.avatarUrl,
     upload,

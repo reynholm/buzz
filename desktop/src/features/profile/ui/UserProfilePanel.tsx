@@ -1,3 +1,4 @@
+import { getDefinitionForAction } from "@/features/agents/lib/definitionCapabilities";
 import * as React from "react";
 import { toast } from "sonner";
 
@@ -419,6 +420,10 @@ export function UserProfilePanel({
 
   const createManagedAgentForPersona = React.useCallback(
     async (personaToStart: AgentPersona) => {
+      personaToStart = await getDefinitionForAction(
+        personaToStart.id,
+        "createInstance",
+      );
       const runtimes = await availableRuntimesForStart(availableRuntimesQuery);
       const { runtime, warnings } = resolveStartRuntimeForDefinition(
         personaToStart,
@@ -564,6 +569,7 @@ export function UserProfilePanel({
 
     if (resolvedPersona.isBuiltIn) {
       try {
+        await getDefinitionForAction(resolvedPersona.id, "deleteDefinition");
         const deletedInstances =
           await deleteManagedAgentsForPersona(resolvedPersona);
         if (deletedInstances.cancelled) return;
@@ -604,6 +610,7 @@ export function UserProfilePanel({
       }
 
       try {
+        await getDefinitionForAction(personaToConfirm.id, "deleteDefinition");
         await deletePersonaMutation.mutateAsync(personaToConfirm.id);
         toast.success(`Deleted ${personaToConfirm.displayName}.`);
         setPersonaToDelete(null);

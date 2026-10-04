@@ -732,7 +732,8 @@
         "pub origin_released: Option<bool>",
         "pub device_host_binding: Option<String>",
         "pub fn into_agent_record",
-        "pub fn to_definition_view"
+        "pub fn to_definition_view",
+        "pub can_start_on_device: bool,"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -2506,11 +2507,12 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/runtime.rs",
-      "responsibility": "Authorize fresh exact target before logs, receipt reuse and process spawn; use fresh signer/scope and fail closed persona reads",
+      "responsibility": "Authorize fresh exact target before logs, receipt reuse and process spawn; use fresh signer/scope and fail closed persona reads; read-only computed exact-instance can_start_on_device summary with shared/legacy no-authority-read fast path",
       "is_new": false,
       "required_symbols": [
         "fn spawn_agent_child",
-        "fn start_managed_agent_process"
+        "fn start_managed_agent_process",
+        "let policy_context = if needs_context { context() } else { None };"
       ],
       "invocation_seams": [
         {
@@ -2528,6 +2530,14 @@
           "behavior_test": "managed_agents::device_runtime_tests::start_refuses_before_terminating_existing_receipt",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::start_refuses_before_terminating_existing_receipt -- --exact",
           "coverage": "Task6 isolated production adapter behavior with injected effects; native Wry caller compiled and exact wiring fingerprint checked; native keychain/process/provider acceptance remains outstanding"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/runtime.rs",
+          "callee_symbol": "runtime_start_refusal",
+          "invocation": "        super::device_runtime::runtime_start_refusal(record, personas, policy_context.as_ref())\n            .is_none();",
+          "behavior_test": "managed_agents::device_runtime_tests::summary_reports_exact_instance_capability_without_spawning_or_persisting",
+          "verification_command": "CARGO_INCREMENTAL=0 cargo test --manifest-path desktop/src-tauri/Cargo.toml summary_reports_exact_instance_capability --lib",
+          "coverage": "Task10 actual summary builder with injected read-only policy context; deliberate authority bypass runtime-failed/restored; native keychain acceptance outstanding"
         }
       ],
       "verification_commands": [
@@ -3175,7 +3185,8 @@
       "responsibility": "Expose authoritative device and definition capability types through existing shared API imports",
       "is_new": false,
       "required_symbols": [
-        "} from \"./deviceTypes\";"
+        "} from \"./deviceTypes\";",
+        "canStartOnDevice?: boolean;"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -3236,12 +3247,14 @@
     },
     {
       "path": "desktop/src/features/agents/lib/definitionCapabilities.ts",
-      "responsibility": "Fresh backend list/action getter and fail-closed required projection; retain exact refusal code and reported label",
+      "responsibility": "Fresh backend list/action getter and fail-closed required projection; retain exact refusal code and reported label; strict backend instance reuse permission and retryable hydration explanation",
       "is_new": true,
       "required_symbols": [
         "export class DefinitionCapabilityError",
         "export function requireDefinitionCapability",
-        "export async function getDefinitionForAction"
+        "export async function getDefinitionForAction",
+        "return canStartOnDevice === true;",
+        "`${code}: Device history is not ready. Wait for synchronization and retry.`"
       ],
       "invocation_seams": [
         {
@@ -3283,6 +3296,304 @@
       "required_symbols": [
         "waitFor(() => assert.deepEqual(result.current, [false, true, true]))",
         "waitFor(() => assert.deepEqual(result.current, [false, false, false]))"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/channelAgents.accessPolicy.test.mjs",
+      "responsibility": "Task10 authoritative device capability integration and owning action coverage",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/channelAgents.ts",
+      "responsibility": "Task10 authoritative device capability integration and owning action coverage",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/agents/channelAgents.ts",
+          "callee_symbol": "getDefinitionForAction",
+          "invocation": "  if (fresh.personaId)\n    await getDefinitionForAction(fresh.personaId, \"createInstance\");",
+          "behavior_test": "channel capability refuses direct-attach before every mutation (definition_hosted_elsewhere)",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs",
+          "coverage": "Task10 production action behavior through synthetic IPC; deliberately removed and runtime-failed, restored"
+        },
+        {
+          "caller_path": "desktop/src/features/agents/channelAgents.ts",
+          "callee_symbol": "canReuseManagedAgentOnDevice",
+          "invocation": "  if (!canReuseManagedAgentOnDevice(fresh.canStartOnDevice))\n    throw new DefinitionCapabilityError(\"instance_not_runnable_on_device\");",
+          "behavior_test": "channel_reuse_never_attaches_copied_instance (direct-attach)",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs",
+          "coverage": "Task10 production action behavior through synthetic IPC; deliberately removed and runtime-failed, restored"
+        },
+        {
+          "caller_path": "desktop/src/features/agents/channelAgents.ts",
+          "callee_symbol": "listManagedAgents",
+          "invocation": "  const fresh = (await listManagedAgents()).find(\n    (agent) =>\n      normalizePubkey(agent.pubkey) === normalizePubkey(input.agent.pubkey),\n  );",
+          "behavior_test": "a vanished exact instance cannot attach a cached identity",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs",
+          "coverage": "Task10 production action behavior through synthetic IPC; deliberately removed and runtime-failed, restored"
+        },
+        {
+          "caller_path": "desktop/src/features/agents/channelAgents.ts",
+          "callee_symbol": "getDefinitionForAction",
+          "invocation": "  const definition = input.personaId\n    ? await getDefinitionForAction(input.personaId, \"createInstance\")\n    : undefined;",
+          "behavior_test": "channel capability refuses direct-provision before every mutation (definition_hosted_elsewhere)",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs",
+          "coverage": "Task10 production action behavior through synthetic IPC; deliberately removed and runtime-failed, restored"
+        },
+        {
+          "caller_path": "desktop/src/features/agents/channelAgents.ts",
+          "callee_symbol": "listManagedAgents",
+          "invocation": "const managedAgents = context ? await listManagedAgents() : undefined;",
+          "behavior_test": "channel refresh refuses stale allowed instance before access policy (false)",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs",
+          "coverage": "Task10 production action behavior through synthetic IPC; deliberately removed and runtime-failed, restored"
+        },
+        {
+          "caller_path": "desktop/src/features/agents/channelAgents.ts",
+          "callee_symbol": "canReuseManagedAgentOnDevice",
+          "invocation": "    const reusable = findReusablePersonaAgent(\n      managedAgents ?? [],\n      input.personaId,\n      context.channelMemberPubkeys,\n    );\n    if (reusable) {\n      if (!canReuseManagedAgentOnDevice(reusable.canStartOnDevice))\n        throw new DefinitionCapabilityError(\"instance_not_runnable_on_device\");",
+          "behavior_test": "channel_reuse_never_attaches_copied_instance (reuse)",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/channelAgents.accessPolicy.test.mjs",
+          "coverage": "Task10 owning runtime guard mutation with exact restoration; static fingerprint separately validates distinct site"
+        },
+        {
+          "caller_path": "desktop/src/features/agents/channelAgents.ts",
+          "callee_symbol": "canReuseManagedAgentOnDevice",
+          "invocation": "    const reusable = findReusableGenericAgent(\n      managedAgents ?? [],\n      input.runtime.command,\n      context.channelMemberPubkeys,\n    );\n    if (reusable) {\n      if (!canReuseManagedAgentOnDevice(reusable.canStartOnDevice))\n        throw new DefinitionCapabilityError(\"instance_not_runnable_on_device\");",
+          "behavior_test": "generic reuse also refuses missing exact-instance authority before access write",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/channelAgents.accessPolicy.test.mjs",
+          "coverage": "Task10 owning runtime guard mutation with exact restoration; static fingerprint separately validates distinct site"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/lib/instanceInputForDefinition.test.mjs",
+      "responsibility": "Task10 authoritative device capability integration and owning action coverage",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/lib/instanceInputForDefinition.ts",
+      "responsibility": "Task10 authoritative device capability integration and owning action coverage",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/agents/lib/instanceInputForDefinition.ts",
+          "callee_symbol": "requireDefinitionCapability",
+          "invocation": "  requireDefinitionCapability(persona, \"createInstance\");",
+          "behavior_test": "builder refuses before avatar upload even with provider intent",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs",
+          "coverage": "Task10 production action behavior through synthetic IPC; deliberately removed and runtime-failed, restored"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/ui/useManagedAgentActions.ts",
+      "responsibility": "Task10 authoritative device capability integration and owning action coverage",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/agents/ui/useManagedAgentActions.ts",
+          "callee_symbol": "getDefinitionForAction",
+          "invocation": "      persona = await getDefinitionForAction(persona.id, \"createInstance\");",
+          "behavior_test": "managed: all_builder_callers_observe_remote_refusal / pending_history_blocks_every_creation_path (definition_hosted_elsewhere)",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs",
+          "coverage": "Task10 production action behavior through synthetic IPC; deliberately removed and runtime-failed, restored"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/ui/usePersonaActions.ts",
+      "responsibility": "Task10 authoritative device capability integration and owning action coverage",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/agents/ui/usePersonaActions.ts",
+          "callee_symbol": "getDefinitionForAction",
+          "invocation": "await getDefinitionForAction(persona.id, \"createInstance\")",
+          "behavior_test": "persona: all_builder_callers_observe_remote_refusal / pending_history_blocks_every_creation_path (definition_hosted_elsewhere)",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs",
+          "coverage": "Task10 production action behavior through synthetic IPC; deliberately removed and runtime-failed, restored"
+        },
+        {
+          "caller_path": "desktop/src/features/agents/ui/usePersonaActions.ts",
+          "callee_symbol": "getDefinitionForAction",
+          "invocation": "      await getDefinitionForAction(persona.id, \"deleteDefinition\");",
+          "behavior_test": "persona: definition deletion refuses before team/cascade mutations (definition_hosted_elsewhere)",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs",
+          "coverage": "Task10 production action behavior through synthetic IPC; deliberately removed and runtime-failed, restored"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/ui/useTeamActions.ts",
+      "responsibility": "Task10 authoritative device capability integration and owning action coverage",
+      "is_new": false,
+      "required_symbols": [
+        "      actions.setActionErrorMessage(\n        result.failures\n          .map(({ name, error }) => `${name}: ${error}`)\n          .join(\"\\n\"),\n      );",
+        "    if (failures.length) actions.setActionErrorMessage(failures.join(\"\\n\"));"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/agents/ui/useTeamActions.ts",
+          "callee_symbol": "getDefinitionForAction",
+          "invocation": "        await getDefinitionForAction(id, \"deleteDefinition\");",
+          "behavior_test": "team: definition deletion refuses before team/cascade mutations (definition_hosted_elsewhere)",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs",
+          "coverage": "Task10 production action behavior through synthetic IPC; deliberately removed and runtime-failed, restored"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/useAgentManagement.ts",
+      "responsibility": "Task10 authoritative device capability integration and owning action coverage",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/agents/useAgentManagement.ts",
+          "callee_symbol": "getDefinitionForAction",
+          "invocation": "await getDefinitionForAction(persona.id, \"createInstance\")",
+          "behavior_test": "management: all_builder_callers_observe_remote_refusal / pending_history_blocks_every_creation_path (definition_hosted_elsewhere)",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs",
+          "coverage": "Task10 production action behavior through synthetic IPC; deliberately removed and runtime-failed, restored"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/onboarding/welcomeGuide.test.mjs",
+      "responsibility": "Task10 authoritative device capability integration and owning action coverage",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/onboarding/welcomeGuide.ts",
+      "responsibility": "Task10 authoritative device capability integration and owning action coverage",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/onboarding/welcomeGuide.ts",
+          "callee_symbol": "getDefinitionForAction",
+          "invocation": "  persona = await getDefinitionForAction(persona.id, \"createInstance\");",
+          "behavior_test": "Welcome builder re-reads its exact definition before producing instance input",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs",
+          "coverage": "Task10 production action behavior through synthetic IPC; deliberately removed and runtime-failed, restored"
+        },
+        {
+          "caller_path": "desktop/src/features/onboarding/welcomeGuide.ts",
+          "callee_symbol": "getDefinitionForAction",
+          "invocation": "      await getDefinitionForAction(starter.personaId, \"createInstance\");",
+          "behavior_test": "onboarding_and_team_skip_with_reason (definition_hosted_elsewhere)",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs",
+          "coverage": "Task10 production action behavior through synthetic IPC; deliberately removed and runtime-failed, restored"
+        },
+        {
+          "caller_path": "desktop/src/features/onboarding/welcomeGuide.ts",
+          "callee_symbol": "canReuseManagedAgentOnDevice",
+          "invocation": "      if (!canReuseManagedAgentOnDevice(existing.canStartOnDevice))\n        throw new DefinitionCapabilityError(\"instance_not_runnable_on_device\");",
+          "behavior_test": "Welcome refuses copied existing instance before runtime or access repair and membership",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs",
+          "coverage": "Task10 production action behavior through synthetic IPC; deliberately removed and runtime-failed, restored"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/profile/ui/UserProfilePanel.tsx",
+      "responsibility": "Task10 authoritative device capability integration and owning action coverage",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/profile/ui/UserProfilePanel.tsx",
+          "callee_symbol": "getDefinitionForAction",
+          "invocation": "      personaToStart = await getDefinitionForAction(\n        personaToStart.id,\n        \"createInstance\",\n      );",
+          "behavior_test": "profile: all_builder_callers_observe_remote_refusal / pending_history_blocks_every_creation_path (definition_hosted_elsewhere)",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs",
+          "coverage": "Task10 production action behavior through synthetic IPC; deliberately removed and runtime-failed, restored"
+        },
+        {
+          "caller_path": "desktop/src/features/profile/ui/UserProfilePanel.tsx",
+          "callee_symbol": "getDefinitionForAction",
+          "invocation": "        await getDefinitionForAction(personaToConfirm.id, \"deleteDefinition\");",
+          "behavior_test": "profile: definition deletion refuses before team/cascade mutations (definition_hosted_elsewhere)",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs",
+          "coverage": "Task10 production action behavior through synthetic IPC; deliberately removed and runtime-failed, restored"
+        },
+        {
+          "caller_path": "desktop/src/features/profile/ui/UserProfilePanel.tsx",
+          "callee_symbol": "getDefinitionForAction",
+          "invocation": "        await getDefinitionForAction(resolvedPersona.id, \"deleteDefinition\");",
+          "behavior_test": "built-in profile removal checks delete capability before cascade and deactivation",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/lib/deviceActionPaths.test.mjs src/features/agents/channelAgents.accessPolicy.test.mjs src/features/agents/lib/instanceInputForDefinition.test.mjs src/features/onboarding/welcomeGuide.test.mjs",
+          "coverage": "Task10 production action behavior through synthetic IPC; deliberately removed and runtime-failed, restored"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/api/tauri.ts",
+      "responsibility": "Task10 authoritative device capability integration and owning action coverage",
+      "is_new": false,
+      "required_symbols": [
+        "canStartOnDevice: agent.can_start_on_device,",
+        "can_start_on_device?: boolean;"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/lib/deviceActionPaths.test.mjs",
+      "responsibility": "Task10 authoritative device capability integration and owning action coverage",
+      "is_new": true,
+      "required_symbols": [
+        "production builder caller inventory is exact"
       ],
       "invocation_seams": [],
       "verification_commands": [

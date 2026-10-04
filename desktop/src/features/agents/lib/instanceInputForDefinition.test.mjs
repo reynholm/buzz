@@ -51,6 +51,12 @@ const buzzAgentRuntime = {
 
 function persona(overrides = {}) {
   return {
+    home: { kind: "local", label: "Here", instancePubkeys: [] },
+    capabilities: {
+      canCreateInstance: true,
+      canDeleteDefinition: true,
+      blockedReason: null,
+    },
     id: "p-1",
     displayName: "Test Agent",
     systemPrompt: "prompt",
