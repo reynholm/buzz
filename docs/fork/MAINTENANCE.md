@@ -201,3 +201,53 @@ two-physical-device acceptance. The real read-only check on 2026-10-04 found no
 stable tag newer than `desktop-v0.5.26`; local `prepare` returned `no_update`, with
 empty stdout and no publication or accepted-ref/mirror changes. Repeat with the
 explicit full Python suite and registry validation before any real update.
+
+## Immutable Apple Silicon candidates
+
+After the exact clean upstream baseline succeeds and the candidate source is
+committed and clean, build locally with the pinned Hermit tools:
+
+```sh
+. ./bin/activate-hermit
+scripts/fork/build-candidate.sh --candidate-sha <full-40-character-SHA> --baseline-report <baseline.json>
+```
+
+The producer accepts M2's successful baseline JSON only when `upstream_sha`
+matches the registry's exact `base_sha`, gate commands are present, and every
+real arm64 app/sidecar plus DMG has a nonzero size and SHA256 receipt. An earlier
+baseline for another selected tag fails closed. `BUZZ_FORK_REVISION` defaults to
+`1`; maintainers can explicitly supply the next positive fork number. The Actions
+source passes owner-configured `FORK_REVISION` with the same default. This number
+labels candidate builds and does not create a release tag.
+
+The script checks the exact clean source both before and after building, clears
+inherited updater/demo/capability/provider/relay build inputs, disables Cargo
+incremental compilation, builds all six real arm64 sidecars, verifies them before
+packaging, and runs upstream's release recipe with `CI=true`. Version `0.5.26`
+and identifier `xyz.block.buzz.app` remain upstream values. Partial fork identity
+variables, malformed SHAs and invalid fork numbers fail during compilation.
+
+`--fork-artifact-probe` on the actual built executable returns the same generated
+Tauri context used at app startup, the compile-time identity, updater compile
+flag and demo namespace. It exits before runtime/GUI/data/keychain startup.
+Verification compares actual plist and embedded config with the clean upstream
+config, rejects configured updater endpoints/keys/activation in generated config
+or JSON/plist resources, rejects demo production candidates, and checks executable
+thin arm64 Mach-O binaries with their sizes, modes and hashes. About requests the
+native immutable identity and shows its fork number and full SHA beside the
+unchanged upstream version. Upstream builds return no fork identity.
+
+Verified output is kept in `artifacts/fork/<candidate-sha>/` with an app archive,
+DMG, manifest, baseline receipt, build log and `SHA256SUMS`. Existing output is
+preserved rather than overwritten; failed build logs remain diagnostic evidence.
+Run `shasum -a 256 -c SHA256SUMS` in that directory before sharing. A later source
+commit requires rebuilding/reverification for the new SHA; never relabel earlier
+assets. These unsigned candidate assets make no Developer ID/notarization promise.
+
+The full Python gate remains mandatory in every candidate workflow. Native probe,
+synthetic IPC/About tests and local packaging prove different boundaries. Native
+GUI/data migration/keychain prompt, owner installation, two physical devices,
+hosted workflow, default-branch schedule and next real upstream tag acceptance
+remain explicit external gates until their corresponding evidence exists. Native
+GUI exercises must use the existing named-demo build recipe and isolated fixtures;
+never launch the production candidate against the owner's data or keychain.

@@ -41,6 +41,16 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('workflow_dispatch', workflow['on'])
         self.assertEqual(set(workflow['permissions']), {'contents', 'pull-requests'})
 
+    def test_candidate_uses_exact_m3_producer_and_verified_output(self):
+        steps = self.workflow()['jobs']['candidate']['steps']
+        build = next(step for step in steps if step.get('name') == 'M3 real candidate build and verification')
+        self.assertEqual(build['env']['CANDIDATE_SHA'], '${{ steps.prepare.outputs.candidate_sha }}')
+        self.assertIn('scripts/fork/build-candidate.sh --candidate-sha "$CANDIDATE_SHA" --baseline-report "$GITHUB_WORKSPACE/baseline.json"', build['run'])
+        self.assertIn('unset BUZZ_UPDATER_ENDPOINT BUZZ_UPDATER_PUBLIC_KEY', build['run'])
+        upload = next(step for step in steps if step.get('name') == 'Upload verified candidate artifacts')
+        self.assertEqual(upload['with']['path'], '${{ steps.prepare.outputs.worktree }}/artifacts/fork/*')
+        self.assertEqual(upload['with']['if-no-files-found'], 'error')
+
     def test_failed_clean_target_never_executes_candidate_steps(self):
         # Execute an injected baseline failure and evaluate the actual job guard.
         # This local graph fixture exercises ordering, not GitHub runner acceptance.

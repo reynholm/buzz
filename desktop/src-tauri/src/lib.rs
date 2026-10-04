@@ -57,6 +57,7 @@ mod util;
 #[cfg(target_os = "linux")]
 pub mod webkit_rendering;
 use app_state::{build_app_state, resolve_persisted_identity, AppState};
+pub use build_identity::print_fork_artifact_probe_if_requested;
 use builderlab::*;
 #[doc(hidden)]
 pub use commands::print_agent_access_owner_only_probe_if_requested;
@@ -98,6 +99,10 @@ use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 use tauri_plugin_window_state::StateFlags;
 #[cfg(target_os = "macos")]
 use tray_menu::show_main_window;
+fn desktop_context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // mesh-llm async chains overflow tokio's default 2 MiB stacks; run on 8 MiB like upstream.
@@ -536,6 +541,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            build_identity::get_fork_build_identity,
             commands::get_device_identity,
             commands::set_device_label,
             commands::begin_device_home_sync,
@@ -917,7 +923,7 @@ pub fn run() {
             set_admin_origin,
             admin_discover_origin,
         ])
-        .build(tauri::generate_context!())
+        .build(desktop_context())
         .expect("error while building tauri application");
     let shutdown_done = Arc::new(AtomicBool::new(false));
 

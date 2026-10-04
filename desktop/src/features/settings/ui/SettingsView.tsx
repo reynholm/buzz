@@ -2,6 +2,12 @@ import * as React from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { AlertCircle, ArrowLeft, LoaderCircle, RefreshCw } from "lucide-react";
 
+import {
+  forkBuildLabel,
+  getForkBuildIdentity,
+  type ForkBuildIdentity,
+} from "@/shared/api/tauriBuildIdentity";
+
 import { useMyRelayMembershipLookupQuery } from "@/features/community-members/hooks";
 import {
   canManageCommunityMembers,
@@ -160,6 +166,8 @@ export function SettingsView({
     });
   }, [myMembershipQuery.data, featureState]);
 
+  const [forkIdentity, setForkIdentity] =
+    React.useState<ForkBuildIdentity | null>(null);
   const [isLoaded, setIsLoaded] = React.useState(false);
   const [appVersion, setAppVersion] = React.useState<string | null>(null);
 
@@ -169,7 +177,16 @@ export function SettingsView({
   }, []);
 
   React.useEffect(() => {
-    void getVersion().then(setAppVersion);
+    let active = true;
+    void getVersion().then((version) => {
+      if (active) setAppVersion(version);
+    });
+    void getForkBuildIdentity().then((identity) => {
+      if (active) setForkIdentity(identity);
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   React.useEffect(() => {
@@ -310,6 +327,14 @@ export function SettingsView({
         </SidebarContent>
 
         <SidebarFooter>
+          {forkIdentity ? (
+            <p
+              className="break-all px-2 text-xs text-sidebar-foreground/45"
+              data-testid="settings-fork-identity"
+            >
+              {forkBuildLabel(forkIdentity)}
+            </p>
+          ) : null}
           {appVersion ? (
             <p
               className="px-2 pb-1 text-xs text-sidebar-foreground/45"

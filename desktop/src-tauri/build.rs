@@ -41,6 +41,34 @@ fn main() {
         println!("cargo:rustc-env=BUZZ_DESKTOP_BUILD_DEMO_SLUG={slug}");
     }
 
+    let fork_keys = ["BUZZ_FORK_REVISION", "BUZZ_FORK_SHA", "BUZZ_FORK_BASE_TAG"];
+    for key in fork_keys {
+        println!("cargo:rerun-if-env-changed={key}");
+    }
+    let fork_values = fork_keys.map(|key| std::env::var(key).ok());
+    if fork_values.iter().any(Option::is_some) {
+        let [Some(revision), Some(sha), Some(base_tag)] = fork_values else {
+            panic!("all three BUZZ_FORK identity variables must be set together");
+        };
+        if revision.parse::<u32>().is_err()
+            || revision.starts_with('0')
+            || sha.len() != 40
+            || !sha
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            || !base_tag.starts_with("desktop-v")
+            || base_tag[9..].split('.').count() != 3
+            || !base_tag[9..]
+                .split('.')
+                .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+        {
+            panic!("invalid immutable BUZZ_FORK identity");
+        }
+        println!("cargo:rustc-env=BUZZ_FORK_REVISION={revision}");
+        println!("cargo:rustc-env=BUZZ_FORK_SHA={sha}");
+        println!("cargo:rustc-env=BUZZ_FORK_BASE_TAG={base_tag}");
+    }
+
     // Explicit owner-only agent-access capability. Release packaging sets this
     // presence-only marker; OSS/custom builds leave agent access configurable.
     if std::env::var("BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY").is_ok() {

@@ -2,6 +2,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    if buzz_lib::print_fork_artifact_probe_if_requested() {
+        return;
+    }
     if buzz_lib::print_agent_access_owner_only_probe_if_requested() {
         return;
     }

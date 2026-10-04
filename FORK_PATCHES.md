@@ -665,6 +665,8 @@ New module: `false`.
 - Required symbol: `commands::invalidate_device_home_sync,`
 - Required symbol: `device_identity::initialize_device_authority(&app_handle)`
 - Required symbol: `commands::set_device_label,`
+- Required symbol: `.build(desktop_context())`
+- Required symbol: `build_identity::get_fork_build_identity,`
 - Invocation: `desktop/src-tauri/src/lib.rs` → `run_boot_backfill_with`; exact call `managed_agents::restore::run_boot_backfill_with(recovery_mode, || {
                 backfill_persona_snapshots(&app_handle)
             }) {
@@ -680,6 +682,9 @@ Separate host proof service for production and named demo builds
 New module: `false`.
 
 - Required symbol: `pub(crate) fn device_host_service`
+- Required symbol: `struct ForkBuildIdentity`
+- Required symbol: `fn get_fork_build_identity()`
+- Required symbol: `pub fn print_fork_artifact_probe_if_requested()`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/src/secret_store.rs`
@@ -2319,3 +2324,105 @@ Actual JSON Actions graph ordering and injected clean-target failure regression 
 New module: `true`.
 
 - Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `.gitignore`
+
+Exact Apple Silicon fork candidate artifact provenance and immutable About identity
+
+New module: `false`.
+
+- Required symbol: `/artifacts/fork/`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `scripts/fork/build-candidate.sh`
+
+Exact Apple Silicon fork candidate artifact provenance and immutable About identity
+
+New module: `true`.
+
+- Required symbol: `assert_source`
+- Required symbol: `unset BUZZ_UPDATER_ENDPOINT BUZZ_UPDATER_PUBLIC_KEY BUZZ_BUILD_DEMO_SLUG`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `scripts/fork/verify_artifact.py`
+
+Exact Apple Silicon fork candidate artifact provenance and immutable About identity
+
+New module: `true`.
+
+- Required symbol: `def verify_artifact(`
+- Required symbol: `def load_baseline(`
+- Required symbol: `def probe_artifact(`
+- Invocation: `scripts/fork/verify_artifact.py` → `probe_artifact`; exact call `probe = probe_artifact(binaries / executable_name)`; behavior test `test_identity_matches_candidate`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `scripts/fork/tests/test_artifact.py`
+
+Exact Apple Silicon fork candidate artifact provenance and immutable About identity
+
+New module: `true`.
+
+- Required symbol: `test_placeholder_or_wrong_arch_is_rejected`
+- Required symbol: `test_bundled_updater_is_rejected`
+- Required symbol: `test_identity_matches_candidate`
+- Required symbol: `test_actual_build_command_fails_closed_before_artifacts`
+- Required symbol: `test_dirty_source_is_rejected_before_build_side_effects`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `desktop/src/shared/api/tauriBuildIdentity.ts`
+
+Exact Apple Silicon fork candidate artifact provenance and immutable About identity
+
+New module: `true`.
+
+- Required symbol: `export async function getForkBuildIdentity()`
+- Required symbol: `export function forkBuildLabel(`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/shared/api/tauriBuildIdentity.test.mjs`
+
+Exact Apple Silicon fork candidate artifact provenance and immutable About identity
+
+New module: `true`.
+
+- Required symbol: `About preserves upstream version`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/settings/ui/SettingsViewBuildIdentity.jsdom-test.mjs`
+
+Exact Apple Silicon fork candidate artifact provenance and immutable About identity
+
+New module: `true`.
+
+- Required symbol: `About renders native fork identity beside unchanged upstream version`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/settings/ui/SettingsView.tsx`
+
+Exact Apple Silicon fork candidate artifact provenance and immutable About identity
+
+New module: `false`.
+
+- Required symbol: `data-testid="settings-fork-identity"`
+- Invocation: `desktop/src/features/settings/ui/SettingsView.tsx` → `getForkBuildIdentity`; exact call `void getForkBuildIdentity().then((identity) => {`; behavior test `About renders native fork identity beside unchanged upstream version`; verify `just desktop-test desktop-typecheck`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src-tauri/build.rs`
+
+Exact Apple Silicon fork candidate artifact provenance and immutable About identity
+
+New module: `false`.
+
+- Required symbol: `cargo:rerun-if-env-changed={key}`
+- Required symbol: `cargo:rustc-env=BUZZ_FORK_SHA={sha}`
+- Verify: `just desktop-tauri-test desktop-tauri-check desktop-tauri-clippy desktop-tauri-fmt-check`
+
+## `desktop/src-tauri/src/main.rs`
+
+Exact Apple Silicon fork candidate artifact provenance and immutable About identity
+
+New module: `false`.
+
+- Required symbol: `buzz_lib::print_fork_artifact_probe_if_requested()`
+- Invocation: `desktop/src-tauri/src/main.rs` → `print_fork_artifact_probe_if_requested`; exact call `if buzz_lib::print_fork_artifact_probe_if_requested() {`; behavior test `test_probe_uses_early_readonly_command`; verify `just desktop-tauri-test`
+- Verify: `just desktop-tauri-test desktop-tauri-check desktop-tauri-clippy desktop-tauri-fmt-check`

@@ -939,7 +939,9 @@
         "commands::finish_device_home_sync,",
         "commands::invalidate_device_home_sync,",
         "device_identity::initialize_device_authority(&app_handle)",
-        "commands::set_device_label,"
+        "commands::set_device_label,",
+        ".build(desktop_context())",
+        "build_identity::get_fork_build_identity,"
       ],
       "invocation_seams": [
         {
@@ -960,7 +962,10 @@
       "responsibility": "Separate host proof service for production and named demo builds",
       "is_new": false,
       "required_symbols": [
-        "pub(crate) fn device_host_service"
+        "pub(crate) fn device_host_service",
+        "struct ForkBuildIdentity",
+        "fn get_fork_build_identity()",
+        "pub fn print_fork_artifact_probe_if_requested()"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -3914,6 +3919,159 @@
       "invocation_seams": [],
       "verification_commands": [
         "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": ".gitignore",
+      "responsibility": "Exact Apple Silicon fork candidate artifact provenance and immutable About identity",
+      "is_new": false,
+      "required_symbols": [
+        "/artifacts/fork/"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "scripts/fork/build-candidate.sh",
+      "responsibility": "Exact Apple Silicon fork candidate artifact provenance and immutable About identity",
+      "is_new": true,
+      "required_symbols": [
+        "assert_source",
+        "unset BUZZ_UPDATER_ENDPOINT BUZZ_UPDATER_PUBLIC_KEY BUZZ_BUILD_DEMO_SLUG"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "scripts/fork/verify_artifact.py",
+      "responsibility": "Exact Apple Silicon fork candidate artifact provenance and immutable About identity",
+      "is_new": true,
+      "required_symbols": [
+        "def verify_artifact(",
+        "def load_baseline(",
+        "def probe_artifact("
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "scripts/fork/verify_artifact.py",
+          "callee_symbol": "probe_artifact",
+          "invocation": "probe = probe_artifact(binaries / executable_name)",
+          "behavior_test": "test_identity_matches_candidate",
+          "verification_command": "python3 -m unittest discover -s scripts/fork/tests -v"
+        }
+      ],
+      "verification_commands": [
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "scripts/fork/tests/test_artifact.py",
+      "responsibility": "Exact Apple Silicon fork candidate artifact provenance and immutable About identity",
+      "is_new": true,
+      "required_symbols": [
+        "test_placeholder_or_wrong_arch_is_rejected",
+        "test_bundled_updater_is_rejected",
+        "test_identity_matches_candidate",
+        "test_actual_build_command_fails_closed_before_artifacts",
+        "test_dirty_source_is_rejected_before_build_side_effects"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/api/tauriBuildIdentity.ts",
+      "responsibility": "Exact Apple Silicon fork candidate artifact provenance and immutable About identity",
+      "is_new": true,
+      "required_symbols": [
+        "export async function getForkBuildIdentity()",
+        "export function forkBuildLabel("
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/api/tauriBuildIdentity.test.mjs",
+      "responsibility": "Exact Apple Silicon fork candidate artifact provenance and immutable About identity",
+      "is_new": true,
+      "required_symbols": [
+        "About preserves upstream version"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/settings/ui/SettingsViewBuildIdentity.jsdom-test.mjs",
+      "responsibility": "Exact Apple Silicon fork candidate artifact provenance and immutable About identity",
+      "is_new": true,
+      "required_symbols": [
+        "About renders native fork identity beside unchanged upstream version"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/settings/ui/SettingsView.tsx",
+      "responsibility": "Exact Apple Silicon fork candidate artifact provenance and immutable About identity",
+      "is_new": false,
+      "required_symbols": [
+        "data-testid=\"settings-fork-identity\""
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/settings/ui/SettingsView.tsx",
+          "callee_symbol": "getForkBuildIdentity",
+          "invocation": "void getForkBuildIdentity().then((identity) => {",
+          "behavior_test": "About renders native fork identity beside unchanged upstream version",
+          "verification_command": "just desktop-test desktop-typecheck"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/build.rs",
+      "responsibility": "Exact Apple Silicon fork candidate artifact provenance and immutable About identity",
+      "is_new": false,
+      "required_symbols": [
+        "cargo:rerun-if-env-changed={key}",
+        "cargo:rustc-env=BUZZ_FORK_SHA={sha}"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check desktop-tauri-clippy desktop-tauri-fmt-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/main.rs",
+      "responsibility": "Exact Apple Silicon fork candidate artifact provenance and immutable About identity",
+      "is_new": false,
+      "required_symbols": [
+        "buzz_lib::print_fork_artifact_probe_if_requested()"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/main.rs",
+          "callee_symbol": "print_fork_artifact_probe_if_requested",
+          "invocation": "if buzz_lib::print_fork_artifact_probe_if_requested() {",
+          "behavior_test": "test_probe_uses_early_readonly_command",
+          "verification_command": "just desktop-tauri-test"
+        }
+      ],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check desktop-tauri-clippy desktop-tauri-fmt-check"
       ]
     }
   ]
