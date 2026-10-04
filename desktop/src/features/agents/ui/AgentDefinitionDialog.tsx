@@ -783,20 +783,20 @@ export function AgentDefinitionDialog({
         ) : (
           <div className="space-y-1 text-sm text-muted-foreground">
             <p>
-              Работает на:{" "}
+              Runs on:{" "}
               {editedPersona?.home?.label?.trim() ||
                 (editedPersona?.home?.kind === "remote"
-                  ? "На другом устройстве"
-                  : "Размещение неизвестно")}
+                  ? "On another device"
+                  : "Location unknown")}
             </p>
             <p>
-              Разрешить запуск на других моих устройствах:{" "}
+              Allow running on my other devices:{" "}
               {!editedPersona
-                ? "неизвестно"
+                ? "unknown"
                 : editedPersona.shareAcrossDevices === true
-                  ? "включено"
-                  : "выключено"}
-              . Выбирается при создании.
+                  ? "enabled"
+                  : "disabled"}
+              . Set during creation.
             </p>
           </div>
         )}

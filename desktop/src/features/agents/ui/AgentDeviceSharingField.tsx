@@ -23,11 +23,11 @@ export function AgentDeviceSharingField({
           onChange={(event) => onChange(event.target.checked)}
           type="checkbox"
         />
-        Разрешить запуск на других моих устройствах
+        Allow running on my other devices
       </label>
       <p className="text-sm text-muted-foreground" id={`${id}-help`}>
-        При включении на другой машине можно создать отдельный экземпляр этого
-        агента
+        When enabled, you can create a separate instance of this agent on
+        another device
       </p>
     </div>
   );

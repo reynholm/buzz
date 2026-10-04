@@ -28,17 +28,16 @@ export function PersonaRemoteRuntime({ persona }: { persona: AgentPersona }) {
     >
       {remote ? (
         <p>
-          {label ? `На устройстве ${label}` : "На другом устройстве"} ·{" "}
-          {online ? "в сети" : known ? "не в сети" : "связь неизвестна"}
+          {label ? `On device ${label}` : "On another device"} ·{" "}
+          {online ? "online" : known ? "offline" : "connection unknown"}
         </p>
       ) : reason === "device_home_sync_pending" ? (
-        <p role="status">Проверяем размещение агента</p>
+        <p role="status">Checking where this agent runs</p>
       ) : (
         <div className="space-y-1">
           <p role="alert">
-            Не удалось проверить размещение агента. Проверьте подключение и
-            обновите состояние. Синхронизация истории возобновится при
-            подключении.
+            Could not verify where this agent runs. Check your connection and
+            refresh the status. History sync will resume when connected.
           </p>
           <button
             className="text-primary underline"
@@ -47,7 +46,7 @@ export function PersonaRemoteRuntime({ persona }: { persona: AgentPersona }) {
             }
             type="button"
           >
-            Обновить состояние
+            Refresh status
           </button>
         </div>
       )}

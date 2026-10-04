@@ -83,7 +83,7 @@ function mount() {
 test("label_keyboard_save_reports_queued", async () => {
   mount();
   const input = await screen.findByRole("textbox", {
-    name: "Имя этого устройства",
+    name: "This device’s name",
   });
   await waitFor(() => assert.equal(input.value, "Laptop A"));
   fireEvent.change(input, { target: { value: "  Laptop B  " } });
@@ -93,23 +93,23 @@ test("label_keyboard_save_reports_queued", async () => {
   fireEvent.submit(input.closest("form"));
   assert.ok(await screen.findByRole("status"));
   await waitFor(() =>
-    assert.match(screen.getByRole("status").textContent, /очереди/),
+    assert.match(screen.getByRole("status").textContent, /queued/),
   );
   assert.deepEqual(commands.find(([cmd]) => cmd === "set_device_label")[1], {
     label: "Laptop B",
   });
-  assert.doesNotMatch(screen.getByRole("status").textContent, /завершено/);
+  assert.doesNotMatch(screen.getByRole("status").textContent, /complete/);
 });
 
 test("failed_label_save_is_visible_and_retryable", async () => {
   mount();
   const input = await screen.findByRole("textbox", {
-    name: "Имя этого устройства",
+    name: "This device’s name",
   });
   await waitFor(() => assert.equal(input.value, "Laptop A"));
   failure = "durable enqueue failed";
   fireEvent.change(input, { target: { value: "Laptop B" } });
-  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
   assert.match(
     (await screen.findByRole("alert")).textContent,
     /durable enqueue failed/,
@@ -119,22 +119,19 @@ test("failed_label_save_is_visible_and_retryable", async () => {
   publication = "complete";
   fireEvent.submit(input.closest("form"));
   await waitFor(() =>
-    assert.match(screen.getByRole("status").textContent, /завершено/),
+    assert.match(screen.getByRole("status").textContent, /complete/),
   );
 });
 
 test("empty_or_whitespace_label_never_invokes_write", async () => {
   mount();
   const input = await screen.findByRole("textbox", {
-    name: "Имя этого устройства",
+    name: "This device’s name",
   });
   await waitFor(() => assert.equal(input.value, "Laptop A"));
   for (const value of ["", "   "]) {
     fireEvent.change(input, { target: { value } });
-    assert.equal(
-      screen.getByRole("button", { name: "Сохранить" }).disabled,
-      true,
-    );
+    assert.equal(screen.getByRole("button", { name: "Save" }).disabled, true);
     await act(async () => fireEvent.submit(input.closest("form")));
   }
   assert.equal(
@@ -151,9 +148,9 @@ test("identity_read_error_retains_retry_affordance", async () => {
     /keychain unavailable/,
   );
   readFailure = null;
-  fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   const input = await screen.findByRole("textbox", {
-    name: "Имя этого устройства",
+    name: "This device’s name",
   });
   await waitFor(() => assert.equal(input.value, "Laptop A"));
 });

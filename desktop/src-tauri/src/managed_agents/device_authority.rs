@@ -43,7 +43,7 @@ pub(crate) fn authorize_instance_authority(
             definition
                 .origin_device_label
                 .as_deref()
-                .unwrap_or("На другом устройстве")
+                .unwrap_or("On another device")
         ));
     }
     Ok(())

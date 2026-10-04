@@ -485,7 +485,7 @@ function StandaloneAgentCard({
       statusBadge={
         agent.canStartOnDevice !== true ? (
           <span className="text-xs text-muted-foreground">
-            Запуск на этом устройстве недоступен
+            Running on this device is unavailable
           </span>
         ) : agent.personaOrphaned ? (
           <Badge className="gap-1" variant="warning">

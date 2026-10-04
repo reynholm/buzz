@@ -36,14 +36,11 @@ export function DeviceIdentitySettingsCard() {
   }
 
   return (
-    <SettingsOptionGroup
-      title="Устройство"
-      data-testid="device-identity-settings"
-    >
+    <SettingsOptionGroup title="Device" data-testid="device-identity-settings">
       <SettingsOptionRow>
         <form className="w-full space-y-3" onSubmit={submit}>
           <label className="text-sm font-medium" htmlFor={id}>
-            Имя этого устройства
+            This device’s name
           </label>
           <div className="flex items-center gap-2">
             <Input
@@ -59,11 +56,11 @@ export function DeviceIdentitySettingsCard() {
               disabled={!identity.data || !label.trim() || save.isPending}
               type="submit"
             >
-              {save.isPending ? "Сохраняем…" : "Сохранить"}
+              {save.isPending ? "Saving…" : "Save"}
             </Button>
           </div>
           {identity.isPending ? (
-            <p role="status">Загружаем имя устройства…</p>
+            <p role="status">Loading device name…</p>
           ) : null}
           {identity.isError ? (
             <div className="space-y-2">
@@ -71,7 +68,7 @@ export function DeviceIdentitySettingsCard() {
                 {identity.error.message}
               </p>
               <Button onClick={() => void identity.refetch()} type="button">
-                Повторить
+                Retry
               </Button>
             </div>
           ) : null}
@@ -83,8 +80,8 @@ export function DeviceIdentitySettingsCard() {
           {save.isSuccess ? (
             <p className="text-sm text-muted-foreground" role="status">
               {save.data.publication === "queued"
-                ? "Имя сохранено. Обновление других устройств в очереди синхронизации."
-                : "Имя сохранено. Обновление завершено."}
+                ? "Name saved. The update is queued for sync to your other devices."
+                : "Name saved. The update is complete."}
             </p>
           ) : null}
         </form>

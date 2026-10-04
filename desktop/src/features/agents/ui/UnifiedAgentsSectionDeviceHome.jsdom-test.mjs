@@ -203,7 +203,7 @@ test("create_toggle_defaults_off_and_survives_submit", async () => {
     ),
   );
   const checkbox = await screen.findByRole("checkbox", {
-    name: "Разрешить запуск на других моих устройствах",
+    name: "Allow running on my other devices",
   });
   assert.equal(checkbox.checked, false);
   await waitFor(() =>
@@ -221,7 +221,7 @@ test("create_toggle_defaults_off_and_survives_submit", async () => {
   assert.equal(submitted[1].shareAcrossDevices, true);
   assert.ok(
     screen.getByText(
-      "При включении на другой машине можно создать отдельный экземпляр этого агента",
+      "When enabled, you can create a separate instance of this agent on another device",
     ),
   );
 });
@@ -242,7 +242,7 @@ test("duplicate_and_draft_default_off", async () => {
     assert.equal(
       (
         await screen.findByRole("checkbox", {
-          name: "Разрешить запуск на других моих устройствах",
+          name: "Allow running on my other devices",
         })
       ).checked,
       false,
@@ -288,14 +288,14 @@ test("remote_card_has_no_start_or_delete", async () => {
 test("presence_uses_pubkey_not_name", async () => {
   presence = { [OTHER]: "online" };
   const view = mount(card());
-  assert.ok(await screen.findByText("На устройстве Laptop A · не в сети"));
+  assert.ok(await screen.findByText("On device Laptop A · offline"));
   assert.deepEqual(calls.find(([cmd]) => cmd === "get_presence")[1].pubkeys, [
     PK,
   ]);
   presence = { [PK]: "away", [OTHER]: "offline" };
   for (const client of clients)
     await act(() => client.invalidateQueries({ queryKey: ["presence"] }));
-  assert.ok(await screen.findByText("На устройстве Laptop A · в сети"));
+  assert.ok(await screen.findByText("On device Laptop A · online"));
   view.rerender(
     React.createElement(
       QueryClientProvider,
@@ -303,7 +303,7 @@ test("presence_uses_pubkey_not_name", async () => {
       card({ ...persona, home: { ...persona.home, label: null } }),
     ),
   );
-  assert.ok(await screen.findByText(/На другом устройстве/));
+  assert.ok(await screen.findByText(/On another device/));
 });
 
 test("pending_failed_and_missing_projection_hide_actions_but_allow_sync_retry", async () => {
@@ -332,12 +332,10 @@ test("pending_failed_and_missing_projection_hide_actions_but_allow_sync_retry", 
       "unauthorized Start must be absent",
     );
     if (reason === "device_home_sync_pending")
-      assert.ok(screen.getByText("Проверяем размещение агента"));
+      assert.ok(screen.getByText("Checking where this agent runs"));
     else {
-      assert.ok(screen.getByRole("button", { name: "Обновить состояние" }));
-      fireEvent.click(
-        screen.getByRole("button", { name: "Обновить состояние" }),
-      );
+      assert.ok(screen.getByRole("button", { name: "Refresh status" }));
+      fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
       await waitFor(() =>
         assert.ok(calls.some(([cmd]) => cmd === "list_personas")),
       );
@@ -413,14 +411,12 @@ test("edit_policy_is_readonly_and_omitted_from_update", async () => {
   );
   assert.ok(
     !screen.queryByRole("checkbox", {
-      name: "Разрешить запуск на других моих устройствах",
+      name: "Allow running on my other devices",
     }),
     "edit must not expose policy toggle",
   );
-  assert.ok(await screen.findByText("Работает на: Laptop A"));
-  assert.ok(
-    screen.getByText(/Разрешить запуск на других моих устройствах: выключено/),
-  );
+  assert.ok(await screen.findByText("Runs on: Laptop A"));
+  assert.ok(screen.getByText(/Allow running on my other devices: disabled/));
   await waitFor(() =>
     assert.equal(screen.getByRole("button", { name: "Save" }).disabled, false),
   );
@@ -435,7 +431,7 @@ test("failed_or_disconnected_presence_is_unknown_without_restoring_actions", asy
     if (!failed) relayClient.getConnectionState = () => "disconnected";
     mount(card());
     assert.ok(
-      await screen.findByText("На устройстве Laptop A · связь неизвестна"),
+      await screen.findByText("On device Laptop A · connection unknown"),
     );
     assert.ok(!screen.queryByRole("button", { name: "Start Agent" }));
     cleanup();

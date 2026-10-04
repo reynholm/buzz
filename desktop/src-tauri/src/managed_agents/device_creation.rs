@@ -62,7 +62,7 @@ pub(crate) fn authorize_definition_action(
             .unwrap_or("device_home_sync_failed"),
         view.home
             .and_then(|h| h.label)
-            .unwrap_or_else(|| "На другом устройстве".into())
+            .unwrap_or_else(|| "On another device".into())
     ))
 }
 /// Authorize before executing any hydration, process, mint or persistence effect.
