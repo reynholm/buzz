@@ -204,8 +204,8 @@ def verify_promotion(repo: Path, candidate_sha: str, merged_sha: str,
         record = acceptance.get('evidence', {}).get(name, {})
         if record.get('accepted') is not True or not isinstance(record.get('reference'), str) or not record['reference'].strip():
             raise ValueError('required acceptance evidence missing: ' + name)
-    if git(repo, 'merge-base', '--is-ancestor', merged_sha, 'refs/heads/fork/main', check=False).returncode:
-        raise ValueError('merged commit is not on accepted fork/main')
+    if git(repo, 'merge-base', '--is-ancestor', merged_sha, 'refs/heads/main', check=False).returncode:
+        raise ValueError('merged commit is not on accepted main')
     tag = base_tag.replace('desktop-', 'fork-') + '-' + revision
     existing = git(repo, 'rev-parse', '--verify', 'refs/tags/' + tag + '^{commit}', check=False)
     if existing.returncode == 0 and existing.stdout.strip() != merged_sha:
@@ -226,7 +226,7 @@ def verify_owner_merge(promotion: Promotion, gh):
             or pr.get('head', {}).get('sha') != promotion.candidate_sha
             or pr.get('head', {}).get('ref') != promotion.branch
             or pr.get('head', {}).get('repo', {}).get('full_name') != REPOSITORY
-            or pr.get('base', {}).get('ref') != 'fork/main'
+            or pr.get('base', {}).get('ref') != 'main'
             or pr.get('base', {}).get('repo', {}).get('full_name') != REPOSITORY):
         raise ValueError('GitHub does not attest this owner-merged candidate PR')
 
@@ -264,9 +264,9 @@ def publish_promotion(repo: Path, candidate_sha: str, merged_sha: str, manifest:
                                                     'git@github.com:reynholm/buzz.git'):
             raise ValueError('real promotion requires owner evidence and reynholm/buzz origin')
         verify_owner_merge(promotion, gh)
-        accepted = remote_ref(repo, 'refs/heads/fork/main')
+        accepted = remote_ref(repo, 'refs/heads/main')
         if accepted != merged_sha:
-            raise ValueError('remote accepted fork/main must be the exact merged commit')
+            raise ValueError('remote accepted main must be the exact merged commit')
         ref = 'refs/tags/' + promotion.tag
         existing = remote_ref(repo, ref)
         if existing and existing != merged_sha:
