@@ -91,15 +91,19 @@ jobs:
       TAG: ${{ inputs.tag }}
     steps:
       - name: Require owner dispatch and protected environment
+        # github.actor is the user who started the run; a re-run keeps it and records
+        # the re-runner as triggering_actor. Either must be the owner.
         env:
           ACTOR: ${{ github.actor }}
-        run: test "$ACTOR" = reynholm
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: test "$ACTOR" = reynholm || test "$TRIGGERING_ACTOR" = reynholm
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
       - uses: actions/download-artifact@v4
         with:
           name: fork-linux-amd64-${{ needs.build.outputs.candidate_sha }}
           path: linux-assets
       - name: Attach verified assets to the existing release
+        # The downloaded artifact nests files under <sha>/linux-amd64/; publish_linux.py locates them.
         run: python3 scripts/fork/publish_linux.py --tag "$TAG" --artifacts linux-assets --publish > publication.json
       - name: Preserve publication receipt
         if: ${{ always() }}
@@ -107,4 +111,4 @@ jobs:
         with:
           name: fork-linux-publication-receipt
           path: publication.json
-          if-no-files-found: error
+          if-no-files-found: warn

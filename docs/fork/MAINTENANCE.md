@@ -528,9 +528,13 @@ runs the fork Python suite, the toolchain script and the producer in a pinned
 `--validate` builds. An owner `workflow_dispatch` with the exact tag builds the
 release package; with `publish: true` the separate `publish` job, gated by the
 `fork-promotion` environment and the owner actor, downloads the verified
-artifacts and runs `publish_linux.py --publish`, which checks that the remote
-tag points at the manifest commit, uploads only missing assets, and re-downloads
-every Linux asset to compare checksums. Hosted execution and the owner's
+artifacts (nested under `<sha>/linux-amd64/`, as `upload-artifact` preserves the
+hierarchy after the first wildcard) and runs `publish_linux.py --publish`, which
+locates that directory, checks that the remote tag points at the manifest
+commit, uploads only missing assets, and re-downloads every Linux asset to
+compare checksums. Publication requires the owner as the run's actor or
+re-run actor; start a fresh "Run workflow" rather than re-running another
+user's run. Hosted execution and the owner's
 installation on a Linux notebook remain external gates; the first package was
 built and installed on the maintainer's Linux Mint 21.3 host from the exact
 `fork-v0.5.26-2` tree before this tooling existed.

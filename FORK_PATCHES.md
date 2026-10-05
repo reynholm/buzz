@@ -5342,6 +5342,7 @@ New module: `true`.
 - Required symbol: `def verify_release(`
 - Required symbol: `def publish(`
 - Required symbol: `never clobber`
+- Required symbol: `def locate_assets(`
 - Invocation: `scripts/fork/publish_linux.py` → `verify_release`; exact call `release = verify_release(directory, tag, gh)`; behavior test `scripts/fork/tests/test_verify_linux.py`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
 - Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
 
@@ -5355,6 +5356,7 @@ New module: `true`.
 - Required symbol: `test_release_tag_must_agree_with_revision_and_base`
 - Required symbol: `test_different_existing_bytes_wrong_tag_or_draft_stop_before_upload`
 - Required symbol: `test_macos_promotion_inventory_ignores_linux_assets_only`
+- Required symbol: `test_assets_are_located_in_a_downloaded_artifact_tree`
 - Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
 
 ## `.github/workflows/fork-linux-release.yml`
@@ -5367,4 +5369,5 @@ New module: `true`.
 - Required symbol: `scripts/fork/build-linux.sh --tag "$TAG"`
 - Required symbol: `environment: fork-promotion`
 - Required symbol: `publish_linux.py --tag "$TAG" --artifacts linux-assets --publish`
+- Required symbol: `TRIGGERING_ACTOR: ${{ github.triggering_actor }}`
 - Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
