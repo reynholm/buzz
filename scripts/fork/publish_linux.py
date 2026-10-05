@@ -19,6 +19,20 @@ def is_linux_asset(name: str) -> bool:
     return bool(LINUX_ASSET_PATTERN.fullmatch(name))
 
 
+def locate_assets(root: Path) -> Path:
+    """The producer directory: `root` itself or exactly one nested directory holding the checksum file.
+
+    actions/upload-artifact keeps the path hierarchy after the first wildcard, so a
+    downloaded artifact nests the files under `<sha>/linux-amd64/`.
+    """
+    if (root / 'SHA256SUMS-linux-amd64').is_file():
+        return root
+    found = [path.parent for path in root.rglob('SHA256SUMS-linux-amd64') if path.is_file()]
+    if len(found) != 1:
+        raise ValueError(f'expected exactly one Linux asset directory under {root}, found {len(found)}')
+    return found[0]
+
+
 def linux_assets(directory: Path) -> dict:
     """Exact producer inventory: the .deb and manifest pinned by the checksum file."""
     checksums = directory / 'SHA256SUMS-linux-amd64'
@@ -87,10 +101,11 @@ def main() -> int:
     try:
         if not TAG_OK.fullmatch(args.tag):
             raise ValueError('tag must be fork-vX.Y.Z-N')
+        directory = locate_assets(args.artifacts)
         if args.publish:
-            result = publish(args.artifacts, args.tag)
+            result = publish(directory, args.tag)
         else:
-            result = {'tag': args.tag, 'assets': linux_assets(args.artifacts), 'state': 'verified_only'}
+            result = {'tag': args.tag, 'assets': linux_assets(directory), 'state': 'verified_only'}
         print(json.dumps(result, indent=2))
         return 0
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:

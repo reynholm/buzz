@@ -113,6 +113,24 @@ class PublicationTests(unittest.TestCase):
             raise AssertionError('unexpected gh call: ' + ' '.join(argv))
         return gh, calls
 
+    def test_assets_are_located_in_a_downloaded_artifact_tree(self):
+        root = self.artifacts()
+        self.assertEqual(publish_linux.locate_assets(root), root)
+        with tempfile.TemporaryDirectory() as directory:
+            nested = Path(directory) / SHA / 'linux-amd64'
+            nested.mkdir(parents=True)
+            for path in root.iterdir():
+                (nested / path.name).write_bytes(path.read_bytes())
+            self.assertEqual(publish_linux.locate_assets(Path(directory)), nested)
+            second = Path(directory) / 'other' / 'linux-amd64'
+            second.mkdir(parents=True)
+            (second / 'SHA256SUMS-linux-amd64').write_text('')
+            with self.assertRaises(ValueError):
+                publish_linux.locate_assets(Path(directory))
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError):
+                publish_linux.locate_assets(Path(directory))
+
     def test_linux_assets_are_exactly_the_pinned_producer_inventory(self):
         root = self.artifacts()
         self.assertEqual(set(publish_linux.linux_assets(root)),

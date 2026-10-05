@@ -7808,7 +7808,8 @@
         "def linux_assets(",
         "def verify_release(",
         "def publish(",
-        "never clobber"
+        "never clobber",
+        "def locate_assets("
       ],
       "invocation_seams": [
         {
@@ -7831,7 +7832,8 @@
         "test_glibc_above_ubuntu_22_04_floor_is_rejected",
         "test_release_tag_must_agree_with_revision_and_base",
         "test_different_existing_bytes_wrong_tag_or_draft_stop_before_upload",
-        "test_macos_promotion_inventory_ignores_linux_assets_only"
+        "test_macos_promotion_inventory_ignores_linux_assets_only",
+        "test_assets_are_located_in_a_downloaded_artifact_tree"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -7846,7 +7848,8 @@
         "container: ubuntu:22.04@sha256:",
         "scripts/fork/build-linux.sh --tag \"$TAG\"",
         "environment: fork-promotion",
-        "publish_linux.py --tag \"$TAG\" --artifacts linux-assets --publish"
+        "publish_linux.py --tag \"$TAG\" --artifacts linux-assets --publish",
+        "TRIGGERING_ACTOR: ${{ github.triggering_actor }}"
       ],
       "invocation_seams": [],
       "verification_commands": [
