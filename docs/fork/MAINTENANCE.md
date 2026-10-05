@@ -461,3 +461,31 @@ The release uses tag `fork-v0.5.26-2` and embedded fork revision `2`, preserving
 base app version `0.5.26` and identifier `xyz.block.buzz.app`. Build only after the
 merged tree passes its full gates and the remote main SHA is verified. Publish
 pinned assets and checksums to the fork; never run upstream release publication.
+
+## macOS bundle signature: 2026-10-05
+
+The original `fork-v0.5.26-2` DMG passes disk-image integrity checks but its app
+has only a linker-generated executable signature. `codesign --verify --deep
+--strict Buzz.app` rejects it with `code has no resources but signature indicates
+they must be present`. Binary hashes and `hdiutil verify` alone missed this;
+neither proves bundle signing or Gatekeeper acceptance.
+
+`build-candidate.sh` now supplies Tauri's `APPLE_SIGNING_IDENTITY`, defaulting to
+the explicit ad-hoc identity `-`, before Tauri packages the app and DMG. An
+explicitly configured signing identity remains in effect. `verify_artifact.py`
+requires a valid sealed app and nested sidecars before running the read-only
+native probe. Real Apple Silicon regression fixtures exercise missing bundle
+signing and post-signature resource/sidecar tampering. Cross-platform fixtures
+cover failure propagation independently of macOS tools.
+
+Ad-hoc signing seals the bundle but does not provide Developer ID or Apple
+notarization. Users still need to allow its first launch; a successful codesign
+check must never be reported as a successful Gatekeeper assessment. See
+[Tauri macOS signing](https://v2.tauri.app/distribute/sign/macos/) and
+[Apple's first-launch procedure](https://support.apple.com/102445).
+
+A packaging repair must retain the original compiled source SHA and fork
+revision. Re-signing changes executable signature bytes and bundle metadata;
+recompute the manifest and all package hashes, identify the packaging repair
+explicitly, and publish separate assets without replacing historical bytes.
+Verify the application extracted from the final DMG, not only its staging copy.

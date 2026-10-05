@@ -4048,7 +4048,8 @@
       "required_symbols": [
         "def verify_artifact(",
         "def load_baseline(",
-        "def probe_artifact("
+        "def probe_artifact(",
+        "def verify_bundle_signature("
       ],
       "invocation_seams": [
         {
@@ -4056,6 +4057,13 @@
           "callee_symbol": "probe_artifact",
           "invocation": "probe = probe_artifact(binaries / executable_name)",
           "behavior_test": "test_identity_matches_candidate",
+          "verification_command": "python3 -m unittest discover -s scripts/fork/tests -v"
+        },
+        {
+          "caller_path": "scripts/fork/verify_artifact.py",
+          "callee_symbol": "verify_bundle_signature",
+          "invocation": "verify_bundle_signature(app)",
+          "behavior_test": "test_linker_signature_is_rejected_before_native_probe",
           "verification_command": "python3 -m unittest discover -s scripts/fork/tests -v"
         }
       ],
@@ -4072,7 +4080,11 @@
         "test_bundled_updater_is_rejected",
         "test_identity_matches_candidate",
         "test_actual_build_command_fails_closed_before_artifacts",
-        "test_dirty_source_is_rejected_before_build_side_effects"
+        "test_dirty_source_is_rejected_before_build_side_effects",
+        "test_invalid_bundle_signature_is_rejected",
+        "test_linker_signature_is_rejected_before_native_probe",
+        "test_sealed_bundle_passes_and_tampered_resource_is_rejected",
+        "test_modified_nested_sidecar_is_rejected"
       ],
       "invocation_seams": [],
       "verification_commands": [

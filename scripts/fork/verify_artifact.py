@@ -61,6 +61,12 @@ def probe_artifact(executable: Path) -> dict:
     return json.loads(result.stdout)
 
 
+def verify_bundle_signature(app: Path):
+    """Require a sealed macOS bundle and valid nested code before executing its probe."""
+    subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)],
+                   check=True, text=True, capture_output=True, timeout=30)
+
+
 def reject_updater(value):
     """Inspect actual generated config and every bundled JSON/plist resource."""
     if isinstance(value, dict):
@@ -91,6 +97,7 @@ def verify_artifact(app: Path, candidate_sha: str, baseline_config: dict) -> Art
         raise ValueError('invalid executable path')
     binaries = app / 'Contents/MacOS'
     records = {name: binary_record(binaries / name) for name in (executable_name, *SIDECARS)}
+    verify_bundle_signature(app)
     probe = probe_artifact(binaries / executable_name)
     identity = probe.get('identity')
     expected = {'commit_sha': candidate_sha, 'base_tag': baseline_config['base_tag'],

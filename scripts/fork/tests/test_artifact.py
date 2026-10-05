@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import platform
 from pathlib import Path
 import plistlib
 import struct
@@ -39,10 +40,21 @@ class ArtifactTests(unittest.TestCase):
         self.subprocess = patch.object(artifact, "probe_artifact", lambda _: json.loads(json.dumps(self.probe)), create=True)
         self.subprocess.start()
         self.addCleanup(self.subprocess.stop)
+        # These content fixtures are synthetic Mach-O headers. Real codesign is
+        # exercised independently by NativeSignatureTests below.
+        self.signature = patch.object(artifact, 'verify_bundle_signature', lambda _: None)
+        self.signature.start()
+        self.addCleanup(self.signature.stop)
     def write_plist(self):
         (self.app / "Contents/Info.plist").write_bytes(plistlib.dumps(self.plist))
     def verify(self):
         return artifact.verify_artifact(self.app, SHA, BASE)
+    def test_invalid_bundle_signature_is_rejected(self):
+        # NativeSignatureTests bind real codesign; this boundary case also runs on Linux.
+        with patch.object(artifact, 'verify_bundle_signature',
+                          side_effect=subprocess.CalledProcessError(1, ['codesign'])):
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.verify()
     def test_identity_matches_candidate(self):
         self.assertEqual(self.verify().commit_sha, SHA)
         for field, wrong in [("commit_sha", "b" * 40), ("base_tag", "desktop-v0.5.25"), ("fork_revision", "2")]:
@@ -101,6 +113,69 @@ class BaselineTests(unittest.TestCase):
             receipts['macos/Buzz.app/Contents/MacOS/buzz']['size'] = 0
             path.write_text(json.dumps(evidence))
             with self.assertRaises(ValueError): artifact.load_baseline(path, registry)
+
+
+@unittest.skipUnless(sys.platform == 'darwin' and platform.machine() == 'arm64',
+                     'real arm64 codesign regression requires macOS Apple Silicon')
+class NativeSignatureTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        self.probe_marker = root / 'probe-ran'
+        self.app = root / 'Buzz.app'
+        binaries = self.app / 'Contents/MacOS'
+        binaries.mkdir(parents=True)
+        (self.app / 'Contents/Resources').mkdir()
+        plist = {'CFBundleExecutable': 'buzz-desktop', 'CFBundlePackageType': 'APPL',
+                 'CFBundleIdentifier': BASE['identifier'],
+                 'CFBundleShortVersionString': BASE['version']}
+        (self.app / 'Contents/Info.plist').write_bytes(plistlib.dumps(plist))
+        probe = {'identity': {'fork_revision': '1', 'commit_sha': SHA,
+                             'base_tag': BASE['base_tag']},
+                 'updater_enabled': False, 'demo_slug': None,
+                 'config': {'version': BASE['version'], 'identifier': BASE['identifier']}}
+        source = root / 'probe.c'
+        source.write_text('#include <stdio.h>\nint main(void) { FILE *f = fopen('
+                          + json.dumps(str(self.probe_marker))
+                          + ', "w"); if (f) fclose(f); puts('
+                          + json.dumps(json.dumps(probe)) + '); return 0; }\n')
+        executable = binaries / 'buzz-desktop'
+        subprocess.run(['clang', '-arch', 'arm64', str(source), '-o', str(executable)],
+                       check=True, capture_output=True)
+        for name in SIDECARS:
+            shutil.copy2(executable, binaries / name)
+
+    def sign(self):
+        subprocess.run(['codesign', '--force', '--sign', '-', '--timestamp=none', str(self.app)],
+                       check=True, capture_output=True)
+
+    def test_linker_signature_is_rejected_before_native_probe(self):
+        # A linker-signed executable inside an unsealed bundle caused the released DMG failure.
+        with self.assertRaises(subprocess.CalledProcessError):
+            artifact.verify_artifact(self.app, SHA, BASE)
+        self.assertFalse(self.probe_marker.exists(), 'unverified app was executed')
+
+    def test_sealed_bundle_passes_and_tampered_resource_is_rejected(self):
+        resource = self.app / 'Contents/Resources/icon.icns'
+        resource.write_bytes(b'original resource')
+        self.sign()
+        self.assertEqual(artifact.verify_artifact(self.app, SHA, BASE).commit_sha, SHA)
+        resource.write_bytes(b'changed after signing')
+        with self.assertRaises(subprocess.CalledProcessError):
+            artifact.verify_artifact(self.app, SHA, BASE)
+
+    def test_modified_nested_sidecar_is_rejected(self):
+        self.sign()
+        self.assertEqual(artifact.verify_artifact(self.app, SHA, BASE).commit_sha, SHA)
+        sidecar = self.app / 'Contents/MacOS/buzz-acp'
+        data = bytearray(sidecar.read_bytes())
+        data[4096] ^= 1  # Corrupt a code-signed page without changing the Mach-O header.
+        sidecar.write_bytes(data)
+        # Sealing the outer bundle must not conceal a broken nested signature.
+        self.sign()
+        with self.assertRaises(subprocess.CalledProcessError):
+            artifact.verify_artifact(self.app, SHA, BASE)
 
 class BuildScriptTests(unittest.TestCase):
     def test_actual_build_command_fails_closed_before_artifacts(self):

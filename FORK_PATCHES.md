@@ -2390,7 +2390,9 @@ New module: `true`.
 - Required symbol: `def verify_artifact(`
 - Required symbol: `def load_baseline(`
 - Required symbol: `def probe_artifact(`
+- Required symbol: `def verify_bundle_signature(`
 - Invocation: `scripts/fork/verify_artifact.py` → `probe_artifact`; exact call `probe = probe_artifact(binaries / executable_name)`; behavior test `test_identity_matches_candidate`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
+- Invocation: `scripts/fork/verify_artifact.py` → `verify_bundle_signature`; exact call `verify_bundle_signature(app)`; behavior test `test_linker_signature_is_rejected_before_native_probe`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
 - Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
 
 ## `scripts/fork/tests/test_artifact.py`
@@ -2404,6 +2406,10 @@ New module: `true`.
 - Required symbol: `test_identity_matches_candidate`
 - Required symbol: `test_actual_build_command_fails_closed_before_artifacts`
 - Required symbol: `test_dirty_source_is_rejected_before_build_side_effects`
+- Required symbol: `test_invalid_bundle_signature_is_rejected`
+- Required symbol: `test_linker_signature_is_rejected_before_native_probe`
+- Required symbol: `test_sealed_bundle_passes_and_tampered_resource_is_rejected`
+- Required symbol: `test_modified_nested_sidecar_is_rejected`
 - Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
 
 ## `desktop/src/shared/api/tauriBuildIdentity.ts`

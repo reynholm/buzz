@@ -46,6 +46,9 @@ cargo build --release --target "$TARGET" -p buzz-acp -p buzz-agent \
 python3 scripts/fork/verify_artifact.py --candidate-sha "$CANDIDATE_SHA" \
     --baseline-report "$BASELINE_REPORT" --sidecar-dir desktop/src-tauri/binaries
 # CI=true uses upstream's supported non-GUI DMG packaging and preserves version/id.
+# A linker signature does not seal the app bundle. Tauri must sign before creating the DMG.
+# Ad-hoc signing needs no certificate; it still requires explicit first-launch permission.
+export APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:--}"
 just desktop-release-build "$TARGET"
 APP="desktop/src-tauri/target/$TARGET/release/bundle/macos/Buzz.app"
 VERSION="$(python3 -c 'import json; print(json.load(open("desktop/package.json"))["version"])')"
