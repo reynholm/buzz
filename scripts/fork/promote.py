@@ -15,6 +15,7 @@ import tempfile
 
 from sync import git, preparation_lock, gh_command
 from verify_artifact import digest, load_baseline, reject_updater, SIDECARS
+from publish_linux import is_linux_asset
 
 REPOSITORY = 'reynholm/buzz'
 OWNER = 'reynholm'
@@ -297,7 +298,9 @@ def publish_promotion(repo: Path, candidate_sha: str, merged_sha: str, manifest:
                     '--notes-file', body.name])
         # Missing assets resume; existing bytes must match, never --clobber.
         release = json.loads(gh(['gh', 'api', f'repos/{REPOSITORY}/releases/tags/{promotion.tag}']))
-        existing_names = [item['name'] for item in release['assets']]
+        # Linux x86_64 assets are attached later by publish_linux.py; they are not
+        # part of this producer's inventory and never block a resume.
+        existing_names = [item['name'] for item in release['assets'] if not is_linux_asset(item['name'])]
         if len(set(existing_names)) != len(existing_names) or set(existing_names) - set(promotion.asset_names):
             raise ValueError('release contains conflicting asset inventory')
         for name in promotion.asset_names:
@@ -314,7 +317,7 @@ def publish_promotion(repo: Path, candidate_sha: str, merged_sha: str, manifest:
             gh(['gh', 'release', 'edit', promotion.tag, '--repo', REPOSITORY, '--draft=false'])
         final = json.loads(gh(['gh', 'api', f'repos/{REPOSITORY}/releases/tags/{promotion.tag}']))
         if (final.get('draft') or final.get('body') != notes or final.get('target_commitish') != merged_sha
-                or set(item['name'] for item in final['assets']) != set(promotion.asset_names)
+                or set(item['name'] for item in final['assets'] if not is_linux_asset(item['name'])) != set(promotion.asset_names)
                 or remote_ref(repo, ref) != merged_sha):
             raise ValueError('final release verification failed')
         branch_ref = 'refs/heads/' + promotion.branch

@@ -120,7 +120,9 @@
       "path": "docs/fork/MAINTENANCE.md",
       "responsibility": "Fork maintenance runbook, all-registry falsification scope and honest local-versus-external acceptance status",
       "is_new": true,
-      "required_symbols": [],
+      "required_symbols": [
+        "## Linux x86_64 release assets"
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "python3 scripts/fork/sync.py validate"
@@ -4189,7 +4191,8 @@
         "def verify_promotion(",
         "def publish_promotion(",
         "def verify_owner_merge(",
-        "def verify_archive("
+        "def verify_archive(",
+        "from publish_linux import is_linux_asset"
       ],
       "invocation_seams": [
         {
@@ -4211,6 +4214,13 @@
           "callee_symbol": "verify_archive",
           "invocation": "verify_archive(directory / names[0], manifest)",
           "behavior_test": "test_rechecks_archived_binary_bytes_even_with_resealed_checksums",
+          "verification_command": "python3 -m unittest discover -s scripts/fork/tests -v"
+        },
+        {
+          "caller_path": "scripts/fork/promote.py",
+          "callee_symbol": "is_linux_asset",
+          "invocation": "existing_names = [item['name'] for item in release['assets'] if not is_linux_asset(item['name'])]",
+          "behavior_test": "scripts/fork/tests/test_verify_linux.py",
           "verification_command": "python3 -m unittest discover -s scripts/fork/tests -v"
         }
       ],
@@ -7719,6 +7729,128 @@
       "verification_commands": [
         "pnpm -C desktop exec playwright test --project=smoke tests/e2e/empty-edit-delete.spec.ts",
         "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "scripts/fork/linux-toolchain.sh",
+      "responsibility": "Linux x86_64 (glibc 2.35) fork release assets with verified compiled identity",
+      "is_new": true,
+      "required_symbols": [
+        "activate-hermit",
+        "VERSION_ID:-}\" == 22.04",
+        "uv python install 3.12"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "scripts/fork/build-linux.sh",
+      "responsibility": "Linux x86_64 (glibc 2.35) fork release assets with verified compiled identity",
+      "is_new": true,
+      "required_symbols": [
+        "unset BUZZ_UPDATER_ENDPOINT BUZZ_UPDATER_PUBLIC_KEY BUZZ_BUILD_DEMO_SLUG",
+        "export BUZZ_FORK_SHA=\"$CANDIDATE_SHA\" BUZZ_FORK_BASE_TAG=\"$BASE_TAG\" BUZZ_FORK_REVISION=\"$REVISION\"",
+        "scripts/fork/verify_linux.py",
+        "PY=\"$(uv python find"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "scripts/fork/build-linux.sh",
+          "callee_symbol": "verify_linux.py",
+          "invocation": "\"$PY\" scripts/fork/verify_linux.py --candidate-sha \"$CANDIDATE_SHA\" --fork-revision \"$REVISION\"",
+          "behavior_test": "scripts/fork/tests/test_verify_linux.py",
+          "verification_command": "python3 -m unittest discover -s scripts/fork/tests -v"
+        }
+      ],
+      "verification_commands": [
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "scripts/fork/verify_linux.py",
+      "responsibility": "Linux x86_64 (glibc 2.35) fork release assets with verified compiled identity",
+      "is_new": true,
+      "required_symbols": [
+        "def elf_record(",
+        "def expected_identity(",
+        "def verify_probe(",
+        "def verify_deb(",
+        "GLIBC_CEILING = (2, 35)"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "scripts/fork/verify_linux.py",
+          "callee_symbol": "verify_probe",
+          "invocation": "config = verify_probe(probe, identity, upstream)",
+          "behavior_test": "scripts/fork/tests/test_verify_linux.py",
+          "verification_command": "python3 -m unittest discover -s scripts/fork/tests -v"
+        },
+        {
+          "caller_path": "scripts/fork/verify_linux.py",
+          "callee_symbol": "elf_record",
+          "invocation": "records = {name: elf_record(binaries / name) for name in names}",
+          "behavior_test": "scripts/fork/tests/test_verify_linux.py",
+          "verification_command": "python3 -m unittest discover -s scripts/fork/tests -v"
+        }
+      ],
+      "verification_commands": [
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "scripts/fork/publish_linux.py",
+      "responsibility": "Linux x86_64 (glibc 2.35) fork release assets with verified compiled identity",
+      "is_new": true,
+      "required_symbols": [
+        "def is_linux_asset(",
+        "def linux_assets(",
+        "def verify_release(",
+        "def publish(",
+        "never clobber"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "scripts/fork/publish_linux.py",
+          "callee_symbol": "verify_release",
+          "invocation": "release = verify_release(directory, tag, gh)",
+          "behavior_test": "scripts/fork/tests/test_verify_linux.py",
+          "verification_command": "python3 -m unittest discover -s scripts/fork/tests -v"
+        }
+      ],
+      "verification_commands": [
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "scripts/fork/tests/test_verify_linux.py",
+      "responsibility": "Linux x86_64 (glibc 2.35) fork release assets with verified compiled identity",
+      "is_new": true,
+      "required_symbols": [
+        "test_glibc_above_ubuntu_22_04_floor_is_rejected",
+        "test_release_tag_must_agree_with_revision_and_base",
+        "test_different_existing_bytes_wrong_tag_or_draft_stop_before_upload",
+        "test_macos_promotion_inventory_ignores_linux_assets_only"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": ".github/workflows/fork-linux-release.yml",
+      "responsibility": "Linux x86_64 (glibc 2.35) fork release assets with verified compiled identity",
+      "is_new": true,
+      "required_symbols": [
+        "container: ubuntu:22.04@sha256:",
+        "scripts/fork/build-linux.sh --tag \"$TAG\"",
+        "environment: fork-promotion",
+        "publish_linux.py --tag \"$TAG\" --artifacts linux-assets --publish"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 -m unittest discover -s scripts/fork/tests -v"
       ]
     }
   ]

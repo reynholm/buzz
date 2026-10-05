@@ -75,3 +75,6 @@ deploy/charts/*/charts/*.tgz
 
 # Immutable verified local fork candidates and failed-build evidence
 /artifacts/fork/
+
+# Detached tag worktrees of the Linux release producer (scripts/fork/build-linux.sh)
+/.fork-linux-src/

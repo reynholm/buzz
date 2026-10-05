@@ -1,0 +1,110 @@
+# Linux x86_64 release assets for reynholm/buzz fork tags.
+#
+# Upstream Linux releases are built on Ubuntu 24.04 and need glibc 2.38, which
+# excludes Ubuntu 22.04 and Linux Mint 21 (block/buzz#6157). This workflow builds
+# the exact tag tree inside an Ubuntu 22.04 container (glibc 2.35), verifies the
+# compiled fork identity and glibc floor from the finished .deb, and only on an
+# explicit owner dispatch with `publish: true` attaches the assets to the existing
+# release. Existing assets are never replaced. Branch pushes under
+# fork/linux-release/** run validation builds of the tooling only.
+name: Fork Linux release (x86_64, glibc 2.35)
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published fork release tag (fork-vX.Y.Z-N)
+        required: true
+        type: string
+      publish:
+        description: Attach verified Linux assets to that GitHub release
+        required: false
+        type: boolean
+        default: false
+  push:
+    branches: ['fork/linux-release/**']
+concurrency:
+  group: fork-linux-release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02
+    timeout-minutes: 180
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      TAG: ${{ inputs.tag }}
+    outputs:
+      candidate_sha: ${{ steps.build.outputs.candidate_sha }}
+    steps:
+      - name: Bootstrap bare container (git and TLS roots for checkout)
+        run: apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Trust the workspace checkout inside the container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Require exact release tag on dispatch
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          [[ "$TAG" =~ ^fork-v[0-9]+\.[0-9]+\.[0-9]+-[1-9][0-9]*$ ]]
+          git rev-parse --verify "refs/tags/$TAG^{commit}"
+        shell: bash
+      - name: System libraries and pinned hermit toolchains
+        run: scripts/fork/linux-toolchain.sh
+      - name: Fork tooling regression suite
+        run: |
+          . ./bin/activate-hermit
+          uv run --python 3.12 --no-project python -m unittest discover -s scripts/fork/tests -v
+        shell: bash
+      - id: build
+        name: Build and verify the Linux x86_64 package
+        env:
+          BUZZ_FORK_REVISION: ${{ vars.FORK_REVISION || '1' }}
+        run: |
+          unset BUZZ_UPDATER_ENDPOINT BUZZ_UPDATER_PUBLIC_KEY
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            scripts/fork/build-linux.sh --tag "$TAG"
+          else
+            scripts/fork/build-linux.sh --validate
+          fi
+          echo "candidate_sha=$(ls artifacts/fork)" >> "$GITHUB_OUTPUT"
+        shell: bash
+      - name: Upload verified Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: fork-linux-amd64-${{ steps.build.outputs.candidate_sha }}
+          path: artifacts/fork/*/linux-amd64/*
+          if-no-files-found: error
+  publish:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: fork-promotion
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - name: Require owner dispatch and protected environment
+        env:
+          ACTOR: ${{ github.actor }}
+        run: test "$ACTOR" = reynholm
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+      - uses: actions/download-artifact@v4
+        with:
+          name: fork-linux-amd64-${{ needs.build.outputs.candidate_sha }}
+          path: linux-assets
+      - name: Attach verified assets to the existing release
+        run: python3 scripts/fork/publish_linux.py --tag "$TAG" --artifacts linux-assets --publish > publication.json
+      - name: Preserve publication receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: fork-linux-publication-receipt
+          path: publication.json
+          if-no-files-found: error
