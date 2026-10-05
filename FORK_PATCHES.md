@@ -79,6 +79,7 @@ Fork maintenance runbook, all-registry falsification scope and honest local-vers
 
 New module: `true`.
 
+- Required symbol: `## Linux x86_64 release assets`
 - Verify: `python3 scripts/fork/sync.py validate`
 
 ## `desktop/src-tauri/src/commands/agent_config_tests.rs`
@@ -2480,9 +2481,11 @@ New module: `true`.
 - Required symbol: `def publish_promotion(`
 - Required symbol: `def verify_owner_merge(`
 - Required symbol: `def verify_archive(`
+- Required symbol: `from publish_linux import is_linux_asset`
 - Invocation: `scripts/fork/promote.py` → `verify_promotion`; exact call `promotion = verify_promotion(repo, candidate_sha, merged_sha, manifest)`; behavior test `test_changed_merge_tree_cannot_promote`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
 - Invocation: `scripts/fork/promote.py` → `verify_owner_merge`; exact call `verify_owner_merge(promotion, gh)`; behavior test `test_authoritative_owner_merge_rejection_precedes_all_mutations`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
 - Invocation: `scripts/fork/promote.py` → `verify_archive`; exact call `verify_archive(directory / names[0], manifest)`; behavior test `test_rechecks_archived_binary_bytes_even_with_resealed_checksums`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
+- Invocation: `scripts/fork/promote.py` → `is_linux_asset`; exact call `existing_names = [item['name'] for item in release['assets'] if not is_linux_asset(item['name'])]`; behavior test `scripts/fork/tests/test_verify_linux.py`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
 - Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
 
 ## `scripts/fork/tests/test_promote.py`
@@ -5288,3 +5291,80 @@ New module: `false`.
 - Required symbol: `await page.keyboard.press("Enter")`
 - Verify: `pnpm -C desktop exec playwright test --project=smoke tests/e2e/empty-edit-delete.spec.ts`
 - Verify: `python3 scripts/fork/sync.py validate`
+
+## `scripts/fork/linux-toolchain.sh`
+
+Linux x86_64 (glibc 2.35) fork release assets with verified compiled identity
+
+New module: `true`.
+
+- Required symbol: `activate-hermit`
+- Required symbol: `VERSION_ID:-}" == 22.04`
+- Required symbol: `uv python install 3.12`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `scripts/fork/build-linux.sh`
+
+Linux x86_64 (glibc 2.35) fork release assets with verified compiled identity
+
+New module: `true`.
+
+- Required symbol: `unset BUZZ_UPDATER_ENDPOINT BUZZ_UPDATER_PUBLIC_KEY BUZZ_BUILD_DEMO_SLUG`
+- Required symbol: `export BUZZ_FORK_SHA="$CANDIDATE_SHA" BUZZ_FORK_BASE_TAG="$BASE_TAG" BUZZ_FORK_REVISION="$REVISION"`
+- Required symbol: `scripts/fork/verify_linux.py`
+- Required symbol: `PY="$(uv python find`
+- Invocation: `scripts/fork/build-linux.sh` → `verify_linux.py`; exact call `"$PY" scripts/fork/verify_linux.py --candidate-sha "$CANDIDATE_SHA" --fork-revision "$REVISION"`; behavior test `scripts/fork/tests/test_verify_linux.py`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `scripts/fork/verify_linux.py`
+
+Linux x86_64 (glibc 2.35) fork release assets with verified compiled identity
+
+New module: `true`.
+
+- Required symbol: `def elf_record(`
+- Required symbol: `def expected_identity(`
+- Required symbol: `def verify_probe(`
+- Required symbol: `def verify_deb(`
+- Required symbol: `GLIBC_CEILING = (2, 35)`
+- Invocation: `scripts/fork/verify_linux.py` → `verify_probe`; exact call `config = verify_probe(probe, identity, upstream)`; behavior test `scripts/fork/tests/test_verify_linux.py`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
+- Invocation: `scripts/fork/verify_linux.py` → `elf_record`; exact call `records = {name: elf_record(binaries / name) for name in names}`; behavior test `scripts/fork/tests/test_verify_linux.py`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `scripts/fork/publish_linux.py`
+
+Linux x86_64 (glibc 2.35) fork release assets with verified compiled identity
+
+New module: `true`.
+
+- Required symbol: `def is_linux_asset(`
+- Required symbol: `def linux_assets(`
+- Required symbol: `def verify_release(`
+- Required symbol: `def publish(`
+- Required symbol: `never clobber`
+- Invocation: `scripts/fork/publish_linux.py` → `verify_release`; exact call `release = verify_release(directory, tag, gh)`; behavior test `scripts/fork/tests/test_verify_linux.py`; verify `python3 -m unittest discover -s scripts/fork/tests -v`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `scripts/fork/tests/test_verify_linux.py`
+
+Linux x86_64 (glibc 2.35) fork release assets with verified compiled identity
+
+New module: `true`.
+
+- Required symbol: `test_glibc_above_ubuntu_22_04_floor_is_rejected`
+- Required symbol: `test_release_tag_must_agree_with_revision_and_base`
+- Required symbol: `test_different_existing_bytes_wrong_tag_or_draft_stop_before_upload`
+- Required symbol: `test_macos_promotion_inventory_ignores_linux_assets_only`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `.github/workflows/fork-linux-release.yml`
+
+Linux x86_64 (glibc 2.35) fork release assets with verified compiled identity
+
+New module: `true`.
+
+- Required symbol: `container: ubuntu:22.04@sha256:`
+- Required symbol: `scripts/fork/build-linux.sh --tag "$TAG"`
+- Required symbol: `environment: fork-promotion`
+- Required symbol: `publish_linux.py --tag "$TAG" --artifacts linux-assets --publish`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`

@@ -489,3 +489,48 @@ revision. Re-signing changes executable signature bytes and bundle metadata;
 recompute the manifest and all package hashes, identify the packaging repair
 explicitly, and publish separate assets without replacing historical bytes.
 Verify the application extracted from the final DMG, not only its staging copy.
+
+## Linux x86_64 release assets
+
+Upstream Linux packages are built on Ubuntu 24.04 and require `GLIBC_2.38`
+([block/buzz#6157](https://github.com/block/buzz/issues/6157)), so they do not
+start on Ubuntu 22.04 or Linux Mint 21. Fork Linux assets are therefore produced
+separately, after the macOS promotion, from the exact tree of an already
+published `fork-vX.Y.Z-N` tag, inside an Ubuntu 22.04 container (glibc 2.35).
+They are an addition to a release, never a replacement: `promote.py` ignores the
+three Linux asset names in its inventory checks and `publish_linux.py` refuses
+to replace bytes that already exist.
+
+Producer: `scripts/fork/linux-toolchain.sh` installs only system libraries from
+apt and activates the repository's pinned hermit toolchains (rustup honoring
+`rust-toolchain.toml`, Node, pnpm, cmake) plus a uv-managed CPython 3.12, because
+Ubuntu 22.04 ships 3.10 and the fork tooling needs 3.11+. `scripts/fork/build-linux.sh --tag
+fork-vX.Y.Z-N` checks the tag commit out into a detached worktree, clears the
+same inherited updater/demo/capability inputs as `build-candidate.sh`, exports
+the immutable identity (`BUZZ_FORK_REVISION` from the tag suffix, `BUZZ_FORK_SHA`
+from the tag commit, `BUZZ_FORK_BASE_TAG` from `scripts/fork/patches.json`),
+builds the six sidecars and `pnpm tauri build --ci --bundles deb`, and writes
+`artifacts/fork/<sha>/linux-amd64/` with the `.deb`, `manifest-linux-amd64.json`,
+`SHA256SUMS-linux-amd64` and `build.log`. `--validate` builds the current HEAD
+for tooling self-checks without a release association.
+
+Verifier: `scripts/fork/verify_linux.py` inspects the finished package, not the
+build tree: `dpkg` control identity (package `buzz`, upstream version, `amd64`),
+every `usr/bin` binary as a nonempty executable x86_64 ELF whose highest
+referenced `GLIBC_x.y` symbol version is at most 2.35, the native
+`--fork-artifact-probe` identity equal to the expected revision/SHA/base, the
+embedded upstream version and bundle identifier, disabled updater and no demo
+slug, plus hashes of every packaged resource.
+
+Workflow: [`fork-linux-release.yml`](../../.github/workflows/fork-linux-release.yml)
+runs the fork Python suite, the toolchain script and the producer in a pinned
+`ubuntu:22.04` container. Pushes to `fork/linux-release/**` only run
+`--validate` builds. An owner `workflow_dispatch` with the exact tag builds the
+release package; with `publish: true` the separate `publish` job, gated by the
+`fork-promotion` environment and the owner actor, downloads the verified
+artifacts and runs `publish_linux.py --publish`, which checks that the remote
+tag points at the manifest commit, uploads only missing assets, and re-downloads
+every Linux asset to compare checksums. Hosted execution and the owner's
+installation on a Linux notebook remain external gates; the first package was
+built and installed on the maintainer's Linux Mint 21.3 host from the exact
+`fork-v0.5.26-2` tree before this tooling existed.
