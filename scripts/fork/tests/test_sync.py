@@ -34,7 +34,7 @@ class SyncTests(unittest.TestCase):
         self.upstream_base = self.git('rev-parse', 'HEAD').strip()
         self.git('tag', 'desktop-v0.5.26')
         self.git('branch', 'upstream')
-        self.git('checkout', '-qb', 'fork/main')
+        self.git('branch', '-qM', 'main')
         (self.repo / 'caller.py').write_text(self.caller_base + '# fork\n')
         paths = ['caller.py', 'FORK_PATCHES.md', 'scripts/fork/patches.json']
         self.manifest = {'base_tag': 'desktop-v0.5.26', 'base_sha': self.upstream_base,
@@ -52,7 +52,7 @@ class SyncTests(unittest.TestCase):
         self.commit('new upstream', ['upstream.txt'])
         self.target = self.git('rev-parse', 'HEAD').strip()
         self.git('tag', 'desktop-v0.5.27')
-        self.git('checkout', '-q', 'fork/main')
+        self.git('checkout', '-q', 'main')
         self.evidence = {'upstream_sha': self.target, 'gate_commands': ['synthetic gate'],
                          'result': 'success', 'artifact_manifest': {'synthetic': True}}
 
@@ -169,7 +169,7 @@ class SyncTests(unittest.TestCase):
         self.assertIn('guard()', self.git('show', f'{report.branch}:caller.py'))
         manifest = json.loads(self.git('show', f'{report.branch}:scripts/fork/patches.json'))
         self.assertEqual(manifest['base_sha'], self.target)
-        self.assertEqual(self.git('rev-parse', 'fork/main').strip(), self.base)
+        self.assertEqual(self.git('rev-parse', 'main').strip(), self.base)
         self.assertEqual(self.git('status', '--porcelain'), '')
         self.assertEqual(self.git('rev-list', '--parents', '-n', '1', report.candidate_sha).split()[1:],
                          [self.base, self.target])
@@ -181,7 +181,7 @@ class SyncTests(unittest.TestCase):
         self.git('tag', '-f', 'desktop-v0.5.27')
         self.target = self.git('rev-parse', 'HEAD').strip()
         self.evidence['upstream_sha'] = self.target
-        self.git('checkout', '-q', 'fork/main')
+        self.git('checkout', '-q', 'main')
         report = self.prepare()
         self.assertEqual(report.state, 'blocked')
         self.assertIn('missing invocation', '\n'.join(report.missing_seams))
@@ -194,7 +194,7 @@ class SyncTests(unittest.TestCase):
         self.git('tag', '-f', 'desktop-v0.5.27')
         self.target = self.git('rev-parse', 'HEAD').strip()
         self.evidence['upstream_sha'] = self.target
-        self.git('checkout', '-q', 'fork/main')
+        self.git('checkout', '-q', 'main')
         return self.prepare()
 
     def test_conflict_reports_without_overwriting_patch(self):
@@ -253,7 +253,7 @@ class SyncTests(unittest.TestCase):
     def test_changed_base_stops_resume(self):
         first = self.prepare()
         (self.repo / 'caller.py').write_text('def run():\n    guard()\n# advanced accepted base\n')
-        self.commit('advance fork/main', ['caller.py'])
+        self.commit('advance main', ['caller.py'])
         report = self.prepare()
         self.assertEqual(report.state, 'blocked')
         self.assertIn('base moved', report.reason)
@@ -264,9 +264,9 @@ class SyncTests(unittest.TestCase):
         remote = Path(self.temp.name) / 'remote.git'
         subprocess.run([GIT, 'init', '--bare', '-q', str(remote)], check=True)
         self.git('remote', 'add', 'origin', str(remote))
-        self.git('push', '-q', '--tags', 'origin', 'fork/main', first.branch)
+        self.git('push', '-q', '--tags', 'origin', 'main', first.branch)
         fresh = Path(self.temp.name) / 'fresh'
-        subprocess.run([GIT, 'clone', '-q', '--branch', 'fork/main', str(remote), str(fresh)], check=True)
+        subprocess.run([GIT, 'clone', '-q', '--branch', 'main', str(remote), str(fresh)], check=True)
         self.assertTrue(hasattr(sync, 'reuse_published_candidate'), 'cross-runner reuse is missing')
         reused = sync.reuse_published_candidate(fresh, self.selection(), self.manifest,
                                                 clean_target=self.evidence)
@@ -308,9 +308,9 @@ class SyncTests(unittest.TestCase):
         remote = Path(self.temp.name) / 'remote.git'
         subprocess.run([GIT, 'init', '--bare', '-q', str(remote)], check=True)
         self.git('remote', 'add', 'origin', str(remote))
-        self.git('push', '-q', '--tags', 'origin', 'fork/main', report.report_branch)
+        self.git('push', '-q', '--tags', 'origin', 'main', report.report_branch)
         fresh = Path(self.temp.name) / 'fresh'
-        subprocess.run([GIT, 'clone', '-q', '--branch', 'fork/main', str(remote), str(fresh)], check=True)
+        subprocess.run([GIT, 'clone', '-q', '--branch', 'main', str(remote), str(fresh)], check=True)
         fresh_report = sync.prepare_update(fresh, self.selection(), self.manifest, clean_target=self.evidence)
         self.assertEqual(fresh_report.state, 'blocked')
         sync.reuse_published_report(fresh, self.selection(), fresh_report)
@@ -326,7 +326,7 @@ class SyncTests(unittest.TestCase):
         self.git('tag', '-f', 'desktop-v0.5.27')
         self.target = self.git('rev-parse', 'HEAD').strip()
         self.evidence['upstream_sha'] = self.target
-        self.git('checkout', '-q', 'fork/main')
+        self.git('checkout', '-q', 'main')
         mirror = self.git('rev-parse', 'upstream').strip()
         report = self.prepare()
         self.assertEqual(report.state, 'blocked')

@@ -6,7 +6,7 @@ The approved contract is [design sections 8–9](../superpowers/specs/2026-10-03
 
 Upstream wins for behavior outside registered patches. Retirement of a patch
 requires an owner decision, even when upstream appears to provide an equivalent.
-Maintain `upstream` as a fast-forward mirror and accepted releases on `fork/main`.
+Maintain `upstream` as a fast-forward mirror and accepted releases on `main`.
 Use temporary `fork/sync-vX.Y.Z` merge branches without rebasing. The owner merges,
 installs and authorizes final `fork-vX.Y.Z-N` tags; preceding artifacts are candidates.
 Do not change the upstream app version or bundle identifier. Preserve demo isolation.
@@ -63,7 +63,7 @@ a local Git 2.49 toolchain without changing global Git configuration. On a runne
 whose Finder automation times out, upstream supports `CI=true` packaging, which
 skips Finder DMG decoration. Preserve initial failures alongside corrected evidence.
 
-Scheduled updates require owner confirmation that `fork/main` is the GitHub default
+Scheduled updates require owner confirmation that `main` is the GitHub default
 branch. No new tags means no chat notification. A real next upstream tag after
 0.5.26, owner installation and two-device acceptance remain explicit delivery gates.
 
@@ -131,12 +131,12 @@ changes or the later two-device owner acceptance.
 intermediate releases. `prepare` writes a structured `no_update` report and emits
 no stdout or PR when the current base is already newest. It does not create real
 accepted refs or configure remotes on the maintainer's behalf. A selected tag with
-no accepted `fork/main` is blocked. For a real update:
+no accepted `main` is blocked. For a real update:
 
 ```sh
 python3 scripts/fork/sync.py select --report selection.json
 python3 scripts/fork/sync.py baseline --target-sha <selected-exact-sha> --report baseline.json
-python3 scripts/fork/sync.py prepare --repo . --base fork/main \
+python3 scripts/fork/sync.py prepare --repo . --base main \
   --manifest scripts/fork/patches.json --baseline-report baseline.json --report preparation.json
 ```
 
@@ -153,7 +153,7 @@ uses upstream's `CI=true` non-GUI packaging. Git 2.46+ remains a prerequisite.
 
 After baseline success for that exact SHA, preparation fast-forwards the local
 `upstream` mirror and merges the target into an owned `fork/sync-vX.Y.Z` worktree.
-It never rebases or moves accepted `fork/main`. The candidate registry compares
+It never rebases or moves accepted `main`. The candidate registry compares
 against the fetched target SHA, so upstream-only changes are excluded; the report
 retains the prior registry base. Protected paths and exact calls are validated
 before and after merging. The upstream side of an unregistered conflict is used
@@ -161,7 +161,7 @@ only after the accepted registry passed. Registered conflicts, missing seams and
 staged conflict markers block the candidate; no buildable SHA is advertised.
 
 Conflicts stay in the separate preparation worktree. `prepare_blocked_report`
-creates a clean `fork/blocked-vX.Y.Z` commit based on accepted `fork/main` changing
+creates a clean `fork/blocked-vX.Y.Z` commit based on accepted `main` changing
 only `docs/fork/sync-reports/desktop-vX.Y.Z.json`. It records base/target SHAs and
 relative conflicts without private workspace paths. Local OS locking and Actions
 concurrency (`cancel-in-progress: false`) serialize runs. Owned interrupted work
@@ -192,7 +192,7 @@ still an external gate. M3 must provide `build-candidate.sh --candidate-sha SHA
 The source workflow is pending owner/default-branch authorization. The owner must
 configure verified `FORK_GIT_AUTHOR_NAME`/`FORK_GIT_AUTHOR_EMAIL` repository variables
 for the repository's author policy before activation. Schedule `0 6 * * *` runs
-only once `fork/main` is confirmed as the default branch and the owner enables it.
+only once `main` is confirmed as the default branch and the owner enables it.
 
 Synthetic disposable Git/GH fixtures prove automation behavior, including actual
 clean merges/conflicts, one draft PR, no force-push and failing baseline ordering.
@@ -269,7 +269,7 @@ full tests and candidate artifact run. Follow
 Record independently accessible evidence for every item below, using the actual
 candidate artifacts. Keep the PR draft until the repository's review and human
 acceptance requirements hold; do not add `buzz-review-completed` early. Owner
-`reynholm` merges into `fork/main`; automation never merges a PR.
+`reynholm` merges into `main`; automation never merges a PR.
 
 Create `owner-acceptance.json` outside the producer output directory. This
 incomplete schema example is deliberately rejected until actual owner evidence
@@ -311,7 +311,7 @@ perform physical tests or authenticate a hand-written receipt. Publication check
 GitHub's authoritative owner merge actor and exact head/base/merged SHAs again.
 
 Fetch the owner's accepted merge and base tag into the maintenance checkout
-without changing its checked-out source, ensure local `fork/main` contains the
+without changing its checked-out source, ensure local `main` contains the
 merge, then run:
 
 ```sh
@@ -334,7 +334,7 @@ manifest; promotion does not start an app. If any merge changes the tree, rebuil
 retest and reaccept a new exact-SHA candidate. Never relabel earlier assets.
 
 Only after owner authorization, append `--publish`. It requires the existing
-`reynholm/buzz` origin, remote `fork/main` at the exact merged SHA and GitHub's
+`reynholm/buzz` origin, remote `main` at the exact merged SHA and GitHub's
 PR record attesting the owner merge of this candidate branch. It copies and
 reverifies a private asset snapshot before external calls, so producer-directory
 changes cannot change published bytes. It creates `fork-vX.Y.Z-N` on the merged
@@ -444,9 +444,9 @@ schedule, configured promotion environment and owner merge/promotion open.
 
 Buzz request `da40df459b2ecc64a36321e65ec6e6741395e121692a943dc86f1a14a5d460f7`
 authorizes translation, commit/push, integration into `main`, and publication of a
-new GitHub release exclusively in `reynholm/buzz`. This explicit request supersedes
+new GitHub release exclusively in `reynholm/buzz`. This explicit request superseded
 the earlier `fork/main` destination and owner-only manual publication workflow
-for this release. It does not attest installed-app or two-device acceptance.
+for that release; `main` has been the accepted fork branch ever since. It does not attest installed-app or two-device acceptance.
 
 Existing fork `main` at `33f54de2dd27a8f6bce0d359183f5ebe5f2fa9ba` contains 47
 commits outside the device-bound branch. Integrate both histories by an ordinary

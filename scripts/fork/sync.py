@@ -137,7 +137,7 @@ def merge_target(worktree: Path, target_sha: str):
 
 
 def prepare_update(repo: Path, selection: UpdateSelection | None, manifest: dict,
-                   *, base: str = 'fork/main', clean_target: dict | None = None) -> SyncReport:
+                   *, base: str = 'main', clean_target: dict | None = None) -> SyncReport:
     """Prepare one local merge only after the exact clean target baseline succeeds."""
     if selection is None:
         return SyncReport('no_update')
@@ -188,7 +188,7 @@ def prepare_update(repo: Path, selection: UpdateSelection | None, manifest: dict
             report.candidate_sha = owned['candidate_sha']
             report.state = 'ready'
             return report
-        # The mirror is never rebased or rewound. Accepted fork/main is never moved.
+        # The mirror is never rebased or rewound. Accepted main is never moved.
         mirror = git(repo, 'rev-parse', '--verify', 'refs/heads/upstream', check=False)
         if 'branch refs/heads/upstream\n' in git(repo, 'worktree', 'list', '--porcelain').stdout:
             report.reason = 'upstream mirror is checked out in a foreign worktree'
@@ -271,7 +271,7 @@ def prepare_update(repo: Path, selection: UpdateSelection | None, manifest: dict
 
 
 def reuse_published_candidate(repo: Path, selection: UpdateSelection, manifest: dict,
-                              *, base='fork/main', clean_target: dict | None = None) -> SyncReport | None:
+                              *, base='main', clean_target: dict | None = None) -> SyncReport | None:
     """Hydrate an ephemeral runner from a verified, previously published merge commit."""
     branch = 'fork/sync-' + selection.target_tag.removeprefix('desktop-')
     remote = git(repo, 'ls-remote', '--refs', 'origin', f'refs/heads/{branch}').stdout.strip()
@@ -350,7 +350,7 @@ def reuse_published_report(repo: Path, selection: UpdateSelection, report: SyncR
 
 
 def prepare_blocked_report(repo: Path, selection: UpdateSelection, report: SyncReport,
-                           *, base: str = 'fork/main') -> str:
+                           *, base: str = 'main') -> str:
     """Create/reuse a clean report-only branch; never stage the conflicted worktree."""
     if report.state != 'blocked' or not report.base_sha:
         raise ValueError('a blocked report with an accepted base is required')
@@ -419,7 +419,7 @@ def gh_body(argv: list[str], report: SyncReport, gh):
         return gh([*argv, '--body-file', body.name])
 
 
-def publish_draft(repo: Path, report: SyncReport, *, gh=gh_command, base='fork/main') -> str:
+def publish_draft(repo: Path, report: SyncReport, *, gh=gh_command, base='main') -> str:
     """Explicit opt-in publication: reuse one draft PR and never promote or merge."""
     branch = report.report_branch if report.state == 'blocked' else report.branch
     sha = report.report_sha if report.state == 'blocked' else report.candidate_sha
@@ -583,7 +583,7 @@ def main() -> int:
     parser.add_argument('command', choices=['validate', 'render', 'select', 'baseline', 'prepare', 'publish', 'link-artifact'],
                         nargs='?', default='validate')
     parser.add_argument('--repo', type=Path, default=Path(__file__).resolve().parents[2])
-    parser.add_argument('--base', default='fork/main')
+    parser.add_argument('--base', default='main')
     parser.add_argument('--manifest', type=Path, default=Path('scripts/fork/patches.json'))
     parser.add_argument('--report', type=Path)
     parser.add_argument('--baseline-report', type=Path)

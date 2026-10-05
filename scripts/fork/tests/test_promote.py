@@ -101,7 +101,7 @@ class PromotionTests(unittest.TestCase):
         self.candidate = self.git('rev-parse', 'HEAD').strip()
         self.tree = self.git('rev-parse', 'HEAD^{tree}').strip()
         self.git('branch', 'fork/sync-v0.5.26')
-        self.git('checkout', '-qb', 'fork/main')
+        self.git('branch', '-qM', 'main')
         self.git('-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-qsm', 'synthetic owner merge')
         self.merged = self.git('rev-parse', 'HEAD').strip()
         self.assets = self.root / 'assets'
@@ -332,12 +332,12 @@ class PromotionTests(unittest.TestCase):
         self.origin = self.root / 'origin.git'
         subprocess.run([GIT, 'init', '--bare', '-q', str(self.origin)], check=True)
         self.git('remote', 'add', 'origin', str(self.origin))
-        self.git('push', '-q', 'origin', 'fork/main', 'fork/sync-v0.5.26')
+        self.git('push', '-q', 'origin', 'main', 'fork/sync-v0.5.26')
         identity = {'full_name': 'reynholm/buzz'}
         pr = {'merged': True, 'merged_at': '2026-10-04T00:00:00Z', 'draft': False,
               'merged_by': {'login': 'reynholm'}, 'merge_commit_sha': self.merged,
               'head': {'sha': self.candidate, 'ref': 'fork/sync-v0.5.26', 'repo': identity},
-              'base': {'ref': 'fork/main', 'repo': identity}}
+              'base': {'ref': 'main', 'repo': identity}}
         self.state_path = self.root / 'gh.json'
         self.state_path.write_text(json.dumps({'pr': pr, 'release': None, 'calls': []}))
         bin_dir = self.root / 'bin'
