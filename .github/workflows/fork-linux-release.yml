@@ -4,8 +4,8 @@
 # excludes Ubuntu 22.04 and Linux Mint 21 (block/buzz#6157). This workflow builds
 # the exact tag tree inside an Ubuntu 22.04 container (glibc 2.35), verifies the
 # compiled fork identity and glibc floor from the finished .deb, and only on an
-# explicit owner dispatch with `publish: true` attaches the assets to the existing
-# release. Existing assets are never replaced. Branch pushes under
+# explicit dispatch with `publish: true` by a listed release maintainer attaches
+# the assets to the existing release. Existing assets are never replaced. Branch pushes under
 # fork/linux-release/** run validation builds of the tooling only.
 name: Fork Linux release (x86_64, glibc 2.35)
 on:
@@ -90,13 +90,24 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ inputs.tag }}
     steps:
-      - name: Require owner dispatch and protected environment
+      - name: Require release-maintainer dispatch and protected environment
         # github.actor is the user who started the run; a re-run keeps it and records
-        # the re-runner as triggering_actor. Either must be the owner.
+        # the re-runner as triggering_actor. Either must be a listed release
+        # maintainer. Write access alone is not enough: a collaborator outside this
+        # list can build and validate but not attach assets to the release.
         env:
           ACTOR: ${{ github.actor }}
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
-        run: test "$ACTOR" = reynholm || test "$TRIGGERING_ACTOR" = reynholm
+          RELEASE_MAINTAINERS: reynholm spiritabsolute
+        run: |
+          for login in $RELEASE_MAINTAINERS; do
+            if [[ "$ACTOR" == "$login" || "$TRIGGERING_ACTOR" == "$login" ]]; then
+              echo "publish authorized for $login"
+              exit 0
+            fi
+          done
+          echo "::error::publish requires dispatch or re-run by one of: $RELEASE_MAINTAINERS (actor=$ACTOR, triggering_actor=$TRIGGERING_ACTOR)"
+          exit 1
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
       - uses: actions/download-artifact@v4
         with:
