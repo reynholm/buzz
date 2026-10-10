@@ -33,6 +33,26 @@
       ]
     },
     {
+      "path": "docs/superpowers/specs/2026-10-10-session-continuity-design.md",
+      "responsibility": "Session visibility, resume and control design for buzz-acp, CLI and Desktop",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "docs/superpowers/specs/2026-10-10-idle-clock-turn-completion-design.md",
+      "responsibility": "Idle pool clock refresh on turn completion design (port of upstream #7173)",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
       "path": "FORK_PATCHES.md",
       "responsibility": "Reviewable generated patch inventory",
       "is_new": true,
