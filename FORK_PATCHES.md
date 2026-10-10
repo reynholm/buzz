@@ -29,6 +29,22 @@ New module: `true`.
 
 - Verify: `python3 scripts/fork/sync.py validate`
 
+## `docs/superpowers/specs/2026-10-10-session-continuity-design.md`
+
+Session visibility, resume and control design for buzz-acp, CLI and Desktop
+
+New module: `true`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `docs/superpowers/specs/2026-10-10-idle-clock-turn-completion-design.md`
+
+Idle pool clock refresh on turn completion design (port of upstream #7173)
+
+New module: `true`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
 ## `FORK_PATCHES.md`
 
 Reviewable generated patch inventory
