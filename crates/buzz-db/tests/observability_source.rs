@@ -354,8 +354,15 @@ fn p0_pool_acquisitions_use_typed_operation_pairs_without_other() {
         .expect("restriction state must precede full ban reads")
         .0;
     assert!(restriction_state.contains("WriterOperation::Authorization"));
-    assert!(restriction_state.contains("fetch_optional(&mut *connection)"));
+    assert!(restriction_state.contains("acquire_writer("));
+    // Cardinality is independent of the typed-connection invariant: aggregate
+    // queries return one row even when no restrictions match.
+    assert!(
+        restriction_state.contains("fetch_optional(&mut *connection)")
+            || restriction_state.contains("fetch_one(&mut *connection)")
+    );
     assert!(!restriction_state.contains("fetch_optional(pool)"));
+    assert!(!restriction_state.contains("fetch_one(pool)"));
 
     let community_store = include_str!("../src/store/community.rs");
     let ensure_community = community_store
@@ -524,6 +531,17 @@ fn p0_pool_acquisitions_use_typed_operation_pairs_without_other() {
         .0;
     assert!(lease_stats.contains("WriterOperation::Maintenance"));
     assert!(lease_stats.contains("fetch_one(&mut *connection)"));
+    let bounded_lease_sql = deletion
+        .split_once("async fn bounded_serving_lease_sql<T>(")
+        .expect("deletion store must expose bounded serving-lease SQL")
+        .1
+        .split_once("/// Acquire a durable, expiring lease")
+        .expect("bounded serving-lease helper must precede acquisition")
+        .0;
+    assert!(bounded_lease_sql.contains("acquire_writer_until("));
+    assert!(bounded_lease_sql.contains("WriterOperation::EventWrite"));
+    assert!(bounded_lease_sql.contains("operation(&mut connection)"));
+    assert!(!bounded_lease_sql.contains("self.pool.acquire()"));
     for (start, end) in [
         (
             "pub async fn acquire_serving_write_lease",
@@ -553,10 +571,23 @@ fn p0_pool_acquisitions_use_typed_operation_pairs_without_other() {
             .split_once(end)
             .unwrap_or_else(|| panic!("serving-write seam {start} must precede {end}"))
             .0;
-        assert!(
-            function.contains("WriterOperation::EventWrite"),
-            "serving-write seam {start} must be event-write attributed"
-        );
+        if matches!(
+            start,
+            "pub async fn acquire_serving_write_lease"
+                | "pub async fn release_serving_write_lease"
+                | "pub async fn verify_serving_write_lease"
+        ) {
+            assert!(
+                function.contains("self.bounded_serving_lease_sql("),
+                "serving-write seam {start} must use the attributed bounded helper"
+            );
+            assert!(function.contains("serving_lease_transaction(connection)"));
+        } else {
+            assert!(
+                function.contains("WriterOperation::EventWrite"),
+                "serving-write seam {start} must be event-write attributed"
+            );
+        }
         assert!(!function.contains("self.pool.begin().await"));
         assert!(!function.contains(".execute(&self.pool)"));
         assert!(!function.contains(".fetch_one(&self.pool)"));
