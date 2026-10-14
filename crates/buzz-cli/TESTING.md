@@ -676,7 +676,9 @@ records can expire after seven days; afterward this command no longer promises
 idempotency for that old key. There is one lock file and one bounded snapshot,
 with a fixed replacement file, and a 30-second bounded lock wait. New Unix
 directories use 0700 and journal files use 0600. Snapshot replacement fsyncs both
-file and directory, including newly created directory links, before sending.
+file and directory before sending. Each invocation fsyncs every ancestor of the
+journal directory, including existing links a concurrent creator may have
+exposed before syncing. Paths deeper than 128 ancestors fail visibly.
 Use a filesystem supporting advisory locks, atomic replacement and directory
 fsync; unsupported filesystem/platform errors fail visibly before publication.
 The durability workflow is exercised on macOS/Unix; Windows and network
