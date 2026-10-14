@@ -112,12 +112,14 @@ fn durable_directory(dir: &Path) -> Result<(), CliError> {
             .ok_or_else(|| error("journal directory has no existing ancestor"))?;
     }
     for directory in missing.into_iter().rev() {
-        let mut builder = fs::DirBuilder::new();
+        let builder = fs::DirBuilder::new();
         #[cfg(unix)]
-        {
+        let builder = {
             use std::os::unix::fs::DirBuilderExt;
+            let mut builder = builder;
             builder.mode(0o700);
-        }
+            builder
+        };
         match builder.create(directory) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && directory.is_dir() => {}
