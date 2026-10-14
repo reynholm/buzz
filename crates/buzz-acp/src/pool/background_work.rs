@@ -5,6 +5,32 @@ use crate::queue::{EventQueue, RuntimeContinuation};
 
 pub(super) const FOLLOWUP_PROMPT: &str = "The background child process you left running has exited. Collect its result and continue the work in the same Buzz thread. Post the update there. Do not start a second copy of the task.";
 
+/// Shell arguments stay literal even when workspace names contain apostrophes.
+fn shell_argument(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+pub(super) fn followup_prompt(
+    channel: Uuid,
+    continuation: &RuntimeContinuation,
+    cwd: &str,
+) -> String {
+    let journal = std::path::Path::new(cwd).join(".buzz-deliveries");
+    let parent = continuation
+        .thread_tags
+        .parent_event_id
+        .as_deref()
+        .or(continuation.thread_tags.root_event_id.as_deref());
+    let command = parent.map(|parent| format!(
+        "buzz messages deliver --delivery-key {} --channel {} --reply-to {} --journal-dir {} --content <FINAL_REPORT>",
+        shell_argument(&continuation.delivery_key.to_string()),
+        shell_argument(&channel.to_string()),
+        shell_argument(parent),
+        shell_argument(&journal.to_string_lossy()),
+    )).unwrap_or_else(|| "Original reply event is unavailable; do not invent a destination or publish a report elsewhere.".into());
+    format!("{FOLLOWUP_PROMPT}\nChannel: {channel}\nReply thread: {}\nPublish the final report using this managed command (replace <FINAL_REPORT> with properly quoted text or use --content - and stdin):\n{command}\nKeep this delivery key, original route and journal directory for every retry, including after an application error. An unconfirmed managed delivery can be safely retried with the SAME key; never replace it with a fresh key or bare messages send. Replays return the first report even if the summary changes. Preserve callback notifications with --mention or ordinary @mentions. Use messages send for separate progress and messages edit for an explicit correction. Managed delivery does not cover other publishing tools.", continuation.thread_tags.root_event_id.as_deref().unwrap_or("none"))
+}
+
 /// A worker with live or pending background work; an invalidated origin never resumes.
 #[derive(Clone, Debug)]
 pub(crate) struct RuntimeHold {
@@ -37,6 +63,7 @@ impl OwnedAgent {
             blocking_pids: HashSet::new(),
             collection_pending: false,
             continuation: Some(RuntimeContinuation {
+                delivery_key: Uuid::new_v4(),
                 worker_index: self.index,
                 session_id: session_id.to_owned(),
                 generation: self

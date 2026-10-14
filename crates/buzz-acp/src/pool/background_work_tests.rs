@@ -833,11 +833,25 @@ async fn background_success_can_start_a_new_group_without_repeating_old_collecti
         .unwrap()
         .thread_tags
         .clone();
+    let original_key = pool.runtime_holds[&0]
+        .continuation
+        .as_ref()
+        .unwrap()
+        .delivery_key;
     finish_child(&mut pool, &mut queue, &dir).await;
     std::fs::write(dir.path().join("next-group"), "start").unwrap();
     assert_eq!(dispatch(&mut pool, &mut queue, &ctx), 1);
     return_success(&mut pool, &mut queue).await;
     assert!(pool.has_runtime_hold(), "new child group retains residency");
+    assert_ne!(
+        pool.runtime_holds[&0]
+            .continuation
+            .as_ref()
+            .unwrap()
+            .delivery_key,
+        original_key,
+        "new groups cannot suppress one another's report"
+    );
     assert!(!queue.has_undispatched_work(), "old collection completed");
     assert_eq!(
         pool.agents[0]

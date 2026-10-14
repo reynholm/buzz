@@ -112,3 +112,53 @@ Goose and uses its provider to invoke the native developer shell. Both operate
 only on temporary local repositories, verify commit/tag signatures and identity,
 check unrelated-remote credential scoping, and assert keyfile removal. They do
 not replace authenticated relay clone/push/readback testing.
+
+## Managed background final reports
+
+A `RuntimeContinuation` receives a random delivery UUID when its background
+origin is recorded. Queue retries, ordinary message interleaving and healthy
+steer/interrupt preserve it. A fresh observed group receives a fresh UUID. Only
+collection prompts supply the key, original channel/parent and an explicitly
+quoted workspace `.buzz-deliveries` path in `buzz messages deliver`. Progress
+uses ordinary `messages send`; corrections use `messages edit`. Callback
+mentions can use `--mention` or ordinary member-name mentions. Pending managed
+publication must retry the same key/route/journal, including after ACP
+application errors; changing the summary returns the first signed report.
+
+```sh
+cargo build -p buzz-cli -p buzz-agent -p buzz-dev-mcp
+BUZZ_TEST_BIN_DIR="$PWD/target/debug" \
+  env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL \
+  -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY \
+  cargo test -p buzz-acp managed_runtime_ -- --ignored --test-threads=1
+```
+
+These four checks exercise actual CLI processes and actual bundled agent + MCP
+shell, production collection dispatch and error handling, a model error after
+publication, same-key replay with changed text, lost response bodies, process
+kill after relay acceptance, concurrent callers and a workspace name containing
+spaces/apostrophes. Readback counts unique verified signed events in a **local
+mock relay** that follows the real relay's duplicate acknowledgment contract.
+They do not use a real authenticated relay/provider or attest human testing.
+The bundled-agent fixture seeds a preserved continuation in the original ACP
+session; the separate background lifecycle tests exercise actual child groups.
+
+The persistent CLI journal recovers an already prepared signed event when the
+same key/route is explicitly invoked after restart. ACP's queue, provider
+session, group observation and ownership token remain in-memory; harness death
+does not reconstruct an unjournaled lost result or automatically replay the
+journal. Neither a successful ACP prompt nor arbitrary shell/MCP publication
+proves managed delivery. The managed path covers kind-9 channel/thread reports,
+including DM channel membership, only when the provider calls the supplied
+command. See `crates/buzz-cli/TESTING.md` for bounded attempts, seven-day confirmed
+retention, capacity/corruption handling and filesystem durability limits.
+
+For human smoke testing with the native app and an authorized local relay,
+start a task with a real background child. Send another-thread traffic while it
+runs and while collection backs off. Make collection publish through the
+supplied command, then cause an ACP application error. Let the same session
+retry with a changed summary: the app and CLI readback must show one original
+report/event ID, in the original thread, with its callback mention. A second
+background group must produce a second report/key. Explicit cancel/rotate and
+membership removal still invalidate collection according to the lifecycle
+runbook above. Agent fixtures cannot mark this human check complete.

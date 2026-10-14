@@ -63,7 +63,10 @@ fn thread_ref_from_parent_tags(
 /// - Nested reply: `root` is the parent's own root marker; `parent` is unchanged.
 ///
 /// Ensures CLI-sent replies thread correctly using the same NIP-10 logic.
-async fn fetch_event(client: &BuzzClient, event_id: &str) -> Result<serde_json::Value, CliError> {
+pub(super) async fn fetch_event(
+    client: &BuzzClient,
+    event_id: &str,
+) -> Result<serde_json::Value, CliError> {
     let filter = serde_json::json!({ "ids": [event_id], "limit": 1 });
     let raw = client.query(&filter).await?;
     let events: serde_json::Value = serde_json::from_str(&raw)
@@ -94,7 +97,10 @@ fn thread_ref_from_event(event_id: &str, event: &serde_json::Value) -> Result<Th
 
 /// Resolve the channel UUID for an event by querying for it via POST /query.
 /// Extracts the `h` tag value from the returned event's tags.
-fn channel_id_from_event(event_id: &str, event: &serde_json::Value) -> Result<Uuid, CliError> {
+pub(super) fn channel_id_from_event(
+    event_id: &str,
+    event: &serde_json::Value,
+) -> Result<Uuid, CliError> {
     let tags = event
         .get("tags")
         .and_then(|tags| tags.as_array())
@@ -278,7 +284,7 @@ fn missing_members(mentions: &[String], members: &[String]) -> Vec<String> {
         .collect()
 }
 
-fn event_mention_pubkeys(event: &nostr::Event) -> Vec<String> {
+pub(super) fn event_mention_pubkeys(event: &nostr::Event) -> Vec<String> {
     event
         .tags
         .iter()
@@ -608,10 +614,27 @@ pub struct SendMessageParams {
     pub mentions: Vec<String>,
 }
 
-pub async fn cmd_send_message(
+pub async fn cmd_send_message(client: &BuzzClient, p: SendMessageParams) -> Result<(), CliError> {
+    let event = prepare_message(client, p, None).await?;
+    let emitted_mentions = event_mention_pubkeys(&event);
+    let resp = client.submit_event(event).await?;
+    let mut output: serde_json::Value = serde_json::from_str(&normalize_write_response(&resp))
+        .unwrap_or_else(|_| serde_json::json!({ "response": resp }));
+    if let Some(object) = output.as_object_mut() {
+        object.insert(
+            "mention_pubkeys".into(),
+            serde_json::json!(emitted_mentions),
+        );
+    }
+    println!("{output}");
+    Ok(())
+}
+
+pub(super) async fn prepare_message(
     client: &BuzzClient,
     mut p: SendMessageParams,
-) -> Result<(), CliError> {
+    delivery_key: Option<&str>,
+) -> Result<nostr::Event, CliError> {
     // Allow '-' to read content from stdin. This keeps callers from having to
     // jam shell-metacharacter-heavy text (backticks, $vars, etc.) through argv
     // quoting — the source of countless self-inflicted command-substitution
@@ -742,19 +765,16 @@ pub async fn cmd_send_message(
         }
     };
 
+    let builder = if let Some(key) = delivery_key {
+        builder.tag(
+            nostr::Tag::parse(["buzz-delivery", key])
+                .map_err(|e| CliError::Other(e.to_string()))?,
+        )
+    } else {
+        builder
+    };
     let event = client.sign_event(builder)?;
-    let emitted_mentions = event_mention_pubkeys(&event);
-    let resp = client.submit_event(event).await?;
-    let mut output: serde_json::Value = serde_json::from_str(&normalize_write_response(&resp))
-        .unwrap_or_else(|_| serde_json::json!({ "response": resp }));
-    if let Some(object) = output.as_object_mut() {
-        object.insert(
-            "mention_pubkeys".into(),
-            serde_json::json!(emitted_mentions),
-        );
-    }
-    println!("{output}");
-    Ok(())
+    Ok(event)
 }
 
 pub struct SendDiffParams {
@@ -937,6 +957,27 @@ pub async fn dispatch(
 ) -> Result<(), CliError> {
     use crate::MessagesCmd;
     match cmd {
+        MessagesCmd::Deliver {
+            channel,
+            reply_to,
+            content,
+            delivery_key,
+            journal_dir,
+            mentions,
+        } => {
+            let output = super::delivery::deliver(
+                client,
+                &channel,
+                &reply_to,
+                &content,
+                &delivery_key,
+                journal_dir.as_deref(),
+                mentions,
+            )
+            .await?;
+            println!("{output}");
+            Ok(())
+        }
         MessagesCmd::Send {
             channel,
             content,
