@@ -2944,6 +2944,9 @@ async fn run_harness(
         ))
     };
 
+    let mut background_poll = tokio::time::interval(Duration::from_secs(1));
+    background_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
     // Runs at the TOP of every loop iteration via Instant check — cannot be
     // starved by the biased select. Slot refill spawns background tasks so
     // spawn_and_init never blocks the main loop.
@@ -3137,6 +3140,7 @@ async fn run_harness(
         // Borrow result_rx and join_set simultaneously via split-borrow helper.
         pool.retain_held_scopes(|scope| queue.has_pending_scope(scope));
         let hold_deadline = pool.next_hold_deadline(pool::HOLD_BUSY_OWNER_TIMEOUT);
+        let background_work_pending = pool_ready && pool.has_runtime_hold();
         let pool_event: Option<PoolEvent> = {
             let (result_rx, join_set) = pool.rx_and_join_set();
             tokio::select! {
@@ -3186,6 +3190,14 @@ async fn run_harness(
                         _ => std::future::pending().await,
                     }
                 } => None,
+                _ = background_poll.tick(), if background_work_pending => {
+                    let _ = result_rx;
+                    pool.queue_finished_background_work(&mut queue);
+                    for (scope, tags) in dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity, observer.as_ref()) {
+                        typing_channels.insert(scope, tags);
+                    }
+                    None
+                },
                 _ = pool::AgentPool::wait_for_hold_deadline(hold_deadline), if pool_ready => {
                     Some(PoolEvent::HoldDeadline)
                 },
@@ -3488,6 +3500,7 @@ async fn run_harness(
                                             "!rotate received — cancelling in-flight turn and rotating session"
                                         );
                                     } else {
+                                        queue.remove_continuation(&scope);
                                         let invalidated =
                                             pool.invalidate_scope_session(&scope);
                                         tracing::info!(
@@ -3606,7 +3619,8 @@ async fn run_harness(
                         last_activity,
                         tokio::time::Instant::now(),
                         inactivity_bound,
-                        queue.has_in_flight() || heartbeat_in_flight,
+                        queue.has_in_flight() || heartbeat_in_flight || pool.has_runtime_hold()
+                            || queue.has_undispatched_work(),
                     ) {
                         tracing::info!(
                             inactivity_seconds = config.exit_after_inactivity_secs,
@@ -3623,15 +3637,6 @@ async fn run_harness(
                     }
                 } => {
                     let _ = result_rx; // end split borrow before touching pool
-                    // Children that outlived the turn prompt the same session
-                    // once they exit. That task is in flight before the sleep
-                    // decision, so the worker is not torn down underneath it.
-                    dispatch_runtime_followups(
-                        &mut pool,
-                        &ctx,
-                        &mut last_activity,
-                        &mut typing_channels,
-                    );
                     // A wake in flight (pool not yet ready) is covered by the
                     // pool_ready gate; respawn tasks and in-flight prompt tasks
                     // are the remaining "busy" signals. Never sleep mid-work:
@@ -3767,7 +3772,7 @@ async fn run_harness(
                                     agent_name,
                                     goose_system_prompt_supported: None,
                                     protocol_version,
-                                    followup_scope: None,
+                                    background_context: None,
                                 };
                                 pool.return_agent(agent);
                                 tracing::info!(agent = rr.index, "respawn complete");
@@ -4779,12 +4784,27 @@ fn dispatch_pending(
     // measured against the same instant.
     let now = tokio::time::Instant::now();
     loop {
-        let batch = match queue.flush_next() {
+        let mut batch = match queue.flush_next() {
             Some(b) => b,
             None => break,
         };
         let channel_id = batch.channel_id;
         let scope = batch.scope.clone();
+        if let Some(continuation) = &batch.continuation {
+            match pool.continuation_state(&scope, continuation) {
+                pool::ContinuationState::Ready => {}
+                pool::ContinuationState::Busy => {
+                    held.push(batch);
+                    continue;
+                }
+                pool::ContinuationState::Stale => {
+                    spawn_failure_notice(Some(&ctx.rest_client), &batch,
+                        "I couldn't collect the background result because its agent session ended. Please re-send the request if it is still needed.".into());
+                    queue.mark_complete(&scope);
+                    continue;
+                }
+            }
+        }
         // Authoritative affinity, variant-gated and bounded: only a `Thread`
         // scope whose session owner is checked out (busy on another turn) is
         // held, and only until `HOLD_BUSY_OWNER_TIMEOUT` elapses. `Conversation`
@@ -4827,11 +4847,7 @@ fn dispatch_pending(
             } => Some((held_for, owner_index)),
             pool::HoldDecision::Dispatch => None,
         };
-        let typing_scope = batch
-            .events
-            .last()
-            .map(queue::BatchEvent::routing_thread_tags)
-            .unwrap_or_default();
+        let typing_scope = batch.reply_tags();
         // Scope-level affinity: reuse the worker that already holds THIS
         // thread's provider session so a temporarily busy worker cannot cause
         // another to open a duplicate session for the same thread.
@@ -4842,7 +4858,7 @@ fn dispatch_pending(
                 let pending = queue.pending_channels();
                 tracing::debug!(pending_channels = pending, "pool_exhausted");
                 queue.requeue_preserve_timestamps(batch);
-                queue.mark_complete(&scope);
+                queue.release_unstarted(&scope);
                 break;
             }
         };
@@ -4874,10 +4890,20 @@ fn dispatch_pending(
         }
         tracing::debug!(agent = agent.index, channel = %channel_id, scope = %scope.telemetry_label(), affinity_hit, "agent_claimed");
 
-        let recoverable_batch = match ctx.dedup_mode {
-            DedupMode::Queue => Some(batch.clone()),
-            DedupMode::Drop => None,
-        };
+        // Assign ownership before spawning and before cloning the retry token.
+        let owner_generation = pool.record_scope_owner(scope.clone(), agent.index);
+        agent
+            .state
+            .set_scope_owner_generation(scope.clone(), owner_generation);
+        if let Some(continuation) = &mut batch.continuation {
+            continuation.generation = owner_generation;
+        }
+        let recoverable_batch =
+            if matches!(ctx.dedup_mode, DedupMode::Queue) || batch.continuation.is_some() {
+                Some(batch.clone())
+            } else {
+                None
+            };
 
         let result_tx = pool.result_tx();
         let ctx_clone = Arc::clone(ctx);
@@ -4901,14 +4927,6 @@ fn dispatch_pending(
         let (control_tx, control_rx) = tokio::sync::oneshot::channel::<ControlSignal>();
         let turn_id = Uuid::new_v4().to_string();
         let task_turn_id = turn_id.clone();
-
-        // Assign ownership before moving the worker into the task. If this is
-        // a bounded-hold fork, the new generation immediately invalidates the
-        // prior busy worker's copy when that worker eventually returns.
-        let owner_generation = pool.record_scope_owner(scope.clone(), agent.index);
-        agent
-            .state
-            .set_scope_owner_generation(scope.clone(), owner_generation);
 
         let abort_handle = pool.join_set.spawn(async move {
             pool::run_prompt_task(
@@ -4941,12 +4959,12 @@ fn dispatch_pending(
     }
     // Release held batches back to the queue (owner busy). They were flushed
     // out (in-flight) so they could not be re-picked above; requeue preserves
-    // their timestamps and mark_complete clears the in-flight marker, leaving
-    // them queued for the next dispatch when the owner frees up.
+    // their timestamps and release_unstarted clears the in-flight marker while
+    // retaining the retry budget for dispatch when the owner frees up.
     for batch in held {
         let scope = batch.scope.clone();
         queue.requeue_preserve_timestamps(batch);
-        queue.mark_complete(scope);
+        queue.release_unstarted(&scope);
     }
     tracing::debug!(
         dispatched = dispatched_channels.len(),
@@ -5024,6 +5042,14 @@ fn spawn_failure_notice(
         return;
     };
     let Some(last) = batch.events.last().cloned() else {
+        if let Some(continuation) = &batch.continuation {
+            let rest = rest.clone();
+            let channel_id = batch.channel_id;
+            let tags = continuation.thread_tags.clone();
+            tokio::spawn(async move {
+                pool::post_failure_notice(&rest, channel_id, &tags, &content).await;
+            });
+        }
         return;
     };
     let rest = rest.clone();
@@ -5283,7 +5309,6 @@ fn handle_prompt_result(
                 outcome = outcome_label,
                 "agent_returned"
             );
-            note_runtime_hold(&mut result.agent, &result.source, pool);
             pool.return_agent(result.agent);
         }
         // Fatal outcomes: the agent subprocess is dead or poisoned — respawn it.
@@ -5614,89 +5639,6 @@ fn drain_ready_join_results(
     LoopAction::Continue
 }
 
-const RUNTIME_FOLLOWUP_PROMPT: &str = "\
-The background child process you left running has exited. This session was kept alive so that process would not be killed with the worker.\n\
-\n\
-Collect that task's result and continue the work in the same Buzz thread. Post the update there. Do not start a second copy of the task.\n";
-
-fn note_runtime_hold(agent: &mut OwnedAgent, source: &PromptSource, pool: &mut AgentPool) {
-    let PromptSource::Channel(scope) = source else {
-        pool.clear_runtime_hold(agent.index);
-        return;
-    };
-    let blocking = agent.acp.blocking_child_pids();
-    if blocking.is_empty() {
-        pool.clear_runtime_hold(agent.index);
-        return;
-    }
-    tracing::info!(
-        agent = agent.index,
-        children = blocking.len(),
-        scope = %scope.telemetry_label(),
-        "turn ended with live child processes — deferring pool sleep"
-    );
-    pool.set_runtime_hold(
-        agent.index,
-        pool::RuntimeHold {
-            scope: scope.clone(),
-            blocking_pids: blocking,
-        },
-    );
-}
-
-fn dispatch_runtime_followups(
-    pool: &mut AgentPool,
-    ctx: &Arc<PromptContext>,
-    last_activity: &mut tokio::time::Instant,
-    typing_channels: &mut HashMap<scope::SessionScope, ThreadTags>,
-) {
-    for (mut agent, scope) in pool.take_finished_runtime_holds() {
-        tracing::info!(
-            agent = agent.index,
-            scope = %scope.telemetry_label(),
-            "background children exited — prompting the same session"
-        );
-        agent.followup_scope = Some(scope.clone());
-        let prompt_text = RUNTIME_FOLLOWUP_PROMPT.to_string();
-        let result_tx = pool.result_tx();
-        let ctx_clone = Arc::clone(ctx);
-        let agent_index = agent.index;
-        let turn_id = Uuid::new_v4().to_string();
-        let task_turn_id = turn_id.clone();
-        let channel_id = scope.channel_id();
-        let (control_tx, control_rx) = tokio::sync::oneshot::channel();
-        let (steer_tx, steer_rx) = tokio::sync::mpsc::channel(1);
-        agent.acp.install_steer_rx(steer_rx);
-        let abort_handle = pool.join_set.spawn(async move {
-            pool::run_prompt_task(
-                agent,
-                None,
-                Some(prompt_text),
-                ctx_clone,
-                result_tx,
-                Some(control_rx),
-                task_turn_id,
-            )
-            .await;
-        });
-        pool.task_map_mut().insert(
-            abort_handle.id(),
-            pool::TaskMeta {
-                agent_index,
-                channel_id: Some(channel_id),
-                scope: Some(scope.clone()),
-                turn_id,
-                recoverable_batch: None,
-                control_tx: Some(control_tx),
-                steer_tx: Some(steer_tx),
-                successful_steer_deliveries: HashSet::new(),
-            },
-        );
-        typing_channels.insert(scope, ThreadTags::default());
-        *last_activity = tokio::time::Instant::now();
-    }
-}
-
 fn dispatch_heartbeat(
     pool: &mut AgentPool,
     ctx: &Arc<PromptContext>,
@@ -6008,7 +5950,7 @@ async fn initialize_agent_pool(
                             agent_name,
                             goose_system_prompt_supported: None,
                             protocol_version,
-                            followup_scope: None,
+                            background_context: None,
                         }));
                     }
                     Ok(Err(e)) => {
@@ -10395,7 +10337,7 @@ mod error_outcome_emission_tests {
             // Error branches under test never read this; 1 is the legacy
             // non-systemPrompt path, the simplest valid value.
             protocol_version: 1,
-            followup_scope: None,
+            background_context: None,
         }
     }
 
@@ -11051,6 +10993,7 @@ mod error_outcome_emission_tests {
                 .unwrap();
             let __cid = Uuid::new_v4();
             FlushBatch {
+                continuation: None,
                 channel_id: __cid,
                 scope: scope::SessionScope::Conversation { channel_id: __cid },
                 events: vec![BatchEvent {
@@ -11161,6 +11104,7 @@ mod error_outcome_emission_tests {
                 .sign_with_keys(&keys)
                 .unwrap();
             FlushBatch {
+                continuation: None,
                 channel_id,
                 scope: scope::SessionScope::Conversation { channel_id },
                 events: vec![BatchEvent {
@@ -11283,6 +11227,7 @@ mod error_outcome_emission_tests {
         let mut respawn_tasks = tokio::task::JoinSet::new();
         let observer = ObserverHandle::in_process();
         let batch = FlushBatch {
+            continuation: None,
             channel_id,
             scope: scope::SessionScope::Conversation { channel_id },
             events: vec![BatchEvent {
@@ -11380,6 +11325,7 @@ mod error_outcome_emission_tests {
         let mut respawn_tasks = tokio::task::JoinSet::new();
         let observer = ObserverHandle::in_process();
         let batch = FlushBatch {
+            continuation: None,
             channel_id,
             scope: scope::SessionScope::Conversation { channel_id },
             events: vec![BatchEvent {
@@ -11462,6 +11408,7 @@ mod error_outcome_emission_tests {
         );
         let channel_id = Uuid::new_v4();
         let batch = FlushBatch {
+            continuation: None,
             channel_id,
             scope: scope::SessionScope::Conversation { channel_id },
             events: vec![BatchEvent {
@@ -11735,6 +11682,7 @@ mod error_outcome_emission_tests {
             .sign_with_keys(&Keys::generate())
             .unwrap();
         let batch = FlushBatch {
+            continuation: None,
             channel_id,
             scope: session_scope.clone(),
             events: vec![BatchEvent {
@@ -11890,6 +11838,7 @@ mod error_outcome_emission_tests {
             .unwrap();
         let channel_id = uuid::Uuid::new_v4();
         let batch = FlushBatch {
+            continuation: None,
             channel_id,
             scope: scope::SessionScope::Conversation { channel_id },
             events: vec![BatchEvent {
@@ -11996,6 +11945,7 @@ mod error_outcome_emission_tests {
         };
         let channel_id = uuid::Uuid::new_v4();
         let batch = FlushBatch {
+            continuation: None,
             channel_id,
             scope: scope::SessionScope::Conversation { channel_id },
             events: vec![BatchEvent {
@@ -12275,6 +12225,7 @@ mod error_outcome_emission_tests {
             .unwrap();
         let channel_id = uuid::Uuid::new_v4();
         let batch = FlushBatch {
+            continuation: None,
             channel_id,
             scope: scope::SessionScope::Conversation { channel_id },
             events: vec![BatchEvent {

@@ -229,8 +229,8 @@ pub struct AcpClient {
     claude_thinking_summaries: bool,
     /// Children that are part of the worker, not of one turn.
     ///
-    /// Seeded at `initialize` and extended with MCP-style helpers the first
-    /// time they are seen. Idle-pool sleep ignores these pids.
+    /// Seeded at `initialize`, extended by newly created `session/new`
+    /// processes and MCP helpers. Their own turn-work children still block sleep.
     resident_pids: HashSet<u32>,
 }
 
@@ -650,42 +650,72 @@ impl AcpClient {
         self.child.id()
     }
 
-    /// Remember every child that already exists once the protocol handshake
-    /// finishes. Those processes predate any turn.
+    /// Remember processes created before the first turn, including providers'
+    /// own startup children. Call only during the initial protocol handshake.
     pub fn capture_startup_children(&mut self) {
-        let Some(pid) = self.process_id() else {
-            return;
-        };
-        if let Some(children) = crate::process_tree::direct_children(pid) {
-            for child in children {
-                self.resident_pids.insert(child.pid);
-            }
+        if let (Some(pid), Some(tree)) = (self.process_id(), crate::process_tree::snapshot()) {
+            self.resident_pids.extend(tree.descendant_pids(pid));
         }
     }
 
-    /// Direct children that are still doing work from a finished turn.
+    /// Background work under the worker or any resident provider/helper.
     ///
-    /// Helpers (MCP) are adopted into [`resident_pids`](Self::resident_pids)
-    /// so a later quiet tick can sleep. A failed process listing returns an
-    /// empty set; the caller must not invent a hold it cannot refresh.
-    pub fn blocking_child_pids(&mut self) -> HashSet<u32> {
+    /// `None` means enumeration is uncertain and the worker must remain awake.
+    /// Each poll traverses current residents so newly created work is visible.
+    pub fn background_child_pids(&mut self) -> Option<HashSet<u32>> {
         let Some(pid) = self.process_id() else {
-            return HashSet::new();
+            return Some(HashSet::new());
         };
-        let Some(children) = crate::process_tree::direct_children(pid) else {
-            tracing::warn!(
-                pid,
-                "could not list worker children; background work is invisible to pool sleep"
-            );
-            return HashSet::new();
-        };
-        let blocking = crate::process_tree::blocking_pids(&children, &self.resident_pids);
-        for child in children {
-            if crate::process_tree::is_resident_helper(&child.command) {
-                self.resident_pids.insert(child.pid);
+        let tree = crate::process_tree::snapshot()?;
+        let live = tree.descendant_pids(pid);
+        self.resident_pids.retain(|pid| live.contains(pid));
+        let mut pending = vec![pid];
+        let mut visited = HashSet::new();
+        let mut blocking = HashSet::new();
+        while let Some(parent) = pending.pop() {
+            if !visited.insert(parent) {
+                continue;
+            }
+            let children = tree.children(parent);
+            blocking.extend(crate::process_tree::blocking_pids(
+                children,
+                &self.resident_pids,
+            ));
+            for child in children {
+                if self.resident_pids.contains(&child.pid)
+                    || crate::process_tree::is_resident_helper(&child.command)
+                {
+                    self.resident_pids.insert(child.pid);
+                    pending.push(child.pid);
+                }
             }
         }
-        blocking
+        Some(blocking)
+    }
+
+    /// Adopt processes born during successful session setup, traversing only
+    /// existing residents and new branches. Prior background work keeps its
+    /// ownership even when it spawns children during another session's setup.
+    fn capture_session_children(&mut self, before: Option<HashSet<u32>>) {
+        let Some(before) = before else {
+            return; // Unknown baseline must never authorize adopting turn work.
+        };
+        let (Some(pid), Some(tree)) = (self.process_id(), crate::process_tree::snapshot()) else {
+            return;
+        };
+        let mut pending = vec![pid];
+        let mut visited = HashSet::new();
+        while let Some(parent) = pending.pop() {
+            if !visited.insert(parent) {
+                continue;
+            }
+            for child in tree.children(parent) {
+                if self.resident_pids.contains(&child.pid) || !before.contains(&child.pid) {
+                    self.resident_pids.insert(child.pid);
+                    pending.push(child.pid);
+                }
+            }
+        }
     }
 
     /// Attach a local observer feed to this ACP client.
@@ -807,11 +837,15 @@ impl AcpClient {
             params["_meta"]["claudeCode"]["options"]["extraArgs"]["thinking-display"] =
                 serde_json::Value::String("summarized".to_owned());
         }
+        let before = self
+            .process_id()
+            .and_then(|pid| crate::process_tree::snapshot().map(|tree| tree.descendant_pids(pid)));
         let result = self.send_request("session/new", params).await?;
         let session_id = result["sessionId"]
             .as_str()
             .ok_or_else(|| AcpError::Protocol("session/new response missing sessionId".into()))?
             .to_owned();
+        self.capture_session_children(before);
         tracing::info!(target: "acp::session", "session created: {session_id}");
         Ok(SessionNewResponse {
             session_id,
@@ -5270,3 +5304,6 @@ sleep 1"#,
         );
     }
 }
+
+#[cfg(all(test, unix))]
+mod process_tracking_tests;

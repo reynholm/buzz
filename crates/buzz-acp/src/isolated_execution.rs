@@ -58,7 +58,7 @@ pub(crate) async fn execute(
         agent_name: crate::normalized_agent_name(&init),
         goose_system_prompt_supported: None,
         protocol_version: init["protocolVersion"].as_u64().unwrap_or(1) as u32,
-        followup_scope: None,
+        background_context: None,
     };
     let mut session = None;
     let outcome = tokio::select! {

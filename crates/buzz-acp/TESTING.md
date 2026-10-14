@@ -40,6 +40,33 @@ BUZZ_TEST_PI_ACP=/absolute/buzz-pi-acp/dist/index.js \
   cargo test -p buzz-acp real_pi_preserves -- --ignored
 ```
 
+## Background process lifecycle
+
+On Unix, the `background` and `process_` test filters exercise real local ACP
+adapters and child processes. They cover provider residency, direct and nested
+work, bounded process enumeration, queue serialization, retry exhaustion,
+session rotation, and completion while a result is being delivered. They do not
+require provider credentials or an external relay.
+
+For a human check, build `buzz-acp` and use the existing relay/auth/adapter
+configuration with `--lazy-pool --idle-pool-sleep 2 --agents 2`:
+
+1. Ask the agent to start a background task lasting at least ten seconds and
+   finish its turn before the task exits. The worker must stay alive beyond the
+   two-second idle bound, then collect the result once in the original thread.
+2. Send a message while collection is running. It must follow the configured
+   queue/steer policy without a concurrent prompt in that conversation.
+3. Repeat with `--idle-pool-sleep 0`, and without `--lazy-pool`. Completion must
+   still trigger collection. With Claude and no MCP servers, an ordinary turn
+   must leave the worker available for other channels.
+4. Repeat with `--max-turns-per-session 1`: collection must reuse the original
+   session before rotation. In a separate run, send owner `!rotate` while the
+   child is running: its exit must not trigger collection in a replacement
+   session.
+
+Process tracking follows children under the worker and resident providers;
+detached/reparented processes are outside that topology.
+
 ## Git bootstrap
 
 `cargo test -p buzz-acp --test git_bootstrap` starts the actual harness with a

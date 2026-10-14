@@ -44,6 +44,9 @@ use crate::queue::{
 use crate::relay::{ChannelInfo, RestClient};
 use crate::scope::SessionScope;
 
+#[cfg(all(test, unix))]
+mod background_work_tests;
+
 /// Window within which agent activity before a hard-cap death qualifies
 /// the turn as "recently active" (eligible for requeue instead of dead-letter).
 const RECENT_ACTIVITY_WINDOW: Duration = Duration::from_secs(60);
@@ -157,6 +160,7 @@ pub struct SessionState {
     /// pool uses this fence to discard that stale provider session before the
     /// worker becomes claimable again.
     scope_owner_generations: HashMap<SessionScope, u64>,
+    background_rotation_pending: HashSet<SessionScope>,
 }
 
 impl SessionState {
@@ -181,6 +185,7 @@ impl SessionState {
     /// Invalidate a single session scope's session and turn counter.
     /// Returns `true` if the scope had an active session.
     pub fn invalidate_scope(&mut self, scope: &SessionScope) -> bool {
+        self.background_rotation_pending.remove(scope);
         self.turn_counts.remove(scope);
         self.core_sections.remove(scope);
         self.canvas_sections.remove(scope);
@@ -218,6 +223,7 @@ impl SessionState {
     /// Invalidate all sessions and turn counters (e.g. after agent exit).
     pub fn invalidate_all(&mut self) {
         self.sessions.clear();
+        self.background_rotation_pending.clear();
         self.turn_counts.clear();
         self.heartbeat_session = None;
         self.heartbeat_turn_count = 0;
@@ -304,19 +310,12 @@ pub struct OwnedAgent {
     pub goose_system_prompt_supported: Option<bool>,
     /// Protocol version reported by the agent in its initialize response.
     pub protocol_version: u32,
-    /// Set only for the one prompt sent after background children exit.
-    ///
-    /// `run_prompt_task` consumes it and uses that scope's existing session
-    /// instead of opening a heartbeat session.
-    pub followup_scope: Option<SessionScope>,
+    /// Origin of work started by the current turn, carried through its result.
+    pub background_context: Option<RuntimeHold>,
 }
 
-/// Background children that outlived the ACP turn which started them.
-#[derive(Debug)]
-pub struct RuntimeHold {
-    pub scope: SessionScope,
-    pub blocking_pids: HashSet<u32>,
-}
+mod background_work;
+pub(crate) use background_work::{ContinuationState, RuntimeHold};
 
 /// Package name reported by `claude-agent-acp` in its `initialize` response.
 /// Any adapter reporting this name supports `_meta.systemPrompt: {append: ...}`
@@ -977,71 +976,6 @@ impl AgentPool {
         }
     }
 
-    pub fn set_runtime_hold(&mut self, index: usize, hold: RuntimeHold) {
-        self.runtime_holds.insert(index, hold);
-    }
-
-    pub fn clear_runtime_hold(&mut self, index: usize) {
-        self.runtime_holds.remove(&index);
-    }
-
-    pub fn has_runtime_hold(&self) -> bool {
-        !self.runtime_holds.is_empty()
-    }
-
-    /// Drop holds whose blocking children have exited and return those workers
-    /// so the caller can prompt the same session. A failed process listing
-    /// leaves the hold in place: the alternative is `killpg` of work we
-    /// cannot see.
-    pub fn take_finished_runtime_holds(&mut self) -> Vec<(OwnedAgent, SessionScope)> {
-        let indexes: Vec<usize> = self.runtime_holds.keys().copied().collect();
-        let mut finished = Vec::new();
-        for index in indexes {
-            // Copy the pid out before any mutable use of `self`. The match
-            // borrow of `agents` must end first.
-            let seen = match self.agents.get(index) {
-                Some(Some(agent)) => match agent.acp.process_id() {
-                    Some(pid) => Some(pid),
-                    None => None,
-                },
-                // Checked out: the worker comes back on the next tick.
-                Some(None) => continue,
-                // Slot index is gone. Drop the hold once this borrow ends.
-                None => Some(u32::MAX),
-            };
-            if seen == Some(u32::MAX) {
-                self.runtime_holds.remove(&index);
-                continue;
-            }
-            let Some(pid) = seen else {
-                // Idle record, process already exited.
-                self.runtime_holds.remove(&index);
-                continue;
-            };
-            let Some(children) = crate::process_tree::direct_children(pid) else {
-                continue;
-            };
-            let live: HashSet<u32> = children.into_iter().map(|child| child.pid).collect();
-            let still_blocking = self
-                .runtime_holds
-                .get(&index)
-                .is_some_and(|hold| hold.blocking_pids.iter().any(|child| live.contains(child)));
-            if still_blocking {
-                if let Some(hold) = self.runtime_holds.get_mut(&index) {
-                    hold.blocking_pids.retain(|child| live.contains(child));
-                }
-                continue;
-            }
-            let Some(hold) = self.runtime_holds.remove(&index) else {
-                continue;
-            };
-            if let Some(agent) = self.agents.get_mut(index).and_then(|slot| slot.take()) {
-                finished.push((agent, hold.scope));
-            }
-        }
-        finished
-    }
-
     /// Record `agent_index` as the newest owner of `scope`, returning the
     /// generation that the caller must install on the checked-out worker.
     /// Returning workers are accepted only while this exact
@@ -1145,13 +1079,18 @@ impl AgentPool {
         if let Some(scope) = scope {
             let idx = self.agents.iter().position(|slot| {
                 slot.as_ref()
-                    .map(|a| self.agent_owns_scope(a, scope))
+                    .map(|a| {
+                        self.agent_owns_scope(a, scope)
+                            && self.runtime_claim_allowed(a.index, Some(scope))
+                    })
                     .unwrap_or(false)
             });
             if let Some(i) = idx {
                 // A real prompt for this session replaces the pending follow-up.
-                self.runtime_holds.remove(&i);
-                return self.agents[i].take();
+                let hold = self.runtime_holds.remove(&i);
+                let mut agent = self.agents[i].take()?;
+                agent.background_context = hold;
+                return Some(agent);
             }
         }
 
@@ -1197,12 +1136,16 @@ impl AgentPool {
                 "BUG: return_agent called for slot {idx} which is already occupied — overwriting"
             );
         }
+        self.refresh_runtime_hold(&mut agent);
         self.agents[idx] = Some(agent);
     }
 
-    /// Whether any agent is currently idle (sitting in its slot).
+    /// Whether an idle worker can accept unrelated work without a runtime hold.
     pub fn any_idle(&self) -> bool {
-        self.agents.iter().any(|slot| slot.is_some())
+        self.agents
+            .iter()
+            .flatten()
+            .any(|agent| self.runtime_claim_allowed(agent.index, None))
     }
 
     /// Confirm that pending work for `scope` successfully claimed a worker.
@@ -1244,12 +1187,15 @@ impl AgentPool {
     /// worker. A worker return wakes the main loop independently, so arming an
     /// already-expired timer while every slot is checked out would only spin.
     pub(crate) fn next_hold_deadline(&self, timeout: Duration) -> Option<tokio::time::Instant> {
-        if !self.any_idle() {
-            return None;
-        }
         self.held_since
-            .values()
-            .map(|held_since| *held_since + timeout)
+            .iter()
+            .filter(|(scope, _)| {
+                self.agents
+                    .iter()
+                    .flatten()
+                    .any(|agent| self.runtime_claim_allowed(agent.index, Some(scope)))
+            })
+            .map(|(_, held_since)| *held_since + timeout)
             .min()
     }
 
@@ -2478,6 +2424,11 @@ fn send_prompt_result(
     batch: Option<FlushBatch>,
 ) {
     agent.acp.clear_steer_rx();
+    if !matches!(outcome, PromptOutcome::Ok(_)) {
+        if let Some(context) = &mut agent.background_context {
+            context.continuation = None;
+        }
+    }
     let _ = result_tx.send(PromptResult {
         agent,
         source,
@@ -2508,18 +2459,27 @@ pub async fn run_prompt_task(
     control_rx: Option<tokio::sync::oneshot::Receiver<ControlSignal>>,
     turn_id: String,
 ) {
-    // A follow-up after background children exit must reuse the channel
-    // session that started them. Heartbeat is a different session and would
-    // not see the result.
-    let followup_scope = agent.followup_scope.take();
-    let source = if let Some(scope) = followup_scope {
-        PromptSource::Channel(scope)
-    } else {
-        match &batch {
-            Some(b) => PromptSource::Channel(b.scope.clone()),
-            None => PromptSource::Heartbeat,
-        }
+    let source = match &batch {
+        Some(batch) => PromptSource::Channel(batch.scope.clone()),
+        None => PromptSource::Heartbeat,
     };
+    let prompt_text = batch
+        .as_ref()
+        .and_then(|batch| {
+            batch.continuation.as_ref().map(|continuation| {
+                format!(
+                    "{}\nChannel: {}\nReply thread: {}",
+                    background_work::FOLLOWUP_PROMPT,
+                    batch.channel_id,
+                    continuation
+                        .thread_tags
+                        .root_event_id
+                        .as_deref()
+                        .unwrap_or("none")
+                )
+            })
+        })
+        .or(prompt_text);
     let observer_channel_id = source.channel_id();
     // Thread conversation context requires the canonical root to distinguish
     // concurrent threads in the same channel's activity.
@@ -2880,6 +2840,7 @@ pub async fn run_prompt_task(
             }
         }
     };
+    agent.remember_background_context(&source, batch.as_ref(), &session_id);
     agent.acp.set_observer_context(observer::context_for_turn(
         observer_channel_id,
         Some(session_id.clone()),
@@ -3490,6 +3451,7 @@ pub async fn run_prompt_task(
                 agent.state.heartbeat_standing_context_sent = true;
             }
 
+            let background_running = agent.background_work_running(&source);
             let should_rotate = matches!(
                 stop_reason,
                 StopReason::MaxTokens | StopReason::MaxTurnRequests
@@ -3514,7 +3476,18 @@ pub async fn run_prompt_task(
                 }
             };
 
-            if should_rotate {
+            let should_rotate = should_rotate
+                || source
+                    .scope()
+                    .is_some_and(|scope| agent.state.background_rotation_pending.contains(scope));
+            if should_rotate && background_running {
+                if let Some(scope) = source.scope() {
+                    agent
+                        .state
+                        .background_rotation_pending
+                        .insert(scope.clone());
+                }
+            } else if should_rotate {
                 tracing::info!(
                     target: "pool::session",
                     "rotating session for {source:?} after {stop_reason:?}",
@@ -4977,6 +4950,12 @@ fn parse_nostr_dm_response(json: serde_json::Value, limit: u32) -> Option<Conver
 /// Return the batch for requeue only in Queue mode; drop it in Drop mode.
 #[inline]
 fn requeue_batch_if_queue(ctx: &PromptContext, batch: Option<FlushBatch>) -> Option<FlushBatch> {
+    if batch
+        .as_ref()
+        .is_some_and(|batch| batch.continuation.is_some())
+    {
+        return batch;
+    }
     match ctx.dedup_mode {
         DedupMode::Queue => batch,
         DedupMode::Drop => None,
@@ -7055,6 +7034,7 @@ mod tests {
         let author_hex = event.pubkey.to_hex();
         let channel_id = Uuid::new_v4();
         let batch = FlushBatch {
+            continuation: None,
             channel_id,
             scope: SessionScope::Conversation { channel_id },
             events: vec![crate::queue::BatchEvent {
@@ -7178,12 +7158,13 @@ mod tests {
                 agent_name: "observer-test-agent".into(),
                 goose_system_prompt_supported: None,
                 protocol_version: 1,
-                followup_scope: None,
+                background_context: None,
             };
             let observer = observer::ObserverHandle::in_process();
             let mut observer_rx = observer.subscribe();
             agent.acp.set_observer(Some(observer.clone()), 0);
             let batch = FlushBatch {
+                continuation: None,
                 channel_id,
                 scope,
                 events: vec![],
@@ -7306,7 +7287,7 @@ done"#
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
-            followup_scope: None,
+            background_context: None,
         };
         agent.state.heartbeat_session = Some("live-session".into());
 
@@ -7407,7 +7388,7 @@ done"#
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
-            followup_scope: None,
+            background_context: None,
         };
         agent
             .state
@@ -7429,6 +7410,7 @@ done"#
                 .unwrap();
             let event_id = event.id.to_hex();
             let batch = FlushBatch {
+                continuation: None,
                 channel_id,
                 scope: SessionScope::Conversation { channel_id },
                 events: vec![crate::queue::BatchEvent {
@@ -7596,7 +7578,7 @@ done"#
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
-            followup_scope: None,
+            background_context: None,
         };
         agent
             .state
@@ -7630,6 +7612,7 @@ done"#
             ctx
         };
         let first_batch = FlushBatch {
+            continuation: None,
             channel_id,
             scope: scope.clone(),
             events: vec![crate::queue::BatchEvent {
@@ -7642,6 +7625,7 @@ done"#
             cancel_reason: None,
         };
         let follow_up_batch = FlushBatch {
+            continuation: None,
             channel_id,
             scope: scope.clone(),
             events: vec![crate::queue::BatchEvent {
@@ -7733,6 +7717,7 @@ done"#
             .sign_with_keys(&keys)
             .unwrap();
         let merged_batch = FlushBatch {
+            continuation: None,
             channel_id,
             scope: SessionScope::Conversation { channel_id },
             events: vec![crate::queue::BatchEvent {
@@ -7750,6 +7735,7 @@ done"#
             cancel_reason: Some(crate::queue::CancelReason::Steer),
         };
         let next_batch = FlushBatch {
+            continuation: None,
             channel_id,
             scope: SessionScope::Conversation { channel_id },
             events: vec![crate::queue::BatchEvent {
@@ -7810,7 +7796,7 @@ done"#
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
-            followup_scope: None,
+            background_context: None,
         };
         agent
             .state
@@ -7908,6 +7894,7 @@ done"#
             .sign_with_keys(&keys)
             .unwrap();
         let batch = FlushBatch {
+            continuation: None,
             channel_id,
             scope: SessionScope::Conversation { channel_id },
             events: vec![crate::queue::BatchEvent {
@@ -7966,7 +7953,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
-            followup_scope: None,
+            background_context: None,
         };
         agent
             .state
@@ -8189,6 +8176,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         )
         .expect("root remains after trigger deduplication");
         let batch = FlushBatch {
+            continuation: None,
             channel_id,
             scope: SessionScope::Thread {
                 channel_id,
@@ -8246,6 +8234,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         )
         .expect("earlier DM remains after trigger deduplication");
         let batch = FlushBatch {
+            continuation: None,
             channel_id,
             scope: SessionScope::Conversation { channel_id },
             events: vec![crate::queue::BatchEvent {
@@ -8487,6 +8476,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
 
     fn batch_with_scope(scope: SessionScope, event: nostr::Event) -> FlushBatch {
         FlushBatch {
+            continuation: None,
             channel_id: scope.channel_id(),
             scope,
             events: vec![crate::queue::BatchEvent {
@@ -8680,7 +8670,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             agent_name: "test".into(),
             goose_system_prompt_supported: None,
             protocol_version: 2,
-            followup_scope: None,
+            background_context: None,
         };
         agent.state.sessions.insert(ta.clone(), "sess-a".into());
         agent.state.sessions.insert(tb.clone(), "sess-b".into());
@@ -8763,7 +8753,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             agent_name: "test".into(),
             goose_system_prompt_supported: None,
             protocol_version: 2,
-            followup_scope: None,
+            background_context: None,
         };
         agent.state.sessions.insert(scope, "sess".into());
         agent
@@ -9255,6 +9245,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             .sign_with_keys(&keys)
             .unwrap();
         FlushBatch {
+            continuation: None,
             channel_id,
             scope: SessionScope::Conversation { channel_id },
             events: vec![crate::queue::BatchEvent {
@@ -9827,7 +9818,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             agent_name: "unknown".into(),
             goose_system_prompt_supported: None,
             protocol_version: 2,
-            followup_scope: None,
+            background_context: None,
         };
 
         // Simulate dispatch: install a steer receiver (normally done by
@@ -9889,7 +9880,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             agent_name: "unknown".into(),
             goose_system_prompt_supported: None,
             protocol_version: 2,
-            followup_scope: None,
+            background_context: None,
         };
 
         // Simulate a completed turn: `steer_rx` was consumed by the read loop
@@ -11190,7 +11181,7 @@ done"#
             agent_name: "boundary-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
-            followup_scope: None,
+            background_context: None,
         };
 
         let event = EventBuilder::new(Kind::Custom(9), "do project work")
@@ -11198,6 +11189,7 @@ done"#
             .unwrap();
         let event_id = event.id.to_hex();
         let batch = FlushBatch {
+            continuation: None,
             channel_id,
             scope: conv(channel_id),
             events: vec![crate::queue::BatchEvent {
@@ -11586,7 +11578,7 @@ mod startup_effort_tests {
             agent_name: "effort-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 2,
-            followup_scope: None,
+            background_context: None,
         }
     }
 
@@ -11847,7 +11839,7 @@ mod model_switch_tests {
             agent_name: "switch-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 2,
-            followup_scope: None,
+            background_context: None,
         }
     }
 
@@ -12423,7 +12415,7 @@ done"#
             agent_name: "switch-effort-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 2,
-            followup_scope: None,
+            background_context: None,
         }
     }
 
