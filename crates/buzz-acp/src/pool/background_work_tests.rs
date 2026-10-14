@@ -771,6 +771,103 @@ async fn background_collection_resumes_original_session_after_steer_and_interrup
 }
 
 #[tokio::test]
+async fn background_collection_completes_under_repeated_ordinary_preemption() {
+    for mode in [
+        crate::config::MultipleEventHandling::Interrupt,
+        crate::config::MultipleEventHandling::Steer,
+    ] {
+        let (mut pool, mut queue, scope, dir, ctx) = started_background_turn(0).await;
+        finish_child(&mut pool, &mut queue, &dir).await;
+        std::fs::write(dir.path().join("block-collection"), "wait").unwrap();
+        assert_eq!(dispatch(&mut pool, &mut queue, &ctx), 1);
+        wait_marker(&dir, "collection-started").await;
+        assert!(crate::signal_in_flight_task_for_scope(
+            &mut pool,
+            &scope,
+            ControlSignal::Interrupt
+        ));
+        let result = timeout(Duration::from_secs(10), pool.result_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(result.outcome, PromptOutcome::Cancelled));
+        apply_result(&mut pool, &mut queue, result, None, &HashSet::new());
+        std::fs::remove_file(dir.path().join("collection-started")).unwrap();
+        assert_eq!(dispatch(&mut pool, &mut queue, &ctx), 1);
+        wait_marker(&dir, "collection-started").await;
+        let (ack_tx, _ack_rx) = tokio::sync::mpsc::unbounded_channel();
+        let native_event = EventBuilder::new(Kind::Custom(9), "native steering must queue")
+            .sign_with_keys(&Keys::generate())
+            .unwrap();
+        let received_at = std::time::Instant::now();
+        assert!(queue.push(QueuedEvent {
+            channel_id: scope.channel_id(),
+            scope: scope.clone(),
+            event: native_event.clone(),
+            prompt_tag: "test".into(),
+            received_at,
+            edit: None
+        }));
+        assert!(!crate::try_native_steer(
+            &mut pool,
+            &mut queue,
+            scope.clone(),
+            crate::queue::BatchEvent {
+                event: native_event,
+                prompt_tag: "test".into(),
+                received_at,
+                edit: None
+            },
+            &ack_tx
+        ));
+        for i in 0..8 {
+            let event = EventBuilder::new(Kind::Custom(9), format!("ordinary message {i}"))
+                .sign_with_keys(&Keys::generate())
+                .unwrap();
+            let author = event.pubkey.to_hex();
+            let id = event.id.to_hex();
+            let received_at = std::time::Instant::now();
+            let accepted = queue.push(QueuedEvent {
+                channel_id: scope.channel_id(),
+                scope: scope.clone(),
+                event: event.clone(),
+                prompt_tag: "test".into(),
+                received_at,
+                edit: None,
+            });
+            crate::QueuedNormalListenerEvent {
+                accepted,
+                scope: scope.clone(),
+                effective_author: author,
+                reaction_target_id: id,
+                steer_event: crate::queue::BatchEvent {
+                    event,
+                    prompt_tag: "test".into(),
+                    received_at,
+                    edit: None,
+                },
+            }
+            .steer_or_interrupt(mode, None, &mut pool, &mut queue, &ack_tx);
+            assert!(
+                pool.task_map.values().next().unwrap().control_tx.is_some(),
+                "repeated ordinary traffic must give collection an execution opportunity"
+            );
+            assert_eq!(dispatch(&mut pool, &mut queue, &ctx), 0);
+        }
+        std::fs::remove_file(dir.path().join("block-collection")).unwrap();
+        return_success(&mut pool, &mut queue).await;
+        assert_eq!(last_prompt(&dir)["params"]["sessionId"], "original-session");
+        assert_eq!(dispatch(&mut pool, &mut queue, &ctx), 1);
+        return_success(&mut pool, &mut queue).await;
+        let prompt = last_prompt(&dir).to_string();
+        for i in 0..8 {
+            assert!(prompt.contains(&format!("ordinary message {i}")));
+        }
+        assert!(prompt.contains("native steering must queue"));
+    }
+}
+
+#[tokio::test]
 async fn background_generation_replacement_and_channel_revocation_never_resume_collection() {
     for revoked in [false, true] {
         let (mut pool, mut queue, scope, dir, ctx) = started_background_turn(0).await;

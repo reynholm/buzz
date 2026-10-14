@@ -4325,6 +4325,17 @@ fn signal_in_flight_task(
         .find(|m| m.channel_id == Some(channel_id));
 
     if let Some(meta) = entry {
+        if matches!(mode, ControlSignal::Steer | ControlSignal::Interrupt)
+            && meta
+                .recoverable_batch
+                .as_ref()
+                .and_then(|batch| batch.continuation.as_ref())
+                .is_some_and(|continuation| continuation.ordinary_preempted)
+        {
+            // Keep queued traffic for the next foreground turn. Repeated ordinary
+            // cancellation must not reset the collection's deadline indefinitely.
+            return false;
+        }
         if let Some(tx) = meta.control_tx.take() {
             tracing::info!(channel = %channel_id, ?mode, "control signal sent to in-flight task");
             let _ = tx.send(mode);
@@ -4382,6 +4393,15 @@ fn signal_in_flight_task_for_scope(
         .find(|m| m.scope.as_ref() == Some(scope));
 
     if let Some(meta) = entry {
+        if matches!(mode, ControlSignal::Steer | ControlSignal::Interrupt)
+            && meta
+                .recoverable_batch
+                .as_ref()
+                .and_then(|batch| batch.continuation.as_ref())
+                .is_some_and(|continuation| continuation.ordinary_preempted)
+        {
+            return false;
+        }
         if let Some(tx) = meta.control_tx.take() {
             tracing::info!(
                 channel = %scope.channel_id(),
@@ -4427,6 +4447,17 @@ fn try_native_steer(
     be: queue::BatchEvent,
     steer_ack_tx: &mpsc::UnboundedSender<SteerAckEvent>,
 ) -> bool {
+    if pool.task_map().values().any(|meta| {
+        meta.scope.as_ref() == Some(&scope)
+            && meta
+                .recoverable_batch
+                .as_ref()
+                .is_some_and(|batch| batch.continuation.is_some())
+    }) {
+        // Native steers can repeatedly extend a turn's deadline. Collections
+        // use the bounded ordinary cancel path, then queue subsequent traffic.
+        return false;
+    }
     let channel_id = scope.channel_id();
     // Build the steer body: framing strings come from
     // `queue::native_steer_framing()` (Eva's drift-proof requirement —

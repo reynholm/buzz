@@ -64,6 +64,7 @@ impl OwnedAgent {
             collection_pending: false,
             continuation: Some(RuntimeContinuation {
                 delivery_key: Uuid::new_v4(),
+                ordinary_preempted: false,
                 worker_index: self.index,
                 session_id: session_id.to_owned(),
                 generation: self
