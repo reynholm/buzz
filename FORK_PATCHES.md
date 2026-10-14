@@ -596,7 +596,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/Cargo.lock`
 
-Direct Desktop gethostname dependency without version changes
+Direct Desktop gethostname dependency without version changes Pin rustls 0.23.46 for the release, resolving RUSTSEC-2026-0346 through RUSTSEC-2026-0349 without unrelated dependency changes.
 
 New module: `false`.
 
@@ -2666,7 +2666,7 @@ New module: `false`.
 
 ## `Cargo.lock`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Pin rustls 0.23.46 for the release, resolving RUSTSEC-2026-0346 through RUSTSEC-2026-0349 without unrelated dependency changes.
 
 New module: `false`.
 
