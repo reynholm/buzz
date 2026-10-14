@@ -43,6 +43,27 @@ mod postgres_tests;
 
 #[cfg(test)]
 mod standard;
+
+#[cfg(test)]
+mod nested {
+    mod postgres_tests {
+        mod recovery;
+        mod directory;
+    }
+}
+RS
+
+mkdir -p "$fixture_root/src/nested/postgres_tests/directory"
+cat >"$fixture_root/src/nested/postgres_tests/recovery.rs" <<'RS'
+#[test]
+#[ignore = "requires PostgreSQL and Redis"]
+fn nested_out_of_line_recovery_test() {}
+RS
+
+cat >"$fixture_root/src/nested/postgres_tests/directory/mod.rs" <<'RS'
+#[test]
+#[ignore = "requires PostgreSQL"]
+fn nested_directory_module_test() {}
 RS
 
 cat >"$fixture_root/src/out_of_line.rs" <<'RS'
@@ -64,6 +85,7 @@ RS
 python3 "$checker" "$fixture_root"
 python3 "$checker" "$fixture_root/src/out_of_line.rs"
 python3 "$checker" "$fixture_root/src/standard/postgres_tests.rs"
+python3 "$checker" "$fixture_root/src/nested/postgres_tests/recovery.rs"
 
 packages="$("$repo_root/scripts/postgres-test-packages.sh" "$fixture_root")"
 if [[ "$packages" != "postgres-discovery-fixture" ]]; then
@@ -124,6 +146,26 @@ fi
 grep -q "postgres_only_test_cannot_hide_under_external_infra" \
   "$fixture_root/external-postgres.out"
 rm "$fixture_root/src/external_postgres_only.rs"
+
+mkdir -p "$fixture_root/src/external_parent/postgres_tests/external_infra_tests"
+cat >"$fixture_root/src/external_parent.rs" <<'RS'
+mod postgres_tests {
+    mod external_infra_tests {
+        mod cases;
+    }
+}
+RS
+cat >"$fixture_root/src/external_parent/postgres_tests/external_infra_tests/cases.rs" <<'RS'
+#[test]
+#[ignore = "requires PostgreSQL"]
+fn external_ancestor_cannot_hide_postgres_test() {}
+RS
+if python3 "$checker" "$fixture_root" >"$fixture_root/external-ancestor.out" 2>&1; then
+  echo "expected an out-of-line PostgreSQL test under external infra to fail" >&2
+  exit 1
+fi
+grep -q "external_ancestor_cannot_hide_postgres_test" "$fixture_root/external-ancestor.out"
+rm -r "$fixture_root/src/external_parent" "$fixture_root/src/external_parent.rs"
 
 cat >"$fixture_root/src/bare_ignore.rs" <<'RS'
 #[cfg(test)]

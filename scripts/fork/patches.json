@@ -4390,9 +4390,11 @@
     },
     {
       "path": ".github/workflows/_ci-relay.yml",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane.",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "export BUZZ_TEST_BIN_DIR=\"$PWD/target/ci\""
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "just ci"
@@ -8406,6 +8408,30 @@
       "invocation_seams": [],
       "verification_commands": [
         "pnpm -C desktop test"
+      ]
+    },
+    {
+      "path": "scripts/check-postgres-test-discovery.py",
+      "responsibility": "Resolve conventional out-of-line Rust tests inside inline postgres_tests modules, retaining ancestor discovery context.",
+      "is_new": false,
+      "required_symbols": [
+        "inline_ranges = module_ranges(source)"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "bash scripts/test-postgres-test-discovery.sh"
+      ]
+    },
+    {
+      "path": "scripts/test-postgres-test-discovery.sh",
+      "responsibility": "Exercise nested file and directory Rust modules in the PostgreSQL discovery contract.",
+      "is_new": false,
+      "required_symbols": [
+        "nested_out_of_line_recovery_test"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "bash scripts/test-postgres-test-discovery.sh"
       ]
     }
   ]

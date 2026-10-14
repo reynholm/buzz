@@ -54,6 +54,7 @@ jobs:
         with:
           path: |
             target/ci/buzz-relay
+            target/ci/buzz
             target/ci/git-credential-nostr
             target/ci/backend-integration-tests.tar.zst
             target/ci/postgres-tests.tar.zst
@@ -84,7 +85,7 @@ jobs:
         env:
           RUSTC_WRAPPER: sccache
         run: |
-          cargo build --profile ci -p buzz-relay -p git-credential-nostr
+          cargo build --profile ci -p buzz-relay -p git-credential-nostr -p buzz-cli
           cargo nextest archive \
             --cargo-profile ci \
             -p buzz-db \
@@ -115,6 +116,7 @@ jobs:
         with:
           path: |
             target/ci/buzz-relay
+            target/ci/buzz
             target/ci/git-credential-nostr
             target/ci/backend-integration-tests.tar.zst
             target/ci/postgres-tests.tar.zst
@@ -125,6 +127,7 @@ jobs:
           name: desktop-e2e-relay
           path: |
             target/ci/buzz-relay
+            target/ci/buzz
             target/ci/git-credential-nostr
             target/ci/backend-integration-tests.tar.zst
             target/ci/postgres-tests.tar.zst
@@ -199,12 +202,13 @@ jobs:
           name: desktop-e2e-relay
           path: target/ci
       - name: Restore relay executable permission
-        run: chmod +x ./target/ci/buzz-relay
+        run: chmod +x ./target/ci/buzz-relay ./target/ci/buzz
       - name: PostgreSQL-backed tests
         env:
           BUZZ_POSTGRES_ADMIN_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/postgres
           PGPASSWORD: ${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}
         run: |
+          export BUZZ_TEST_BIN_DIR="$PWD/target/ci"
           scripts/postgres-test-run.sh \
             --archive-file target/ci/postgres-tests.tar.zst
 
