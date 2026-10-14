@@ -13,6 +13,7 @@ mod isolated_execution;
 mod observer;
 mod pool;
 mod pool_lifecycle;
+mod process_tree;
 mod prompt_framing;
 mod prompt_project;
 mod queue;
@@ -2200,11 +2201,15 @@ fn inactivity_expired(
 ///
 /// True only when the pool is ready, the idle bound has elapsed with no
 /// dispatched turn or heartbeat in flight and no in-flight prompt tasks, no
-/// work is queued, and no wake/respawn task is running. The queue and task
+/// work is queued, no wake/respawn task is running, and no worker is still
+/// parenting a background child (subagent or shell). The queue and task
 /// gates make teardown race-safe with enqueue/wake: an event that landed in
 /// the queue (or a wake/respawn already in flight) blocks this decision, so a
 /// queued batch is never stranded — the caller's next loop iteration will
 /// dispatch or wake it instead.
+///
+/// `last_activity` is the end of the last turn, not its dispatch. A turn
+/// longer than `bound` must not count as quiet time.
 #[allow(clippy::too_many_arguments)]
 fn idle_pool_sleep_due(
     pool_ready: bool,
@@ -2215,11 +2220,13 @@ fn idle_pool_sleep_due(
     prompt_tasks_in_flight: bool,
     work_queued: bool,
     wake_or_respawn_in_flight: bool,
+    runtime_busy: bool,
 ) -> bool {
     pool_ready
         && !work_queued
         && !prompt_tasks_in_flight
         && !wake_or_respawn_in_flight
+        && !runtime_busy
         && inactivity_expired(last_activity, now, bound, turn_in_flight)
 }
 
@@ -2286,7 +2293,7 @@ mod idle_pool_sleep_tests {
     fn sleeps_when_ready_idle_and_quiet() {
         let (last, now, bound) = ready_after_bound();
         assert!(idle_pool_sleep_due(
-            true, last, now, bound, false, false, false, false
+            true, last, now, bound, false, false, false, false, false
         ));
     }
 
@@ -2301,6 +2308,7 @@ mod idle_pool_sleep_tests {
             false,
             false,
             false,
+            false,
             false
         ));
     }
@@ -2310,7 +2318,7 @@ mod idle_pool_sleep_tests {
         // A still-sleeping (or waking) pool must not "re-sleep".
         let (last, now, bound) = ready_after_bound();
         assert!(!idle_pool_sleep_due(
-            false, last, now, bound, false, false, false, false
+            false, last, now, bound, false, false, false, false, false
         ));
     }
 
@@ -2318,7 +2326,7 @@ mod idle_pool_sleep_tests {
     fn active_turn_defers_sleep() {
         let (last, now, bound) = ready_after_bound();
         assert!(!idle_pool_sleep_due(
-            true, last, now, bound, true, false, false, false
+            true, last, now, bound, true, false, false, false, false
         ));
     }
 
@@ -2326,7 +2334,7 @@ mod idle_pool_sleep_tests {
     fn in_flight_prompt_task_defers_sleep() {
         let (last, now, bound) = ready_after_bound();
         assert!(!idle_pool_sleep_due(
-            true, last, now, bound, false, true, false, false
+            true, last, now, bound, false, true, false, false, false
         ));
     }
 
@@ -2336,7 +2344,7 @@ mod idle_pool_sleep_tests {
         // teardown so it is never stranded — the loop dispatches it instead.
         let (last, now, bound) = ready_after_bound();
         assert!(!idle_pool_sleep_due(
-            true, last, now, bound, false, false, true, false
+            true, last, now, bound, false, false, true, false, false
         ));
     }
 
@@ -2344,7 +2352,15 @@ mod idle_pool_sleep_tests {
     fn wake_or_respawn_in_flight_defers_sleep() {
         let (last, now, bound) = ready_after_bound();
         assert!(!idle_pool_sleep_due(
-            true, last, now, bound, false, false, false, true
+            true, last, now, bound, false, false, false, true, false
+        ));
+    }
+
+    #[test]
+    fn live_runtime_children_defer_sleep() {
+        let (last, now, bound) = ready_after_bound();
+        assert!(!idle_pool_sleep_due(
+            true, last, now, bound, false, false, false, false, true
         ));
     }
 
@@ -2359,6 +2375,7 @@ mod idle_pool_sleep_tests {
             recent,
             now,
             Duration::from_secs(60),
+            false,
             false,
             false,
             false,
@@ -2397,6 +2414,7 @@ mod idle_pool_sleep_tests {
             false,
             false,
             any_respawn_in_flight(&busy),
+            false
         ));
 
         // Once the respawn completes (payload received → flag cleared), the
@@ -2413,6 +2431,7 @@ mod idle_pool_sleep_tests {
             false,
             false,
             any_respawn_in_flight(&quiet),
+            false
         ));
     }
 
@@ -2904,10 +2923,12 @@ async fn run_harness(
 
     // Idle pool re-sleep: tear a woken lazy pool back down to the empty-slot
     // state after `idle_pool_sleep_bound` of quiet, releasing worker
-    // subprocesses. The next accepted event re-wakes it through the same lazy
-    // path. Only meaningful under `lazy_pool`; the tick arm additionally gates
-    // on `pool_ready`, so a still-sleeping pool never re-sleeps. Reuses the
-    // `last_activity` clock the dispatch path already maintains.
+    // subprocesses. Quiet starts when a turn finishes, not when it is
+    // dispatched. A worker that still parents a subagent or background shell
+    // is not quiet: killing its process group would kill that work. The next
+    // accepted event re-wakes a sleeping pool through the same lazy path.
+    // Only meaningful under `lazy_pool`; the tick arm additionally gates on
+    // `pool_ready`, so a still-sleeping pool never re-sleeps.
     let idle_pool_sleep_bound = if config.lazy_pool {
         Duration::from_secs(config.idle_pool_sleep_secs)
     } else {
@@ -3602,13 +3623,23 @@ async fn run_harness(
                     }
                 } => {
                     let _ = result_rx; // end split borrow before touching pool
+                    // Children that outlived the turn prompt the same session
+                    // once they exit. That task is in flight before the sleep
+                    // decision, so the worker is not torn down underneath it.
+                    dispatch_runtime_followups(
+                        &mut pool,
+                        &ctx,
+                        &mut last_activity,
+                        &mut typing_channels,
+                    );
                     // A wake in flight (pool not yet ready) is covered by the
                     // pool_ready gate; respawn tasks and in-flight prompt tasks
                     // are the remaining "busy" signals. Never sleep mid-work:
                     // `has_undispatched_work()` (not `has_flushable_work()`)
                     // keeps `work_queued` true for a retry-throttled batch too,
                     // so a failed turn awaiting backoff is never stranded — the
-                    // next iteration dispatches or re-wakes it.
+                    // next iteration dispatches or re-wakes it. Live background
+                    // children are the same kind of busy.
                     if idle_pool_sleep_due(
                         pool_ready,
                         last_activity,
@@ -3619,6 +3650,7 @@ async fn run_harness(
                         queue.has_undispatched_work(),
                         !wake_tasks.is_empty()
                             || any_respawn_in_flight(&crash_history),
+                        pool.has_runtime_hold(),
                     ) {
                         tracing::info!(
                             idle_pool_sleep_seconds = config.idle_pool_sleep_secs,
@@ -3735,6 +3767,7 @@ async fn run_harness(
                                     agent_name,
                                     goose_system_prompt_supported: None,
                                     protocol_version,
+                                    followup_scope: None,
                                 };
                                 pool.return_agent(agent);
                                 tracing::info!(agent = rr.index, "respawn complete");
@@ -3800,6 +3833,10 @@ async fn run_harness(
                 {
                     break;
                 }
+                // Quiet time starts when the turn finishes. Measuring it from
+                // dispatch made a turn longer than the sleep bound look idle
+                // on the next tick, and `killpg` then took its children with it.
+                last_activity = tokio::time::Instant::now();
                 for (scope, thread_tags) in dispatch_pending(
                     &mut pool,
                     &mut queue,
@@ -5246,10 +5283,12 @@ fn handle_prompt_result(
                 outcome = outcome_label,
                 "agent_returned"
             );
+            note_runtime_hold(&mut result.agent, &result.source, pool);
             pool.return_agent(result.agent);
         }
         // Fatal outcomes: the agent subprocess is dead or poisoned — respawn it.
         PromptOutcome::AgentExited | PromptOutcome::Timeout(_) => {
+            pool.clear_runtime_hold(agent_index);
             tracing::warn!(
                 agent = agent_index,
                 outcome = outcome_label,
@@ -5300,6 +5339,7 @@ fn handle_prompt_result(
         // removed channel) is decided above — the message stays fate-neutral
         // since it must be true in every case.
         PromptOutcome::CancelDrainTimeout(grace) => {
+            pool.clear_runtime_hold(agent_index);
             tracing::warn!(
                 agent = agent_index,
                 outcome = outcome_label,
@@ -5346,6 +5386,7 @@ fn handle_prompt_result(
         // via requeue_as_cancelled() above and will be merged into the next
         // FlushBatch by flush_next().
         PromptOutcome::Cancelled => {
+            pool.clear_runtime_hold(agent_index);
             tracing::debug!(
                 agent = agent_index,
                 outcome = outcome_label,
@@ -5356,6 +5397,7 @@ fn handle_prompt_result(
             pool.return_agent(result.agent);
         }
         PromptOutcome::ProjectContextIndeterminate(reason) => {
+            pool.clear_runtime_hold(agent_index);
             tracing::warn!(
                 agent = agent_index,
                 outcome = outcome_label,
@@ -5366,6 +5408,7 @@ fn handle_prompt_result(
             pool.return_agent(result.agent);
         }
         PromptOutcome::Error(ref e) => {
+            pool.clear_runtime_hold(agent_index);
             let is_transport_error = matches!(
                 e,
                 acp::AcpError::Io(_)
@@ -5569,6 +5612,89 @@ fn drain_ready_join_results(
         }
     }
     LoopAction::Continue
+}
+
+const RUNTIME_FOLLOWUP_PROMPT: &str = "\
+The background child process you left running has exited. This session was kept alive so that process would not be killed with the worker.\n\
+\n\
+Collect that task's result and continue the work in the same Buzz thread. Post the update there. Do not start a second copy of the task.\n";
+
+fn note_runtime_hold(agent: &mut OwnedAgent, source: &PromptSource, pool: &mut AgentPool) {
+    let PromptSource::Channel(scope) = source else {
+        pool.clear_runtime_hold(agent.index);
+        return;
+    };
+    let blocking = agent.acp.blocking_child_pids();
+    if blocking.is_empty() {
+        pool.clear_runtime_hold(agent.index);
+        return;
+    }
+    tracing::info!(
+        agent = agent.index,
+        children = blocking.len(),
+        scope = %scope.telemetry_label(),
+        "turn ended with live child processes — deferring pool sleep"
+    );
+    pool.set_runtime_hold(
+        agent.index,
+        pool::RuntimeHold {
+            scope: scope.clone(),
+            blocking_pids: blocking,
+        },
+    );
+}
+
+fn dispatch_runtime_followups(
+    pool: &mut AgentPool,
+    ctx: &Arc<PromptContext>,
+    last_activity: &mut tokio::time::Instant,
+    typing_channels: &mut HashMap<scope::SessionScope, ThreadTags>,
+) {
+    for (mut agent, scope) in pool.take_finished_runtime_holds() {
+        tracing::info!(
+            agent = agent.index,
+            scope = %scope.telemetry_label(),
+            "background children exited — prompting the same session"
+        );
+        agent.followup_scope = Some(scope.clone());
+        let prompt_text = RUNTIME_FOLLOWUP_PROMPT.to_string();
+        let result_tx = pool.result_tx();
+        let ctx_clone = Arc::clone(ctx);
+        let agent_index = agent.index;
+        let turn_id = Uuid::new_v4().to_string();
+        let task_turn_id = turn_id.clone();
+        let channel_id = scope.channel_id();
+        let (control_tx, control_rx) = tokio::sync::oneshot::channel();
+        let (steer_tx, steer_rx) = tokio::sync::mpsc::channel(1);
+        agent.acp.install_steer_rx(steer_rx);
+        let abort_handle = pool.join_set.spawn(async move {
+            pool::run_prompt_task(
+                agent,
+                None,
+                Some(prompt_text),
+                ctx_clone,
+                result_tx,
+                Some(control_rx),
+                task_turn_id,
+            )
+            .await;
+        });
+        pool.task_map_mut().insert(
+            abort_handle.id(),
+            pool::TaskMeta {
+                agent_index,
+                channel_id: Some(channel_id),
+                scope: Some(scope.clone()),
+                turn_id,
+                recoverable_batch: None,
+                control_tx: Some(control_tx),
+                steer_tx: Some(steer_tx),
+                successful_steer_deliveries: HashSet::new(),
+            },
+        );
+        typing_channels.insert(scope, ThreadTags::default());
+        *last_activity = tokio::time::Instant::now();
+    }
 }
 
 fn dispatch_heartbeat(
@@ -5882,6 +6008,7 @@ async fn initialize_agent_pool(
                             agent_name,
                             goose_system_prompt_supported: None,
                             protocol_version,
+                            followup_scope: None,
                         }));
                     }
                     Ok(Err(e)) => {
@@ -10268,6 +10395,7 @@ mod error_outcome_emission_tests {
             // Error branches under test never read this; 1 is the legacy
             // non-systemPrompt path, the simplest valid value.
             protocol_version: 1,
+            followup_scope: None,
         }
     }
 

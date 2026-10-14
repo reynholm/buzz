@@ -304,6 +304,18 @@ pub struct OwnedAgent {
     pub goose_system_prompt_supported: Option<bool>,
     /// Protocol version reported by the agent in its initialize response.
     pub protocol_version: u32,
+    /// Set only for the one prompt sent after background children exit.
+    ///
+    /// `run_prompt_task` consumes it and uses that scope's existing session
+    /// instead of opening a heartbeat session.
+    pub followup_scope: Option<SessionScope>,
+}
+
+/// Background children that outlived the ACP turn which started them.
+#[derive(Debug)]
+pub struct RuntimeHold {
+    pub scope: SessionScope,
+    pub blocking_pids: HashSet<u32>,
 }
 
 /// Package name reported by `claude-agent-acp` in its `initialize` response.
@@ -384,6 +396,10 @@ pub struct AgentPool {
     /// `Thread` scopes (the sole variant [`hold_decision`](Self::hold_decision)
     /// stamps).
     held_since: HashMap<SessionScope, tokio::time::Instant>,
+    /// Workers that must stay alive until `blocking_pids` are no longer
+    /// children. Keyed by slot index. Cleared when the slot is checked out
+    /// for a real prompt or when the children exit and a follow-up is sent.
+    runtime_holds: HashMap<usize, RuntimeHold>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -957,7 +973,73 @@ impl AgentPool {
             session_owners: HashMap::new(),
             next_scope_owner_generation: 1,
             held_since: HashMap::new(),
+            runtime_holds: HashMap::new(),
         }
+    }
+
+    pub fn set_runtime_hold(&mut self, index: usize, hold: RuntimeHold) {
+        self.runtime_holds.insert(index, hold);
+    }
+
+    pub fn clear_runtime_hold(&mut self, index: usize) {
+        self.runtime_holds.remove(&index);
+    }
+
+    pub fn has_runtime_hold(&self) -> bool {
+        !self.runtime_holds.is_empty()
+    }
+
+    /// Drop holds whose blocking children have exited and return those workers
+    /// so the caller can prompt the same session. A failed process listing
+    /// leaves the hold in place: the alternative is `killpg` of work we
+    /// cannot see.
+    pub fn take_finished_runtime_holds(&mut self) -> Vec<(OwnedAgent, SessionScope)> {
+        let indexes: Vec<usize> = self.runtime_holds.keys().copied().collect();
+        let mut finished = Vec::new();
+        for index in indexes {
+            // Copy the pid out before any mutable use of `self`. The match
+            // borrow of `agents` must end first.
+            let seen = match self.agents.get(index) {
+                Some(Some(agent)) => match agent.acp.process_id() {
+                    Some(pid) => Some(pid),
+                    None => None,
+                },
+                // Checked out: the worker comes back on the next tick.
+                Some(None) => continue,
+                // Slot index is gone. Drop the hold once this borrow ends.
+                None => Some(u32::MAX),
+            };
+            if seen == Some(u32::MAX) {
+                self.runtime_holds.remove(&index);
+                continue;
+            }
+            let Some(pid) = seen else {
+                // Idle record, process already exited.
+                self.runtime_holds.remove(&index);
+                continue;
+            };
+            let Some(children) = crate::process_tree::direct_children(pid) else {
+                continue;
+            };
+            let live: HashSet<u32> = children.into_iter().map(|child| child.pid).collect();
+            let still_blocking = self
+                .runtime_holds
+                .get(&index)
+                .is_some_and(|hold| hold.blocking_pids.iter().any(|child| live.contains(child)));
+            if still_blocking {
+                if let Some(hold) = self.runtime_holds.get_mut(&index) {
+                    hold.blocking_pids.retain(|child| live.contains(child));
+                }
+                continue;
+            }
+            let Some(hold) = self.runtime_holds.remove(&index) else {
+                continue;
+            };
+            if let Some(agent) = self.agents.get_mut(index).and_then(|slot| slot.take()) {
+                finished.push((agent, hold.scope));
+            }
+        }
+        finished
     }
 
     /// Record `agent_index` as the newest owner of `scope`, returning the
@@ -1067,12 +1149,18 @@ impl AgentPool {
                     .unwrap_or(false)
             });
             if let Some(i) = idx {
+                // A real prompt for this session replaces the pending follow-up.
+                self.runtime_holds.remove(&i);
                 return self.agents[i].take();
             }
         }
 
-        // Pass 2: first idle agent.
-        let idx = self.agents.iter().position(|slot| slot.is_some());
+        // Pass 2: first idle agent that is not waiting on background children.
+        // Stealing that worker would kill the process group under it.
+        let idx = self.agents.iter().position(|slot| {
+            slot.as_ref()
+                .is_some_and(|agent| !self.runtime_holds.contains_key(&agent.index))
+        });
         idx.map(|i| self.agents[i].take().unwrap())
     }
 
@@ -2420,10 +2508,17 @@ pub async fn run_prompt_task(
     control_rx: Option<tokio::sync::oneshot::Receiver<ControlSignal>>,
     turn_id: String,
 ) {
-    // Is this a channel prompt or a heartbeat?
-    let source = match &batch {
-        Some(b) => PromptSource::Channel(b.scope.clone()),
-        None => PromptSource::Heartbeat,
+    // A follow-up after background children exit must reuse the channel
+    // session that started them. Heartbeat is a different session and would
+    // not see the result.
+    let followup_scope = agent.followup_scope.take();
+    let source = if let Some(scope) = followup_scope {
+        PromptSource::Channel(scope)
+    } else {
+        match &batch {
+            Some(b) => PromptSource::Channel(b.scope.clone()),
+            None => PromptSource::Heartbeat,
+        }
     };
     let observer_channel_id = source.channel_id();
     // Thread conversation context requires the canonical root to distinguish
@@ -7083,6 +7178,7 @@ mod tests {
                 agent_name: "observer-test-agent".into(),
                 goose_system_prompt_supported: None,
                 protocol_version: 1,
+                followup_scope: None,
             };
             let observer = observer::ObserverHandle::in_process();
             let mut observer_rx = observer.subscribe();
@@ -7210,6 +7306,7 @@ done"#
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
+            followup_scope: None,
         };
         agent.state.heartbeat_session = Some("live-session".into());
 
@@ -7310,6 +7407,7 @@ done"#
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
+            followup_scope: None,
         };
         agent
             .state
@@ -7498,6 +7596,7 @@ done"#
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
+            followup_scope: None,
         };
         agent
             .state
@@ -7711,6 +7810,7 @@ done"#
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
+            followup_scope: None,
         };
         agent
             .state
@@ -7866,6 +7966,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             agent_name: "legacy-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
+            followup_scope: None,
         };
         agent
             .state
@@ -8579,6 +8680,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             agent_name: "test".into(),
             goose_system_prompt_supported: None,
             protocol_version: 2,
+            followup_scope: None,
         };
         agent.state.sessions.insert(ta.clone(), "sess-a".into());
         agent.state.sessions.insert(tb.clone(), "sess-b".into());
@@ -8661,6 +8763,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             agent_name: "test".into(),
             goose_system_prompt_supported: None,
             protocol_version: 2,
+            followup_scope: None,
         };
         agent.state.sessions.insert(scope, "sess".into());
         agent
@@ -9724,6 +9827,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             agent_name: "unknown".into(),
             goose_system_prompt_supported: None,
             protocol_version: 2,
+            followup_scope: None,
         };
 
         // Simulate dispatch: install a steer receiver (normally done by
@@ -9785,6 +9889,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             agent_name: "unknown".into(),
             goose_system_prompt_supported: None,
             protocol_version: 2,
+            followup_scope: None,
         };
 
         // Simulate a completed turn: `steer_rx` was consumed by the read loop
@@ -11085,6 +11190,7 @@ done"#
             agent_name: "boundary-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 1,
+            followup_scope: None,
         };
 
         let event = EventBuilder::new(Kind::Custom(9), "do project work")
@@ -11480,6 +11586,7 @@ mod startup_effort_tests {
             agent_name: "effort-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 2,
+            followup_scope: None,
         }
     }
 
@@ -11740,6 +11847,7 @@ mod model_switch_tests {
             agent_name: "switch-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 2,
+            followup_scope: None,
         }
     }
 
@@ -12315,6 +12423,7 @@ done"#
             agent_name: "switch-effort-test-agent".into(),
             goose_system_prompt_supported: None,
             protocol_version: 2,
+            followup_scope: None,
         }
     }
 

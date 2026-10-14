@@ -10,6 +10,8 @@
 
 mod launch;
 
+use std::collections::HashSet;
+
 use futures_util::StreamExt;
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio_util::codec::{FramedRead, LinesCodec, LinesCodecError};
@@ -225,6 +227,11 @@ pub struct AcpClient {
     /// readable thinking unless asked; set only when the CLI the adapter runs
     /// is new enough to accept `--thinking-display`.
     claude_thinking_summaries: bool,
+    /// Children that are part of the worker, not of one turn.
+    ///
+    /// Seeded at `initialize` and extended with MCP-style helpers the first
+    /// time they are seen. Idle-pool sleep ignores these pids.
+    resident_pids: HashSet<u32>,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -634,7 +641,51 @@ impl AcpClient {
             standard_usage: StandardUsageTracker::default(),
             standard_adapter,
             claude_thinking_summaries,
+            resident_pids: HashSet::new(),
         })
+    }
+
+    /// OS pid of the worker, while it is still running.
+    pub fn process_id(&self) -> Option<u32> {
+        self.child.id()
+    }
+
+    /// Remember every child that already exists once the protocol handshake
+    /// finishes. Those processes predate any turn.
+    pub fn capture_startup_children(&mut self) {
+        let Some(pid) = self.process_id() else {
+            return;
+        };
+        if let Some(children) = crate::process_tree::direct_children(pid) {
+            for child in children {
+                self.resident_pids.insert(child.pid);
+            }
+        }
+    }
+
+    /// Direct children that are still doing work from a finished turn.
+    ///
+    /// Helpers (MCP) are adopted into [`resident_pids`](Self::resident_pids)
+    /// so a later quiet tick can sleep. A failed process listing returns an
+    /// empty set; the caller must not invent a hold it cannot refresh.
+    pub fn blocking_child_pids(&mut self) -> HashSet<u32> {
+        let Some(pid) = self.process_id() else {
+            return HashSet::new();
+        };
+        let Some(children) = crate::process_tree::direct_children(pid) else {
+            tracing::warn!(
+                pid,
+                "could not list worker children; background work is invisible to pool sleep"
+            );
+            return HashSet::new();
+        };
+        let blocking = crate::process_tree::blocking_pids(&children, &self.resident_pids);
+        for child in children {
+            if crate::process_tree::is_resident_helper(&child.command) {
+                self.resident_pids.insert(child.pid);
+            }
+        }
+        blocking
     }
 
     /// Attach a local observer feed to this ACP client.
@@ -688,6 +739,7 @@ impl AcpClient {
             .pointer("/_meta/steering/supported")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        self.capture_startup_children();
         tracing::debug!(target: "acp::init", "initialize response: {result}");
         Ok(result)
     }
