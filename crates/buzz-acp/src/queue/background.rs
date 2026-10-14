@@ -7,6 +7,8 @@ use super::*;
 pub(crate) struct RuntimeContinuation {
     /// Stable random identity of this group's managed final report.
     pub delivery_key: Uuid,
+    /// One ordinary cancellation is allowed; its retry must get an execution window.
+    pub ordinary_preempted: bool,
     pub worker_index: usize,
     pub session_id: String,
     pub generation: u64,
@@ -106,6 +108,7 @@ mod tests {
     fn continuation() -> RuntimeContinuation {
         RuntimeContinuation {
             delivery_key: Uuid::new_v4(),
+            ordinary_preempted: false,
             worker_index: 0,
             session_id: "original".into(),
             generation: 1,

@@ -65,6 +65,12 @@ configuration with `--lazy-pool --idle-pool-sleep 2 --agents 2`:
    with queue, steer, and interrupt. Ready collection runs first; collection
    backoff permits ordinary messages without resetting its retry budget or
    deadline. An interrupted collection resumes in the original session.
+   One ordinary cancel is permitted per collection; after that, ordinary
+   Interrupt/OwnerInterrupt and fallback-Steer queue behind its protected retry.
+   Native steer also queues during collection rather than extending its deadline.
+   Keep sending messages during the retry: collection must finish, then all
+   retained messages must reach a foreground turn. Explicit owner/observer
+   cancel and owner rotate still stop a protected retry.
 3. Under `--session-policy channel`, send the new message in a different thread
    while the child is still running. Its result must still be collected in the
    first thread. Repeat with `--session-policy thread` and a DM.

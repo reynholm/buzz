@@ -836,7 +836,8 @@ impl EventQueue {
     /// the generic queue — they are stored separately and merged by
     /// `flush_next()`. No retry throttle, no backoff.
     pub fn requeue_as_cancelled(&mut self, batch: FlushBatch, reason: CancelReason) {
-        if let Some(continuation) = batch.continuation {
+        if let Some(mut continuation) = batch.continuation {
+            continuation.ordinary_preempted = true;
             self.enqueue_continuation(batch.scope, continuation);
             return;
         }

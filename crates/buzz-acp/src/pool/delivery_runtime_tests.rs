@@ -468,6 +468,7 @@ async fn managed_runtime_bundled_agent_publication_then_application_error_retrie
         .set_scope_owner_generation(scope.clone(), generation);
     let continuation = RuntimeContinuation {
         delivery_key: Uuid::new_v4(),
+        ordinary_preempted: false,
         worker_index: 0,
         session_id: session.session_id,
         generation,
