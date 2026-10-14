@@ -2617,10 +2617,11 @@ New module: `false`.
 
 ## `.github/workflows/_ci-relay.yml`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane.
 
 New module: `false`.
 
+- Required symbol: `export BUZZ_TEST_BIN_DIR="$PWD/target/ci"`
 - Verify: `just ci`
 
 ## `.github/workflows/_ci-rust.yml`
@@ -5763,3 +5764,21 @@ New module: `false`.
 
 - Required symbol: `channel replay lookback stays coupled to relay and DB source constants`
 - Verify: `pnpm -C desktop test`
+
+## `scripts/check-postgres-test-discovery.py`
+
+Resolve conventional out-of-line Rust tests inside inline postgres_tests modules, retaining ancestor discovery context.
+
+New module: `false`.
+
+- Required symbol: `inline_ranges = module_ranges(source)`
+- Verify: `bash scripts/test-postgres-test-discovery.sh`
+
+## `scripts/test-postgres-test-discovery.sh`
+
+Exercise nested file and directory Rust modules in the PostgreSQL discovery contract.
+
+New module: `false`.
+
+- Required symbol: `nested_out_of_line_recovery_test`
+- Verify: `bash scripts/test-postgres-test-discovery.sh`
