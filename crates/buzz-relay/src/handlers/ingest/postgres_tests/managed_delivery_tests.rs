@@ -896,3 +896,196 @@ async fn managed_ws_original_ack_correlates_after_recovery_wins() {
     shutdown_tx.send(()).unwrap();
     server.await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires Postgres, Redis and built CLI in BUZZ_TEST_BIN_DIR"]
+async fn managed_recovery_mention_history_survives_lost_ack() {
+    use sha2::{Digest, Sha256};
+    let state = authenticated_http_state().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let host = listener.local_addr().unwrap().to_string();
+    let relay = format!("http://{host}");
+    let community = state
+        .db
+        .ensure_configured_community(&host)
+        .await
+        .unwrap()
+        .id;
+    let tenant = TenantContext::resolved(community, &host);
+    let author = Keys::generate();
+    let recipient = Keys::generate();
+    let channel = Uuid::new_v4();
+    state
+        .db
+        .create_channel_with_id(
+            community,
+            channel,
+            "managed mentions",
+            ChannelType::Stream,
+            ChannelVisibility::Private,
+            None,
+            author.public_key().as_bytes(),
+            None,
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .add_member(
+            community,
+            channel,
+            recipient.public_key().as_bytes(),
+            buzz_db::channel::MemberRole::Member,
+            Some(author.public_key().as_bytes()),
+        )
+        .await
+        .unwrap();
+    crate::handlers::side_effects::emit_group_discovery_events(&tenant, &state, channel)
+        .await
+        .unwrap();
+    let tracer: Arc<dyn buzz_conformance::Tracer> = Arc::new(VecTracer::default());
+    let auth = || IngestAuth::Http {
+        pubkey: author.public_key(),
+        scopes: vec![Scope::MessagesWrite],
+        auth_method: HttpAuthMethod::Nip98,
+    };
+    let root = EventBuilder::new(Kind::Custom(9), "original task")
+        .tag(Tag::parse(["h", &channel.to_string()]).unwrap())
+        .sign_with_keys(&author)
+        .unwrap();
+    ingest_event_inner(&state, &tracer, &tenant, root.clone(), auth())
+        .await
+        .unwrap();
+    let key = Uuid::new_v4().to_string();
+    let original = EventBuilder::new(Kind::Custom(9), "callback final report")
+        .tags([
+            Tag::parse(["h", &channel.to_string()]).unwrap(),
+            Tag::parse(["e", &root.id.to_hex(), "", "root"]).unwrap(),
+            Tag::parse(["e", &root.id.to_hex(), "", "reply"]).unwrap(),
+            Tag::parse(["buzz-delivery", &key]).unwrap(),
+            Tag::parse(["p", &recipient.public_key().to_hex()]).unwrap(),
+        ])
+        .custom_created_at(Timestamp::from(Timestamp::now().as_secs() - 3600))
+        .sign_with_keys(&author)
+        .unwrap();
+    let candidate = EventBuilder::new(original.kind, &original.content)
+        .tags(original.tags.clone())
+        .sign_with_keys(&author)
+        .unwrap();
+    let wrapper = EventBuilder::new(
+        Kind::Custom(20003),
+        serde_json::json!({"original":original,"candidate":ReportStamp::from(&candidate)})
+            .to_string(),
+    )
+    .tag(Tag::parse(["h", &channel.to_string()]).unwrap())
+    .sign_with_keys(&author)
+    .unwrap();
+    // The server commits, but the journal below deliberately has no local ACK.
+    let receipt = ingest_event_inner(&state, &tracer, &tenant, wrapper, auth())
+        .await
+        .unwrap();
+    assert_eq!(receipt.event_id, candidate.id.to_hex());
+    let mentions = state
+        .db
+        .query_feed_mentions(
+            community,
+            recipient.public_key().as_bytes(),
+            &[channel],
+            None,
+            10,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        mentions.len(),
+        1,
+        "recovered callback must appear in Home Mentions"
+    );
+    assert_eq!(mentions[0].event.id, candidate.id);
+    let mut query = buzz_db::EventQuery::for_community(community);
+    query.channel_id = Some(channel);
+    query.p_tag_hex = Some(recipient.public_key().to_hex());
+    query.kinds = Some(vec![9]);
+    assert_eq!(
+        state.db.query_events(&query).await.unwrap()[0].event.id,
+        candidate.id
+    );
+    let router = crate::router::build_router(state.clone());
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async {
+                let _ = shutdown_rx.await;
+            })
+            .await
+            .unwrap();
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let signer = author.public_key().to_hex();
+    let id = hex::encode(Sha256::digest(
+        serde_json::to_vec(&(&relay, &signer, &key)).unwrap(),
+    ));
+    let journal = serde_json::json!({"version":2,"entries":{id.clone():{"relay":relay,"signer":signer,"key":key,"channel":channel.to_string(),"parent":root.id.to_hex(),"event":original,"recovery_candidate":ReportStamp::from(&candidate),"attempts":1,"confirmed_at":null,"last_error":null}}});
+    std::fs::write(dir.path().join("journal.json"), journal.to_string()).unwrap();
+    let cli = std::path::PathBuf::from(std::env::var("BUZZ_TEST_BIN_DIR").unwrap()).join("buzz");
+    let output = tokio::process::Command::new(cli)
+        .env_remove("BUZZ_AUTH_TAG")
+        .env("BUZZ_PRIVATE_KEY", author.secret_key().to_secret_hex())
+        .args([
+            "--relay",
+            &relay,
+            "messages",
+            "deliver",
+            "--delivery-key",
+            &key,
+            "--channel",
+            &channel.to_string(),
+            "--reply-to",
+            &root.id.to_hex(),
+            "--journal-dir",
+            dir.path().to_str().unwrap(),
+            "--content",
+            "changed retry summary",
+        ])
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let replay: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(replay["event_id"], candidate.id.to_hex());
+    assert_eq!(
+        replay["mention_pubkeys"],
+        serde_json::json!([recipient.public_key().to_hex()])
+    );
+    let mentions = state
+        .db
+        .query_feed_mentions(
+            community,
+            recipient.public_key().as_bytes(),
+            &[channel],
+            None,
+            10,
+        )
+        .await
+        .unwrap();
+    assert_eq!(mentions.len(), 1);
+    assert_eq!(mentions[0].event.id, candidate.id);
+    let history = state.db.query_events(&query).await.unwrap();
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].event.id, candidate.id);
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM event_mentions WHERE community_id=$1 AND event_id=$2",
+    )
+    .bind(community.as_uuid())
+    .bind(candidate.id.as_bytes().as_slice())
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(count, 1, "ACK-loss replay must not duplicate mention rows");
+    shutdown_tx.send(()).unwrap();
+    server.await.unwrap();
+}

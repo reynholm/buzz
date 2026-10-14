@@ -83,6 +83,15 @@ pub async fn insert(
         insert_event_with_thread_metadata_tx(&mut tx, community, candidate, Some(channel), metadata)
             .await?
     };
+    if result.1 {
+        crate::runtime::insert_mentions_in_transaction(
+            &mut tx,
+            community,
+            &result.0.event,
+            Some(channel),
+        )
+        .await?;
+    }
     let received_at: DateTime<Utc> = result.0.received_at;
     sqlx::query("INSERT INTO managed_deliveries (community_id, author, delivery_key, channel_id, event, received_at) VALUES ($1,$2,$3,$4,$5,$6)")
         .bind(community.as_uuid()).bind(author.as_slice()).bind(key).bind(channel)
