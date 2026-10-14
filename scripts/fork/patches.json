@@ -840,7 +840,7 @@
     },
     {
       "path": "desktop/src-tauri/Cargo.lock",
-      "responsibility": "Direct Desktop gethostname dependency without version changes",
+      "responsibility": "Direct Desktop gethostname dependency without version changes Pin rustls 0.23.46 for the release, resolving RUSTSEC-2026-0346 through RUSTSEC-2026-0349 without unrelated dependency changes.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -4452,7 +4452,7 @@
     },
     {
       "path": "Cargo.lock",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Pin rustls 0.23.46 for the release, resolving RUSTSEC-2026-0346 through RUSTSEC-2026-0349 without unrelated dependency changes.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
