@@ -105,16 +105,17 @@ function numericList(source, pattern) {
 }
 
 test("channel replay lookback stays coupled to relay and DB source constants", async () => {
-  const [ingest, fence] = await Promise.all([
+  const [ingest, timestamp, fence] = await Promise.all([
     readFile("../crates/buzz-relay/src/handlers/ingest.rs", "utf8"),
+    readFile("../crates/buzz-relay/src/handlers/ingest/timestamp.rs", "utf8"),
     readFile("../crates/buzz-db/src/runtime/replica_fence.rs", "utf8"),
   ]);
   assert.match(
-    ingest,
-    new RegExp(
-      `MAX_TIMESTAMP_DRIFT_SECS: i64 = ${RELAY_INGEST_FUTURE_TOLERANCE_SECS}`,
-    ),
+    timestamp,
+    new RegExp(`MAX_DRIFT: u64 = ${RELAY_INGEST_FUTURE_TOLERANCE_SECS}`),
   );
+  assert.match(timestamp, /timestamp\.saturating_sub\(now\) > MAX_DRIFT/);
+  assert.match(ingest, /timestamp::validate\s*\(/);
   assert.match(
     fence,
     new RegExp(`CREATED_AT_FLOOR_SECS: i64 = ${DB_CREATED_AT_FLOOR_SECS}`),

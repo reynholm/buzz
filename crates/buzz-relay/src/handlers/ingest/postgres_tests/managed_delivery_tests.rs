@@ -304,6 +304,18 @@ async fn managed_old_report_still_enforces_signature_route_membership_and_archiv
             .sign_with_keys(&author)
             .unwrap()
     };
+    let future = EventBuilder::new(Kind::Custom(9), "ordinary future message")
+        .custom_created_at(Timestamp::from(Timestamp::now().as_secs() + 3600))
+        .tag(Tag::parse(["h", &channel.to_string()]).unwrap())
+        .sign_with_keys(&author)
+        .unwrap();
+    assert!(
+        matches!(
+            ingest_event_inner(&state, &tracer, &tenant, future, auth(&author)).await,
+            Err(IngestError::Rejected(message)) if message.contains("timestamp too far")
+        ),
+        "ordinary message must traverse shared timestamp admission before storage"
+    );
     let event = make_event(None);
     let mut invalid = event.clone();
     invalid.content.push_str("tampered");
