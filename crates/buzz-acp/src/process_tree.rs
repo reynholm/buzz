@@ -50,6 +50,7 @@ pub fn is_resident_helper(command: &str) -> bool {
 /// Parse one `ps -axo pid=,ppid=,command=` line.
 ///
 /// Returns `(pid, ppid, command)`.
+#[cfg(any(unix, test))]
 pub fn parse_ps_line(line: &str) -> Option<(u32, u32, String)> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
