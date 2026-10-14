@@ -241,6 +241,9 @@ pub struct FlushBatch {
 /// ```
 pub struct EventQueue {
     continuations: HashMap<SessionScope, RuntimeContinuation>,
+    continuation_retry_after: HashMap<SessionScope, Instant>,
+    continuation_retry_counts: HashMap<SessionScope, u32>,
+    in_flight_continuations: HashSet<SessionScope>,
     queues: HashMap<SessionScope, VecDeque<QueuedEvent>>,
     in_flight_scopes: HashSet<SessionScope>,
     /// Per-scope deadline for auto-expiring stuck in-flight entries.
@@ -288,6 +291,9 @@ impl EventQueue {
     pub fn new(dedup_mode: DedupMode) -> Self {
         Self {
             continuations: HashMap::new(),
+            continuation_retry_after: HashMap::new(),
+            continuation_retry_counts: HashMap::new(),
+            in_flight_continuations: HashSet::new(),
             queues: HashMap::new(),
             in_flight_scopes: HashSet::new(),
             in_flight_deadlines: HashMap::new(),
@@ -358,7 +364,6 @@ impl EventQueue {
         }
         let channel_id = event.channel_id;
         let scope = event.scope.clone();
-        self.remove_continuation(&scope);
         let queue = self.queues.entry(scope.clone()).or_default();
         // Enforce per-scope depth cap: drop oldest in this partition.
         if queue.len() >= MAX_PENDING_PER_SCOPE {
@@ -440,6 +445,7 @@ impl EventQueue {
                  auto-releasing; {lost_events} dispatched event(s) orphaned"
             );
             self.in_flight_scopes.remove(&scope);
+            self.in_flight_continuations.remove(&scope);
             self.in_flight_deadlines.remove(&scope);
             self.in_flight_reply_threads.remove(&scope);
             // Recover any withheld goose-native steer events for the expired
@@ -448,6 +454,12 @@ impl EventQueue {
             // now-hung prompt — nothing to recover), these events were never
             // delivered to the agent.
             self.recover_withheld_for_expired_scope(&scope);
+        }
+
+        // Ready collection precedes ordinary traffic so continuous messages
+        // cannot starve it. A collection in backoff leaves messages eligible.
+        if let Some(batch) = self.flush_continuation() {
+            return Some(batch);
         }
 
         // Find the scope whose head event has the oldest received_at,
@@ -495,7 +507,7 @@ impl EventQueue {
                             cancel_reason,
                         });
                     }
-                    None => return self.flush_continuation(),
+                    None => return None,
                 }
             }
         };
@@ -557,10 +569,18 @@ impl EventQueue {
             .iter()
             .filter(|(scope, _)| {
                 !self.in_flight_scopes.contains(*scope)
-                    && (self.queues.get(*scope).is_some_and(|q| !q.is_empty())
-                        || self.continuations.contains_key(*scope))
+                    && self.queues.get(*scope).is_some_and(|q| !q.is_empty())
             })
             .map(|(_, &deadline)| deadline)
+            .chain(
+                self.continuation_retry_after
+                    .iter()
+                    .filter(|(scope, _)| {
+                        !self.in_flight_scopes.contains(*scope)
+                            && self.continuations.contains_key(*scope)
+                    })
+                    .map(|(_, &deadline)| deadline),
+            )
             .min()
     }
 
@@ -576,11 +596,20 @@ impl EventQueue {
     /// Also cleans up any already-expired `retry_after` entry.
     pub fn mark_complete<K: IntoScope>(&mut self, scope: K) {
         let scope = scope.into_scope();
+        let collecting = self.in_flight_continuations.remove(&scope);
         self.in_flight_scopes.remove(&scope);
         self.in_flight_deadlines.remove(&scope);
         self.in_flight_batch_sizes.remove(&scope);
         self.in_flight_reply_threads.remove(&scope);
         let now = Instant::now();
+        if collecting {
+            // Retried/cancelled collection remains independently pending.
+            // Ordinary message completion never touches this retry budget.
+            if !self.continuations.contains_key(&scope) {
+                self.remove_continuation(&scope);
+            }
+            return;
+        }
         match self.retry_after.get(&scope) {
             // Active throttle → scope was requeued; keep retry_counts intact.
             Some(&deadline) if deadline > now => {}
@@ -603,6 +632,14 @@ impl EventQueue {
         self.in_flight_deadlines.remove(scope);
         self.in_flight_batch_sizes.remove(scope);
         self.in_flight_reply_threads.remove(scope);
+        self.in_flight_continuations.remove(scope);
+        if self
+            .continuation_retry_after
+            .get(scope)
+            .is_some_and(|deadline| *deadline <= Instant::now())
+        {
+            self.continuation_retry_after.remove(scope);
+        }
         if self
             .retry_after
             .get(scope)
@@ -632,12 +669,14 @@ impl EventQueue {
     pub fn requeue(&mut self, batch: FlushBatch) -> Option<FlushBatch> {
         let channel_id = batch.channel_id;
         let scope = batch.scope.clone();
-        if batch.continuation.is_some() && self.has_pending_scope(&scope) {
-            // A newly accepted real message supersedes the failed continuation.
-            return None;
-        }
+        let collecting = batch.continuation.is_some();
         let attempt = {
-            let count = self.retry_counts.entry(scope.clone()).or_insert(0);
+            let counts = if collecting {
+                &mut self.continuation_retry_counts
+            } else {
+                &mut self.retry_counts
+            };
+            let count = counts.entry(scope.clone()).or_insert(0);
             *count += 1;
             *count
         };
@@ -651,6 +690,10 @@ impl EventQueue {
                 MAX_RETRIES,
                 batch.events.len(),
             );
+            if collecting {
+                self.remove_continuation(&scope);
+                return Some(batch);
+            }
             self.retry_counts.remove(&scope);
             // Also clear retry_after so fresh traffic on this scope isn't
             // throttled by stale backoff from the discarded poison batch.
@@ -682,7 +725,8 @@ impl EventQueue {
 
         if let Some(continuation) = batch.continuation {
             self.enqueue_continuation(scope.clone(), continuation);
-            self.retry_after.insert(scope, Instant::now() + delay);
+            self.continuation_retry_after
+                .insert(scope, Instant::now() + delay);
             return None;
         }
 
@@ -792,8 +836,9 @@ impl EventQueue {
     /// the generic queue — they are stored separately and merged by
     /// `flush_next()`. No retry throttle, no backoff.
     pub fn requeue_as_cancelled(&mut self, batch: FlushBatch, reason: CancelReason) {
-        if batch.continuation.is_some() {
-            return; // A control message supersedes background collection.
+        if let Some(continuation) = batch.continuation {
+            self.enqueue_continuation(batch.scope, continuation);
+            return;
         }
         let scope = batch.scope.clone();
         let entry = self.cancelled_batches.entry(scope.clone()).or_default();
@@ -830,6 +875,7 @@ impl EventQueue {
                  auto-releasing; {lost_events} dispatched event(s) orphaned"
             );
             self.in_flight_scopes.remove(&scope);
+            self.in_flight_continuations.remove(&scope);
             self.in_flight_deadlines.remove(&scope);
             self.in_flight_reply_threads.remove(&scope);
             // Symmetric with the flush_next expiry block: recover withheld
@@ -949,6 +995,10 @@ impl EventQueue {
     pub fn drain_channel(&mut self, channel_id: Uuid) -> Vec<String> {
         self.continuations
             .retain(|scope, _| scope.channel_id() != channel_id);
+        self.continuation_retry_after
+            .retain(|s, _| s.channel_id() != channel_id);
+        self.continuation_retry_counts
+            .retain(|s, _| s.channel_id() != channel_id);
         // Channel-wide cleanup must find and clear EVERY child thread scope for
         // this channel, not just the conversation scope.
         let mut ids: Vec<String> = Vec::new();
@@ -1199,12 +1249,16 @@ impl EventQueue {
     pub fn compact_expired_state(&mut self) {
         let now = Instant::now();
         self.retry_after.retain(|_, deadline| *deadline > now);
+        self.continuation_retry_after
+            .retain(|_, deadline| *deadline > now);
+        self.continuation_retry_counts.retain(|scope, _| {
+            self.continuations.contains_key(scope) || self.in_flight_continuations.contains(scope)
+        });
         // Remove retry_counts for channels with no active throttle, no
         // queued events, AND no in-flight prompt — they completed their
         // retry cycle and are truly idle.
         self.retry_counts.retain(|scope, _| {
             self.retry_after.contains_key(scope)
-                || self.continuations.contains_key(scope)
                 || self.queues.get(scope).is_some_and(|q| !q.is_empty())
                 || self.in_flight_scopes.contains(scope)
         });
