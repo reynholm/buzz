@@ -1,8 +1,9 @@
 //! Durable final-report publication. The lock protects the entire bounded snapshot.
 use super::messages;
 use crate::{client::BuzzClient, error::CliError, validate};
+use buzz_core::managed_delivery::{same_report, RecoveryRequest, ReportStamp, RECEIPT_PREFIX};
 use fs2::FileExt;
-use nostr::Event;
+use nostr::{Event, EventBuilder, Kind, Tag};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -36,6 +37,10 @@ struct Record {
     channel: String,
     parent: String,
     event: Event,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recovery_candidate: Option<ReportStamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    canonical_event: Option<ReportStamp>,
     attempts: u8,
     confirmed_at: Option<u64>,
     last_error: Option<String>,
@@ -155,7 +160,7 @@ fn read(dir: &Path) -> Result<Journal, CliError> {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Ok(Journal {
-                version: 1,
+                version: 2,
                 ..Default::default()
             })
         }
@@ -171,8 +176,8 @@ fn read(dir: &Path) -> Result<Journal, CliError> {
     if bytes.len() > MAX_JOURNAL_BYTES {
         return Err(error("journal exceeds 16 MiB"));
     }
-    let journal: Journal = serde_json::from_slice(&bytes).map_err(error)?;
-    if journal.version != 1 || journal.entries.len() > MAX_RECORDS {
+    let mut journal: Journal = serde_json::from_slice(&bytes).map_err(error)?;
+    if !matches!(journal.version, 1 | 2) || journal.entries.len() > MAX_RECORDS {
         return Err(error("unsupported version or record limit exceeded"));
     }
     for (id, record) in &journal.entries {
@@ -180,6 +185,20 @@ fn read(dir: &Path) -> Result<Journal, CliError> {
             return Err(error("record exceeds 512 KiB"));
         }
         record.event.verify().map_err(error)?;
+        for extra in [
+            record.recovery_candidate.as_ref(),
+            record.canonical_event.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let restored = extra.restore(&record.event).map_err(error)?;
+            if !same_report(&record.event, &restored) {
+                return Err(error(
+                    "recovery/canonical report changed the original payload or route",
+                ));
+            }
+        }
         let markers = buzz_core::nip10::parse_thread_markers_from_parts(
             record.event.tags.iter().map(|t| t.as_slice()),
         );
@@ -214,6 +233,7 @@ fn read(dir: &Path) -> Result<Journal, CliError> {
         validate::validate_content_size(&record.event.content)?;
         validate::validate_hex64(&record.parent)?;
     }
+    journal.version = 2;
     Ok(journal)
 }
 
@@ -271,14 +291,39 @@ async fn check_membership(client: &BuzzClient, channel: &str) -> Result<(), CliE
     Ok(())
 }
 
-fn acknowledgment(raw: &str, event: &Event) -> Result<serde_json::Value, CliError> {
+fn acknowledgment(
+    raw: &str,
+    original: &Event,
+    recovery: bool,
+) -> Result<(serde_json::Value, Event), CliError> {
     let response: serde_json::Value = serde_json::from_str(raw).map_err(error)?;
-    if response["accepted"] != true || response["event_id"] != event.id.to_hex() {
-        return Err(error("relay did not acknowledge the saved event ID"));
+    if response["accepted"] != true {
+        return Err(error("relay did not accept the managed report"));
     }
-    Ok(
-        serde_json::json!({"event_id":event.id.to_hex(),"accepted":true,"message":response["message"].as_str().unwrap_or(""),"mention_pubkeys":messages::event_mention_pubkeys(event)}),
-    )
+    let message = response["message"].as_str().unwrap_or("");
+    let chosen = if let Some(encoded) = message.strip_prefix(RECEIPT_PREFIX) {
+        let event: Event = serde_json::from_str(encoded).map_err(error)?;
+        event.verify().map_err(error)?;
+        if !same_report(original, &event) {
+            return Err(error(
+                "canonical receipt changed the original signed report",
+            ));
+        }
+        event
+    } else if !recovery {
+        original.clone()
+    } else {
+        return Err(error(
+            "relay does not support atomic recovery; signed evidence retained",
+        ));
+    };
+    if response["event_id"] != chosen.id.to_hex() {
+        return Err(error("relay did not acknowledge the canonical event ID"));
+    }
+    Ok((
+        serde_json::json!({"event_id":chosen.id.to_hex(),"accepted":true,"message":if recovery {"managed report recovered"} else {"managed report acknowledged"},"mention_pubkeys":messages::event_mention_pubkeys(&chosen)}),
+        chosen,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -358,6 +403,8 @@ pub(super) async fn deliver(
                 channel,
                 parent,
                 event,
+                recovery_candidate: None,
+                canonical_event: None,
                 attempts: 0,
                 confirmed_at: None,
                 last_error: None,
@@ -370,26 +417,76 @@ pub(super) async fn deliver(
         .get_mut(&id)
         .ok_or_else(|| error("record disappeared"))?;
     if record.confirmed_at.is_some() {
+        let chosen = match record.canonical_event.as_ref() {
+            Some(stamp) => stamp.restore(&record.event).map_err(error)?,
+            None => record.event.clone(),
+        };
         return Ok(
-            serde_json::json!({"event_id":record.event.id.to_hex(),"accepted":true,"message":"managed delivery already confirmed","mention_pubkeys":messages::event_mention_pubkeys(&record.event)}),
+            serde_json::json!({"event_id":chosen.id.to_hex(),"accepted":true,"message":"managed delivery already confirmed","mention_pubkeys":messages::event_mention_pubkeys(&chosen)}),
         );
     }
     if record.attempts >= MAX_ATTEMPTS {
         return Err(error(format!("terminal: delivery {key} exhausted {MAX_ATTEMPTS} managed submissions; signed evidence retained in {}", dir.display())));
     }
+    let original = record.event.clone();
+    let recovery_now = now()?;
+    let recovery = recovery_now.saturating_sub(original.created_at.as_secs()) > 600;
+    let submission = if recovery {
+        if record
+            .recovery_candidate
+            .as_ref()
+            .is_none_or(|e| recovery_now.saturating_sub(e.created_at) > 600)
+        {
+            let signed = EventBuilder::new(original.kind, &original.content)
+                .tags(original.tags.clone())
+                .allow_self_tagging()
+                .sign_with_keys(client.keys())
+                .map_err(error)?;
+            record.recovery_candidate = Some(ReportStamp::from(&signed));
+        }
+        let candidate = record
+            .recovery_candidate
+            .clone()
+            .ok_or_else(|| error("recovery candidate disappeared"))?;
+        let request = RecoveryRequest {
+            original: original.clone(),
+            candidate,
+        };
+        let body = serde_json::to_string(&request).map_err(error)?;
+        if body.len() > buzz_core::managed_delivery::MAX_RECOVERY_BYTES {
+            return Err(error(
+                "recovery payload exceeds protocol limit; original retained",
+            ));
+        }
+        client.sign_event(
+            EventBuilder::new(
+                Kind::Custom(buzz_core::kind::KIND_MANAGED_DELIVERY_RECOVERY as u16),
+                body,
+            )
+            .tag(Tag::parse(["h", &record.channel]).map_err(error)?),
+        )?
+    } else {
+        original.clone()
+    };
+    if serde_json::to_vec(&submission).map_err(error)?.len() > 1024 * 1024 {
+        return Err(error(
+            "recovery envelope exceeds transport limit; original retained",
+        ));
+    }
     record.attempts += 1;
-    let event = record.event.clone();
     write(&dir, &journal)?;
     let result = client
-        .submit_event(event.clone())
+        .submit_event(submission)
         .await
-        .and_then(|raw| acknowledgment(&raw, &event));
+        .and_then(|raw| acknowledgment(&raw, &original, recovery));
     let record = journal
         .entries
         .get_mut(&id)
         .ok_or_else(|| error("record disappeared"))?;
     match result {
-        Ok(output) => {
+        Ok((output, chosen)) => {
+            record.canonical_event =
+                (chosen.id != record.event.id).then(|| ReportStamp::from(&chosen));
             record.confirmed_at = Some(now()?);
             record.last_error = None;
             write(&dir, &journal)?;

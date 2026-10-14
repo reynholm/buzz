@@ -705,7 +705,7 @@ mod postgres_tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 55);
+        assert_eq!(migrations.len(), 56);
         assert_eq!(migrations[48].version, 49);
         assert_eq!(migrations[49].version, 50);
         assert_eq!(migrations[50].version, 51);
@@ -713,6 +713,15 @@ mod postgres_tests {
         assert_eq!(migrations[52].version, 53);
         assert_eq!(migrations[53].version, 54);
         assert_eq!(migrations[54].version, 55);
+        assert_eq!(migrations[55].version, 56);
+        assert!(migrations[55]
+            .sql
+            .as_str()
+            .contains("CREATE TABLE managed_deliveries"));
+        assert!(migrations[55]
+            .sql
+            .as_str()
+            .contains("attach_community_write_fence"));
         assert!(migrations[48]
             .sql
             .as_str()
@@ -2048,7 +2057,9 @@ mod postgres_tests {
         let mut expected_fences = migration.fence_attachments.clone();
         expected_fences.remove("product_feedback");
         expected_fences.remove("rate_limit_violations");
-        expected_fences.extend(["artifact_heads", "artifact_revisions"].map(str::to_owned));
+        expected_fences.extend(
+            ["artifact_heads", "artifact_revisions", "managed_deliveries"].map(str::to_owned),
+        );
         assert_eq!(
             expected_fences, schema.fence_attachments,
             "write-fence attachment targets differ after recovery policy"
@@ -2480,14 +2491,15 @@ mod postgres_tests {
             .await
             .expect("connect migrated probe database");
         MIGRATOR
-            .run_to(55, &migrated)
+            .run_to(56, &migrated)
             .await
-            .expect("apply migrations 1-55");
+            .expect("apply migrations 1-56");
 
         for table in [
             "relay_admin_actions",
             "relay_admin_outbox",
             "relay_operator_audit",
+            "managed_deliveries",
         ] {
             assert_eq!(
                 columns(&desired, table).await,

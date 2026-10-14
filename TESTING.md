@@ -2,6 +2,28 @@
 
 ## Automated Tests
 
+For managed final-report recovery, explicitly run the ignored production-ingest
+and standalone-CLI HTTP checks against an isolated schema-compatible Postgres
+and Redis. The HTTP check uses real NIP-98 verification and replay protection:
+
+```sh
+cargo build -p buzz-cli
+BUZZ_TEST_BIN_DIR="$PWD/target/debug" \
+  cargo test -p buzz-relay managed_old_ -- --ignored --test-threads=1
+cargo test -p buzz-relay managed_timestamp_exception -- --test-threads=1
+```
+
+Set `BUZZ_TEST_DATABASE_URL` and `REDIS_URL` to the isolated services first.
+These checks use `Db::new` and production migrations, assert the 960-second
+writer floor and cover absent/accepted reports, earlier accepted candidates,
+soft-deleted originals, candidate renewal, current authority and concurrent
+original/recovery elections. Historical acceptance is explicitly seeded through
+a separate fixture pool; tested recovery never disarms production connections.
+Kind 20003 is a signed recovery command over the existing event bridge. The relay
+atomically elects one signed kind-9 report and returns its canonical signed event.
+A coordinated relay upgrade must drain old writers before enabling recovery;
+unknown-server wrapper acknowledgment is not report confirmation.
+
 ```bash
 just test-unit          # unit tests — no infrastructure needed
 just test               # unit + integration (starts Docker if needed)
