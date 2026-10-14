@@ -45,7 +45,7 @@ use crate::relay::{ChannelInfo, RestClient};
 use crate::scope::SessionScope;
 
 #[cfg(all(test, unix))]
-mod background_work_tests;
+pub(crate) mod background_work_tests;
 
 /// Window within which agent activity before a hard-cap death qualifies
 /// the turn as "recently active" (eligible for requeue instead of dead-letter).
@@ -1086,8 +1086,9 @@ impl AgentPool {
                     .unwrap_or(false)
             });
             if let Some(i) = idx {
-                // A real prompt for this session replaces the pending follow-up.
-                let hold = self.runtime_holds.remove(&i);
+                // Keep pool-side authority visible while this worker is checked
+                // out, so a later explicit control can still revoke collection.
+                let hold = self.runtime_holds.get(&i).cloned();
                 let mut agent = self.agents[i].take()?;
                 agent.background_context = hold;
                 return Some(agent);
@@ -2424,7 +2425,7 @@ fn send_prompt_result(
     batch: Option<FlushBatch>,
 ) {
     agent.acp.clear_steer_rx();
-    if !matches!(outcome, PromptOutcome::Ok(_)) {
+    if !matches!(outcome, PromptOutcome::Ok(_)) && !agent.has_background_collection() {
         if let Some(context) = &mut agent.background_context {
             context.continuation = None;
         }
@@ -3303,7 +3304,12 @@ pub async fn run_prompt_task(
                         {
                             Ok(stop_reason) => {
                                 log_stop_reason(&source, &stop_reason);
-                                agent.state.invalidate(&source);
+                                if !matches!(control_signal, ControlSignal::Steer | ControlSignal::Interrupt)
+                                    || !agent.has_background_collection()
+                                {
+                                    agent.state.invalidate(&source);
+                                    agent.finish_background_collection();
+                                }
                                 let retry_batch =
                                     requeue_cancelled_batch(&ctx, control_signal, batch);
 
@@ -3451,6 +3457,15 @@ pub async fn run_prompt_task(
                 agent.state.heartbeat_standing_context_sent = true;
             }
 
+            if batch
+                .as_ref()
+                .is_some_and(|batch| batch.continuation.is_some())
+            {
+                // The original collection succeeded. Newly launched children,
+                // if any, form a fresh observed group in this same destination.
+                agent.background_context = None;
+                agent.remember_background_context(&source, batch.as_ref(), &session_id);
+            }
             let background_running = agent.background_work_running(&source);
             let should_rotate = matches!(
                 stop_reason,

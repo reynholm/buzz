@@ -1620,6 +1620,7 @@ fn handle_relay_observer_control_event(
     keys: &nostr::Keys,
     event: nostr::Event,
     pool: &mut AgentPool,
+    queue: &mut EventQueue,
     observer: Option<&observer::ObserverHandle>,
     owner_pubkey_hex: &str,
     event_publisher: RelayEventPublisher,
@@ -1663,7 +1664,7 @@ fn handle_relay_observer_control_event(
     let command_type = payload.get("type").and_then(|value| value.as_str());
     match command_type {
         Some("cancel_turn") => {
-            handle_cancel_turn_control(&payload, pool, observer);
+            handle_cancel_turn_control(&payload, pool, queue, observer);
         }
         Some("switch_model") => {
             handle_switch_model_control(&payload, pool, observer);
@@ -1824,10 +1825,12 @@ fn emit_project_owner_control_result(
     );
 }
 
-/// Handle a `cancel_turn` control frame: signal the in-flight task to cancel.
+/// Cancel the unambiguous active turn, revoking its background authority even
+/// when a prior ordinary control already consumed the one-shot sender.
 fn handle_cancel_turn_control(
     payload: &serde_json::Value,
     pool: &mut AgentPool,
+    queue: &mut EventQueue,
     observer: Option<&observer::ObserverHandle>,
 ) {
     let Some(channel_id) = payload
@@ -1841,10 +1844,23 @@ fn handle_cancel_turn_control(
 
     let status = if pool.channel_control_is_ambiguous(channel_id) {
         "ambiguous_target"
-    } else if signal_in_flight_task(pool, channel_id, ControlSignal::Cancel) {
-        "sent"
     } else {
-        "no_active_turn"
+        // Use only the active task's actual scope. A channel-only frame cannot
+        // choose among sibling threads, or invent a scope when genuinely idle.
+        let active_scope = pool
+            .task_map()
+            .values()
+            .find(|meta| meta.channel_id == Some(channel_id))
+            .and_then(|meta| meta.scope.clone());
+        let revoked = active_scope
+            .as_ref()
+            .is_some_and(|scope| cancel_background_collection_for_scope(pool, queue, scope));
+        let sent = signal_in_flight_task(pool, channel_id, ControlSignal::Cancel);
+        if sent || revoked {
+            "sent"
+        } else {
+            "no_active_turn"
+        }
     };
     if let Some(observer) = observer {
         observer.emit(
@@ -3235,6 +3251,7 @@ async fn run_harness(
                                     &config.keys,
                                     event,
                                     &mut pool,
+                                    &mut queue,
                                     observer.as_ref(),
                                     owner_hex,
                                     relay.event_publisher(),
@@ -3436,12 +3453,15 @@ async fn run_harness(
                                             .await,
                                         &buzz_event.event,
                                     );
+                                    let background_pending = cancel_background_collection_for_scope(
+                                        &mut pool, &mut queue, &scope,
+                                    );
                                     let fired = signal_in_flight_task_for_scope(
                                         &mut pool,
                                         &scope,
                                         ControlSignal::Cancel,
                                     );
-                                    if !fired {
+                                    if !fired && !background_pending {
                                         tracing::warn!(
                                             channel_id = %buzz_event.channel_id,
                                             scope = %scope.telemetry_label(),
@@ -3488,6 +3508,7 @@ async fn run_harness(
                                             .await,
                                         &buzz_event.event,
                                     );
+                                    queue.remove_continuation(&scope);
                                     let fired = signal_in_flight_task_for_scope(
                                         &mut pool,
                                         &scope,
@@ -3500,7 +3521,6 @@ async fn run_harness(
                                             "!rotate received — cancelling in-flight turn and rotating session"
                                         );
                                     } else {
-                                        queue.remove_continuation(&scope);
                                         let invalidated =
                                             pool.invalidate_scope_session(&scope);
                                         tracing::info!(
@@ -4314,6 +4334,35 @@ fn signal_in_flight_task(
     false
 }
 
+/// Revoke background collection independently of the task's one-shot sender.
+/// Clearing its recoverable token also suppresses a late cancellation result;
+/// an idle scope with no background work retains its existing session.
+fn cancel_background_collection_for_scope(
+    pool: &mut AgentPool,
+    queue: &mut EventQueue,
+    scope: &scope::SessionScope,
+) -> bool {
+    if !queue.has_pending_continuation(scope) && !pool.has_background_collection_for_scope(scope) {
+        return false;
+    }
+    queue.remove_continuation(scope);
+    pool.invalidate_scope_session(scope);
+    for meta in pool
+        .task_map_mut()
+        .values_mut()
+        .filter(|meta| meta.scope.as_ref() == Some(scope))
+    {
+        if meta
+            .recoverable_batch
+            .as_ref()
+            .is_some_and(|batch| batch.continuation.is_some())
+        {
+            meta.recoverable_batch = None;
+        }
+    }
+    true
+}
+
 /// Send a control signal to the in-flight task for one exact session scope.
 ///
 /// The scope-precise counterpart of [`signal_in_flight_task`]: mid-turn
@@ -4891,7 +4940,22 @@ fn dispatch_pending(
         tracing::debug!(agent = agent.index, channel = %channel_id, scope = %scope.telemetry_label(), affinity_hit, "agent_claimed");
 
         // Assign ownership before spawning and before cloning the retry token.
-        let owner_generation = pool.record_scope_owner(scope.clone(), agent.index);
+        // The pending collection's generation remains authoritative across
+        // serialized ordinary turns in its original worker/session.
+        let owner_generation = if agent.has_background_collection() {
+            agent
+                .background_context
+                .as_ref()
+                .filter(|hold| hold.scope == scope)
+                .and_then(|hold| {
+                    hold.continuation
+                        .as_ref()
+                        .map(|continuation| continuation.generation)
+                })
+        } else {
+            None
+        }
+        .unwrap_or_else(|| pool.record_scope_owner(scope.clone(), agent.index));
         agent
             .state
             .set_scope_owner_generation(scope.clone(), owner_generation);
@@ -5083,6 +5147,27 @@ fn handle_prompt_result(
 ) -> LoopAction {
     let before = pool.task_map().len();
     let agent_index = result.agent.index;
+    // Continuations always have a recovery token at dispatch. Explicit owner
+    // cancellation can revoke it while the ordinary control is still draining.
+    let collection_cancelled = result
+        .batch
+        .as_ref()
+        .is_some_and(|batch| batch.continuation.is_some())
+        && pool
+            .task_map()
+            .values()
+            .any(|meta| meta.agent_index == agent_index && meta.recoverable_batch.is_none());
+    if collection_cancelled {
+        result.batch = None;
+        result.agent.finish_background_collection();
+    }
+    let collecting = pool.task_map().values().any(|meta| {
+        meta.agent_index == agent_index
+            && meta
+                .recoverable_batch
+                .as_ref()
+                .is_some_and(|batch| batch.continuation.is_some())
+    });
     let successful_steer_deliveries = pool
         .task_map()
         .values()
@@ -5241,6 +5326,14 @@ fn handle_prompt_result(
                 "dropping failed batch for removed channel"
             );
             hard_timeout_fate_suffix = Some(" — batch dropped (channel removed)");
+        }
+    }
+
+    if collecting && !matches!(result.outcome, PromptOutcome::Ok(_)) {
+        if let PromptSource::Channel(scope) = &result.source {
+            if !queue.has_pending_continuation(scope) {
+                result.agent.finish_background_collection();
+            }
         }
     }
 
@@ -5508,6 +5601,7 @@ fn recover_panicked_agent(
         return;
     };
     let i = meta.agent_index;
+    pool.clear_runtime_hold(i);
 
     // Requeue BEFORE mark_complete (same rationale as handle_prompt_result).
     if let Some(batch) = meta.recoverable_batch {
@@ -6563,7 +6657,12 @@ mod owner_control_command_tests {
             "channelId": ch.to_string(), "modelId": "new-model", "requestId": "pick-1",
         });
 
-        handle_cancel_turn_control(&payload, &mut pool, Some(&observer));
+        handle_cancel_turn_control(
+            &payload,
+            &mut pool,
+            &mut EventQueue::new(DedupMode::Queue),
+            Some(&observer),
+        );
         handle_switch_model_control(&payload, &mut pool, Some(&observer));
         let results = observer.snapshot();
         assert_eq!(results.len(), 2);
@@ -6614,9 +6713,12 @@ mod owner_control_command_tests {
                 "channelId": ch.to_string(), "modelId": "new-model", "requestId": "pick-1",
             });
             match &signal {
-                ControlSignal::Cancel => {
-                    handle_cancel_turn_control(&payload, &mut pool, Some(&observer))
-                }
+                ControlSignal::Cancel => handle_cancel_turn_control(
+                    &payload,
+                    &mut pool,
+                    &mut EventQueue::new(DedupMode::Queue),
+                    Some(&observer),
+                ),
                 _ => handle_switch_model_control(&payload, &mut pool, Some(&observer)),
             }
             assert_eq!(rx.await.unwrap(), signal);
