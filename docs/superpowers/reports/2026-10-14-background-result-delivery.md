@@ -2,7 +2,7 @@
 
 Specification: [task](../specs/2026-10-14-background-result-delivery-task.md). Plan: [implementation](../plans/2026-10-14-background-result-delivery.md).
 
-**Current status: final B3 review and required integration gate pending.** A2 is committed as `59fe7b69817395933225c7b91e02dcaecabba8e8`; owner-approved atomic B2 is committed as `d33222b6680531bf6e895ec41799bde458c4a71f`. Astron confirmed B2 fixed and found B3 (missing recovered-report mention history). The minimal B3 fix passes its reproduced regression and all eleven production-writer recovery cases. Complete DB and relay packages now pass after correcting two stale source-test assumptions without changing moderation or lease behavior. No completion reaction or GitHub publication.
+**Current status: requested local implementation complete.** A2 is committed as `59fe7b69817395933225c7b91e02dcaecabba8e8`, owner-approved atomic B2 as `d33222b6680531bf6e895ec41799bde458c4a71f`, and B3/DB source guards as `30f52e7dfb3821116ba658e642deb04fd577333e`. Astron addressed review returned PASS with all prior important findings fixed. Fresh required `just test` completed exit0 on unchanged production/test source; full affected DB141/0 and relay1448/0 passed without filtering. The reviewer separately reproduced the unchanged intermittent mesh504; that failing run is retained as a known verification limitation, not substituted by the passing run. No GitHub publication, deployment or human acceptance is claimed.
 
 Repository: `reynholm/buzz`; origin was fetched before work. Base: `e72a377e5fd3d552e0e30dc523535d9a79cf1e99`. Branch: `fork/background-result-delivery`, isolated worktree `/Users/reynholm/.buzz/REPOS/buzz-background-result-delivery`. No GitHub publication, PR or push was performed.
 
@@ -81,7 +81,7 @@ No human smoke confirmation or real authenticated relay/provider test is claimed
 
 ## Final review
 
-Internal A review: passed. Internal B review identified IMPORTANT B1, documented below; its complete final verdict was not preserved. Owner corrected the reviewer to Astron. Whole-branch review at `904bc0a5`: FAIL with A2/B2. Scoped V2 re-review: FAIL, A2 fixed and B2 partially fixed. Thread completion remains unset while B2 and gate decisions remain open.
+Internal A review: passed. Internal B review identified IMPORTANT B1, documented below; its complete final verdict was not preserved. Owner corrected the reviewer to Astron. Whole-branch review at `904bc0a5`: FAIL with A2/B2. Scoped V2 re-review: FAIL, A2 fixed and B2 partially fixed. Those earlier rounds were superseded by owner-approved atomic B2 and the addressed B3 PASS below; the fresh required gate subsequently completed exit0.
 
 
 ## Review finding B1 and final verified source
@@ -186,6 +186,15 @@ GREEN `B3_MENTIONS_GREEN.log`: 11/0 explicit production `Db::new`, PostgreSQL/Re
 
 Complete affected packages on parent `d33222b6` plus this sealed source: DB **141/0** (138 library and 3 source guards; 391 ignored), relay **1448/0** (1412 library, 27 binary, 9 boot; 379 ignored), zero doctest failures (`B3_FULL_DB_RELAY_V2.log`, exit0). The first full attempt retained the newly exposed stale lease assertion (`B3_FULL_DB_RELAY.log`, exit101). Final fmt/all-target DB+relay clippy exit0 (`B3_FMT_V2.log`, `B3_CLIPPY_V2.log`). Finite independent source review confirms B3 and the revised guards, with twelve source mutations rejected; it ran no Rust tests.
 
-The earlier post-commit broad gate ended exit1 at the stale source guards (`B2_POST_COMMIT_JUST_TEST.log`). B3 edits began while it was still running, so it is mixed-state evidence, not final B3 verification. A fresh required `just test` is running on the stable B3 source (`B3_JUST_TEST.log`); its outcome and external addressed review remain pending.
+The earlier post-commit broad gate ended exit1 at the stale source guards (`B2_POST_COMMIT_JUST_TEST.log`). B3 edits began while it was still running, so it is mixed-state evidence, not final B3 verification. The fresh required `just test` subsequently completed exit0 on stable B3 production/test source (`B3_JUST_TEST.log`, `B3_JUST_TEST_RECEIPT.json`). External addressed review returned PASS as recorded below.
 
 Additional human check: send a managed final report with an explicit callback `--mention`, preserve its pending journal while the first submission cannot reach the relay, then recover after the original expires. The original thread must contain one report; the recipient's Home Mentions and historical `#p` readback must include its canonical ID. Replay the same journal/key again and expect that same ID and one mention entry. Use disposable local infrastructure and an authorized recipient account; do not infer this check was performed by a human from the automated regression.
+
+
+## Final local result and verification limits
+
+Astron addressed review at `30f52e7dfb3821116ba658e642deb04fd577333e` returned **PASS** for B3/source guards and preserved all earlier fixed finding statuses; a fresh independent verifier confirmed it. Report: `/Users/reynholm/.buzz/RESEARCH/BACKGROUND_RESULT_DELIVERY_B3_REVIEW_ASTRON_2026_10_14.md`. Reviewer-owned DB141/0 is separate from author evidence. Its relay library run failed the previously observed, unchanged mesh demo echo (1411/1, HTTP504); the full command stopped before subsequent targets. No new causal connection to the feature was confirmed, and no successful retry is substituted for that failure.
+
+Author's complete affected packages remain DB141/0,391ignored and relay1448/0,379ignored without filters (`B3_FULL_DB_RELAY_V2.log`). Fresh required `just test` now ends **exit0**, including DB package and workspace integration; CLI514/0, complete ACP1098/0,7ignored and embedded MCP80/0 passed within the script. The script also runs an additional ACP library pass. `B3_JUST_TEST_RECEIPT.json` records the checked start/completion HEADs and unchanged production/test hashes; the local B3 commit occurred during the run without changing compiled source. Report-only edits do not claim another test run. Earlier failed or mixed-state runs remain preserved.
+
+All requested local implementation stages and addressed review corrections are delivered; intermittent mesh behavior remains an explicitly recorded baseline test limitation outside the feature paths. No mesh fix, skip or waiver is claimed. Before any later PR, perform the repository's `just ci` and human-confirmed smoke gates; no PR/push is authorized here. Full expired recovery requires coordinated relay/writer upgrade with migration0056, original persistent journal and unique delivery keys. Arbitrary shell/MCP publications, loss of the journal/provider output, hardware power loss, native-app acceptance and deployed-relay behavior retain the limits described above.
