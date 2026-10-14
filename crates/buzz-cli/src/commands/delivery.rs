@@ -118,20 +118,20 @@ fn durable_directory(dir: &Path) -> Result<(), CliError> {
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && directory.is_dir() => {}
             Err(e) => return Err(error(e)),
         }
-        if let Some(parent) = directory.parent() {
-            sync_directory(parent)?;
+    }
+    // A concurrent creator may expose the whole chain before syncing any link.
+    // Every publisher must persist every ancestor link before it can send.
+    for (depth, parent) in dir.ancestors().skip(1).enumerate() {
+        if depth >= 128 {
+            return Err(error("journal directory nesting exceeds 128 levels"));
         }
+        sync_directory(parent)?;
     }
     Ok(())
 }
 
 async fn lock(dir: &Path) -> Result<File, CliError> {
     durable_directory(dir)?;
-    // Another creator can expose this directory before syncing its parent.
-    // Sync even an existing directory's link before any publisher can send.
-    if let Some(parent) = dir.parent() {
-        sync_directory(parent)?;
-    }
     let file = private_file(&dir.join("journal.lock"))?;
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {

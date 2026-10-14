@@ -632,3 +632,26 @@ async fn managed_existing_directory_requires_parent_link_sync_before_publication
     assert_eq!(result, 4);
     assert!(r.events.lock().unwrap().is_empty());
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn managed_existing_nested_directory_requires_ancestor_link_sync_before_publication() {
+    use std::os::unix::fs::PermissionsExt;
+    let (r, url, dir) = fixture().await;
+    let ancestor = dir.path().join("ancestor");
+    let journal = ancestor.join("parent/journal");
+    // A concurrent creator can expose the entire chain before syncing its links.
+    std::fs::create_dir_all(&journal).unwrap();
+    std::fs::set_permissions(&ancestor, std::fs::Permissions::from_mode(0o100)).unwrap();
+    let result = deliver(
+        &r,
+        &url,
+        &journal,
+        &Uuid::new_v4().to_string(),
+        "must not publish without durable ancestor links",
+    )
+    .await;
+    std::fs::set_permissions(&ancestor, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(result, 4);
+    assert!(r.events.lock().unwrap().is_empty());
+}
