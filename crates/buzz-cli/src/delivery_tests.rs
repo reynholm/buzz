@@ -655,3 +655,58 @@ async fn managed_existing_nested_directory_requires_ancestor_link_sync_before_pu
     assert_eq!(result, 4);
     assert!(r.events.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn managed_expired_journal_never_treats_legacy_wrapper_ack_as_delivery() {
+    let (r, url, dir) = fixture().await;
+    let key = Uuid::new_v4().to_string();
+    assert_eq!(deliver(&r, &url, dir.path(), &key, "first").await, 0);
+    let path = dir.path().join("journal.json");
+    let mut journal: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let record = journal["entries"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+        .next()
+        .unwrap();
+    let first: Event = serde_json::from_value(record["event"].clone()).unwrap();
+    let old = EventBuilder::new(first.kind, &first.content)
+        .tags(first.tags.clone())
+        .allow_self_tagging()
+        .custom_created_at(nostr::Timestamp::from(
+            nostr::Timestamp::now().as_secs() - 3600,
+        ))
+        .sign_with_keys(&r.keys)
+        .unwrap();
+    record["event"] = serde_json::to_value(&old).unwrap();
+    record["confirmed_at"] = serde_json::Value::Null;
+    std::fs::write(&path, journal.to_string()).unwrap();
+    r.events.lock().unwrap().clear();
+    assert_eq!(
+        deliver(&r, &url, dir.path(), &key, "changed after restart").await,
+        2
+    );
+    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let record = saved["entries"]
+        .as_object()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap();
+    let original: Event = serde_json::from_value(record["event"].clone()).unwrap();
+    let stamp: buzz_core::managed_delivery::ReportStamp =
+        serde_json::from_value(record["recovery_candidate"].clone()).unwrap();
+    let candidate = stamp.restore(&original).unwrap();
+    assert_eq!(original, old);
+    assert!(buzz_core::managed_delivery::same_report(
+        &original, &candidate
+    ));
+    assert!(record["confirmed_at"].is_null());
+    assert!(r
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|e| e.kind.as_u16() == 20003));
+}

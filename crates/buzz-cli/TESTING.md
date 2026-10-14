@@ -666,6 +666,32 @@ event ID. The real relay's `accepted:true, message:"duplicate:"` response is a
 successful replay. Unjournaled `messages send` retains its existing
 `delivery_unknown, retryable:false` ambiguity contract.
 
+Late recovery requires an updated relay with atomic managed-report election.
+For a report older than 600 seconds, the CLI journals a fresh signed copy that
+preserves the original author, content and exact tags, then submits a signed
+kind-20003 recovery command containing both events. An aged pending candidate
+may be renewed again; the original evidence remains unchanged. The relay uses
+one writer transaction to return a previously accepted report or insert one
+current candidate and bind it to the completion key. The 960-second DB floor
+remains active. Soft-deleted reports are acknowledged without resurrection.
+
+The CLI validates and durably saves the chosen signed event before returning.
+Recovered unaccepted reports can have a new event ID/date, with the same content,
+mentions and original thread. A lost acknowledgment can return an earlier
+candidate; callers must use the returned canonical ID. Journal v1 is migrated to
+v2 under its existing lock. The record retains original evidence plus the latest candidate and canonical
+timestamp/ID/signature; immutable content/tags are reconstructed and verified. Existing size/attempt limits
+still apply. Old CLI versions reject v2 journals instead of publishing through
+an incompatible path. Unknown relays cannot publish the nested candidate as a
+kind-9 message, and ordinary wrapper acceptance is not sufficient confirmation.
+
+Upgrade all relay writers and drain old in-flight writes before enabling this
+recovery contract: mixed old writers do not participate in the canonical-key
+lock. Each completion UUID must remain unique; the server retains its binding
+until community deletion, independently of the journal's seven-day confirmed
+retention. Key reuse with another body or route conflicts. Direct unmarked
+progress and edit operations retain their separate behavior.
+
 Each record permits eight managed submissions, each using the existing maximum
 of three transport attempts (24 HTTP publication requests at most). Attempts
 are saved before sending, so a crash can consume an attempt without publishing.
