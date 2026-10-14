@@ -5,6 +5,8 @@ use super::*;
 /// Authority and reply destination of a background task's original session.
 #[derive(Clone, Debug)]
 pub(crate) struct RuntimeContinuation {
+    /// Stable random identity of this group's managed final report.
+    pub delivery_key: Uuid,
     pub worker_index: usize,
     pub session_id: String,
     pub generation: u64,
@@ -103,6 +105,7 @@ mod tests {
 
     fn continuation() -> RuntimeContinuation {
         RuntimeContinuation {
+            delivery_key: Uuid::new_v4(),
             worker_index: 0,
             session_id: "original".into(),
             generation: 1,
@@ -388,5 +391,72 @@ mod tests {
             .tags
             .iter()
             .any(|tag| tag.as_slice() == ["h", &scope.channel_id().to_string()]));
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn background_managed_delivery_key_stays_on_collection_across_error_and_new_message() {
+        use crate::pool::background_work_tests::{
+            apply_result, dispatch, finish_child, push_new_message, started_background_turn,
+        };
+        let (mut pool, mut queue, scope, dir, ctx) = started_background_turn(0).await;
+        finish_child(&mut pool, &mut queue, &dir).await;
+        std::fs::write(dir.path().join("fail-collection"), "fail").unwrap();
+        let original = queue.continuations[&scope].thread_tags.clone();
+        assert_eq!(dispatch(&mut pool, &mut queue, &ctx), 1);
+        let result = tokio::time::timeout(Duration::from_secs(10), pool.rx_and_join_set().0.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            result.outcome,
+            crate::pool::PromptOutcome::Error(crate::acp::AcpError::AgentError { .. })
+        ));
+        apply_result(&mut pool, &mut queue, result, None, &HashSet::new());
+        push_new_message(&mut queue, &scope);
+        assert_eq!(dispatch(&mut pool, &mut queue, &ctx), 1);
+        let result = tokio::time::timeout(Duration::from_secs(10), pool.rx_and_join_set().0.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        apply_result(&mut pool, &mut queue, result, None, &HashSet::new());
+        std::fs::remove_file(dir.path().join("fail-collection")).unwrap();
+        queue
+            .continuation_retry_after
+            .insert(scope.clone(), Instant::now());
+        assert_eq!(dispatch(&mut pool, &mut queue, &ctx), 1);
+        let result = tokio::time::timeout(Duration::from_secs(10), pool.rx_and_join_set().0.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        apply_result(&mut pool, &mut queue, result, None, &HashSet::new());
+        let requests: Vec<serde_json::Value> = std::fs::read_to_string(dir.path().join("requests"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let prompts: Vec<&str> = requests
+            .iter()
+            .filter(|r| r["method"] == "session/prompt")
+            .map(|r| r["params"]["prompt"][0]["text"].as_str().unwrap())
+            .collect();
+        assert_eq!(prompts.len(), 4);
+        let key = |prompt: &str| -> String {
+            prompt
+                .split("--delivery-key ")
+                .nth(1)
+                .expect("collection must receive managed delivery command")
+                .split_whitespace()
+                .next()
+                .unwrap()
+                .trim_matches('\'')
+                .to_string()
+        };
+        assert!(Uuid::parse_str(&key(prompts[1])).is_ok());
+        assert_eq!(key(prompts[1]), key(prompts[3]));
+        assert!(!prompts[0].contains("--delivery-key "));
+        assert!(!prompts[2].contains("--delivery-key "));
+        assert!(prompts[3].contains(&scope.channel_id().to_string()));
+        assert!(prompts[3].contains(original.parent_event_id.as_deref().unwrap()));
+        assert!(prompts[3].contains("--journal-dir "));
     }
 }

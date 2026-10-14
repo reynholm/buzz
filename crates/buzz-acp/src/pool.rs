@@ -2468,16 +2468,7 @@ pub async fn run_prompt_task(
         .as_ref()
         .and_then(|batch| {
             batch.continuation.as_ref().map(|continuation| {
-                format!(
-                    "{}\nChannel: {}\nReply thread: {}",
-                    background_work::FOLLOWUP_PROMPT,
-                    batch.channel_id,
-                    continuation
-                        .thread_tags
-                        .root_event_id
-                        .as_deref()
-                        .unwrap_or("none")
-                )
+                background_work::followup_prompt(batch.channel_id, continuation, &ctx.cwd)
             })
         })
         .or(prompt_text);
@@ -12532,3 +12523,6 @@ done"#
 #[cfg(all(test, unix))]
 #[path = "pool/pi_prompt_tests.rs"]
 mod pi_prompt_tests;
+
+#[cfg(all(test, unix))]
+mod delivery_runtime_tests;

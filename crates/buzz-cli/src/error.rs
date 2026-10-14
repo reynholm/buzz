@@ -39,6 +39,11 @@ pub enum CliError {
     #[error("delivery unknown: {0}")]
     DeliveryUnknown(String),
 
+    /// A managed attempt is pending or its journal is busy. Retrying the same
+    /// key, route and journal is safe; never replace it with a fresh send.
+    #[error("{0}")]
+    ManagedDeliveryPending(String),
+
     /// Catch-all for unexpected failures
     #[error("{0}")]
     Other(String),
@@ -79,6 +84,7 @@ pub fn is_retryable_error(e: &CliError) -> bool {
                 || net_err.is_decode()
         }
         CliError::Relay { status, .. } => matches!(status, 429 | 502 | 503 | 504),
+        CliError::ManagedDeliveryPending(_) => true,
         CliError::DeliveryUnknown(_) => false,
         _ => false,
     }
@@ -102,7 +108,7 @@ pub fn exit_code(e: &CliError) -> i32 {
         CliError::Key(_) => 3,
         CliError::Conflict(_) => 5,
         CliError::NotFound(_) => 1,
-        CliError::DeliveryUnknown(_) => 2,
+        CliError::DeliveryUnknown(_) | CliError::ManagedDeliveryPending(_) => 2,
         CliError::Other(_) => 4,
     }
 }
@@ -125,6 +131,7 @@ pub fn print_error(e: &CliError) {
         CliError::Conflict(_) => "conflict",
         CliError::NotFound(_) => "not_found",
         CliError::DeliveryUnknown(_) => "delivery_unknown",
+        CliError::ManagedDeliveryPending(_) => "managed_delivery_pending",
         CliError::Other(_) => "error",
     };
     let obj = serde_json::json!({

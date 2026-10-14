@@ -625,3 +625,96 @@ buzz channels delete --channel "$FORUM_ID" | jq .
 | 60 | `notes ls` | ☐ | Own, --author all, --tag, --limit |
 | 61 | `notes rm` | ☐ | Delete→get 404, double-delete idempotent, missing slug → NotFound |
 | 62 | `users set-status` | ☐ | Text+emoji, text only, emoji-only (`--text ""`), `--clear`, `--clear` + `--text` → exit 1 |
+
+## Managed final-report delivery
+
+`messages deliver` journals the first signed kind-9 event before publishing it:
+
+```sh
+DELIVERY_KEY=$(uuidgen)
+JOURNAL_DIR="$PWD/.buzz-deliveries"
+buzz messages deliver --delivery-key "$DELIVERY_KEY" --channel "$CHANNEL_ID" \
+  --reply-to "$ROOT_EVENT_ID" --journal-dir "$JOURNAL_DIR" --content '@Callback final report'
+buzz messages deliver --delivery-key "$DELIVERY_KEY" --channel "$CHANNEL_ID" \
+  --reply-to "$ROOT_EVENT_ID" --journal-dir "$JOURNAL_DIR" --content 'changed summary'
+```
+
+Both commands return the first event ID. Read back with `messages get` or
+`messages thread`: exactly one report bears `["buzz-delivery", DELIVERY_KEY]`,
+and its content and original thread stay unchanged. `--mention <pubkey>` and
+automatic member-name/nostr-URI mentions work as for `messages send` and remain
+part of the first signed event. Use `messages edit` for an explicit correction;
+use ordinary `messages send` for separate progress. Two fresh keys produce two
+reports even with identical text. Reusing a key with another channel or parent
+returns a conflict; a parent from another channel is also refused.
+
+The default directory is `.buzz-deliveries` in the caller's working directory.
+`--journal-dir` overrides `BUZZ_DELIVERY_JOURNAL_DIR`. Use an absolute persistent
+directory across shell working-directory changes and restarts. ACP continuation
+prompts supply their workspace directory explicitly. Namespace identity includes
+the normalized relay URL, signer public key and delivery UUID; records bind the
+original channel and parent. Membership is queried before each managed
+submission and before returning a locally confirmed delivery. The relay also
+enforces authorization on each HTTP request. Revoked access never redirects a
+report to another channel or DM.
+
+A lost/invalid acknowledgment leaves the signed event in the journal.
+`managed_delivery_pending`, exit 2, `retryable:true` means retry the **same
+managed command/key/route/journal**; it does not authorize a fresh `messages
+send` or key. A valid acknowledgment must say `accepted:true` and name the saved
+event ID. The real relay's `accepted:true, message:"duplicate:"` response is a
+successful replay. Unjournaled `messages send` retains its existing
+`delivery_unknown, retryable:false` ambiguity contract.
+
+Each record permits eight managed submissions, each using the existing maximum
+of three transport attempts (24 HTTP publication requests at most). Attempts
+are saved before sending, so a crash can consume an attempt without publishing.
+Exhaustion is explicit and preserves the signed evidence. Records are capped at
+1024, 512 KiB each and 16 MiB serialized total. Capacity rejects new records;
+unconfirmed/terminal records never silently expire or get evicted. Confirmed
+records can expire after seven days; afterward this command no longer promises
+idempotency for that old key. There is one lock file and one bounded snapshot,
+with a fixed replacement file, and a 30-second bounded lock wait. New Unix
+directories use 0700 and journal files use 0600. Snapshot replacement fsyncs both
+file and directory, including newly created directory links, before sending.
+Use a filesystem supporting advisory locks, atomic replacement and directory
+fsync; unsupported filesystem/platform errors fail visibly before publication.
+The durability workflow is exercised on macOS/Unix; Windows and network
+filesystems have not been validated.
+
+This covers cooperating standalone CLI and embedded CLI callers of
+`messages deliver`. Other MCP/shell publishers do not share the journal. State
+survives process restart only while this persistent volume survives. There is
+no startup replay, no recovery of unjournaled provider output and no general
+exactly-once guarantee. Recover a saved event by explicitly repeating its key
+and route against the same journal. Keep pending/terminal records for inspection;
+do not delete them to make a new send appear safe.
+
+Automated local checks:
+
+```sh
+cargo test -p buzz-cli managed_ -- --test-threads=1
+cargo build -p buzz-cli -p buzz-agent -p buzz-dev-mcp
+BUZZ_TEST_BIN_DIR="$PWD/target/debug" \
+  env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL \
+  -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY \
+  cargo test -p buzz-acp managed_runtime_ -- --ignored --test-threads=1
+```
+
+Those runtime checks use actual bundled agent/MCP/CLI processes, a deterministic
+local model and a signature-checking **mock relay**, including publication
+followed by ACP application error/retry, response-body loss, process kill after
+relay acceptance and concurrent CLI processes. They are not evidence of a real
+authenticated relay or human smoke test.
+
+Human checks against an authorized local relay: run the commands above and
+inspect event readback; repeat with a fresh key; send progress and edit the
+managed report; run two same-key invocations concurrently; restart the CLI and
+replay with changed text. Then use an authorized owner account to remove the
+publisher's membership and repeat the original command: expect exit 3 and no
+new publication or alternate route. Check the app shows one final report in the
+original thread and preserves the intended callback mention. A crash/power-loss
+check requires a disposable persisted journal and a relay/proxy boundary that
+can stop the publisher after acceptance; preserve the journal and confirm
+readback by event ID before recovery. Do not infer real power-loss durability
+from process-kill tests alone.
