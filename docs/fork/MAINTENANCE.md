@@ -9,7 +9,8 @@ requires an owner decision, even when upstream appears to provide an equivalent.
 Maintain `upstream` as a fast-forward mirror and accepted releases on `main`.
 Use temporary `fork/sync-vX.Y.Z` merge branches without rebasing. The owner merges,
 installs and authorizes final `fork-vX.Y.Z-N` tags; preceding artifacts are candidates.
-Do not change the upstream app version or bundle identifier. Preserve demo isolation.
+Number those releases with [the rule below](#release-numbering). Do not change
+the upstream app version or bundle identifier. Preserve demo isolation.
 
 Every changed tracked path since the base, including tests and documentation,
 belongs in `scripts/fork/patches.json`. New modules use `is_new: true`. Register
@@ -540,3 +541,25 @@ run started by someone outside the list. Hosted execution and the owner's
 installation on a Linux notebook remain external gates; the first package was
 built and installed on the maintainer's Linux Mint 21.3 host from the exact
 `fork-v0.5.26-2` tree before this tooling existed.
+
+## Release numbering
+
+The release tag is `fork-v{upstream base}-N`.
+
+`X.Y.Z` is the upstream base in `scripts/fork/patches.json` `base_tag`. It
+changes only when an upstream sync is accepted. `N` is how many fork releases
+have been published. It does not start over. The app version in
+`desktop/package.json`, `desktop/src-tauri/tauri.conf.json` and
+`desktop/src-tauri/Cargo.toml` stays equal to that base. The bundle identifier
+stays `xyz.block.buzz.app`. About shows that app version, then `Fork N` and the
+commit SHA. Set `BUZZ_FORK_REVISION` to `N`. After the first release, do not
+publish with the producer default `1`.
+
+| Tag | App version | Fork revision | Upstream base |
+| --- | --- | --- | --- |
+| `fork-v0.5.26-2` | 0.5.26 | 2 | `desktop-v0.5.26` |
+
+The next release is not published yet. It is tag `fork-v0.5.26-3`, app version
+`0.5.26`, `BUZZ_FORK_REVISION=3`, same base `desktop-v0.5.26`. When a newer
+upstream base is accepted, the app version moves with it and the next tag is
+`fork-v{that base}-{next N}`.
