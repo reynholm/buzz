@@ -311,7 +311,12 @@ async fn migration_schema_thread_window_prebuild_does_not_queue_behind_writer() 
         production_result.is_ok(),
         "production migrator must preserve ingestion progress: {production_result:?}"
     );
-    let expected_version = sqlx::migrate!("../../migrations")
+    let migrations = sqlx::migrate::Migrator::new(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations"),
+    )
+    .await
+    .unwrap();
+    let expected_version = migrations
         .iter()
         .map(|migration| migration.version)
         .max()

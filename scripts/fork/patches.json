@@ -4462,12 +4462,15 @@
     },
     {
       "path": "Justfile",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Select the infra-free demo echo cancellation regression in the required nextest unit lane.",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "test(=mesh_boot::tests::demo_echo_keeps_inflight_read_across_ticks_and_still_drains)"
+      ],
       "invocation_seams": [],
       "verification_commands": [
-        "just ci"
+        "just ci",
+        "just test-unit"
       ]
     },
     {
@@ -7590,12 +7593,16 @@
     },
     {
       "path": "scripts/run-tests.sh",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Keep the cargo-test fallback selecting the same demo echo receive-retention regression as nextest.",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "buzz-relay demo echo receive retention"
+      ],
       "invocation_seams": [],
       "verification_commands": [
-        "just ci"
+        "just ci",
+        "bash -n scripts/run-tests.sh",
+        "just test-unit"
       ]
     },
     {
@@ -8446,6 +8453,19 @@
       "invocation_seams": [],
       "verification_commands": [
         "cargo-deny check"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/mesh_boot.rs",
+      "responsibility": "Preserve one in-flight demo echo receive across drain ticks; retain bounded explicit shutdown and the existing validated frame/Goodbye handling.",
+      "is_new": false,
+      "required_symbols": [
+        "tokio::pin!(receive);",
+        "demo_echo_keeps_inflight_read_across_ticks_and_still_drains"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-relay -- --test-threads=1"
       ]
     }
   ]

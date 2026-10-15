@@ -421,24 +421,38 @@ pub(crate) async fn run_demo_echo(
     tracing::info!(%session_id, %peer, "mesh demo echo: session open");
     let mut drain_tick = tokio::time::interval(std::time::Duration::from_millis(100));
     loop {
-        let frame = tokio::select! {
-            _ = drain_tick.tick() => {
-                if shutting_down.load(Ordering::Relaxed) {
-                    if let Some(community_id) = stream.community_id() {
-                        if let Err(e) = stream.send_goodbye(community_id, GoodbyeReason::Draining).await {
-                            tracing::warn!(%session_id, "mesh demo echo: draining goodbye failed: {e}");
-                        } else {
-                            tracing::info!(%session_id, "mesh demo echo: sent draining goodbye");
+        let frame = {
+            // Framing and fence validation may already have consumed a frame
+            // before yielding. Poll the same receive across ordinary drain
+            // ticks; only actual shutdown may abandon it and close the stream.
+            let receive = stream.recv_validated(&directory);
+            tokio::pin!(receive);
+            loop {
+                tokio::select! {
+                    frame = &mut receive => break Some(frame),
+                    _ = drain_tick.tick() => {
+                        if shutting_down.load(Ordering::Relaxed) {
+                            break None;
                         }
-                    } else {
-                        let _ = stream.finish();
-                        tracing::info!(%session_id, "mesh demo echo: drain before community latch — closing");
                     }
-                    return;
                 }
-                continue;
             }
-            frame = stream.recv_validated(&directory) => frame,
+        };
+        let Some(frame) = frame else {
+            if let Some(community_id) = stream.community_id() {
+                if let Err(e) = stream
+                    .send_goodbye(community_id, GoodbyeReason::Draining)
+                    .await
+                {
+                    tracing::warn!(%session_id, "mesh demo echo: draining goodbye failed: {e}");
+                } else {
+                    tracing::info!(%session_id, "mesh demo echo: sent draining goodbye");
+                }
+            } else {
+                let _ = stream.finish();
+                tracing::info!(%session_id, "mesh demo echo: drain before community latch — closing");
+            }
+            return;
         };
         match frame {
             Ok(Some(ReliableFrame::Data(payload))) => {
@@ -694,6 +708,69 @@ mod tests {
 
     fn stub_stream() -> MeshStream {
         MeshStream::new(Box::new(StubSend), Box::new(StubRecv))
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn demo_echo_keeps_inflight_read_across_ticks_and_still_drains() {
+        struct PendingRecv {
+            starts: Arc<std::sync::atomic::AtomicUsize>,
+            entered: Arc<tokio::sync::Notify>,
+        }
+        impl StreamRecvHalf for PendingRecv {
+            fn recv_frame(&mut self) -> BoxFuture<'_, Result<Option<MeshStreamFrame>, MeshError>> {
+                Box::pin(async move {
+                    // A framing read may already have consumed bytes before it
+                    // waits for the rest. Replacing this future loses that state.
+                    self.starts.fetch_add(1, Ordering::SeqCst);
+                    self.entered.notify_one();
+                    std::future::pending().await
+                })
+            }
+        }
+        let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let pool = deadpool_redis::Config::from_url("redis://127.0.0.1:1")
+            .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+            .unwrap();
+        let fenced = FencedHeader {
+            session_id: uuid::Uuid::new_v4(),
+            generation: 1,
+            owner_runtime_id: rid(1),
+        };
+        let stream = MeshStream::new(
+            Box::new(StubSend),
+            Box::new(PendingRecv {
+                starts: Arc::clone(&starts),
+                entered: Arc::clone(&entered),
+            }),
+        );
+        let shutting_down = Arc::new(AtomicBool::new(false));
+        let task = tokio::spawn(run_demo_echo(
+            SessionDirectory::new(pool),
+            ReliableInbound {
+                fenced,
+                from: rid(2),
+                stream: crate::tunnel::reliable::ReliableMeshStream::new_inbound(fenced, stream),
+            },
+            Arc::clone(&shutting_down),
+        ));
+        entered.notified().await;
+        for _ in 0..3 {
+            tokio::time::advance(std::time::Duration::from_millis(100)).await;
+            tokio::task::yield_now().await;
+            assert!(!task.is_finished());
+        }
+        let read_starts = starts.load(Ordering::SeqCst);
+        shutting_down.store(true, Ordering::Relaxed);
+        tokio::time::advance(std::time::Duration::from_millis(100)).await;
+        tokio::time::timeout(std::time::Duration::from_secs(1), task)
+            .await
+            .expect("shutdown must interrupt the pending read")
+            .unwrap();
+        assert_eq!(
+            read_starts, 1,
+            "drain polling must preserve the receive future"
+        );
     }
 
     fn rid(byte: u8) -> RuntimeId {
