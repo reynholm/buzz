@@ -2674,11 +2674,13 @@ New module: `false`.
 
 ## `Justfile`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Select the infra-free demo echo cancellation regression in the required nextest unit lane.
 
 New module: `false`.
 
+- Required symbol: `test(=mesh_boot::tests::demo_echo_keeps_inflight_read_across_ticks_and_still_drains)`
 - Verify: `just ci`
+- Verify: `just test-unit`
 
 ## `bin/.uv-0.12.21.pkg`
 
@@ -5177,11 +5179,14 @@ New module: `false`.
 
 ## `scripts/run-tests.sh`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Keep the cargo-test fallback selecting the same demo echo receive-retention regression as nextest.
 
 New module: `false`.
 
+- Required symbol: `buzz-relay demo echo receive retention`
 - Verify: `just ci`
+- Verify: `bash -n scripts/run-tests.sh`
+- Verify: `just test-unit`
 
 ## `.config/nextest.toml`
 
@@ -5793,3 +5798,13 @@ New module: `false`.
 - Required symbol: `RUSTSEC-2024-0449`
 - Required symbol: `https://github.com/reynholm/buzz/issues/19`
 - Verify: `cargo-deny check`
+
+## `crates/buzz-relay/src/mesh_boot.rs`
+
+Preserve one in-flight demo echo receive across drain ticks; retain bounded explicit shutdown and the existing validated frame/Goodbye handling.
+
+New module: `false`.
+
+- Required symbol: `tokio::pin!(receive);`
+- Required symbol: `demo_echo_keeps_inflight_read_across_ticks_and_still_drains`
+- Verify: `cargo test -p buzz-relay -- --test-threads=1`
