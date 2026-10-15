@@ -4864,12 +4864,13 @@
     },
     {
       "path": "crates/buzz-db/src/runtime/tests/thread_window_postgres_tests.rs",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Verify production prebuild migration reaches the latest embedded migration while preserving the ingestion witness/index checks.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
-        "just ci"
+        "just ci",
+        "scripts/postgres-test-run.sh -p buzz-db --lib --tests"
       ]
     },
     {
@@ -8432,6 +8433,19 @@
       "invocation_seams": [],
       "verification_commands": [
         "bash scripts/test-postgres-test-discovery.sh"
+      ]
+    },
+    {
+      "path": "deny.toml",
+      "responsibility": "Track the owner-approved RUSTSEC-2024-0449 exception for fork-v0.5.26-4 only, with YAML replacement issue19 and mandatory reassessment before another release. Other advisory policies remain unchanged.",
+      "is_new": false,
+      "required_symbols": [
+        "RUSTSEC-2024-0449",
+        "https://github.com/reynholm/buzz/issues/19"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo-deny check"
       ]
     }
   ]

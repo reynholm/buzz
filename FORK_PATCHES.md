@@ -2995,11 +2995,12 @@ New module: `false`.
 
 ## `crates/buzz-db/src/runtime/tests/thread_window_postgres_tests.rs`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Verify production prebuild migration reaches the latest embedded migration while preserving the ingestion witness/index checks.
 
 New module: `false`.
 
 - Verify: `just ci`
+- Verify: `scripts/postgres-test-run.sh -p buzz-db --lib --tests`
 
 ## `crates/buzz-db/src/store/community.rs`
 
@@ -5782,3 +5783,13 @@ New module: `false`.
 
 - Required symbol: `nested_out_of_line_recovery_test`
 - Verify: `bash scripts/test-postgres-test-discovery.sh`
+
+## `deny.toml`
+
+Track the owner-approved RUSTSEC-2024-0449 exception for fork-v0.5.26-4 only, with YAML replacement issue19 and mandatory reassessment before another release. Other advisory policies remain unchanged.
+
+New module: `false`.
+
+- Required symbol: `RUSTSEC-2024-0449`
+- Required symbol: `https://github.com/reynholm/buzz/issues/19`
+- Verify: `cargo-deny check`
