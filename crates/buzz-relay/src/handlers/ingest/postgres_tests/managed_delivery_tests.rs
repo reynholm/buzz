@@ -186,7 +186,9 @@ async fn authenticated_http_state() -> Arc<crate::state::AppState> {
     })
     .await
     .unwrap();
-    buzz_db::migration::run_migrations(db.pool()).await.unwrap();
+    if std::env::var("BUZZ_TEST_SCHEMA_MODE").as_deref() != Ok("desired") {
+        buzz_db::migration::run_migrations(db.pool()).await.unwrap();
+    }
     let pool = db.pool().clone();
     let floor: String = sqlx::query_scalar("SELECT current_setting('buzz.created_at_floor')")
         .fetch_one(&pool)

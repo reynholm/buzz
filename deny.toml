@@ -1,5 +1,9 @@
 [advisories]
 ignore = [
+    # Release-only approval: Andrey B., 2026-10-15, Buzz event
+    # 14da571fb65bf9ab1946c2be8ca6c3a621709f07a5ac5423e49fe6c64894c028.
+    # Reassess before the next release; remove after the YAML replacement.
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml unmaintained; no safe upgrade. Approved only for fork-v0.5.26-4; replacement tracked in https://github.com/reynholm/buzz/issues/19" },
     # instant 0.1.13 — unmaintained crate. Transitive dep: nostr → instant.
     # Will be resolved when nostr crate updates its dependencies.
     { id = "RUSTSEC-2024-0384", reason = "transitive dep via nostr; no upstream fix available" },
