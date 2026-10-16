@@ -5855,3 +5855,14 @@ New module: `true`.
 - Required symbol: `a draft change preserves focus on an open dialog button`
 - Required symbol: `initial mount and navigation from an ordinary button still focus the editor`
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/useComposerAutofocus.test.mjs`
+
+## `desktop/tests/e2e/voice-note.spec.ts`
+
+Bind duplicate voice-note playback assertions to stable emitted message IDs through live reordering; loop the short media fixture so natural completion cannot impersonate mutual pause.
+
+New module: `false`.
+
+- Required symbol: `const messageIds = await page.evaluate(`
+- Required symbol: `const firstCard = page.locator(`
+- Required symbol: `(player as HTMLAudioElement).loop = true;`
+- Verify: `cd desktop && pnpm exec playwright test --project=smoke tests/e2e/voice-note.spec.ts --retries=0`
