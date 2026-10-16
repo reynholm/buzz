@@ -5459,7 +5459,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/process_tree.rs`
 
-Bounded process snapshots and resident-helper classification; macOS executable confirmation releases completed Codex turns while preserving actual child work.
+Bounded process snapshots and resident-helper classification; macOS/Linux executable confirmation releases completed Codex turns while preserving actual child work.
 
 New module: `true`.
 
@@ -5811,26 +5811,29 @@ New module: `false`.
 - Required symbol: `demo_echo_keeps_inflight_read_across_ticks_and_still_drains`
 - Verify: `cargo test -p buzz-relay -- --test-threads=1`
 
-## `crates/buzz-acp/src/process_tree/macos_helpers.rs`
+## `crates/buzz-acp/src/process_tree/codex_helpers.rs`
 
-Confirm late Codex code-mode host executable identity on macOS with one bounded ps call; arguments, missing identity, and truncated names cannot free slots.
+Confirm late Codex code-mode host identity with one bounded ps call: macOS comm and Linux exe; missing identity and work arguments cannot free slots.
 
 New module: `true`.
 
 - Required symbol: `pub(super) fn classify(`
 - Required symbol: `fn confirmed_hosts(`
-- Invocation: `crates/buzz-acp/src/process_tree.rs` → `classify`; exact call `let tree = macos_helpers::classify(tree);`; behavior test `six_finished_threads_reuse_five_slots_with_late_codex_hosts`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/process_tree.rs` → `classify`; exact call `let tree = codex_helpers::classify(tree);`; behavior test `six_finished_threads_reuse_five_slots_with_late_codex_hosts`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1`
 - Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/resident_helper_tests.rs`
 
-Real local ACP/process regressions for sixth-thread admission, late resident host, nested child exit and work mentioning host in arguments on macOS.
+Real local ACP/process regressions for sixth-thread admission, nested child exit and original-session collection on macOS/Linux; Linux executable unlink and symlink boundaries.
 
 New module: `true`.
 
 - Required symbol: `six_finished_threads_reuse_five_slots_with_late_codex_hosts`
 - Required symbol: `work_under_late_codex_host_holds_slot_until_child_exits`
 - Required symbol: `work_mentioning_codex_host_in_arguments_still_holds_slot`
+- Required symbol: `child_of_codex_host_queues_original_collection_before_releasing_slot`
+- Required symbol: `symlink_named_codex_host_does_not_hide_ordinary_work`
+- Required symbol: `unlinked_codex_host_does_not_retain_finished_turn`
 - Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1`
 
 ## `desktop/src/features/messages/lib/useComposerAutofocus.ts`

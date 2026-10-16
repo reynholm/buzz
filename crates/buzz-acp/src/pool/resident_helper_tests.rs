@@ -20,9 +20,13 @@ for line in sys.stdin:
             assert host.stdout.readline().strip() == 'ready'
         text = req['params']['prompt'][0]['text']
         if text == 'work':
-            host.stdin.write('sleep 60 & echo $!\n')
+            host.stdin.write('python3 -c \'import time; print("work-ready", flush=True); time.sleep(60)\' & echo $!\n')
             host.stdin.flush()
-            child = int(host.stdout.readline())
+            # Ack from the child after exec: a freshly forked shell can still
+            # have the helper executable identity before becoming real work.
+            started = {host.stdout.readline().strip(), host.stdout.readline().strip()}
+            assert 'work-ready' in started
+            child = int(next(value for value in started if value != 'work-ready'))
         elif text == 'argument':
             child = subprocess.Popen(['/bin/bash', '-c', 'read -r line', sys.argv[1]], stdin=subprocess.PIPE)
         elif text == 'stop':
@@ -66,7 +70,11 @@ fn helper_executable(dir: &tempfile::TempDir) -> std::path::PathBuf {
         .join("Application  Support")
         .join("codex-code-mode-host");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    // Launch a real executable under this name; no argv-only impersonation.
+    // Linux confirms the kernel executable path, so a symlink to bash would
+    // correctly remain ordinary work. Copy the executable for that fixture.
+    #[cfg(target_os = "linux")]
+    std::fs::copy("/bin/bash", &path).unwrap();
+    #[cfg(target_os = "macos")]
     std::os::unix::fs::symlink("/bin/bash", &path).unwrap();
     path
 }
@@ -161,4 +169,90 @@ async fn work_mentioning_codex_host_in_arguments_still_holds_slot() {
     let mut pool = AgentPool::from_slots(vec![None]);
     return_after_turn(&mut pool, agent, scope());
     assert!(pool.try_claim(Some(&scope())).is_none());
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn symlink_named_codex_host_does_not_hide_ordinary_work() {
+    let dir = tempfile::tempdir().unwrap();
+    let executable = dir.path().join("codex-code-mode-host");
+    std::os::unix::fs::symlink("/bin/bash", &executable).unwrap();
+    let mut agent = helper_worker(0, &executable).await;
+    helper_prompt(&mut agent, "idle").await;
+    assert_eq!(agent.acp.background_child_pids().unwrap().len(), 1);
+    let mut pool = AgentPool::from_slots(vec![None]);
+    return_after_turn(&mut pool, agent, scope());
+    assert!(pool.try_claim(Some(&scope())).is_none());
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn unlinked_codex_host_does_not_retain_finished_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    let executable = helper_executable(&dir);
+    let mut agent = helper_worker(0, &executable).await;
+    helper_prompt(&mut agent, "idle").await;
+    std::fs::remove_file(&executable).unwrap();
+    let mut pool = AgentPool::from_slots(vec![None]);
+    return_after_turn(&mut pool, agent, scope());
+    assert!(pool.try_claim(Some(&scope())).is_some());
+}
+
+#[tokio::test]
+async fn child_of_codex_host_queues_original_collection_before_releasing_slot() {
+    let dir = tempfile::tempdir().unwrap();
+    let executable = helper_executable(&dir);
+    let agent = helper_worker(0, &executable).await;
+    let mut pool = AgentPool::from_slots(vec![Some(agent)]);
+    let original = scope();
+    bind(&mut pool, &original, 0);
+    let mut agent = pool.try_claim(Some(&original)).unwrap();
+    agent
+        .state
+        .sessions
+        .insert(original.clone(), "helper-session".into());
+    helper_prompt(&mut agent, "work").await;
+    let generation = agent.state.scope_owner_generations[&original];
+    let delivery_key = Uuid::new_v4();
+    agent.background_context = Some(RuntimeHold {
+        scope: original.clone(),
+        blocking_pids: HashSet::new(),
+        collection_pending: false,
+        continuation: Some(crate::queue::RuntimeContinuation {
+            delivery_key,
+            ordinary_preempted: false,
+            worker_index: 0,
+            session_id: "helper-session".into(),
+            generation,
+            thread_tags: ThreadTags {
+                root_event_id: Some("a".repeat(64)),
+                parent_event_id: Some("b".repeat(64)),
+                ..Default::default()
+            },
+            received_at: std::time::Instant::now(),
+        }),
+    });
+    pool.return_agent(agent);
+    let mut queue = EventQueue::new(DedupMode::Queue);
+    pool.queue_finished_background_work(&mut queue);
+    assert!(!queue.has_pending_continuation(&original));
+    assert!(pool.try_claim(Some(&scope())).is_none());
+    helper_prompt(pool.agents[0].as_mut().unwrap(), "stop").await;
+    pool.queue_finished_background_work(&mut queue);
+    let batch = queue.flush_next().expect("child exit queues collection");
+    assert_eq!(batch.scope, original);
+    let continuation = batch.continuation.unwrap();
+    assert_eq!(continuation.delivery_key, delivery_key);
+    assert_eq!(continuation.session_id, "helper-session");
+    assert_eq!(continuation.generation, generation);
+    assert_eq!(
+        continuation.thread_tags.parent_event_id,
+        Some("b".repeat(64))
+    );
+    assert!(pool.try_claim(Some(&scope())).is_none());
+    let mut agent = pool.try_claim(Some(&original)).unwrap();
+    agent.finish_background_collection();
+    queue.mark_complete(&original);
+    pool.return_agent(agent);
+    assert!(pool.try_claim(Some(&scope())).is_some());
 }

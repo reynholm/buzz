@@ -1,6 +1,7 @@
 //! Codex starts its code-mode service lazily, after session setup. Its lifetime
-//! is not a background task. macOS `ps comm` preserves its executable path,
-//! including spaces, without confusing arguments of other work for helpers.
+//! is not a background task. Confirm the full executable path without treating
+//! arguments of ordinary work as identity: macOS uses `comm`, Linux uses `exe`.
+//! Linux `comm` truncates long names; `exe` comes from the kernel executable link.
 use super::*;
 
 const CODE_MODE_HOST: &str = "codex-code-mode-host";
@@ -28,7 +29,10 @@ pub(super) fn classify(mut tree: ProcessTree) -> ProcessTree {
         .collect::<Vec<_>>()
         .join(",");
     let mut command = tokio::process::Command::new("/bin/ps");
+    #[cfg(target_os = "macos")]
     command.args(["-p", &pids, "-o", "pid=,comm="]);
+    #[cfg(target_os = "linux")]
+    command.args(["-ww", "-p", &pids, "-o", "pid=,exe="]);
     let output = bounded_output(command, std::time::Duration::from_millis(250), 256 * 1024);
     tree.resident_helpers = confirmed_hosts(output.as_deref(), &candidates);
     tree
@@ -45,9 +49,11 @@ fn confirmed_hosts(output: Option<&str>, candidates: &HashSet<u32>) -> HashSet<u
             let pid = pid.parse().ok()?;
             // Do not collapse whitespace inside an executable path. No filesystem
             // lookup here: a mounted filesystem must not stall the pool poll.
-            let name = std::path::Path::new(executable.trim())
-                .file_name()?
-                .to_str()?;
+            let executable = executable.trim();
+            // Linux retains the original path for a running, unlinked binary.
+            #[cfg(target_os = "linux")]
+            let executable = executable.strip_suffix(" (deleted)").unwrap_or(executable);
+            let name = std::path::Path::new(executable).file_name()?.to_str()?;
             (candidates.contains(&pid) && name == CODE_MODE_HOST).then_some(pid)
         })
         .collect()
@@ -76,8 +82,26 @@ mod tests {
     #[test]
     fn failed_or_missing_executable_confirmation_keeps_work_blocking() {
         let candidates = HashSet::from([10]);
-        for output in [None, Some(""), Some("invalid"), Some("10 codex-code-mode")] {
+        for output in [
+            None,
+            Some(""),
+            Some("invalid"),
+            Some("10 -"),
+            Some("10 codex-code-mode"),
+        ] {
             assert!(confirmed_hosts(output, &candidates).is_empty());
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unlinked_executable_retains_identity_without_accepting_other_names() {
+        assert_eq!(
+            confirmed_hosts(
+                Some("10 /tmp/Code  Mode/codex-code-mode-host (deleted)\n11 /bin/bash (deleted)\n12 /tmp/codex-code-mode-host-worker (deleted)\n"),
+                &HashSet::from([10, 11, 12]),
+            ),
+            HashSet::from([10]),
+        );
     }
 }

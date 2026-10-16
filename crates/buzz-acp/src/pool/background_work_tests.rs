@@ -3,7 +3,7 @@ use crate::queue::{EventQueue, QueuedEvent};
 use nostr::{EventBuilder, Keys, Kind};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[path = "resident_helper_tests.rs"]
 mod resident_helper_tests;
 

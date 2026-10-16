@@ -119,13 +119,13 @@ pub fn snapshot() -> Option<ProcessTree> {
         4 * 1024 * 1024,
     )?;
     let tree = parse_snapshot(&output)?;
-    #[cfg(target_os = "macos")]
-    let tree = macos_helpers::classify(tree);
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let tree = codex_helpers::classify(tree);
     Some(tree)
 }
 
-#[cfg(target_os = "macos")]
-mod macos_helpers;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod codex_helpers;
 
 #[cfg(unix)]
 fn parse_snapshot(output: &str) -> Option<ProcessTree> {
