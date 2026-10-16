@@ -60,6 +60,9 @@ typesense-data/
 doc/
 /repos/
 
+# Private design notes (specs and plans kept outside the repository)
+/docs/local
+
 # Local identity files
 identity.key
 **/identity.key

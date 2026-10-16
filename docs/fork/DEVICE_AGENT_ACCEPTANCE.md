@@ -1,7 +1,7 @@
 # Device agent acceptance
 
 This procedure implements the owner acceptance contract in the
-[approved design](../superpowers/specs/2026-10-03-device-bound-agents-design.md),
+approved design (`docs/local/specs/2026-10-03-device-bound-agents-design.md`, kept outside the repository),
 [contributor rules](../../AGENTS.md), [testing rules](../../TESTING.md), and
 [fork maintenance guide](MAINTENANCE.md). Automated tests, an isolated native
 run on one host, and two physical notebooks are separate evidence. None grants

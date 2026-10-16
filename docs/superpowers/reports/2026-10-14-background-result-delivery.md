@@ -1,6 +1,6 @@
 # Background result delivery — local implementation report
 
-Specification: [task](../specs/2026-10-14-background-result-delivery-task.md). Plan: [implementation](../plans/2026-10-14-background-result-delivery.md).
+Specification: `docs/local/specs/2026-10-14-background-result-delivery-task.md` (kept outside the repository). Plan: [implementation](../plans/2026-10-14-background-result-delivery.md).
 
 **Current status: requested local implementation complete.** A2 is committed as `59fe7b69817395933225c7b91e02dcaecabba8e8`, owner-approved atomic B2 as `d33222b6680531bf6e895ec41799bde458c4a71f`, and B3/DB source guards as `30f52e7dfb3821116ba658e642deb04fd577333e`. Astron addressed review returned PASS with all prior important findings fixed. Fresh required `just test` completed exit0 on unchanged production/test source; full affected DB141/0 and relay1448/0 passed without filtering. The reviewer separately reproduced the unchanged intermittent mesh504; that failing run is retained as a known verification limitation, not substituted by the passing run. No GitHub publication, deployment or human acceptance is claimed.
 

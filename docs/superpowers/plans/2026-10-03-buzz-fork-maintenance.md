@@ -8,7 +8,7 @@
 
 **Tech Stack:** Existing Git/GitHub Actions, Python standard library, Hermit, cargo, pnpm, Tauri and macOS build tools.
 
-**Spec:** [Approved design §8–9](../specs/2026-10-03-device-bound-agents-design.md); [device-agent plan](2026-10-03-device-bound-agents.md).
+**Spec:** Approved design §8–9 (`docs/local/specs/2026-10-03-device-bound-agents-design.md`, kept outside the repository); [device-agent plan](2026-10-03-device-bound-agents.md).
 
 ## Global Constraints
 
