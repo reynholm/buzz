@@ -209,6 +209,9 @@ pub struct AcpClient {
     /// a JSON-RPC *success*, not `-32601` — which the main loop would read as
     /// a delivered steer and drop the user's message from the queue.
     steering_supported: bool,
+    /// Whether `initialize` advertised `sessionCapabilities.resume`. Set once
+    /// by [`initialize`](Self::initialize); gates `session/resume`.
+    resume_supported: bool,
     /// Per-turn channel for receiving goose-native non-cancelling steer
     /// requests from the main loop. Installed by
     /// [`install_steer_rx`](Self::install_steer_rx) at dispatch and
@@ -636,6 +639,7 @@ impl AcpClient {
             observer_context: ObserverContext::default(),
             active_run_id: None,
             steering_supported: false,
+            resume_supported: false,
             steer_rx: None,
             goose_usage: UsageTracker::default(),
             standard_usage: StandardUsageTracker::default(),
@@ -764,6 +768,9 @@ impl AcpClient {
             .pointer("/_meta/steering/supported")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        self.resume_supported = result
+            .pointer("/agentCapabilities/sessionCapabilities/resume")
+            .is_some_and(serde_json::Value::is_object);
         self.capture_startup_children();
         tracing::debug!(target: "acp::init", "initialize response: {result}");
         Ok(result)
@@ -806,6 +813,33 @@ impl AcpClient {
         system_prompt: Option<SystemPromptTransport<'_>>,
         session_title: Option<&str>,
     ) -> Result<SessionNewResponse, AcpError> {
+        let params = self.build_session_params(cwd, mcp_servers, system_prompt, session_title);
+        let before = self
+            .process_id()
+            .and_then(|pid| crate::process_tree::snapshot().map(|tree| tree.descendant_pids(pid)));
+        let result = self.send_request("session/new", params).await?;
+        let session_id = result["sessionId"]
+            .as_str()
+            .ok_or_else(|| AcpError::Protocol("session/new response missing sessionId".into()))?
+            .to_owned();
+        self.capture_session_children(before);
+        tracing::info!(target: "acp::session", "session created: {session_id}");
+        Ok(SessionNewResponse {
+            session_id,
+            raw: result,
+        })
+    }
+
+    /// Parameters shared by `session/new` and `session/resume`: working
+    /// directory, MCP servers, and the `_meta` members (system prompt, title,
+    /// Claude CLI options), merged into one object.
+    fn build_session_params(
+        &self,
+        cwd: &str,
+        mcp_servers: Vec<McpServer>,
+        system_prompt: Option<SystemPromptTransport<'_>>,
+        session_title: Option<&str>,
+    ) -> serde_json::Value {
         let mut params = serde_json::json!({
             "cwd": cwd,
             "mcpServers": mcp_servers,
@@ -832,18 +866,31 @@ impl AcpClient {
             params["_meta"]["claudeCode"]["options"]["extraArgs"]["thinking-display"] =
                 serde_json::Value::String("summarized".to_owned());
         }
+        params
+    }
+
+    /// Send `session/resume` for a session this agent created earlier, with
+    /// the same parameters `session/new` would send. Call only when
+    /// [`resume_supported`](Self::resume_supported) is true. Any error means
+    /// the session cannot be continued; see [`resume_failure_code`].
+    pub async fn session_resume(
+        &mut self,
+        session_id: &str,
+        cwd: &str,
+        mcp_servers: Vec<McpServer>,
+        system_prompt: Option<SystemPromptTransport<'_>>,
+        session_title: Option<&str>,
+    ) -> Result<SessionNewResponse, AcpError> {
+        let mut params = self.build_session_params(cwd, mcp_servers, system_prompt, session_title);
+        params["sessionId"] = serde_json::Value::String(session_id.to_owned());
         let before = self
             .process_id()
             .and_then(|pid| crate::process_tree::snapshot().map(|tree| tree.descendant_pids(pid)));
-        let result = self.send_request("session/new", params).await?;
-        let session_id = result["sessionId"]
-            .as_str()
-            .ok_or_else(|| AcpError::Protocol("session/new response missing sessionId".into()))?
-            .to_owned();
+        let result = self.send_request("session/resume", params).await?;
         self.capture_session_children(before);
-        tracing::info!(target: "acp::session", "session created: {session_id}");
+        tracing::info!(target: "acp::session", "session resumed: {session_id}");
         Ok(SessionNewResponse {
-            session_id,
+            session_id: session_id.to_owned(),
             raw: result,
         })
     }
@@ -1042,6 +1089,11 @@ impl AcpClient {
     /// for the supervisor's post-initialize log line.
     pub fn steering_supported(&self) -> bool {
         self.steering_supported
+    }
+
+    /// Whether the agent advertised `sessionCapabilities.resume`.
+    pub fn resume_supported(&self) -> bool {
+        self.resume_supported
     }
 
     /// Consume per-turn usage for NIP-AM publishing. Goose/buzz-agent is an
@@ -2604,6 +2656,19 @@ fn configure_no_window(cmd: &mut tokio::process::Command) {
     let _ = cmd;
 }
 
+/// Stable code for a failed `session/resume`, reported to the agent as
+/// `resume_failed:<code>`.
+pub fn resume_failure_code(err: &AcpError) -> String {
+    /// JSON-RPC "resource not found", sent for an unknown session/transcript.
+    const RESOURCE_NOT_FOUND: i64 = -32002;
+    match err {
+        AcpError::AgentError { code, .. } if *code == RESOURCE_NOT_FOUND => "not_found".into(),
+        AcpError::AgentError { code, .. } => format!("rpc_{code}"),
+        AcpError::Timeout(_) => "timeout".into(),
+        _ => "protocol".into(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4019,6 +4084,7 @@ sleep 1"#,
     // ── claude-agent-acp _meta.systemPrompt transport ─────────────────────
 
     include!("acp/system_prompt_tests.rs");
+    include!("acp/session_resume_tests.rs");
 
     #[tokio::test]
     async fn active_run_id_sets_on_string() {
