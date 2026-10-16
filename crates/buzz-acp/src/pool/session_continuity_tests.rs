@@ -713,7 +713,6 @@ async fn max_turns_survives_resume() {
 
 #[tokio::test]
 async fn resumed_session_gets_only_delta() {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let fixture = Fixture::new();
     let human = Keys::generate();
@@ -728,47 +727,11 @@ async fn resumed_session_gets_only_delta() {
         root_event_id: root_id.clone(),
     };
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base_url = format!("http://{}", listener.local_addr().unwrap());
-    let body = serde_json::to_string(&vec![
-        root.clone(),
-        old_reply.clone(),
-        new_reply.clone(),
-        trigger.clone(),
-    ])
-    .unwrap();
-    let server = tokio::spawn(async move {
-        while let Ok((mut socket, _)) = listener.accept().await {
-            let mut request = vec![0; 16 * 1024];
-            let _ = socket.read(&mut request).await;
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            );
-            let _ = socket.write_all(response.as_bytes()).await;
-        }
-    });
-
-    let mut ctx = ctx();
-    ctx.context_message_limit = 10;
-    ctx.rest_client.base_url = base_url.clone();
-    ctx.channel_info = ChannelInfoResolver::new(
-        HashMap::from([(
-            channel_id,
-            crate::relay::ChannelInfo {
-                name: "thread".into(),
-                channel_type: "stream".into(),
-                description: None,
-            },
-        )]),
-        RestClient {
-            http: reqwest::Client::new(),
-            base_url,
-            keys: ctx.agent_keys.clone(),
-            auth_tag_json: None,
-        },
-    );
+    let (ctx, server) = relay_context(
+        channel_id,
+        vec![root.clone(), old_reply.clone(), new_reply.clone(), trigger.clone()],
+    )
+    .await;
     let ctx = Arc::new(ctx);
     fixture.departed_record(&scope, &ctx, &[&root_id, &old_reply.id.to_hex()]);
 
@@ -916,4 +879,97 @@ fn late_commit_after_rotate_is_ignored() {
     state.mark_scope_delivery_success(scope.clone(), true, ["late".to_owned()], []);
     assert_eq!(fixture.record(&scope).live, None);
     assert!(!state.leases.contains_key(&scope));
+}
+
+/// A prompt context whose relay answers every `/query` with `events`.
+async fn relay_context(
+    channel_id: Uuid,
+    events: Vec<nostr::Event>,
+) -> (PromptContext, tokio::task::JoinHandle<()>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base_url = format!("http://{}", listener.local_addr().unwrap());
+    let body = serde_json::to_string(&events).unwrap();
+    let server = tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let mut request = vec![0; 16 * 1024];
+            let _ = socket.read(&mut request).await;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = socket.write_all(response.as_bytes()).await;
+        }
+    });
+    let mut ctx = ctx();
+    ctx.context_message_limit = 10;
+    ctx.rest_client.base_url = base_url.clone();
+    ctx.channel_info = ChannelInfoResolver::new(
+        HashMap::from([(
+            channel_id,
+            crate::relay::ChannelInfo {
+                name: "thread".into(),
+                channel_type: "stream".into(),
+                description: None,
+            },
+        )]),
+        RestClient {
+            http: reqwest::Client::new(),
+            base_url,
+            keys: ctx.agent_keys.clone(),
+            auth_tag_json: None,
+        },
+    );
+    (ctx, server)
+}
+
+#[tokio::test]
+async fn cold_start_prompt_includes_first_mention() {
+    let fixture = Fixture::new();
+    let human = Keys::generate();
+    let channel_id = Uuid::from_u128(42);
+    let root = mention(&human, channel_id, None, "thread opener");
+    let root_id = root.id.to_hex();
+    let agent_keys = Keys::generate();
+    let agent_hex = agent_keys.public_key().to_hex();
+    let mut events = vec![root.clone()];
+    for n in 0..30 {
+        let mut tags = vec![
+            Tag::parse(["h", channel_id.to_string().as_str()]).unwrap(),
+            Tag::parse(["e", root_id.as_str(), "", "reply"]).unwrap(),
+        ];
+        let text = if n == 2 {
+            tags.push(Tag::parse(["p", agent_hex.as_str()]).unwrap());
+            "FIRST-MENTION-TASK".to_owned()
+        } else {
+            format!("chatter {n}")
+        };
+        events.push(
+            EventBuilder::new(Kind::Custom(9), text)
+                .tags(tags)
+                .custom_created_at(nostr::Timestamp::from(2_000 + n))
+                .sign_with_keys(&human)
+                .unwrap(),
+        );
+    }
+    let trigger = events.last().unwrap().clone();
+    let (mut ctx, server) = relay_context(channel_id, events).await;
+    ctx.agent_keys = agent_keys;
+    ctx.context_message_limit = 12;
+    let ctx = Arc::new(ctx);
+    let scope = SessionScope::Thread {
+        channel_id,
+        root_event_id: root_id,
+    };
+    let prompts = fixture.dir.path().join("prompts.ndjson");
+    let agent = fixture
+        .agent(&[("PROMPTS", prompts.to_str().unwrap())])
+        .await;
+    let mut agent = run_turn(agent, &ctx, batch(&scope, trigger)).await;
+    agent.acp.shutdown().await;
+    server.abort();
+    let prompt = std::fs::read_to_string(&prompts).unwrap();
+    assert!(prompt.contains("FIRST-MENTION-TASK"));
+    assert!(!prompt.contains("chatter 5"), "window stays bounded");
 }
