@@ -555,20 +555,30 @@ async fn failed_claim_never_calls_resume() {
     assert!(!agent.state.leases.contains_key(&scope));
 }
 
-/// Tombstone `scope` from another thread every `period` until `until`.
-fn rotate_repeatedly(
-    store: Arc<SessionStore>,
-    scope: SessionScope,
-    first_after: Duration,
-    period: Duration,
-    until: Duration,
+/// Tombstone `scope` from another thread while each of the first `times`
+/// calls of `method` is in flight (the fake adapter logs a call when it
+/// receives it and answers after its delay).
+fn rotate_during_calls(
+    fixture: &Fixture,
+    scope: &SessionScope,
+    method: &'static str,
+    times: usize,
 ) -> std::thread::JoinHandle<()> {
+    let (store, scope, log) = (fixture.store.clone(), scope.clone(), fixture.log());
     std::thread::spawn(move || {
-        let started = std::time::Instant::now();
-        std::thread::sleep(first_after);
-        while started.elapsed() < until {
-            let _ = store.discard_scope(&scope);
-            std::thread::sleep(period);
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let mut rotated = 0;
+        while rotated < times && std::time::Instant::now() < deadline {
+            let calls = std::fs::read_to_string(&log)
+                .unwrap_or_default()
+                .lines()
+                .filter(|line| *line == method)
+                .count();
+            if calls > rotated {
+                store.discard_scope(&scope).unwrap();
+                rotated += 1;
+            }
+            std::thread::sleep(Duration::from_millis(10));
         }
     })
 }
@@ -582,14 +592,7 @@ async fn resume_result_after_rotate_is_dropped() {
     let mut agent = fixture
         .agent(&[("RESUME_CAP", "1"), ("DELAY", "0.6")])
         .await;
-    // One rotate, landing while the resume call is in flight.
-    let rotate = rotate_repeatedly(
-        fixture.store.clone(),
-        scope.clone(),
-        Duration::from_millis(200),
-        Duration::from_secs(10),
-        Duration::from_millis(300),
-    );
+    let rotate = rotate_during_calls(&fixture, &scope, "session/resume", 1);
     let (sid, start) = acquire_session(&mut agent, &ctx, None, channel_context(&scope), &scope)
         .await
         .unwrap();
@@ -611,13 +614,7 @@ async fn new_result_after_rotate_is_dropped() {
     let scope = scope();
     let ctx = ctx();
     let mut agent = fixture.agent(&[("DELAY", "0.6")]).await;
-    let rotate = rotate_repeatedly(
-        fixture.store.clone(),
-        scope.clone(),
-        Duration::from_millis(200),
-        Duration::from_secs(10),
-        Duration::from_millis(300),
-    );
+    let rotate = rotate_during_calls(&fixture, &scope, "session/new", 1);
     let (sid, start) = acquire_session(&mut agent, &ctx, None, channel_context(&scope), &scope)
         .await
         .unwrap();
@@ -639,13 +636,7 @@ async fn ownership_lost_three_times_runs_unpersisted() {
     let scope = scope();
     let ctx = ctx();
     let mut agent = fixture.agent(&[("DELAY", "0.3")]).await;
-    let rotate = rotate_repeatedly(
-        fixture.store.clone(),
-        scope.clone(),
-        Duration::from_millis(50),
-        Duration::from_millis(50),
-        Duration::from_secs(1),
-    );
+    let rotate = rotate_during_calls(&fixture, &scope, "session/new", MAX_ACQUIRE_ROUNDS);
     let (sid, start) = acquire_session(&mut agent, &ctx, None, channel_context(&scope), &scope)
         .await
         .unwrap();
