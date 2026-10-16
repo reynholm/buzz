@@ -431,6 +431,45 @@ pub(super) async fn acquire_session(
     new_unpersisted(agent, ctx, agent_core, channel, SessionReason::LiveElsewhere).await
 }
 
+/// The agent-facing marker for the first prompt of a new or resumed session:
+/// `<session state="new|resumed" reason="..."/>`, plus
+/// `first_mention="not_found"` when a cold start could not find the agent's
+/// first mention in the thread.
+pub(crate) fn format_session_marker(
+    start: &SessionStart,
+    first_mention: Option<&super::first_mention::FirstMention>,
+) -> String {
+    let (state, reason) = match start {
+        SessionStart::New { reason } => ("new", reason),
+        SessionStart::Resumed { reason } => ("resumed", reason),
+    };
+    let not_found = matches!(
+        first_mention,
+        Some(super::first_mention::FirstMention::NotFound)
+    );
+    format!(
+        r#"<session state="{state}" reason="{}"{}/>"#,
+        reason.as_wire(),
+        if not_found {
+            r#" first_mention="not_found""#
+        } else {
+            ""
+        }
+    )
+}
+
+/// Put the marker right before the conversation context section, or first
+/// when the prompt has none.
+pub(crate) fn insert_session_marker(sections: &mut Vec<String>, marker: String) {
+    let at = sections
+        .iter()
+        .position(|section| {
+            section.starts_with("<thread-context") || section.starts_with("<conversation-context")
+        })
+        .unwrap_or(0);
+    sections.insert(at, marker);
+}
+
 fn decision_reason(decision: &ResumeDecision) -> SessionReason {
     match decision {
         ResumeDecision::Resume { reason, .. } | ResumeDecision::New { reason } => reason.clone(),

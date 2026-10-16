@@ -973,3 +973,84 @@ async fn cold_start_prompt_includes_first_mention() {
     assert!(prompt.contains("FIRST-MENTION-TASK"));
     assert!(!prompt.contains("chatter 5"), "window stays bounded");
 }
+
+// ---- session marker ----
+
+#[test]
+fn marker_for_resumed_session() {
+    let start = SessionStart::Resumed {
+        reason: SessionReason::IdleSleep,
+    };
+    assert_eq!(
+        format_session_marker(&start, None),
+        r#"<session state="resumed" reason="idle_sleep"/>"#
+    );
+}
+
+#[test]
+fn marker_for_failed_resume() {
+    let start = SessionStart::New {
+        reason: SessionReason::ResumeFailed("not_found".into()),
+    };
+    assert_eq!(
+        format_session_marker(&start, None),
+        r#"<session state="new" reason="resume_failed:not_found"/>"#
+    );
+}
+
+#[test]
+fn marker_reports_first_mention_not_found() {
+    let start = SessionStart::New {
+        reason: SessionReason::FirstInThread,
+    };
+    assert_eq!(
+        format_session_marker(&start, Some(&super::super::first_mention::FirstMention::NotFound)),
+        r#"<session state="new" reason="first_in_thread" first_mention="not_found"/>"#
+    );
+    assert_eq!(
+        format_session_marker(&start, Some(&super::super::first_mention::FirstMention::InRoot)),
+        r#"<session state="new" reason="first_in_thread"/>"#
+    );
+}
+
+#[test]
+fn marker_precedes_thread_context() {
+    let mut sections = vec![
+        "<context-hints/>".to_owned(),
+        "<thread-context included=\"1\">x</thread-context>".to_owned(),
+        "<buzz-event/>".to_owned(),
+    ];
+    insert_session_marker(&mut sections, "<session/>".to_owned());
+    assert_eq!(sections[1], "<session/>");
+    let mut bare = vec!["<buzz-event/>".to_owned()];
+    insert_session_marker(&mut bare, "<session/>".to_owned());
+    assert_eq!(bare[0], "<session/>");
+}
+
+#[tokio::test]
+async fn marker_present_once_after_start() {
+    let fixture = Fixture::new();
+    let human = Keys::generate();
+    let channel_id = Uuid::from_u128(42);
+    let root = mention(&human, channel_id, None, "first");
+    let scope = SessionScope::Thread {
+        channel_id,
+        root_event_id: root.id.to_hex(),
+    };
+    let mut ctx = ctx();
+    ctx.context_message_limit = 0;
+    let ctx = Arc::new(ctx);
+    let prompts = fixture.dir.path().join("prompts.ndjson");
+    let agent = fixture
+        .agent(&[("PROMPTS", prompts.to_str().unwrap())])
+        .await;
+    let agent = run_turn(agent, &ctx, batch(&scope, root.clone())).await;
+    let follow_up = mention(&human, channel_id, Some(&root.id.to_hex()), "second");
+    let mut agent = run_turn(agent, &ctx, batch(&scope, follow_up)).await;
+    agent.acp.shutdown().await;
+    let prompts = std::fs::read_to_string(&prompts).unwrap();
+    let lines: Vec<&str> = prompts.lines().collect();
+    assert_eq!(lines.len(), 2);
+    assert!(lines[0].contains(r#"<session state=\"new\" reason=\"first_in_thread\"/>"#));
+    assert!(!lines[1].contains("<session state="));
+}
