@@ -23,6 +23,7 @@ mod run_task;
 mod runtime;
 use runtime::{AgentRuntime, PoolStartup, SessionMode};
 mod scope;
+mod session_store;
 mod setup_mode;
 mod usage;
 
@@ -9763,6 +9764,8 @@ mod build_mcp_servers_tests {
             config_path: std::path::PathBuf::from("./buzz-acp.toml"),
             context_message_limit: 12,
             max_turns_per_session: 0,
+            session_store_dir: None,
+            session_resume: true,
             presence_enabled: true,
             typing_enabled: true,
             memory_enabled: false,
@@ -10455,6 +10458,8 @@ mod error_outcome_emission_tests {
             config_path: std::path::PathBuf::from("./buzz-acp.toml"),
             context_message_limit: 12,
             max_turns_per_session: 0,
+            session_store_dir: None,
+            session_resume: true,
             presence_enabled: true,
             typing_enabled: true,
             memory_enabled: false,
