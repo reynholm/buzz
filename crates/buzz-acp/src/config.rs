@@ -397,6 +397,16 @@ pub struct CliArgs {
           value_parser = clap::value_parser!(u32))]
     pub max_turns_per_session: u32,
 
+    /// Directory for durable session records, used to resume provider
+    /// sessions after a pool sleep, worker crash, or harness restart.
+    /// Default: `<cwd>/.buzz-sessions/<agent pubkey hex>`.
+    #[arg(long, env = "BUZZ_ACP_SESSION_STORE_DIR")]
+    pub session_store_dir: Option<PathBuf>,
+
+    /// Disable resuming provider sessions; every lost session starts fresh.
+    #[arg(long, env = "BUZZ_ACP_NO_SESSION_RESUME")]
+    pub no_session_resume: bool,
+
     /// Disable automatic presence (online/offline) status.
     #[arg(long, env = "BUZZ_ACP_NO_PRESENCE")]
     pub no_presence: bool,
@@ -574,6 +584,10 @@ pub struct Config {
     pub context_message_limit: u32,
     /// Maximum turns per session before proactive rotation. 0 = disabled.
     pub max_turns_per_session: u32,
+    /// Durable session record directory override; `None` = default under cwd.
+    pub session_store_dir: Option<PathBuf>,
+    /// Whether lost provider sessions are resumed from the session store.
+    pub session_resume: bool,
     pub presence_enabled: bool,
     pub typing_enabled: bool,
     /// Whether NIP-AE agent core memory injection is enabled. When false,
@@ -1186,6 +1200,8 @@ impl Config {
             config_path: args.config,
             context_message_limit: args.context_message_limit,
             max_turns_per_session: args.max_turns_per_session,
+            session_store_dir: args.session_store_dir,
+            session_resume: !args.no_session_resume,
             presence_enabled: !args.no_presence,
             typing_enabled: !args.no_typing,
             memory_enabled: args.memory && !args.no_memory,
@@ -1567,6 +1583,8 @@ mod tests {
             config_path: PathBuf::from("./buzz-acp.toml"),
             context_message_limit: 12,
             max_turns_per_session: 0,
+            session_store_dir: None,
+            session_resume: true,
             presence_enabled: true,
             typing_enabled: true,
             memory_enabled: true,
@@ -2335,6 +2353,30 @@ channels = "ALL"
             "300",
         ]);
         assert_eq!(configured.idle_pool_sleep, 300);
+    }
+
+    #[test]
+    fn session_store_flags_default_to_resume_in_working_dir() {
+        let key = format!("{:0>64}", "1");
+        let config = Config::from_args(CliArgs::parse_from(["buzz-acp", "--private-key", &key]))
+            .expect("config");
+        assert!(config.session_resume);
+        assert_eq!(config.session_store_dir, None);
+
+        let config = Config::from_args(CliArgs::parse_from([
+            "buzz-acp",
+            "--private-key",
+            &key,
+            "--no-session-resume",
+            "--session-store-dir",
+            "/tmp/sessions",
+        ]))
+        .expect("config");
+        assert!(!config.session_resume);
+        assert_eq!(
+            config.session_store_dir,
+            Some(PathBuf::from("/tmp/sessions"))
+        );
     }
 
     #[test]

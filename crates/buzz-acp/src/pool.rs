@@ -161,6 +161,10 @@ pub struct SessionState {
     /// worker becomes claimable again.
     scope_owner_generations: HashMap<SessionScope, u64>,
     background_rotation_pending: HashSet<SessionScope>,
+    /// Durable session records; `None` disables resume.
+    pub(crate) store: Option<Arc<crate::session_store::SessionStore>>,
+    /// Lease of every durable record this state owns, by scope.
+    leases: HashMap<SessionScope, Uuid>,
 }
 
 impl SessionState {
@@ -185,6 +189,7 @@ impl SessionState {
     /// Invalidate a single session scope's session and turn counter.
     /// Returns `true` if the scope had an active session.
     pub fn invalidate_scope(&mut self, scope: &SessionScope) -> bool {
+        self.discard_durable(scope);
         self.background_rotation_pending.remove(scope);
         self.turn_counts.remove(scope);
         self.core_sections.remove(scope);
@@ -221,7 +226,12 @@ impl SessionState {
     }
 
     /// Invalidate all sessions and turn counters (e.g. after agent exit).
+    ///
+    /// Every caller handles a dead or unrecoverable worker process, so the
+    /// provider sessions themselves stay resumable: their durable records are
+    /// marked departed rather than discarded.
     pub fn invalidate_all(&mut self) {
+        self.depart_durable_all(crate::session_store::Departure::WorkerCrash);
         self.sessions.clear();
         self.background_rotation_pending.clear();
         self.turn_counts.clear();
@@ -241,6 +251,14 @@ impl SessionState {
         event_ids: impl IntoIterator<Item = String>,
         hydrated_thread_roots: impl IntoIterator<Item = String>,
     ) {
+        let event_ids: Vec<String> = event_ids.into_iter().collect();
+        let hydrated_thread_roots: Vec<String> = hydrated_thread_roots.into_iter().collect();
+        self.persist_delivery(
+            &scope,
+            standing_context_sent,
+            &event_ids,
+            &hydrated_thread_roots,
+        );
         let delivery = self.deliveries.entry(scope).or_default();
         delivery.standing_context_sent |= standing_context_sent;
         delivery.delivered_event_ids.extend(event_ids);
@@ -316,6 +334,9 @@ pub struct OwnedAgent {
 
 mod background_work;
 pub(crate) use background_work::{ContinuationState, RuntimeHold};
+mod first_mention;
+mod session_continuity;
+pub(crate) use session_continuity::{open_session_store, SessionStart};
 
 /// Package name reported by `claude-agent-acp` in its `initialize` response.
 /// Any adapter reporting this name supports `_meta.systemPrompt: {append: ...}`
@@ -399,6 +420,8 @@ pub struct AgentPool {
     /// children. Keyed by slot index. Cleared when the slot is checked out
     /// for a real prompt or when the children exit and a follow-up is sent.
     runtime_holds: HashMap<usize, RuntimeHold>,
+    /// Durable session records, independent of the slots (empty after sleep).
+    store: Option<Arc<crate::session_store::SessionStore>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -973,6 +996,7 @@ impl AgentPool {
             next_scope_owner_generation: 1,
             held_since: HashMap::new(),
             runtime_holds: HashMap::new(),
+            store: None,
         }
     }
 
@@ -1605,6 +1629,7 @@ async fn resolve_new_session_channel_context(
 /// On error from `session_new_full()`, returns the `AcpError` — caller handles
 /// error reporting. Model-switch failures are logged and gracefully ignored
 /// (the agent proceeds with its default model).
+#[derive(Clone, Copy)]
 struct NewSessionChannelContext<'a> {
     huddle_instructions: Option<&'a str>,
     canvas: Option<&'a str>,
@@ -1618,6 +1643,19 @@ async fn create_session_and_apply_model(
     ctx: &PromptContext,
     agent_core: Option<&str>,
     channel: NewSessionChannelContext<'_>,
+) -> Result<String, AcpError> {
+    create_or_resume_session_and_apply_model(agent, ctx, agent_core, channel, None).await
+}
+
+/// [`create_session_and_apply_model`], or with `resume` set, `session/resume`
+/// of that earlier session with the same request parameters; model, effort,
+/// and permission mode are applied to the result either way.
+async fn create_or_resume_session_and_apply_model(
+    agent: &mut OwnedAgent,
+    ctx: &PromptContext,
+    agent_core: Option<&str>,
+    channel: NewSessionChannelContext<'_>,
+    resume: Option<&str>,
 ) -> Result<String, AcpError> {
     // Build base_prompt + system_prompt + agent core + canvas metadata into a
     // single prompt. Standard protocol-v2 agents receive it in `session/new`;
@@ -1658,20 +1696,37 @@ async fn create_session_and_apply_model(
         ctx.session_title.as_deref(),
     );
 
-    let resp = agent
-        .acp
-        .session_new_full(
-            &ctx.cwd,
-            mcp_servers,
-            session_new_system_prompt(
-                is_goose,
-                agent.protocol_version,
-                &agent.agent_name,
-                combined_system_prompt.as_deref(),
-            ),
-            session_title.as_deref(),
-        )
-        .await?;
+    let system_prompt = session_new_system_prompt(
+        is_goose,
+        agent.protocol_version,
+        &agent.agent_name,
+        combined_system_prompt.as_deref(),
+    );
+    let resp = match resume {
+        Some(session_id) => {
+            agent
+                .acp
+                .session_resume(
+                    session_id,
+                    &ctx.cwd,
+                    mcp_servers,
+                    system_prompt,
+                    session_title.as_deref(),
+                )
+                .await?
+        }
+        None => {
+            agent
+                .acp
+                .session_new_full(
+                    &ctx.cwd,
+                    mcp_servers,
+                    system_prompt,
+                    session_title.as_deref(),
+                )
+                .await?
+        }
+    };
 
     if is_goose && agent.goose_system_prompt_supported != Some(false) {
         if let Some(prompt) = combined_system_prompt.as_deref() {
@@ -2705,6 +2760,8 @@ pub async fn run_prompt_task(
         PromptSource::Heartbeat => None,
     };
 
+    // How this turn's session came to be, when this turn created or resumed it.
+    let mut session_start: Option<SessionStart> = None;
     let (session_id, is_new_session) = match &source {
         PromptSource::Channel(scope) => {
             let cid = &scope.channel_id();
@@ -2714,7 +2771,7 @@ pub async fn run_prompt_task(
                 // The title includes channel and, for thread sessions, the
                 // canonical root prefix so sibling sessions are distinguishable.
                 // DMs, unresolved, and unnamed channels omit the channel name.
-                match create_session_and_apply_model(
+                match session_continuity::acquire_session(
                     &mut agent,
                     &ctx,
                     agent_core.as_deref(),
@@ -2725,28 +2782,39 @@ pub async fn run_prompt_task(
                         scope: Some(scope),
                         channel_type: origin_channel_type.as_deref(),
                     },
+                    scope,
                 )
                 .await
                 {
-                    Ok(sid) => {
+                    Ok((sid, start)) => {
                         tracing::info!(
                             target: "pool::session",
-                            "created session {sid} for channel {cid} (scope {})",
-                            scope.telemetry_label()
+                            "{} session {sid} for channel {cid} (scope {}, {})",
+                            if start.is_resumed() { "resumed" } else { "created" },
+                            scope.telemetry_label(),
+                            match &start {
+                                SessionStart::New { reason } | SessionStart::Resumed { reason } =>
+                                    reason.as_wire(),
+                            }
                         );
                         agent.state.sessions.insert(scope.clone(), sid.clone());
-                        agent
-                            .state
-                            .deliveries
-                            .insert(scope.clone(), ChannelDeliveryState::default());
-                        // Seed a zero usage baseline: buzz-acp spawned this session
-                        // so prior usage is zero by definition — first turn is reliable.
-                        agent.acp.notify_session_spawned(&sid);
+                        let resumed = start.is_resumed();
+                        session_start = Some(start);
+                        if !resumed {
+                            agent
+                                .state
+                                .deliveries
+                                .insert(scope.clone(), ChannelDeliveryState::default());
+                            // Seed a zero usage baseline: buzz-acp spawned this session
+                            // so prior usage is zero by definition — first turn is reliable.
+                            agent.acp.notify_session_spawned(&sid);
+                        }
                         // Commit canvas only after session creation succeeds (I3).
                         if let Some((pending_scope, section)) = pending_canvas.take() {
                             agent.state.canvas_sections.insert(pending_scope, section);
                         }
-                        (sid, true)
+                        // A resumed session already received its initial message.
+                        (sid, !resumed)
                     }
                     Err(AcpError::AgentExited) => {
                         agent.state.invalidate_all();
@@ -3104,7 +3172,7 @@ pub async fn run_prompt_task(
             .map(|delivery| &delivery.delivered_event_ids)
             .cloned()
             .unwrap_or_default();
-        let conversation_context = if ctx.context_message_limit > 0 {
+        let mut conversation_context = if ctx.context_message_limit > 0 {
             fetch_conversation_context_for_target(
                 b.channel_id,
                 &context_target,
@@ -3115,6 +3183,14 @@ pub async fn run_prompt_task(
             .await
         } else {
             None
+        };
+        // Cold start of this thread in this session: make sure its first
+        // mention of the agent is in context, however old.
+        let first_mention = match (&context_target, conversation_context.as_mut()) {
+            (ContextTarget::Thread(root), Some(context)) if !thread_context_is_hydrated => {
+                Some(first_mention::cold_start_pin(root, b.channel_id, context, &ctx).await)
+            }
+            _ => None,
         };
         if let Some(root) =
             fetched_thread_root_to_hydrate(&context_target, conversation_context.as_ref(), is_dm)
@@ -3153,7 +3229,7 @@ pub async fn run_prompt_task(
             );
         }
 
-        crate::queue::format_prompt(
+        let mut sections = crate::queue::format_prompt(
             b,
             &crate::queue::FormatPromptArgs {
                 agent_core: standing.agent_core,
@@ -3169,7 +3245,14 @@ pub async fn run_prompt_task(
                 agent_canvas: standing.agent_canvas,
                 standing_context_sent,
             },
-        )
+        );
+        if let Some(start) = &session_start {
+            session_continuity::insert_session_marker(
+                &mut sections,
+                session_continuity::format_session_marker(start, first_mention.as_ref()),
+            );
+        }
+        sections
     } else {
         // Should not happen — batch is None only for heartbeats which have prompt_text.
         // Return the agent to the pool to prevent a permanent slot leak.
@@ -3470,7 +3553,9 @@ pub async fn run_prompt_task(
                         PromptSource::Channel(scope) => {
                             let count = agent.state.turn_counts.entry(scope.clone()).or_insert(0);
                             *count += 1;
-                            *count >= limit
+                            let rotate = *count >= limit;
+                            agent.state.persist_turns(scope);
+                            rotate
                         }
                         PromptSource::Heartbeat => {
                             agent.state.heartbeat_turn_count += 1;

@@ -569,6 +569,7 @@ pub(crate) fn apply_result(
         &mut respawn_tasks,
         None,
         rest,
+        &mut tokio::time::Instant::now(),
     );
     assert!(
         respawn_tasks.is_empty(),
