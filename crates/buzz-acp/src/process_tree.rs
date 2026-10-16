@@ -63,26 +63,28 @@ pub fn parse_ps_line(line: &str) -> Option<(u32, u32, String)> {
     Some((pid, ppid, command))
 }
 
-/// Pids that should keep the worker out of idle-pool sleep.
-///
-/// `resident` holds children captured at worker start and helpers adopted
-/// since (MCP). Everything else still parented by the worker is background
-/// work: a subagent or a shell the turn left running.
-pub fn blocking_pids(children: &[ChildProcess], resident: &HashSet<u32>) -> HashSet<u32> {
-    children
-        .iter()
-        .filter(|child| !resident.contains(&child.pid) && !is_resident_helper(&child.command))
-        .map(|child| child.pid)
-        .collect()
-}
-
 /// A single process snapshot, shared across a complete classification pass.
 #[derive(Default)]
 pub struct ProcessTree {
     children: HashMap<u32, Vec<ChildProcess>>,
+    resident_helpers: HashSet<u32>,
 }
 
 impl ProcessTree {
+    /// Direct children that are work, excluding startup residents and helpers.
+    pub fn blocking_pids(&self, parent: u32, resident: &HashSet<u32>) -> HashSet<u32> {
+        self.children(parent)
+            .iter()
+            .filter(|child| !resident.contains(&child.pid) && !self.is_resident_helper(child))
+            .map(|child| child.pid)
+            .collect()
+    }
+
+    /// Helpers confirmed by executable identity, or the existing MCP classifier.
+    pub fn is_resident_helper(&self, child: &ChildProcess) -> bool {
+        self.resident_helpers.contains(&child.pid) || is_resident_helper(&child.command)
+    }
+
     /// Direct children in this snapshot.
     pub fn children(&self, parent: u32) -> &[ChildProcess] {
         self.children.get(&parent).map(Vec::as_slice).unwrap_or(&[])
@@ -116,8 +118,14 @@ pub fn snapshot() -> Option<ProcessTree> {
         std::time::Duration::from_millis(250),
         4 * 1024 * 1024,
     )?;
-    parse_snapshot(&output)
+    let tree = parse_snapshot(&output)?;
+    #[cfg(target_os = "macos")]
+    let tree = macos_helpers::classify(tree);
+    Some(tree)
 }
+
+#[cfg(target_os = "macos")]
+mod macos_helpers;
 
 #[cfg(unix)]
 fn parse_snapshot(output: &str) -> Option<ProcessTree> {
@@ -259,7 +267,11 @@ mod tests {
         ];
         let mut resident = HashSet::new();
         resident.insert(4);
-        let blocking = blocking_pids(&children, &resident);
+        let tree = ProcessTree {
+            children: HashMap::from([(99, children)]),
+            ..Default::default()
+        };
+        let blocking = tree.blocking_pids(99, &resident);
         assert_eq!(blocking.len(), 2);
         assert!(blocking.contains(&2));
         assert!(blocking.contains(&3));

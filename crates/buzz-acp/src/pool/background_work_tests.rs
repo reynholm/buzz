@@ -3,6 +3,10 @@ use crate::queue::{EventQueue, QueuedEvent};
 use nostr::{EventBuilder, Keys, Kind};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+#[cfg(target_os = "macos")]
+#[path = "resident_helper_tests.rs"]
+mod resident_helper_tests;
+
 async fn worker(index: usize) -> OwnedAgent {
     OwnedAgent {
         index,

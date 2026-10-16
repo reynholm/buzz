@@ -677,14 +677,9 @@ impl AcpClient {
                 continue;
             }
             let children = tree.children(parent);
-            blocking.extend(crate::process_tree::blocking_pids(
-                children,
-                &self.resident_pids,
-            ));
+            blocking.extend(tree.blocking_pids(parent, &self.resident_pids));
             for child in children {
-                if self.resident_pids.contains(&child.pid)
-                    || crate::process_tree::is_resident_helper(&child.command)
-                {
+                if self.resident_pids.contains(&child.pid) || tree.is_resident_helper(child) {
                     self.resident_pids.insert(child.pid);
                     pending.push(child.pid);
                 }

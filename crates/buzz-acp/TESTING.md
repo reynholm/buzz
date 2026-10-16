@@ -94,6 +94,27 @@ collection guarantee; successful ACP completion alone does not confirm publicati
 Process tracking follows children under the worker and resident providers;
 detached/reparented processes are outside that topology.
 
+### macOS Codex service processes and completed slots
+
+The Codex code-mode host may start after `session/new` and stay alive after a
+turn. On macOS, a bounded executable-name lookup recognizes this service,
+including installation paths containing spaces. Its real child processes still
+protect the worker. Other platforms retain their existing classification; Linux's
+truncated `comm` value is not accepted as executable identity.
+
+The `resident_helper_tests` regressions run real local ACP adapters and shell
+processes through pool return/claim. They cover six finished threads with five
+slots, child exit beneath a live host, and ordinary shell work mentioning the
+host path in arguments. The fixtures require no provider credentials or relay.
+
+For native acceptance, run the patched harness with Codex, `--agents 5` and
+`--session-policy thread` (or the equivalent desktop settings).
+Complete a short task using code-mode tools in each of six distinct threads.
+The sixth must start without restarting the agent. Then leave a real background
+child running under code mode: its original worker must remain protected until
+exit, and collection must still return to the original thread. This check needs
+the rebuilt harness; source tests do not update the installed desktop app.
+
 ## Git bootstrap
 
 The credential fixture requires Git 2.46 or newer for the `authtype` credential
