@@ -23,16 +23,6 @@
       ]
     },
     {
-      "path": "docs/superpowers/specs/2026-10-03-device-bound-agents-design.md",
-      "responsibility": "Approved device ownership and fork acceptance contract",
-      "is_new": true,
-      "required_symbols": [],
-      "invocation_seams": [],
-      "verification_commands": [
-        "python3 scripts/fork/sync.py validate"
-      ]
-    },
-    {
       "path": "FORK_PATCHES.md",
       "responsibility": "Reviewable generated patch inventory",
       "is_new": true,
@@ -4020,10 +4010,11 @@
     },
     {
       "path": ".gitignore",
-      "responsibility": "Exact Apple Silicon fork candidate artifact provenance and immutable About identity",
+      "responsibility": "Exact Apple Silicon fork candidate artifact provenance and immutable About identity; private design notes directory stays untracked",
       "is_new": false,
       "required_symbols": [
-        "/artifacts/fork/"
+        "/artifacts/fork/",
+        "/docs/local"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -8389,16 +8380,6 @@
     {
       "path": "docs/superpowers/reports/2026-10-14-background-result-delivery.md",
       "responsibility": "Preserve implementation scope, actual validation receipts, mutation evidence and remaining runtime/acceptance limits.",
-      "is_new": true,
-      "required_symbols": [],
-      "invocation_seams": [],
-      "verification_commands": [
-        "python3 scripts/fork/sync.py validate"
-      ]
-    },
-    {
-      "path": "docs/superpowers/specs/2026-10-14-background-result-delivery-task.md",
-      "responsibility": "Inherited integration inventory: agreed background collection/publication requirements and explicit authorization boundaries; registered as task input, not newly authored implementation.",
       "is_new": true,
       "required_symbols": [],
       "invocation_seams": [],

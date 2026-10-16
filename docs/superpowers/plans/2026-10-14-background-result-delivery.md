@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust, Tokio, existing ACP queue/pool, Nostr SDK and CLI HTTP transport, filesystem journal and advisory locks.
 
-**Spec:** `docs/superpowers/specs/2026-10-14-background-result-delivery-task.md`
+**Spec:** `docs/local/specs/2026-10-14-background-result-delivery-task.md` (kept outside the repository)
 
 ## Global Constraints
 

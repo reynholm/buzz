@@ -2,7 +2,8 @@
 
 The accepted base is `desktop-v0.5.26`, commit
 `2b4b138dc5cf2d9cc1a0ceb21d9063ff56fe8bf4`.
-The approved contract is [design sections 8–9](../superpowers/specs/2026-10-03-device-bound-agents-design.md#8-форк-и-обновления).
+The approved contract is sections 8–9 of the design in
+`docs/local/specs/2026-10-03-device-bound-agents-design.md` (kept outside the repository).
 
 Upstream wins for behavior outside registered patches. Retirement of a patch
 requires an owner decision, even when upstream appears to provide an equivalent.

@@ -21,14 +21,6 @@ New module: `true`.
 
 - Verify: `python3 scripts/fork/sync.py validate`
 
-## `docs/superpowers/specs/2026-10-03-device-bound-agents-design.md`
-
-Approved device ownership and fork acceptance contract
-
-New module: `true`.
-
-- Verify: `python3 scripts/fork/sync.py validate`
-
 ## `FORK_PATCHES.md`
 
 Reviewable generated patch inventory
@@ -2365,11 +2357,12 @@ New module: `true`.
 
 ## `.gitignore`
 
-Exact Apple Silicon fork candidate artifact provenance and immutable About identity
+Exact Apple Silicon fork candidate artifact provenance and immutable About identity; private design notes directory stays untracked
 
 New module: `false`.
 
 - Required symbol: `/artifacts/fork/`
+- Required symbol: `/docs/local`
 - Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
 
 ## `scripts/fork/build-candidate.sh`
@@ -5740,14 +5733,6 @@ New module: `true`.
 ## `docs/superpowers/reports/2026-10-14-background-result-delivery.md`
 
 Preserve implementation scope, actual validation receipts, mutation evidence and remaining runtime/acceptance limits.
-
-New module: `true`.
-
-- Verify: `python3 scripts/fork/sync.py validate`
-
-## `docs/superpowers/specs/2026-10-14-background-result-delivery-task.md`
-
-Inherited integration inventory: agreed background collection/publication requirements and explicit authorization boundaries; registered as task input, not newly authored implementation.
 
 New module: `true`.
 
