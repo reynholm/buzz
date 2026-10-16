@@ -5832,3 +5832,26 @@ New module: `true`.
 - Required symbol: `work_under_late_codex_host_holds_slot_until_child_exits`
 - Required symbol: `work_mentioning_codex_host_in_arguments_still_holds_slot`
 - Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1`
+
+## `desktop/src/features/messages/lib/useComposerAutofocus.ts`
+
+Preserve focus inside an open dialog/popover when late composer readiness or draft changes trigger autofocus; fixes the reproduced huddle smoke CI blocker.
+
+New module: `false`.
+
+- Required symbol: `useComposerAutofocus`
+- Required symbol: `active.closest('[role="dialog"]')`
+- Invocation: `desktop/src/features/messages/ui/MessageComposer.tsx` → `useComposerAutofocus`; exact call `  useComposerAutofocus(richText.focus, effectiveDraftKey, composerDisabled);`; behavior test `late composer readiness preserves focus on a dialog switch; existing huddle assigns distinct agent voices E2E`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/useComposerAutofocus.test.mjs`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/useComposerAutofocus.test.mjs`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/messages/lib/useComposerAutofocus.test.mjs`
+
+Production-hook regression for late readiness and draft-switch focus retention in dialogs, preserving ordinary navigation autofocus.
+
+New module: `true`.
+
+- Required symbol: `late composer readiness preserves focus on a dialog switch`
+- Required symbol: `a draft change preserves focus on an open dialog button`
+- Required symbol: `initial mount and navigation from an ordinary button still focus the editor`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/useComposerAutofocus.test.mjs`

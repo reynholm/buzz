@@ -8516,6 +8516,43 @@
       "verification_commands": [
         "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1"
       ]
+    },
+    {
+      "path": "desktop/src/features/messages/lib/useComposerAutofocus.ts",
+      "responsibility": "Preserve focus inside an open dialog/popover when late composer readiness or draft changes trigger autofocus; fixes the reproduced huddle smoke CI blocker.",
+      "is_new": false,
+      "required_symbols": [
+        "useComposerAutofocus",
+        "active.closest('[role=\"dialog\"]')"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/messages/ui/MessageComposer.tsx",
+          "callee_symbol": "useComposerAutofocus",
+          "invocation": "  useComposerAutofocus(richText.focus, effectiveDraftKey, composerDisabled);",
+          "behavior_test": "late composer readiness preserves focus on a dialog switch; existing huddle assigns distinct agent voices E2E",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/useComposerAutofocus.test.mjs",
+          "coverage": "Real React hook/DOM focus behavior and existing browser workflow RED/GREEN; removing the dialog guard fails two hook tests."
+        }
+      ],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/useComposerAutofocus.test.mjs",
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/lib/useComposerAutofocus.test.mjs",
+      "responsibility": "Production-hook regression for late readiness and draft-switch focus retention in dialogs, preserving ordinary navigation autofocus.",
+      "is_new": true,
+      "required_symbols": [
+        "late composer readiness preserves focus on a dialog switch",
+        "a draft change preserves focus on an open dialog button",
+        "initial mount and navigation from an ordinary button still focus the editor"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/useComposerAutofocus.test.mjs"
+      ]
     }
   ]
 }
