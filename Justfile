@@ -364,6 +364,10 @@ test-unit:
     set -euo pipefail
     ./scripts/test-ensure-local-relay-key.sh
     if command -v cargo-nextest &>/dev/null; then
+        # Both shipping YAML graphs and every persona/workflow consumer must
+        # remain covered: workspace membership alone does not run these suites.
+        python3 -m unittest discover -s scripts/fork/tests -p test_yaml_dependencies.py -v
+        cargo test --locked -p buzz-persona -p buzz-workflow
         cargo nextest run -p buzz-core -p buzz-auth --lib
         cargo nextest run -p buzz-audit --lib
         # S4 cross-pod NIP-FI disconnect payload tests (infra-free).

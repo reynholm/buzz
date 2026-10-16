@@ -105,7 +105,13 @@ pub fn plan(
                 // No server-assigned timestamp means no age proof. Skip.
                 continue;
             };
-            if (now - created.0).num_seconds() >= ORPHAN_SECRET_MIN_AGE_SECS {
+            // OpenAPI timestamps use Jiff, while the authoritative Date header
+            // uses Chrono. Compare exact instants without losing the age gate's
+            // subsecond boundary or limiting valid timestamps to i64 nanos.
+            let now_nanos = i128::from(now.timestamp()) * 1_000_000_000
+                + i128::from(now.timestamp_subsec_nanos());
+            let age_nanos = now_nanos - created.0.as_nanosecond();
+            if age_nanos >= i128::from(ORPHAN_SECRET_MIN_AGE_SECS) * 1_000_000_000 {
                 plan.secrets.push(name.to_string());
             }
         }
@@ -119,7 +125,7 @@ mod tests {
     use super::*;
     use crate::naming::{ANNOTATION_PUBKEY_FULL, LABEL_MANAGED_BY};
     use k8s_openapi::api::core::v1::{Container, EnvFromSource, PodSpec, SecretEnvSource};
-    use k8s_openapi::apimachinery::pkg::apis::meta::v1::{ObjectMeta, Time};
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
     use std::collections::BTreeMap;
 
     fn identity() -> AgentIdentity {
@@ -176,7 +182,12 @@ mod tests {
                     .into_iter()
                     .collect::<BTreeMap<_, _>>(),
                 ),
-                creation_timestamp: Some(Time(now - chrono::Duration::seconds(age_secs))),
+                creation_timestamp: Some(
+                    serde_json::from_value(serde_json::json!((now
+                        - chrono::Duration::seconds(age_secs))
+                    .to_rfc3339()))
+                    .unwrap(),
+                ),
                 ..Default::default()
             },
             ..Default::default()
@@ -292,7 +303,7 @@ mod tests {
     #[test]
     fn age_gate_boundary_is_exact() {
         let id = identity();
-        let now = Utc::now();
+        let now = "2026-10-16T12:00:00.500Z".parse::<DateTime<Utc>>().unwrap();
         let just_under = secret_named(&id, "under", ORPHAN_SECRET_MIN_AGE_SECS - 1, now);
         let exactly = secret_named(&id, "exact", ORPHAN_SECRET_MIN_AGE_SECS, now);
         assert!(plan(&id, &[], &[just_under], never, Some(now))
@@ -302,6 +313,20 @@ mod tests {
             plan(&id, &[], &[exactly], never, Some(now)).secrets,
             ["exact"]
         );
+        let just_under = secret_named(&id, "fractional", ORPHAN_SECRET_MIN_AGE_SECS, now);
+        assert!(plan(
+            &id,
+            &[],
+            &[just_under],
+            never,
+            Some(now - chrono::Duration::nanoseconds(1))
+        )
+        .secrets
+        .is_empty());
+        let future = secret_named(&id, "future", -1, now);
+        assert!(plan(&id, &[], &[future], never, Some(now))
+            .secrets
+            .is_empty());
     }
 
     /// The same-clock rule. No apiserver `Date` header → skip the orphan

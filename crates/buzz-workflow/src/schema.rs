@@ -9,6 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::WorkflowError;
 
+#[cfg(test)]
+#[path = "schema_yaml_tests.rs"]
+mod yaml_tests;
+
 /// Top-level workflow definition, authored in YAML and stored as canonical JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowDef {
@@ -309,7 +313,7 @@ pub(crate) fn normalize_cron(expr: &str) -> String {
 ///
 /// Returns `(WorkflowDef, canonical_json)` on success.
 pub fn parse_yaml(yaml: &str) -> Result<(WorkflowDef, String), WorkflowError> {
-    let def: WorkflowDef = serde_yaml::from_str(yaml)?;
+    let def: WorkflowDef = yaml_serde::from_str(yaml)?;
     def.validate()?;
     let json =
         serde_json::to_string(&def).map_err(|e| WorkflowError::InvalidDefinition(e.to_string()))?;
@@ -741,7 +745,7 @@ mod tests {
         // Unknown trigger `on:` value should fail deserialization.
         let yaml = "name: Bad Trigger\ntrigger:\n  on: unknown_trigger_type\nsteps:\n  - id: s1\n    action: delay\n    duration: 1m\n";
         let err = parse_yaml(yaml).unwrap_err();
-        // serde_yaml will return an InvalidYaml error for unknown enum variant.
+        // yaml_serde will return an InvalidYaml error for unknown enum variant.
         assert!(
             matches!(
                 err,
@@ -983,16 +987,16 @@ mod tests {
     #[test]
     fn diff_posted_trigger_roundtrips_yaml() {
         let yaml = "on: diff_posted\n";
-        let trigger: TriggerDef = serde_yaml::from_str(yaml).unwrap();
+        let trigger: TriggerDef = yaml_serde::from_str(yaml).unwrap();
         assert!(matches!(trigger, TriggerDef::DiffPosted { filter: None }));
-        let back = serde_yaml::to_string(&trigger).unwrap();
+        let back = yaml_serde::to_string(&trigger).unwrap();
         assert!(back.contains("diff_posted"));
     }
 
     #[test]
     fn diff_posted_trigger_with_filter_roundtrips_yaml() {
         let yaml = "on: diff_posted\nfilter: 'str_contains(trigger_text, \"src/\")'\n";
-        let trigger: TriggerDef = serde_yaml::from_str(yaml).unwrap();
+        let trigger: TriggerDef = yaml_serde::from_str(yaml).unwrap();
         assert!(matches!(
             trigger,
             TriggerDef::DiffPosted { filter: Some(_) }

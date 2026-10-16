@@ -90,7 +90,7 @@ fn parse_skill_frontmatter(content: &str) -> Option<(String, String)> {
     let close_pos = rest.find("\n---")?;
     let yaml_block = &rest[..close_pos];
 
-    let map: HashMap<String, serde_yaml::Value> = serde_yaml::from_str(yaml_block).ok()?;
+    let map: HashMap<String, yaml_serde::Value> = yaml_serde::from_str(yaml_block).ok()?;
     let name = map
         .get("name")
         .and_then(|v| v.as_str())
@@ -106,6 +106,10 @@ fn parse_skill_frontmatter(content: &str) -> Option<(String, String)> {
 
     Some((name, description))
 }
+
+#[cfg(test)]
+#[path = "hints_yaml_tests.rs"]
+mod yaml_tests;
 
 fn scan_skill_dir(dir: &Path, seen: &mut HashSet<String>, skills: &mut Vec<SkillEntry>) {
     let Ok(entries) = std::fs::read_dir(dir) else {

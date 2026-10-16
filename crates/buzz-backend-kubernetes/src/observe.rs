@@ -281,7 +281,7 @@ mod tests {
         ContainerState, ContainerStateRunning, ContainerStateTerminated, ContainerStateWaiting,
         ContainerStatus, PodStatus,
     };
-    use k8s_openapi::apimachinery::pkg::apis::meta::v1::{ObjectMeta, Time};
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
     use std::collections::BTreeMap;
 
     fn identity() -> AgentIdentity {
@@ -526,7 +526,9 @@ mod tests {
     fn verified_pod_carries_the_fence_and_deletion_mark() {
         let id = identity();
         let mut pod = base_pod(&id);
-        pod.metadata.deletion_timestamp = Some(Time(chrono::Utc::now()));
+        pod.metadata.deletion_timestamp = Some(
+            serde_json::from_value(serde_json::json!(chrono::Utc::now().to_rfc3339())).unwrap(),
+        );
         let verified = verify(&pod, &id, Startup::Started).unwrap();
         assert_eq!(verified.fence.uid, "uid-1");
         assert_eq!(verified.fence.resource_version, "100");

@@ -19,7 +19,7 @@ pub struct PartialProgress {
 pub enum WorkflowError {
     /// The workflow YAML/JSON could not be parsed.
     #[error("invalid YAML: {0}")]
-    InvalidYaml(#[from] serde_yaml::Error),
+    InvalidYaml(#[from] yaml_serde::Error),
 
     /// The workflow definition violates a semantic invariant.
     #[error("invalid definition: {0}")]
