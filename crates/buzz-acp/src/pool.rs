@@ -334,6 +334,7 @@ pub struct OwnedAgent {
 
 mod background_work;
 pub(crate) use background_work::{ContinuationState, RuntimeHold};
+mod first_mention;
 mod session_continuity;
 pub(crate) use session_continuity::{open_session_store, SessionStart};
 
@@ -3163,7 +3164,7 @@ pub async fn run_prompt_task(
             .map(|delivery| &delivery.delivered_event_ids)
             .cloned()
             .unwrap_or_default();
-        let conversation_context = if ctx.context_message_limit > 0 {
+        let mut conversation_context = if ctx.context_message_limit > 0 {
             fetch_conversation_context_for_target(
                 b.channel_id,
                 &context_target,
@@ -3174,6 +3175,14 @@ pub async fn run_prompt_task(
             .await
         } else {
             None
+        };
+        // Cold start of this thread in this session: make sure its first
+        // mention of the agent is in context, however old.
+        let first_mention = match (&context_target, conversation_context.as_mut()) {
+            (ContextTarget::Thread(root), Some(context)) if !thread_context_is_hydrated => {
+                Some(first_mention::cold_start_pin(root, b.channel_id, context, &ctx).await)
+            }
+            _ => None,
         };
         if let Some(root) =
             fetched_thread_root_to_hydrate(&context_target, conversation_context.as_ref(), is_dm)
