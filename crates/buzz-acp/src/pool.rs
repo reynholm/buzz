@@ -12610,4 +12610,8 @@ done"#
 mod pi_prompt_tests;
 
 #[cfg(all(test, unix))]
+#[path = "pool/real_resume_tests.rs"]
+mod real_resume_tests;
+
+#[cfg(all(test, unix))]
 mod delivery_runtime_tests;

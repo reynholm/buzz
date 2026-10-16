@@ -358,3 +358,32 @@ fn dead_instance_locks_are_swept_and_own_lock_removed_on_drop() {
     drop(first);
     assert!(!first_lock.exists(), "own lock is removed on drop");
 }
+
+#[test]
+fn instance_publication_cannot_be_reaped_before_locking() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = Arc::new(SessionStore::open(dir.path().to_path_buf()).unwrap());
+    let second = SessionStore::open(dir.path().to_path_buf()).unwrap();
+    let (opened_tx, opened_rx) = std::sync::mpsc::sync_channel(0);
+    let (continue_tx, continue_rx) = std::sync::mpsc::sync_channel(0);
+    *first.before_instance_lock.lock().unwrap() = Some(Box::new(move || {
+        opened_tx.send(()).unwrap();
+        continue_rx.recv().unwrap();
+    }));
+    let writer = first.clone();
+    let claim = std::thread::spawn(move || {
+        writer.claim(&thread("a"), &Expect::Missing, live(&writer, "active"))
+    });
+    opened_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let alive_while_publishing = second.instance_alive(first.instance());
+    continue_tx.send(()).unwrap();
+    claim.join().unwrap().unwrap();
+    assert!(
+        alive_while_publishing,
+        "publication must fail closed while registration owns the registry"
+    );
+    assert!(
+        second.instance_alive(first.instance()),
+        "registered owner must remain discoverable"
+    );
+}

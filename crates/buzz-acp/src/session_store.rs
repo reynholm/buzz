@@ -242,6 +242,8 @@ pub struct SessionStore {
     poisoned: Mutex<HashSet<PathBuf>>,
     #[cfg(test)]
     fail_writes: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    before_instance_lock: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl SessionStore {
@@ -254,6 +256,8 @@ impl SessionStore {
             poisoned: Mutex::new(HashSet::new()),
             #[cfg(test)]
             fail_writes: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            before_instance_lock: Mutex::new(None),
         })
     }
 
@@ -271,6 +275,11 @@ impl SessionStore {
         if held.is_some() {
             return Ok(());
         }
+        // Publication and removal share a registry lock. An unlocked UUID
+        // pathname can be a registration in progress, not a dead process.
+        let _registry = self
+            .lock_record(&self.dir.join(INSTANCES_DIR))
+            .map_err(|error| io::Error::other(error.to_string()))?;
         let instances = self.dir.join(INSTANCES_DIR);
         fs::create_dir_all(&instances)?;
         for entry in fs::read_dir(&instances)?.flatten() {
@@ -290,6 +299,10 @@ impl SessionStore {
             .create(true)
             .truncate(false)
             .open(self.instance_lock_path(self.instance))?;
+        #[cfg(test)]
+        if let Some(hook) = self.before_instance_lock.lock().unwrap().take() {
+            hook();
+        }
         lock.try_lock_exclusive()?;
         *held = Some(lock);
         Ok(())
@@ -306,6 +319,9 @@ impl SessionStore {
         if instance == self.instance {
             return true;
         }
+        let Ok(_registry) = self.lock_record(&self.dir.join(INSTANCES_DIR)) else {
+            return true; // Registration in progress or unknown: never resume.
+        };
         let path = self.instance_lock_path(instance);
         let file = match OpenOptions::new().read(true).write(true).open(&path) {
             Ok(file) => file,

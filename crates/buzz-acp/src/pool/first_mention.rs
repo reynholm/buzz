@@ -183,12 +183,9 @@ pub(crate) fn pin_first_mention(
         let victim = messages[first_reply..]
             .iter()
             .position(|message| !message.pubkey.eq_ignore_ascii_case(agent_hex));
-        match victim {
-            Some(offset) => {
-                messages.remove(first_reply + offset);
-            }
-            None => return,
-        }
+        // The assignment takes priority when both pins cannot fit. Prefer
+        // evicting a non-agent reply, otherwise the oldest agent reply.
+        messages.remove(first_reply + victim.unwrap_or(0));
     }
     messages.insert(first_reply, message);
 }
