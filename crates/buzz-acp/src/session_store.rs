@@ -429,10 +429,6 @@ impl SessionStore {
         }
     }
 
-    pub fn poison(&self, scope: &SessionScope) {
-        self.poison_path(&self.record_path(scope));
-    }
-
     pub fn is_poisoned(&self, scope: &SessionScope) -> bool {
         self.poisoned
             .lock()

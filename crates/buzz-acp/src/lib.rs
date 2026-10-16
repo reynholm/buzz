@@ -3401,6 +3401,7 @@ async fn run_harness(
                                     // complete normally (the relay may reject actions if
                                     // the agent lost access).
                                     let drained_ids = queue.drain_channel(ch);
+                                    pool.discard_durable_channel(ch);
                                     let invalidated = if pool_ready {
                                         pool.invalidate_channel_sessions(ch)
                                     } else {
@@ -3556,6 +3557,7 @@ async fn run_harness(
                                         &buzz_event.event,
                                     );
                                     queue.remove_continuation(&scope);
+                                    pool.discard_durable_scope(&scope);
                                     let fired = signal_in_flight_task_for_scope(
                                         &mut pool,
                                         &scope,
@@ -3728,6 +3730,7 @@ async fn run_harness(
                             idle_pool_sleep_seconds = config.idle_pool_sleep_secs,
                             "idle pool sleep bound reached — tearing pool back to lazy state"
                         );
+                        pool.depart_idle_sessions(session_store::Departure::IdleSleep);
                         shutdown_agent_pool(&mut pool).await;
                         // Return to the exact pre-wake lazy state: empty slots,
                         // Listening lifecycle. The top-of-loop wake path re-wakes

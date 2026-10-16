@@ -785,3 +785,135 @@ async fn resumed_session_gets_only_delta() {
     assert!(prompt.contains("NEW-CONTEXT-AFTER-SLEEP"));
     assert!(!prompt.contains("OLD-CONTEXT-ALREADY-SEEN"));
 }
+
+// ---- pool control paths (sleep, !rotate, channel removal) ----
+
+async fn idle_worker(fixture: &Fixture, index: usize, scope: &SessionScope, sid: &str) -> OwnedAgent {
+    let acp = AcpClient::spawn("cat", &[], &[], false).await.unwrap();
+    let (mut state, _) = owned_state(fixture, scope, sid);
+    state.store = Some(fixture.store.clone());
+    OwnedAgent {
+        index,
+        acp,
+        state,
+        model_capabilities: None,
+        desired_model: None,
+        model_overridden: false,
+        desired_model_request_id: None,
+        desired_model_pending_ack: false,
+        startup_effort: None,
+        agent_name: "fake-acp".into(),
+        goose_system_prompt_supported: None,
+        protocol_version: 1,
+        background_context: None,
+    }
+}
+
+fn thread_scope(channel: u128, root: &str) -> SessionScope {
+    SessionScope::Thread {
+        channel_id: Uuid::from_u128(channel),
+        root_event_id: root.repeat(64 / root.len()),
+    }
+}
+
+fn decision_now(fixture: &Fixture, scope: &SessionScope) -> ResumeDecision {
+    let me = ResumeContext {
+        adapter: "fake-acp".into(),
+        cwd: "/tmp".into(),
+        model: None,
+        instance: fixture.store.instance(),
+        worker_index: 0,
+        resume_supported: true,
+        poisoned: fixture.store.is_poisoned(scope),
+    };
+    resume_decision(&fixture.store.load(scope), &me, |_| false)
+}
+
+#[tokio::test]
+async fn pool_sleep_marks_every_idle_session() {
+    let fixture = Fixture::new();
+    let (a, b) = (thread_scope(42, "a"), thread_scope(42, "b"));
+    let mut pool = AgentPool::from_slots(vec![
+        Some(idle_worker(&fixture, 0, &a, "s-a").await),
+        Some(idle_worker(&fixture, 1, &b, "s-b").await),
+    ]);
+    pool.set_session_store(Some(fixture.store.clone()));
+    pool.depart_idle_sessions(Departure::IdleSleep);
+    for scope in [&a, &b] {
+        assert_eq!(
+            fixture.record(scope).live.unwrap().departed,
+            Some(Departure::IdleSleep)
+        );
+    }
+}
+
+#[test]
+fn rotate_before_first_resume_discards_disk_session() {
+    let fixture = Fixture::new();
+    let scope = thread_scope(42, "a");
+    fixture.departed_record(&scope, &ctx(), &[]);
+    // After sleep the pool has only empty slots.
+    let mut pool = AgentPool::from_slots(vec![None, None]);
+    pool.set_session_store(Some(fixture.store.clone()));
+    pool.discard_durable_scope(&scope);
+    assert_eq!(
+        new_reason(decision_now(&fixture, &scope)),
+        SessionReason::Discarded
+    );
+}
+
+#[test]
+fn rotate_leaves_sibling_thread_resumable() {
+    let fixture = Fixture::new();
+    let (rotated, sibling) = (thread_scope(42, "a"), thread_scope(42, "b"));
+    fixture.departed_record(&rotated, &ctx(), &[]);
+    fixture.departed_record(&sibling, &ctx(), &[]);
+    let mut pool = AgentPool::from_slots(vec![None]);
+    pool.set_session_store(Some(fixture.store.clone()));
+    pool.discard_durable_scope(&rotated);
+    assert_eq!(
+        resume_reason(decision_now(&fixture, &sibling)),
+        SessionReason::IdleSleep
+    );
+}
+
+#[test]
+fn channel_removal_then_readd_starts_new_session() {
+    let fixture = Fixture::new();
+    let (a, b, other) = (
+        thread_scope(42, "a"),
+        thread_scope(42, "b"),
+        thread_scope(43, "a"),
+    );
+    for scope in [&a, &b, &other] {
+        fixture.departed_record(scope, &ctx(), &[]);
+    }
+    let mut pool = AgentPool::from_slots(vec![None]);
+    pool.set_session_store(Some(fixture.store.clone()));
+    pool.discard_durable_channel(Uuid::from_u128(42));
+    for scope in [&a, &b] {
+        assert_eq!(
+            new_reason(decision_now(&fixture, scope)),
+            SessionReason::Discarded
+        );
+    }
+    assert_eq!(
+        resume_reason(decision_now(&fixture, &other)),
+        SessionReason::IdleSleep
+    );
+}
+
+#[test]
+fn late_commit_after_rotate_is_ignored() {
+    let fixture = Fixture::new();
+    let scope = thread_scope(42, "a");
+    let (mut state, _) = owned_state(&fixture, &scope, "s-1");
+    let mut pool = AgentPool::from_slots(vec![None]);
+    pool.set_session_store(Some(fixture.store.clone()));
+    pool.discard_durable_scope(&scope);
+    state.turn_counts.insert(scope.clone(), 5);
+    state.persist_turns(&scope);
+    state.mark_scope_delivery_success(scope.clone(), true, ["late".to_owned()], []);
+    assert_eq!(fixture.record(&scope).live, None);
+    assert!(!state.leases.contains_key(&scope));
+}
