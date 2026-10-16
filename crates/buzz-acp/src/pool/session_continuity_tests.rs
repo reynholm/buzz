@@ -1019,6 +1019,57 @@ async fn cold_start_prompt_includes_first_mention() {
 
 // ---- session marker ----
 
+#[tokio::test]
+async fn one_reply_window_keeps_first_mention_over_agent_reply() {
+    let fixture = Fixture::new();
+    let human = Keys::generate();
+    let agent_keys = Keys::generate();
+    let channel_id = Uuid::from_u128(43);
+    let root = mention(&human, channel_id, None, "thread opener");
+    let root_id = root.id.to_hex();
+    let reply = |keys: &Keys, at, text, addressed| {
+        let mut tags = vec![
+            Tag::parse(["h", channel_id.to_string().as_str()]).unwrap(),
+            Tag::parse(["e", root_id.as_str(), "", "reply"]).unwrap(),
+        ];
+        if addressed {
+            tags.push(Tag::parse(["p", agent_keys.public_key().to_hex().as_str()]).unwrap());
+        }
+        EventBuilder::new(Kind::Custom(9), text)
+            .tags(tags)
+            .custom_created_at(nostr::Timestamp::from(at))
+            .sign_with_keys(keys)
+            .unwrap()
+    };
+    let assignment = reply(&human, 2_000, "ORIGINAL-ASSIGNMENT", true);
+    let old_answer = reply(&agent_keys, 2_001, "PREVIOUS-AGENT-ANSWER", false);
+    let trigger = reply(&human, 2_002, "continue", true);
+    let (mut ctx, server) = relay_context(
+        channel_id,
+        vec![root, assignment, old_answer, trigger.clone()],
+    )
+    .await;
+    ctx.agent_keys = agent_keys;
+    ctx.context_message_limit = 1;
+    let scope = SessionScope::Thread {
+        channel_id,
+        root_event_id: root_id,
+    };
+    let prompts = fixture.dir.path().join("prompts.ndjson");
+    let agent = fixture
+        .agent(&[("PROMPTS", prompts.to_str().unwrap())])
+        .await;
+    let mut agent = run_turn(agent, &Arc::new(ctx), batch(&scope, trigger)).await;
+    agent.acp.shutdown().await;
+    server.abort();
+    let prompt = std::fs::read_to_string(prompts).unwrap();
+    assert!(prompt.contains("ORIGINAL-ASSIGNMENT"));
+    assert!(
+        !prompt.contains("PREVIOUS-AGENT-ANSWER"),
+        "the reply budget remains one"
+    );
+}
+
 #[test]
 fn marker_for_resumed_session() {
     let start = SessionStart::Resumed {
