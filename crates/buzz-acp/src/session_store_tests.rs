@@ -277,6 +277,10 @@ fn other_live_instance_is_alive_dead_one_is_not() {
     let dir = tempfile::tempdir().unwrap();
     let store = SessionStore::open(dir.path().to_path_buf()).unwrap();
     let other = SessionStore::open(dir.path().to_path_buf()).unwrap();
+    // An instance registers on its first write; only then can it own records.
+    other
+        .claim(&thread("r"), &Expect::Missing, live(&other, "s"))
+        .unwrap();
     let other_instance = other.instance();
     assert!(store.instance_alive(store.instance()));
     assert!(store.instance_alive(other_instance));
@@ -309,4 +313,42 @@ fn reason_wire_strings_roundtrip() {
         SessionReason::ResumeFailed("rpc_-32603".into()).as_wire(),
         "resume_failed:rpc_-32603"
     );
+}
+
+#[test]
+fn open_does_not_touch_disk_until_first_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("store");
+    let store = SessionStore::open(root.clone()).unwrap();
+    assert!(!root.exists());
+    assert_eq!(store.load(&thread("o")), LoadOutcome::Missing);
+    assert!(!root.exists());
+    store
+        .claim(&thread("o"), &Expect::Missing, live(&store, "s"))
+        .unwrap();
+    assert!(root.join(INSTANCES_DIR).join(format!("{}.lock", store.instance())).exists());
+}
+
+#[test]
+fn dead_instance_locks_are_swept_and_own_lock_removed_on_drop() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = SessionStore::open(dir.path().to_path_buf()).unwrap();
+    first
+        .claim(&thread("p"), &Expect::Missing, live(&first, "s"))
+        .unwrap();
+    let first_lock = dir
+        .path()
+        .join(INSTANCES_DIR)
+        .join(format!("{}.lock", first.instance()));
+    // A crashed process leaves its lock file behind but no longer holds it.
+    let crashed = dir.path().join(INSTANCES_DIR).join(format!("{}.lock", Uuid::new_v4()));
+    fs::write(&crashed, b"").unwrap();
+    let second = SessionStore::open(dir.path().to_path_buf()).unwrap();
+    second
+        .claim(&thread("q"), &Expect::Missing, live(&second, "s"))
+        .unwrap();
+    assert!(!crashed.exists(), "dead instance lock is swept");
+    assert!(first_lock.exists(), "live instance lock is kept");
+    drop(first);
+    assert!(!first_lock.exists(), "own lock is removed on drop");
 }

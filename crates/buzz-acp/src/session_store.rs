@@ -234,32 +234,23 @@ pub fn append_delivered(ids: &mut Vec<String>, new: impl IntoIterator<Item = Str
 pub struct SessionStore {
     dir: PathBuf,
     instance: Uuid,
-    /// Held for the life of the process; the OS releases it on exit, which is
-    /// how other processes tell a dead instance from a live one.
-    _instance_lock: File,
+    /// Registered on the first write and held for the life of the process;
+    /// the OS releases it on exit, which is how other processes tell a dead
+    /// instance from a live one. Every record naming this instance is written
+    /// after the lock exists.
+    instance_lock: Mutex<Option<File>>,
     poisoned: Mutex<HashSet<PathBuf>>,
     #[cfg(test)]
     fail_writes: std::sync::atomic::AtomicBool,
 }
 
 impl SessionStore {
-    /// Open (creating if needed) the store and register this process as a
-    /// live instance.
+    /// Open the store. Nothing touches the disk until the first write.
     pub fn open(dir: PathBuf) -> io::Result<Self> {
-        let instances = dir.join(INSTANCES_DIR);
-        fs::create_dir_all(&instances)?;
-        let instance = Uuid::new_v4();
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(instances.join(format!("{instance}.lock")))?;
-        lock.try_lock_exclusive()?;
         Ok(Self {
             dir,
-            instance,
-            _instance_lock: lock,
+            instance: Uuid::new_v4(),
+            instance_lock: Mutex::new(None),
             poisoned: Mutex::new(HashSet::new()),
             #[cfg(test)]
             fail_writes: std::sync::atomic::AtomicBool::new(false),
@@ -270,12 +261,50 @@ impl SessionStore {
         self.instance
     }
 
+    /// Create and hold this process's instance lock, sweeping lock files of
+    /// instances that are no longer running.
+    fn register_instance(&self) -> io::Result<()> {
+        let mut held = self
+            .instance_lock
+            .lock()
+            .map_err(|_| io::Error::other("instance lock poisoned"))?;
+        if held.is_some() {
+            return Ok(());
+        }
+        let instances = self.dir.join(INSTANCES_DIR);
+        fs::create_dir_all(&instances)?;
+        for entry in fs::read_dir(&instances)?.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("lock") {
+                continue;
+            }
+            if let Ok(file) = OpenOptions::new().read(true).write(true).open(&path) {
+                if file.try_lock_exclusive().is_ok() {
+                    let _ = fs::remove_file(&path);
+                }
+            }
+        }
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.instance_lock_path(self.instance))?;
+        lock.try_lock_exclusive()?;
+        *held = Some(lock);
+        Ok(())
+    }
+
+    fn instance_lock_path(&self, instance: Uuid) -> PathBuf {
+        self.dir.join(INSTANCES_DIR).join(format!("{instance}.lock"))
+    }
+
     /// Whether the harness process `instance` is still running.
     pub fn instance_alive(&self, instance: Uuid) -> bool {
         if instance == self.instance {
             return true;
         }
-        let path = self.dir.join(INSTANCES_DIR).join(format!("{instance}.lock"));
+        let path = self.instance_lock_path(instance);
         let file = match OpenOptions::new().read(true).write(true).open(&path) {
             Ok(file) => file,
             Err(err) if err.kind() == io::ErrorKind::NotFound => return false,
@@ -485,6 +514,7 @@ impl SessionStore {
         path: &Path,
         decide: impl FnOnce(Option<&SessionRecord>) -> Result<SessionRecord, StoreError>,
     ) -> Result<(), StoreError> {
+        self.register_instance().map_err(StoreError::Io)?;
         let lock = self.lock_record(path)?;
         let current = read_record(path).map_err(|()| StoreError::Unreadable)?;
         let next = decide(current.as_ref())?;
@@ -515,6 +545,15 @@ impl SessionStore {
         file.as_file().sync_all()?;
         file.persist(path).map_err(|err| err.error)?;
         Ok(())
+    }
+}
+
+impl Drop for SessionStore {
+    fn drop(&mut self) {
+        let held = self.instance_lock.get_mut().ok().and_then(Option::take);
+        if held.is_some() {
+            let _ = fs::remove_file(self.instance_lock_path(self.instance));
+        }
     }
 }
 
