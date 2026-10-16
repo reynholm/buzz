@@ -95,7 +95,7 @@ fn claim_retention_failure_is_recoverable() {
     recover_in_dir(
         dir.path(),
         |binding| Ok(c.proof.matches(binding)),
-        |op| enqueue_home_events(&mut conn, op),
+        |op| enqueue_home_events(dir.path(), &mut conn, op),
     )
     .unwrap();
     assert_eq!(get_pending_sync(&conn).unwrap().len(), 2);
@@ -156,7 +156,9 @@ fn claim_beats_future_release_preserves_catalog_sharing_and_replays_exact_ids() 
     );
     std::fs::create_dir_all(db.parent().unwrap()).unwrap();
     let mut conn = open_retention_db(&db).unwrap();
-    let rs = read_policy_records(&dir.path().join("agents/managed-agents.json")).unwrap();
+    let mut rs = read_policy_records(&dir.path().join("agents/managed-agents.json")).unwrap();
+    rs[0].source_team_persona_slug = Some("CodeReviewer".into());
+    save(dir.path(), &rs).unwrap();
     let mut d = rs[0].to_definition_view().unwrap();
     d.shared = true;
     let future = nostr::Timestamp::from(nostr::Timestamp::now().as_secs() + 10000);
@@ -170,7 +172,7 @@ fn claim_beats_future_release_preserves_catalog_sharing_and_replays_exact_ids() 
         &RetainedEvent {
             kind: 30175,
             pubkey: c.scope.owner_pubkey.clone(),
-            d_tag: "one".into(),
+            d_tag: "codereviewer".into(),
             content: prior.content.clone(),
             created_at: future.as_secs() as i64,
             raw_event: prior.as_json(),
@@ -196,10 +198,10 @@ fn claim_beats_future_release_preserves_catalog_sharing_and_replays_exact_ids() 
     recover_in_dir(
         dir.path(),
         |binding| Ok(c.proof.matches(binding)),
-        |op| enqueue_home_events(&mut conn, op),
+        |op| enqueue_home_events(dir.path(), &mut conn, op),
     )
     .unwrap();
-    let head = get_retained_event(&conn, 30175, &c.scope.owner_pubkey, "one")
+    let head = get_retained_event(&conn, 30175, &c.scope.owner_pubkey, "codereviewer")
         .unwrap()
         .unwrap();
     assert_eq!(Event::from_json(head.raw_event).unwrap().id, ids[0]);
@@ -217,7 +219,7 @@ fn claim_transaction_failure_retains_intent_and_never_half_enqueues() {
         i,
         &owner,
         |rs| save(dir.path(), rs),
-        |op| enqueue_home_events(&mut conn, op)
+        |op| enqueue_home_events(dir.path(), &mut conn, op)
     )
     .is_err());
     assert!(get_pending_sync(&conn).unwrap().is_empty());
@@ -226,7 +228,7 @@ fn claim_transaction_failure_retains_intent_and_never_half_enqueues() {
     recover_in_dir(
         dir.path(),
         |binding| Ok(c.proof.matches(binding)),
-        |op| enqueue_home_events(&mut conn, op),
+        |op| enqueue_home_events(dir.path(), &mut conn, op),
     )
     .unwrap();
     assert_eq!(get_pending_sync(&conn).unwrap().len(), 2);
@@ -371,4 +373,137 @@ fn new_import_pair_preserves_foreign_records_and_persists_only_new_keys() {
             .count(),
         1
     );
+}
+
+#[test]
+fn builtin_and_source_slug_claims_enqueue_canonical_persona_heads() {
+    for (id, source) in [
+        ("builtin:fizz", None),
+        ("builtin:honey", None),
+        ("one", Some("CodeReviewer")),
+    ] {
+        let (dir, c, mut instance, keys) = setup();
+        if let Some(source) = source {
+            let mut raw =
+                read_policy_records(&dir.path().join("agents/managed-agents.json")).unwrap();
+            raw[0].source_team_persona_slug = Some(source.into());
+            save(dir.path(), &raw).unwrap();
+        } else {
+            save(dir.path(), &[]).unwrap();
+        }
+        instance.persona_id = Some(id.into());
+        let mut conn = open_retention_db(&dir.path().join("claim.db")).unwrap();
+        commit_claim_in_dir(
+            dir.path(),
+            &c,
+            id,
+            instance,
+            &keys,
+            |raw| save(dir.path(), raw),
+            |op| enqueue_home_events(dir.path(), &mut conn, op),
+        )
+        .unwrap();
+        let pending = get_pending_sync(&conn).unwrap();
+        let head = pending.iter().find(|row| row.kind == 30175).unwrap();
+        let expected = source
+            .map(str::to_lowercase)
+            .unwrap_or_else(|| id.replace(':', "-"));
+        assert_eq!(head.d_tag, expected);
+        Event::from_json(&head.raw_event).unwrap().verify().unwrap();
+        let raw = read_policy_records(&dir.path().join("agents/managed-agents.json")).unwrap();
+        assert_eq!(raw[0].slug.as_deref(), Some(id));
+        assert!(read_journal(dir.path()).unwrap().is_empty());
+    }
+}
+
+#[test]
+fn builtin_journal_recovery_preserves_signed_bytes_and_rejects_wrong_scope_atomically() {
+    for id in ["builtin:fizz", "builtin:honey"] {
+        let (dir, c, mut instance, keys) = setup();
+        save(dir.path(), &[]).unwrap();
+        instance.persona_id = Some(id.into());
+        assert!(commit_claim_in_dir(
+            dir.path(),
+            &c,
+            id,
+            instance,
+            &keys,
+            |raw| save(dir.path(), raw),
+            |_| Err("offline".into()),
+        )
+        .is_err());
+        let op = read_journal(dir.path()).unwrap().pop().unwrap();
+        let signed: Vec<_> = op.signed_events.iter().map(Event::as_json).collect();
+        let original = std::fs::read(journal(dir.path())).unwrap();
+        let mut conn = open_retention_db(&dir.path().join("recovery.db")).unwrap();
+        for mutation in [
+            "persona_coordinate",
+            "coordinate",
+            "owner",
+            "kind",
+            "signature",
+        ] {
+            let mut invalid = op.clone();
+            if mutation == "owner" {
+                invalid.owner_pubkey = Keys::generate().public_key().to_hex();
+            } else {
+                let mut json = serde_json::to_value(&invalid.signed_events[1]).unwrap();
+                if mutation == "signature" {
+                    json["content"] = serde_json::json!("tampered");
+                    invalid.signed_events[1] = serde_json::from_value(json).unwrap();
+                } else {
+                    let index = if mutation == "persona_coordinate" {
+                        0
+                    } else {
+                        1
+                    };
+                    let original_event = &op.signed_events[index];
+                    let kind = if mutation == "kind" {
+                        nostr::Kind::from(30175u16)
+                    } else {
+                        original_event.kind
+                    };
+                    let tags = original_event.tags.iter().cloned().map(|tag| {
+                        if mutation != "kind"
+                            && tag.as_slice().first().map(String::as_str) == Some("d")
+                        {
+                            nostr::Tag::parse(["d", "wrong"]).unwrap()
+                        } else {
+                            tag
+                        }
+                    });
+                    invalid.signed_events[index] =
+                        nostr::EventBuilder::new(kind, original_event.content.clone())
+                            .tags(tags)
+                            .custom_created_at(original_event.created_at)
+                            .sign_with_keys(&keys)
+                            .unwrap();
+                }
+            }
+            assert!(enqueue_home_events(dir.path(), &mut conn, &invalid).is_err());
+            assert!(get_pending_sync(&conn).unwrap().is_empty());
+            assert_eq!(std::fs::read(journal(dir.path())).unwrap(), original);
+        }
+        recover_in_dir(
+            dir.path(),
+            |b| Ok(c.proof.matches(b)),
+            |op| {
+                assert_eq!(
+                    op.signed_events
+                        .iter()
+                        .map(Event::as_json)
+                        .collect::<Vec<_>>(),
+                    signed
+                );
+                enqueue_home_events(dir.path(), &mut conn, op)
+            },
+        )
+        .unwrap();
+        let pending = get_pending_sync(&conn).unwrap();
+        assert_eq!(pending.len(), 2);
+        for event in signed {
+            assert!(pending.iter().any(|row| row.raw_event == event));
+        }
+        assert!(read_journal(dir.path()).unwrap().is_empty());
+    }
 }

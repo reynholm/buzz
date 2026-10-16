@@ -169,7 +169,7 @@ fn prepare_claim_events(
             .transpose()
             .map(Option::flatten)
     };
-    let persona_head = prior(30175, &definition.id)?;
+    let persona_head = prior(30175, &super::persona_events::persona_d_tag(definition))?;
     let instance_head = prior(30177, &record.pubkey)?;
     let mut scoped = definition.clone();
     scoped.shared = persona_head
@@ -193,20 +193,33 @@ fn prepare_claim_events(
 }
 /// Atomically retain all signed heads for the original operation scope.
 pub(crate) fn enqueue_home_events(
+    dir: &Path,
     conn: &mut Connection,
     operation: &HomeOperation,
 ) -> Result<(), String> {
+    let definitions = read_policy_records(&dir.join("agents/managed-agents.json"))?;
     let tx = conn
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|e| e.to_string())?;
-    enqueue_home_events_in_transaction(&tx, operation)?;
+    enqueue_home_events_in_transaction(&tx, operation, &definitions)?;
     tx.commit().map_err(|e| format!("home events commit: {e}"))
 }
 /// All event kinds share the caller-owned transaction; no helper opens nested BEGIN.
 fn enqueue_home_events_in_transaction(
     conn: &Connection,
     operation: &HomeOperation,
+    definitions: &[ManagedAgentRecord],
 ) -> Result<(), String> {
+    // Journals keep local IDs; signed heads use the persona protocol coordinate.
+    // Retained-only label worklists already contain coordinates and need no local row.
+    let persona_coordinate = |id: &str| {
+        definitions
+            .iter()
+            .find(|r| r.pubkey.is_empty() && r.slug.as_deref() == Some(id))
+            .and_then(ManagedAgentRecord::to_definition_view)
+            .map(|d| super::persona_events::persona_d_tag(&d))
+            .unwrap_or_else(|| id.to_string())
+    };
     match &operation.kind {
         HomeOperationKind::Claim {
             definition_id,
@@ -216,8 +229,9 @@ fn enqueue_home_events_in_transaction(
             if operation.signed_events.len() != 2 {
                 return Err("invalid home claim event count".into());
             }
+            let persona = persona_coordinate(definition_id);
             for (event, kind, coordinate) in [
-                (&operation.signed_events[0], 30175, definition_id.as_str()),
+                (&operation.signed_events[0], 30175, persona.as_str()),
                 (&operation.signed_events[1], 30177, target_pubkey.as_str()),
             ] {
                 enqueue_head(conn, operation, event, kind, coordinate)?;
@@ -233,7 +247,7 @@ fn enqueue_home_events_in_transaction(
                 let id = persona_id
                     .as_deref()
                     .ok_or_else(|| "release missing definition".to_string())?;
-                enqueue_head(conn, operation, &events[0], 30175, id)?;
+                enqueue_head(conn, operation, &events[0], 30175, &persona_coordinate(id))?;
             } else if events.len() != 2 {
                 return Err("invalid home delete event count".into());
             }
@@ -255,7 +269,18 @@ fn enqueue_home_events_in_transaction(
                 return Err("unprepared device label worklist".into());
             }
             for (event, id) in operation.signed_events.iter().zip(affected_definition_ids) {
-                enqueue_head(conn, operation, event, 30175, id)?;
+                // Retained-only worklists record protocol coordinates, which can
+                // collide with unrelated local IDs in another owner scope.
+                let recorded_coordinate = event.tags.iter().any(|tag| {
+                    let values = tag.as_slice();
+                    values.first().map(String::as_str) == Some("d") && values.get(1) == Some(id)
+                });
+                let coordinate = if recorded_coordinate {
+                    id.clone()
+                } else {
+                    persona_coordinate(id)
+                };
+                enqueue_head(conn, operation, event, 30175, &coordinate)?;
             }
         }
     }
@@ -474,7 +499,7 @@ fn enqueue_in_scope(dir: &Path, operation: &HomeOperation) -> Result<(), String>
         &operation.relay_url,
         &operation.owner_pubkey,
     )?;
-    enqueue_home_events(&mut conn, operation)
+    enqueue_home_events(dir, &mut conn, operation)
 }
 /// Save new imported definitions and instances together, preserving unrelated rows and keys.
 pub(crate) fn commit_new_pairs_locked<R: tauri::Runtime>(

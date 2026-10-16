@@ -115,7 +115,13 @@ fn scoped_definitions(
             .filter_map(ManagedAgentRecord::to_definition_view)
             .filter(|d| d.origin_device_id.as_deref() == Some(device.device_id.as_str()))
         {
-            if !definitions.iter().any(|r| r.id == d.id) {
+            if let Some(retained) = definitions.iter_mut().find(|r| {
+                super::super::persona_events::persona_d_tag(r)
+                    == super::super::persona_events::persona_d_tag(&d)
+            }) {
+                // Keep retained content, but retain local journal identity for retries.
+                retained.id = d.id;
+            } else {
                 definitions.push(d);
             }
         }
@@ -156,18 +162,36 @@ fn sign_label(
     } else {
         None
     };
+    // Built-in journals retain local IDs even when replay only has retained coordinates.
+    let matches_id = |d: &AgentDefinition, id: &String| {
+        &d.id == id
+            || super::super::persona_events::persona_d_tag(d) == *id
+            || super::super::built_in_persona_definition(id, &crate::util::now_iso()).is_some_and(
+                |builtin| {
+                    super::super::persona_events::persona_d_tag(&builtin)
+                        == super::super::persona_events::persona_d_tag(d)
+                },
+            )
+    };
     // Keep exactly the recorded worklist; later deleted/moved definitions are dropped.
-    affected_definition_ids.retain(|id| definitions.iter().any(|d| &d.id == id));
+    affected_definition_ids.retain(|id| definitions.iter().any(|d| matches_id(d, id)));
     for id in affected_definition_ids.iter() {
         let mut d = definitions
             .iter()
-            .find(|d| &d.id == id)
+            .find(|d| matches_id(d, id))
             .cloned()
             .ok_or_else(|| "label definition missing".to_string())?;
         d.origin_device_label = Some(new_label.clone());
         let prior = conn
             .as_ref()
-            .map(|c| super::super::retention::get_retained_event(c, 30175, &op.owner_pubkey, id))
+            .map(|c| {
+                super::super::retention::get_retained_event(
+                    c,
+                    30175,
+                    &op.owner_pubkey,
+                    &super::super::persona_events::persona_d_tag(&d),
+                )
+            })
             .transpose()?
             .flatten();
         let event = super::super::persona_events::build_persona_event(&d)?
@@ -177,6 +201,11 @@ fn sign_label(
                     .map(|r| r.created_at)
                     .into_iter()
                     .chain(superseded_created_at.get(id).copied())
+                    .chain(
+                        superseded_created_at
+                            .get(&super::super::persona_events::persona_d_tag(&d))
+                            .copied(),
+                    )
                     .max(),
             ))
             .sign_with_keys(keys)

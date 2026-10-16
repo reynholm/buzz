@@ -30,7 +30,7 @@ fn last_instance_delete_queues_release_and_tombstone_atomically() {
         dir.path(),
         &op,
         |r| save(dir.path(), r),
-        |op| enqueue_home_events(&mut conn, op),
+        |op| enqueue_home_events(dir.path(), &mut conn, op),
     )
     .unwrap();
     let r = read_policy_records(&dir.path().join("agents/managed-agents.json")).unwrap();
@@ -92,7 +92,7 @@ fn recovery_reuses_signed_event_ids() {
                 ids
             );
             assert_eq!(op.relay_url, c.scope.relay_url);
-            enqueue_home_events(&mut conn, op)
+            enqueue_home_events(dir.path(), &mut conn, op)
         },
     )
     .unwrap();
@@ -120,7 +120,7 @@ fn new_instance_cancels_obsolete_release() {
     recover_in_dir(
         dir.path(),
         |b| Ok(c.proof.matches(b)),
-        |op| enqueue_home_events(&mut conn, op),
+        |op| enqueue_home_events(dir.path(), &mut conn, op),
     )
     .unwrap();
     let r = read_policy_records(&dir.path().join("agents/managed-agents.json")).unwrap();
@@ -244,7 +244,7 @@ fn intent_save_and_each_sql_enqueue_failure_leave_no_partial_batch() {
                 saved.set(true);
                 save(dir.path(), r)
             },
-            |op| enqueue_home_events(&mut conn, op),
+            |op| enqueue_home_events(dir.path(), &mut conn, op),
             |ops| {
                 if fail == 0 {
                     Err("intent write failure".into())
@@ -269,7 +269,7 @@ fn intent_save_and_each_sql_enqueue_failure_leave_no_partial_batch() {
             recover_in_dir(
                 dir.path(),
                 |b| Ok(c.proof.matches(b)),
-                |op| enqueue_home_events(&mut conn, op),
+                |op| enqueue_home_events(dir.path(), &mut conn, op),
             )
             .unwrap();
             assert_eq!(get_pending_sync(&conn).unwrap().len(), 3);
@@ -292,7 +292,7 @@ fn unified_save_failure_restarts_deletion_and_clear_failure_replays_exact_ids() 
             } else {
                 save(dir.path(), r)
             },
-            |op| enqueue_home_events(&mut conn, op),
+            |op| enqueue_home_events(dir.path(), &mut conn, op),
             |ops| {
                 writes.set(writes.get() + 1);
                 if writes.get() == 2 {
@@ -321,7 +321,7 @@ fn unified_save_failure_restarts_deletion_and_clear_failure_replays_exact_ids() 
                     ids,
                     op.signed_events.iter().map(|e| e.id).collect::<Vec<_>>()
                 );
-                enqueue_home_events(&mut conn, op)
+                enqueue_home_events(dir.path(), &mut conn, op)
             },
         )
         .unwrap();
@@ -386,7 +386,7 @@ fn definition_cascade_recovery_never_resurrects_absent_definition() {
     recover_in_dir(
         dir.path(),
         |_| panic!("absent target proof"),
-        |op| enqueue_home_events(&mut conn, op),
+        |op| enqueue_home_events(dir.path(), &mut conn, op),
     )
     .unwrap();
     assert!(
@@ -464,7 +464,7 @@ fn premetadata_label_worklist_resolves_when_original_database_becomes_known() {
     recover_in_dir(
         dir.path(),
         |_| panic!("label proof"),
-        |op| enqueue_home_events(&mut conn, op),
+        |op| enqueue_home_events(dir.path(), &mut conn, op),
     )
     .unwrap();
     let pending = get_pending_sync(&conn).unwrap();
@@ -536,7 +536,7 @@ fn label_other_owner_waits_for_its_keys_and_foreign_origins_are_not_rebuilt() {
     recover_in_dir(
         dir.path(),
         |_| panic!("label proof"),
-        |op| enqueue_home_events(&mut conn, op),
+        |op| enqueue_home_events(dir.path(), &mut conn, op),
     )
     .unwrap();
     let pending = get_pending_sync(&conn).unwrap();
@@ -588,54 +588,64 @@ fn native_label_adapter_reports_queued_until_existing_event_sync_acknowledges() 
 #[test]
 fn claim_recovery_finishes_enqueue_without_mint() {
     use tauri::Manager;
-    let dir = tempfile::tempdir().unwrap();
-    let app = super::super::device_home_migration::tests::app(dir.path());
-    let state = app.state::<crate::app_state::AppState>();
-    let (mut raw, _) = super::super::device_home_migration::tests::records();
-    let i = raw.pop().unwrap();
-    save(dir.path(), &raw).unwrap();
-    let mut c = super::super::device_home_migration::tests::context(
-        super::super::definition_home::EvidenceReadiness::Ready,
-    );
-    c.scope = super::super::device_home_sync::capture_scope(&state).unwrap();
-    assert!(commit_claim_in_dir(
-        dir.path(),
-        &c,
-        "one",
-        i.clone(),
-        &state.signing_keys().unwrap(),
-        |r| save(dir.path(), r),
-        |_| Err("SQL unavailable".into())
-    )
-    .is_err());
-    let op = read_journal(dir.path()).unwrap().pop().unwrap();
-    let ids = op
-        .signed_events
-        .iter()
-        .map(|e| e.id)
-        .collect::<std::collections::HashSet<_>>();
-    let original_owner = c.scope.owner_pubkey.clone();
-    let original_relay = c.scope.relay_url.clone();
-    *state.keys.lock().unwrap() = Keys::generate();
-    *state.relay_url_override.lock().unwrap() = Some("wss://switched".into());
-    recover_home_operations_locked_with(app.handle(), |b| Ok(c.proof.matches(b))).unwrap();
-    let path = super::super::retention::scoped_retention_db_path(
-        &dir.path().join("agents"),
-        &original_relay,
-        &original_owner,
-    );
-    let conn = open_retention_db(&path).unwrap();
-    let pending = get_pending_sync(&conn).unwrap();
-    assert_eq!(
-        pending
+    for id in ["one", "builtin:fizz", "builtin:honey"] {
+        let dir = tempfile::tempdir().unwrap();
+        let app = super::super::device_home_migration::tests::app(dir.path());
+        let state = app.state::<crate::app_state::AppState>();
+        let (mut raw, _) = super::super::device_home_migration::tests::records();
+        let mut i = raw.pop().unwrap();
+        if id != "one" {
+            raw.clear();
+        }
+        i.persona_id = Some(id.into());
+        save(dir.path(), &raw).unwrap();
+        let mut c = super::super::device_home_migration::tests::context(
+            super::super::definition_home::EvidenceReadiness::Ready,
+        );
+        c.scope = super::super::device_home_sync::capture_scope(&state).unwrap();
+        assert!(commit_claim_in_dir(
+            dir.path(),
+            &c,
+            id,
+            i.clone(),
+            &state.signing_keys().unwrap(),
+            |r| save(dir.path(), r),
+            |_| Err("SQL unavailable".into())
+        )
+        .is_err());
+        let op = read_journal(dir.path()).unwrap().pop().unwrap();
+        let signed: Vec<_> = op.signed_events.iter().map(Event::as_json).collect();
+        let ids = op
+            .signed_events
             .iter()
-            .map(|r| Event::from_json(&r.raw_event).unwrap().id)
-            .collect::<std::collections::HashSet<_>>(),
-        ids
-    );
-    let raw = read_policy_records(&dir.path().join("agents/managed-agents.json")).unwrap();
-    assert_eq!(raw.iter().filter(|r| r.pubkey == i.pubkey).count(), 1);
-    assert!(read_journal(dir.path()).unwrap().is_empty());
+            .map(|e| e.id)
+            .collect::<std::collections::HashSet<_>>();
+        let original_owner = c.scope.owner_pubkey.clone();
+        let original_relay = c.scope.relay_url.clone();
+        *state.keys.lock().unwrap() = Keys::generate();
+        *state.relay_url_override.lock().unwrap() = Some("wss://switched".into());
+        recover_home_operations_locked_with(app.handle(), |b| Ok(c.proof.matches(b))).unwrap();
+        let path = super::super::retention::scoped_retention_db_path(
+            &dir.path().join("agents"),
+            &original_relay,
+            &original_owner,
+        );
+        let conn = open_retention_db(&path).unwrap();
+        let pending = get_pending_sync(&conn).unwrap();
+        assert_eq!(
+            pending
+                .iter()
+                .map(|r| Event::from_json(&r.raw_event).unwrap().id)
+                .collect::<std::collections::HashSet<_>>(),
+            ids
+        );
+        let raw = read_policy_records(&dir.path().join("agents/managed-agents.json")).unwrap();
+        assert_eq!(raw.iter().filter(|r| r.pubkey == i.pubkey).count(), 1);
+        for event in signed {
+            assert!(pending.iter().any(|row| row.raw_event == event));
+        }
+        assert!(read_journal(dir.path()).unwrap().is_empty());
+    }
 }
 
 #[test]
@@ -777,7 +787,7 @@ fn label_batch_rolls_back_all_definitions_and_replays_same_signed_ids() {
     conn.execute_batch("CREATE TRIGGER reject_second BEFORE INSERT ON persona_events WHEN NEW.d_tag='two' BEGIN SELECT RAISE(ABORT,'second label head failure');END;").unwrap();
     assert!(
         label::set_label_in_dir(dir.path(), c.device.clone(), "New", &scopes, &k, |op| {
-            enqueue_home_events(&mut conn, op)
+            enqueue_home_events(dir.path(), &mut conn, op)
         })
         .unwrap()
     );
@@ -797,7 +807,7 @@ fn label_batch_rolls_back_all_definitions_and_replays_same_signed_ids() {
                 ids,
                 op.signed_events.iter().map(|e| e.id).collect::<Vec<_>>()
             );
-            enqueue_home_events(&mut conn, op)
+            enqueue_home_events(dir.path(), &mut conn, op)
         },
     )
     .unwrap();
@@ -905,5 +915,60 @@ fn native_label_retry_never_rebuilds_deleted_or_foreign_scope_from_local_id_coll
         assert!(read_journal(dir.path()).unwrap().is_empty());
         let current = read_policy_records(&dir.path().join("agents/managed-agents.json")).unwrap();
         assert_eq!(current[0].origin_device_label.as_deref(), Some("New"));
+    }
+}
+
+#[test]
+fn builtin_last_instance_delete_publishes_and_recovers_exact_release() {
+    for id in ["builtin:fizz", "builtin:honey"] {
+        for offline in [false, true] {
+            let (dir, c, mut instance, keys) = setup();
+            save(dir.path(), &[]).unwrap();
+            instance.persona_id = Some(id.into());
+            commit_claim_in_dir(
+                dir.path(),
+                &c,
+                id,
+                instance.clone(),
+                &keys,
+                |raw| save(dir.path(), raw),
+                |_| Ok(()),
+            )
+            .unwrap();
+            let op =
+                delete::prepare_delete_in_dir(dir.path(), &c, &instance.pubkey, &keys).unwrap();
+            assert_eq!(op.signed_events.len(), 3);
+            let signed: Vec<_> = op.signed_events.iter().map(Event::as_json).collect();
+            let mut conn = open_retention_db(&dir.path().join("delete.db")).unwrap();
+            let result = delete::commit_delete_in_dir(
+                dir.path(),
+                &op,
+                |raw| save(dir.path(), raw),
+                |op| {
+                    if offline {
+                        Err("offline".into())
+                    } else {
+                        enqueue_home_events(dir.path(), &mut conn, op)
+                    }
+                },
+            );
+            assert_eq!(result.is_err(), offline);
+            recover_in_dir(
+                dir.path(),
+                |b| Ok(c.proof.matches(b)),
+                |op| enqueue_home_events(dir.path(), &mut conn, op),
+            )
+            .unwrap();
+            let pending = get_pending_sync(&conn).unwrap();
+            assert_eq!(pending.len(), 3);
+            for event in signed {
+                assert!(pending.iter().any(|row| row.raw_event == event));
+            }
+            let raw = read_policy_records(&dir.path().join("agents/managed-agents.json")).unwrap();
+            assert_eq!(raw.len(), 1);
+            assert_eq!(raw[0].slug.as_deref(), Some(id));
+            assert_eq!(raw[0].origin_released, Some(true));
+            assert!(read_journal(dir.path()).unwrap().is_empty());
+        }
     }
 }

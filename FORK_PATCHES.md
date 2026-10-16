@@ -1402,7 +1402,7 @@ New module: `true`.
 
 ## `desktop/src-tauri/src/managed_agents/device_home_operations.rs`
 
-Device creation policy, default-private sources, atomic claim and durable recovery regression coverage; Task8 durable original-scope home deletion/label publication and retry
+Device creation policy, default-private sources, atomic claim and durable recovery regression coverage; Task8 durable original-scope home deletion/label publication and retry; Preserve canonical persona coordinates for builtin claims and durable journal recovery
 
 New module: `true`.
 
@@ -1417,22 +1417,23 @@ New module: `true`.
 - Invocation: `desktop/src-tauri/src/commands/agents.rs` → `commit_home_claim_locked`; exact call `crate::managed_agents::device_home_operations::commit_home_claim_locked(`; behavior test `managed_agents::device_home_operations::tests::released_definition_is_claimed_without_restart`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_home_operations::tests::released_definition_is_claimed_without_restart -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `save_journal`; exact call `save_journal(dir, &operations)?;
     save(&raw)?;`; behavior test `managed_agents::device_home_operations::tests::failed_claim_save_never_publishes_uncommitted_intent`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_home_operations::tests::failed_claim_save_never_publishes_uncommitted_intent -- --exact`
-- Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `enqueue_home_events`; exact call `enqueue_home_events(&mut conn, operation)`; behavior test `managed_agents::device_home_operations::tests::claim_transaction_failure_retains_intent_and_never_half_enqueues`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_home_operations::tests::claim_transaction_failure_retains_intent_and_never_half_enqueues -- --exact`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `enqueue_home_events`; exact call `enqueue_home_events(dir, &mut conn, operation)`; behavior test `managed_agents::device_home_operations::tests::claim_transaction_failure_retains_intent_and_never_half_enqueues`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_home_operations::tests::claim_transaction_failure_retains_intent_and_never_half_enqueues -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `recover_in_dir`; exact call `recover_in_dir(&dir, verify_binding, |operation| {`; behavior test `commands::workspace::device_home_preparation_tests::recovery_precedes_migration_and_replays_original_scope_after_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::workspace::device_home_preparation_tests::recovery_precedes_migration_and_replays_original_scope_after_switch -- --exact`
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `load_existing_host_proof`; exact call `crate::device_identity::load_existing_host_proof(`; behavior test `managed_agents::device_home_operations::tests::copied_or_unavailable_proof_never_recovers_claim_and_preserves_intent_bytes`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_home_operations::tests::copied_or_unavailable_proof_never_recovers_claim_and_preserves_intent_bytes -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/workspace.rs` → `recover_home_operations_locked`; exact call `crate::managed_agents::device_home_operations::recover_home_operations_locked(app)`; behavior test `commands::workspace::device_home_preparation_tests::recovery_precedes_migration_and_replays_original_scope_after_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::workspace::device_home_preparation_tests::recovery_precedes_migration_and_replays_original_scope_after_switch -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `commit_new_pairs_locked`; exact call `crate::managed_agents::device_home_operations::commit_new_pairs_locked(`; behavior test `managed_agents::device_home_operations::tests::new_import_pair_preserves_foreign_records_and_persists_only_new_keys`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_home_operations::tests::new_import_pair_preserves_foreign_records_and_persists_only_new_keys -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/team_snapshot.rs` → `commit_new_pairs_locked`; exact call `crate::managed_agents::device_home_operations::commit_new_pairs_locked(`; behavior test `managed_agents::device_home_operations::tests::new_import_pair_preserves_foreign_records_and_persists_only_new_keys`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_home_operations::tests::new_import_pair_preserves_foreign_records_and_persists_only_new_keys -- --exact`
-- Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `enqueue_home_events_in_transaction`; exact call `enqueue_home_events_in_transaction(&tx, operation)?;`; behavior test `intent_save_and_each_sql_enqueue_failure_leave_no_partial_batch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace intent_save_and_each_sql_enqueue_failure_leave_no_partial_batch`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `enqueue_home_events_in_transaction`; exact call `enqueue_home_events_in_transaction(&tx, operation, &definitions)?;`; behavior test `intent_save_and_each_sql_enqueue_failure_leave_no_partial_batch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace intent_save_and_each_sql_enqueue_failure_leave_no_partial_batch`
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `apply_delete`; exact call `delete::apply_delete(&mut raw, op, Some(&mut verify_binding))?`; behavior test `new_instance_cancels_obsolete_release`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace new_instance_cancels_obsolete_release`
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `prepare_label_retries`; exact call `label::prepare_label_retries(`; behavior test `premetadata_label_worklist_resolves_when_original_database_becomes_known`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace premetadata_label_worklist_resolves_when_original_database_becomes_known`
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `coalesce_label_worklists`; exact call `label::coalesce_label_worklists(&mut operations, label)?;`; behavior test `managed_agents::device_home_operations::label_tests`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations.rs` → `persona_d_tag`; exact call `.map(|d| super::persona_events::persona_d_tag(&d))`; behavior test `builtin_and_source_slug_claims_enqueue_canonical_persona_heads`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib builtin_and_source_slug_claims_enqueue_canonical_persona_heads`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 - Verify: `just desktop-tauri-clippy`
 
 ## `desktop/src-tauri/src/managed_agents/device_home_operations/tests.rs`
 
-Device creation policy, default-private sources, atomic claim and durable recovery regression coverage
+Device creation policy, default-private sources, atomic claim and durable recovery regression coverage; Canonical builtin/source-slug claims, exact signed-byte legacy recovery, and invalid event rejection
 
 New module: `true`.
 
@@ -1897,7 +1898,7 @@ New module: `true`.
 
 ## `desktop/src-tauri/src/managed_agents/device_home_operations/label.rs`
 
-Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage; R5 coalesce all outstanding scope label worklists to latest intent with monotonic signed floors
+Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage; R5 coalesce all outstanding scope label worklists to latest intent with monotonic signed floors; canonical persona deduplication and superseded timestamp floors preserve builtin and source-slug label retries
 
 New module: `true`.
 
@@ -1905,6 +1906,7 @@ New module: `true`.
 - Invocation: `desktop/src-tauri/src/commands/device_identity.rs` → `set_device_label_locked`; exact call `crate::managed_agents::device_home_operations::label::set_device_label_locked(`; behavior test `native_label_adapter_reports_queued_until_existing_event_sync_acknowledges`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace native_label_adapter_reports_queued_until_existing_event_sync_acknowledges`
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations/label.rs` → `coalesce_label_worklists`; exact call `coalesce_label_worklists(&mut ops, label)?;`; behavior test `managed_agents::device_home_operations::label_tests`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
 - Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations/label.rs` → `coalesce_label_worklists`; exact call `coalesce_label_worklists(&mut ops, &label)?;`; behavior test `managed_agents::device_home_operations::label_tests`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
+- Invocation: `desktop/src-tauri/src/managed_agents/device_home_operations/label.rs` → `persona_d_tag`; exact call `.get(&super::super::persona_events::persona_d_tag(&d))`; behavior test `newer_label_is_signed_after_superseded_unenqueued_event`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib newer_label_is_signed_after_superseded_unenqueued_event`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 - Verify: `just desktop-tauri-clippy`
 
