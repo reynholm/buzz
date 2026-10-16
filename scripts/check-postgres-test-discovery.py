@@ -184,7 +184,9 @@ def integration_binary_is_postgres(path: Path) -> bool:
     )
 
 
-def standard_module_paths(parent_source: Path, module_name: str) -> list[Path]:
+def standard_module_paths(
+    parent_source: Path, module_name: str, ancestors: list[str]
+) -> list[Path]:
     """Resolve Rust's conventional out-of-line module source paths."""
     root = crate_root(parent_source)
     is_crate_root = parent_source.name in {"lib.rs", "main.rs", "mod.rs"}
@@ -200,6 +202,7 @@ def standard_module_paths(parent_source: Path, module_name: str) -> list[Path]:
         if is_crate_root
         else parent_source.parent / parent_source.stem
     )
+    base = base.joinpath(*ancestors)
     return [base / f"{module_name}.rs", base / module_name / "mod.rs"]
 
 
@@ -215,6 +218,7 @@ def out_of_line_module_index(files: list[Path]) -> dict[Path, list[str]]:
     for parent_source in sorted(context_files):
         source = parent_source.read_text(encoding="utf-8")
         sanitized = sanitize_rust(source)
+        inline_ranges = module_ranges(source)
 
         if "path" in source:
             for attribute in PATH_ATTRIBUTE.finditer(sanitized):
@@ -232,11 +236,16 @@ def out_of_line_module_index(files: list[Path]) -> dict[Path, list[str]]:
 
         for module in OUT_OF_LINE_MODULE.finditer(sanitized):
             module_name = module.group("name")
-            for candidate in standard_module_paths(parent_source, module_name):
+            ancestors = [
+                name for start, end, name in inline_ranges
+                if start < module.start() < end
+            ]
+            for candidate in standard_module_paths(parent_source, module_name, ancestors):
                 if candidate.is_file():
                     module_names = names.setdefault(candidate.resolve(), [])
-                    if module_name not in module_names:
-                        module_names.append(module_name)
+                    for name in ancestors + [module_name]:
+                        if name not in module_names:
+                            module_names.append(name)
     return names
 
 
@@ -278,7 +287,7 @@ def file_has_postgres_lane_test(
         if (
             ("postgres" in reason_lower or "postgresql" in reason_lower)
             and not EXTERNAL_INFRA.search(reason)
-            and not any(name.startswith("external_infra") for name in modules)
+            and not any(name.startswith("external_infra") for name in modules + external_modules)
             and (
                 any(name.endswith("postgres_tests") for name in modules + external_modules)
                 or integration_binary_is_postgres(path)
@@ -345,7 +354,9 @@ def validate_file(
             any(name.endswith("postgres_tests") for name in modules + external_modules)
             or integration_binary_is_postgres(path)
         )
-        in_external_module = any(name.startswith("external_infra") for name in modules)
+        in_external_module = any(
+            name.startswith("external_infra") for name in modules + external_modules
+        )
         needs_external_infra = bool(EXTERNAL_INFRA.search(reason))
 
         if mentions_redis and not mentions_postgres and in_postgres_lane and not in_external_module:

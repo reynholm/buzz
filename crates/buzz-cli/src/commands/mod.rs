@@ -1,6 +1,7 @@
 pub mod agents;
 pub mod channel_templates;
 pub mod channels;
+mod delivery;
 pub mod dms;
 pub mod emoji;
 pub mod feed;

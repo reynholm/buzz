@@ -24,6 +24,8 @@ pub mod event;
 pub mod feed;
 /// Git repository name registry (NIP-34 kind:30617).
 pub mod git_repo;
+/// Atomic managed report election.
+pub mod managed_delivery;
 /// Community moderation: reports, bans/timeouts, audit actions.
 pub mod moderation;
 /// Deployment-global operator-listener mention registrations and delivery queues.

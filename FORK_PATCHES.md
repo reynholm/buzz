@@ -21,14 +21,6 @@ New module: `true`.
 
 - Verify: `python3 scripts/fork/sync.py validate`
 
-## `docs/superpowers/specs/2026-10-03-device-bound-agents-design.md`
-
-Approved device ownership and fork acceptance contract
-
-New module: `true`.
-
-- Verify: `python3 scripts/fork/sync.py validate`
-
 ## `FORK_PATCHES.md`
 
 Reviewable generated patch inventory
@@ -596,7 +588,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/Cargo.lock`
 
-Direct Desktop gethostname dependency without version changes
+Direct Desktop gethostname dependency without version changes Pin rustls 0.23.46 for the release, resolving RUSTSEC-2026-0346 through RUSTSEC-2026-0349 without unrelated dependency changes.
 
 New module: `false`.
 
@@ -2365,11 +2357,12 @@ New module: `true`.
 
 ## `.gitignore`
 
-Exact Apple Silicon fork candidate artifact provenance and immutable About identity
+Exact Apple Silicon fork candidate artifact provenance and immutable About identity; private design notes directory stays untracked
 
 New module: `false`.
 
 - Required symbol: `/artifacts/fork/`
+- Required symbol: `/docs/local`
 - Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
 
 ## `scripts/fork/build-candidate.sh`
@@ -2617,10 +2610,11 @@ New module: `false`.
 
 ## `.github/workflows/_ci-relay.yml`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane.
 
 New module: `false`.
 
+- Required symbol: `export BUZZ_TEST_BIN_DIR="$PWD/target/ci"`
 - Verify: `just ci`
 
 ## `.github/workflows/_ci-rust.yml`
@@ -2665,7 +2659,7 @@ New module: `false`.
 
 ## `Cargo.lock`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Pin rustls 0.23.46 for the release, resolving RUSTSEC-2026-0346 through RUSTSEC-2026-0349 without unrelated dependency changes.
 
 New module: `false`.
 
@@ -2673,11 +2667,13 @@ New module: `false`.
 
 ## `Justfile`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Select the infra-free demo echo cancellation regression in the required nextest unit lane.
 
 New module: `false`.
 
+- Required symbol: `test(=mesh_boot::tests::demo_echo_keeps_inflight_read_across_ticks_and_still_drains)`
 - Verify: `just ci`
+- Verify: `just test-unit`
 
 ## `bin/.uv-0.12.21.pkg`
 
@@ -2777,10 +2773,11 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/lib.rs`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Preserve the heartbeat collection call with a textual drift guard; full live-service-loop behavioral mutation coverage is not claimed.
 
 New module: `false`.
 
+- Required symbol: `pool.queue_finished_background_work(&mut queue);`
 - Verify: `just ci`
 
 ## `crates/buzz-acp/src/pool.rs`
@@ -2993,11 +2990,12 @@ New module: `false`.
 
 ## `crates/buzz-db/src/runtime/tests/thread_window_postgres_tests.rs`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Verify production prebuild migration reaches the latest embedded migration while preserving the ingestion witness/index checks.
 
 New module: `false`.
 
 - Verify: `just ci`
+- Verify: `scripts/postgres-test-run.sh -p buzz-db --lib --tests`
 
 ## `crates/buzz-db/src/store/community.rs`
 
@@ -5174,11 +5172,14 @@ New module: `false`.
 
 ## `scripts/run-tests.sh`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Keep the cargo-test fallback selecting the same demo echo receive-retention regression as nextest.
 
 New module: `false`.
 
+- Required symbol: `buzz-relay demo echo receive retention`
 - Verify: `just ci`
+- Verify: `bash -n scripts/run-tests.sh`
+- Verify: `just test-unit`
 
 ## `.config/nextest.toml`
 
@@ -5371,3 +5372,485 @@ New module: `true`.
 - Required symbol: `publish_linux.py --tag "$TAG" --artifacts linux-assets --publish`
 - Required symbol: `TRIGGERING_ACTOR: ${{ github.triggering_actor }}`
 - Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `TESTING.md`
+
+Document production-writer recovery, replica-floor premises, authenticated CLI/relay regression commands and evidence boundaries.
+
+New module: `false`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
+
+## `crates/buzz-acp/TESTING.md`
+
+Document original-session collection, bounded ordinary preemption and bundled agent/MCP/CLI delivery runtime fixtures.
+
+New module: `false`.
+
+- Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background -- --test-threads=1`
+
+## `crates/buzz-acp/src/acp/process_tracking_tests.rs`
+
+Inherited integration inventory: real ACP adapter regressions distinguish resident providers, active task children and unrelated sessions.
+
+New module: `true`.
+
+- Required symbol: `prompt_work_is_tracked_under_worker_and_resident_provider`
+- Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp process_tracking_tests -- --test-threads=1`
+
+## `crates/buzz-acp/src/isolated_execution.rs`
+
+Inherited integration inventory: fresh-process isolated prompt executor with cancellation, deadlines and bounded shutdown; module retention does not assert a new background-delivery invocation.
+
+New module: `false`.
+
+- Required symbol: `pub(crate) async fn execute(`
+- Required symbol: `agent.acp.shutdown().await;`
+- Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp --lib -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/background_work.rs`
+
+Retain collection authority in the original worker/session, poll child exit independently of pool sleep, and compose stable-key final-report instructions.
+
+New module: `true`.
+
+- Required symbol: `pub(crate) struct RuntimeHold`
+- Required symbol: `pub fn queue_finished_background_work`
+- Required symbol: `pub(super) fn followup_prompt`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `followup_prompt`; exact call `background_work::followup_prompt(batch.channel_id, continuation, &ctx.cwd)`; behavior test `background_managed_delivery_key_stays_on_collection_across_error_and_new_message`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_managed_delivery_key_stays_on_collection_across_error_and_new_message -- --test-threads=1`
+- Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_work_tests -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/background_work_tests.rs`
+
+Production-dispatch local-process regressions for route/session retention, collection progress under repeated preemption, cancellation, rotation and lost-task cleanup.
+
+New module: `true`.
+
+- Required symbol: `background_collection_completes_under_repeated_ordinary_preemption`
+- Required symbol: `background_explicit_cancel_after_ordinary_control_never_resumes_collection`
+- Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_work_tests -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/delivery_runtime_tests.rs`
+
+Run actual bundled agent, MCP and CLI processes against a signature-checking mock relay: application-error replay, lost acknowledgments, process restart and concurrency; not real-relay evidence.
+
+New module: `true`.
+
+- Required symbol: `managed_runtime_bundled_agent_publication_then_application_error_retries_one_event`
+- Required symbol: `managed_runtime_killed_after_relay_acceptance_replays_on_new_process`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp managed_runtime_ -- --ignored --test-threads=1`
+
+## `crates/buzz-acp/src/pool/pi_prompt_tests.rs`
+
+Inherited integration inventory: Pi ACP system-prompt metadata, workspace skill installation and restore compatibility fixtures.
+
+New module: `false`.
+
+- Required symbol: `pi_composed_prompt_uses_meta_without_capability_negotiation`
+- Required symbol: `real_pi_preserves_buzz_prompt_and_launch_skills_on_restore`
+- Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp pi_prompt_tests -- --test-threads=1`
+
+## `crates/buzz-acp/src/process_tree.rs`
+
+Bounded process snapshots and resident-helper classification; macOS/Linux executable confirmation releases completed Codex turns while preserving actual child work.
+
+New module: `true`.
+
+- Required symbol: `pub fn snapshot()`
+- Required symbol: `pub fn blocking_pids(`
+- Required symbol: `pub fn is_resident_helper(`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `snapshot`; exact call `let tree = crate::process_tree::snapshot()?;`; behavior test `prompt_work_is_tracked_under_worker_and_resident_provider`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp prompt_work_is_tracked_under_worker_and_resident_provider -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `blocking_pids`; exact call `blocking.extend(tree.blocking_pids(parent, &self.resident_pids));`; behavior test `work_under_late_codex_host_holds_slot_until_child_exits`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `is_resident_helper`; exact call `self.resident_pids.contains(&child.pid) || tree.is_resident_helper(child)`; behavior test `work_under_late_codex_host_holds_slot_until_child_exits`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1`
+- Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp process_tree -- --test-threads=1`
+
+## `crates/buzz-acp/src/process_tree/snapshot_tests.rs`
+
+Inherited integration inventory: process-list timeout/output bounds, malformed snapshots and zombie exclusion tests.
+
+New module: `true`.
+
+- Required symbol: `snapshot_rejects_partial_output_and_ignores_zombies`
+- Required symbol: `listing_timeout_kills_a_stalled_command`
+- Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp process_tree -- --test-threads=1`
+
+## `crates/buzz-acp/src/queue/background.rs`
+
+Keep background collection separate from ordinary messages with stable delivery UUID, original thread/session ownership, finite retries and bounded ordinary preemption.
+
+New module: `true`.
+
+- Required symbol: `pub(crate) struct RuntimeContinuation`
+- Required symbol: `pub ordinary_preempted: bool`
+- Required symbol: `background_managed_delivery_key_stays_on_collection_across_error_and_new_message`
+- Invocation: `crates/buzz-acp/src/queue.rs` → `enqueue_continuation`; exact call `self.enqueue_continuation(batch.scope, continuation);`; behavior test `background_collection_completes_under_repeated_ordinary_preemption`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_collection_completes_under_repeated_ordinary_preemption -- --test-threads=1`
+- Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background -- --test-threads=1`
+
+## `crates/buzz-cli/Cargo.toml`
+
+Add filesystem locking and temporary-fixture dependencies for durable managed-report journals.
+
+New module: `false`.
+
+- Required symbol: `fs2 = "0.4"`
+- Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
+
+## `crates/buzz-cli/TESTING.md`
+
+Specify managed publisher scope, journal durability and retention, recovery opt-in/upgrade requirements and real versus mock-relay checks.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
+
+## `crates/buzz-cli/src/commands/delivery.rs`
+
+Lock, validate and fsync a bounded original-report journal before submission; refresh signed recovery stamps and persist only verified canonical receipts while preserving original evidence.
+
+New module: `true`.
+
+- Required symbol: `pub(super) async fn deliver(`
+- Required symbol: `fn acknowledgment(`
+- Required symbol: `fn durable_directory(`
+- Required symbol: `recovery_candidate`
+- Required symbol: `canonical_event`
+- Invocation: `crates/buzz-cli/src/commands/messages.rs` → `deliver`; exact call `super::delivery::deliver(
+                client,
+                &channel,
+                &reply_to,
+                &content,
+                &delivery_key,
+                journal_dir.as_deref(),
+                mentions,
+            )`; behavior test `managed_same_key_changed_text_returns_first_signed_delivery`; verify `cargo test -p buzz-cli managed_same_key_changed_text_returns_first_signed_delivery -- --test-threads=1`
+- Invocation: `crates/buzz-cli/src/commands/delivery.rs` → `submit_event`; exact call `write(&dir, &journal)?;
+    let result = client
+        .submit_event(submission)`; behavior test `managed_same_key_changed_text_returns_first_signed_delivery`; verify `cargo test -p buzz-cli managed_same_key_changed_text_returns_first_signed_delivery -- --test-threads=1`
+- Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
+
+## `crates/buzz-cli/src/commands/messages.rs`
+
+Expose messages deliver and preserve original route, stable UUID and signed callback mentions without suppressing ordinary progress or explicit edits.
+
+New module: `false`.
+
+- Required symbol: `MessagesCmd::Deliver {`
+- Required symbol: `pub(super) fn event_mention_pubkeys(`
+- Required symbol: `async fn resolve_content_mentions(`
+- Invocation: `crates/buzz-cli/src/commands/delivery.rs` → `event_mention_pubkeys`; exact call `messages::event_mention_pubkeys(&chosen)`; behavior test `managed_recovery_mention_history_survives_lost_ack`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib managed_recovery_mention_history_survives_lost_ack -- --ignored --test-threads=1`
+- Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
+- Verify: `cargo test -p buzz-cli mention -- --test-threads=1`
+
+## `crates/buzz-cli/src/commands/mod.rs`
+
+Wire the managed delivery module into the CLI message dispatcher.
+
+New module: `false`.
+
+- Required symbol: `mod delivery;`
+- Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
+
+## `crates/buzz-cli/src/delivery_tests.rs`
+
+Production CLI regressions for same-key replay, namespace/route integrity, concurrency, durable ancestor links, bounded retention/retries and legacy wrapper rejection.
+
+New module: `true`.
+
+- Required symbol: `managed_same_key_changed_text_returns_first_signed_delivery`
+- Required symbol: `managed_expired_journal_never_treats_legacy_wrapper_ack_as_delivery`
+- Required symbol: `managed_existing_nested_directory_requires_ancestor_link_sync_before_publication`
+- Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
+
+## `crates/buzz-cli/src/error.rs`
+
+Expose managed-delivery pending as a safe same-key retry while preserving existing ambiguous unjournaled-send errors.
+
+New module: `false`.
+
+- Required symbol: `ManagedDeliveryPending`
+- Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
+
+## `crates/buzz-cli/src/lib.rs`
+
+Define messages deliver arguments and compile production-publisher regression tests.
+
+New module: `false`.
+
+- Required symbol: `Deliver {`
+- Required symbol: `mod delivery_tests;`
+- Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
+
+## `crates/buzz-core/src/kind.rs`
+
+Reserve ephemeral managed recovery kind 20003 for signed canonical election; upgraded relays route it through shared ingest.
+
+New module: `false`.
+
+- Required symbol: `KIND_MANAGED_DELIVERY_RECOVERY: u32 = 20003`
+- Invocation: `crates/buzz-relay/src/handlers/event.rs` → `is_ephemeral`; exact call `if is_ephemeral(kind_u32)
+        && kind_u32 != buzz_core::kind::KIND_NIP43_LEAVE_REQUEST
+        && kind_u32 != buzz_core::kind::KIND_MANAGED_DELIVERY_RECOVERY`; behavior test `managed_ws_original_ack_correlates_after_recovery_wins`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib managed_ws_original_ack_correlates_after_recovery_wins -- --ignored --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
+
+## `crates/buzz-core/src/lib.rs`
+
+Export the shared signed managed-report recovery protocol.
+
+New module: `false`.
+
+- Required symbol: `pub mod managed_delivery;`
+- Verify: `cargo test -p buzz-core managed_delivery -- --test-threads=1`
+
+## `crates/buzz-core/src/managed_delivery.rs`
+
+Validate author-signed original report and compact candidate stamp, immutable body/tags/route, canonical UUID and current wrapper/candidate timestamps.
+
+New module: `true`.
+
+- Required symbol: `pub struct RecoveryRequest`
+- Required symbol: `pub struct ReportStamp`
+- Required symbol: `pub fn delivery_key(`
+- Required symbol: `pub fn same_report(`
+- Required symbol: `pub fn decode(`
+- Invocation: `crates/buzz-relay/src/handlers/ingest.rs` → `decode`; exact call `buzz_core::managed_delivery::RecoveryRequest::decode(
+                &event,
+                nostr::Timestamp::now().as_secs(),
+            )`; behavior test `managed_old_absent_report_recovers_with_production_writer`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib managed_old_absent_report_recovers_with_production_writer -- --ignored --test-threads=1`
+- Verify: `cargo test -p buzz-core managed_delivery -- --test-threads=1`
+
+## `crates/buzz-db/src/error.rs`
+
+Return an explicit canonical delivery conflict for UUID reuse with another report or route.
+
+New module: `false`.
+
+- Required symbol: `ManagedDeliveryConflict`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
+
+## `crates/buzz-db/src/store/event.rs`
+
+Route ordinary marked kind-9 inserts through the same atomic canonical election as recovery while retaining transactional thread metadata and the production commit-time floor.
+
+New module: `false`.
+
+- Required symbol: `crate::store::managed_delivery::insert(`
+- Invocation: `crates/buzz-db/src/store/event.rs` → `insert`; exact call `crate::store::managed_delivery::insert(
+                pool,
+                community_id,
+                event,
+                channel,
+                thread_meta,
+                None,
+            )`; behavior test `managed_recovery_and_original_race_share_one_election`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib managed_recovery_and_original_race_share_one_election -- --ignored --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
+
+## `crates/buzz-db/src/store/managed_delivery.rs`
+
+Elect once per community/author/UUID under a transaction advisory lock; adopt accepted or soft-deleted originals, otherwise commit candidate, thread counters, callback mentions and durable binding together.
+
+New module: `true`.
+
+- Required symbol: `pub async fn insert(`
+- Required symbol: `pub async fn recover_managed_delivery(`
+- Required symbol: `pg_advisory_xact_lock`
+- Required symbol: `INSERT INTO managed_deliveries`
+- Invocation: `crates/buzz-relay/src/handlers/ingest.rs` → `recover_managed_delivery`; exact call `.recover_managed_delivery(
+                    tenant.community(),
+                    &event,
+                    channel,
+                    thread_params,
+                    &request.original,
+                )`; behavior test `managed_old_accepted_report_recovers_with_production_writer`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib managed_old_accepted_report_recovers_with_production_writer -- --ignored --test-threads=1`
+- Invocation: `crates/buzz-db/src/store/managed_delivery.rs` → `insert_mentions_in_transaction`; exact call `crate::runtime::insert_mentions_in_transaction(
+            &mut tx,
+            community,
+            &result.0.event,
+            Some(channel),
+        )`; behavior test `managed_recovery_mention_history_survives_lost_ack`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib managed_recovery_mention_history_survives_lost_ack -- --ignored --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
+
+## `crates/buzz-db/src/store/mod.rs`
+
+Register the canonical managed-delivery storage module.
+
+New module: `false`.
+
+- Required symbol: `pub mod managed_delivery;`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
+
+## `crates/buzz-db/tests/observability_source.rs`
+
+Repair stale aggregate-cardinality and bounded-helper assumptions while retaining typed Authorization/EventWrite checkout and direct-pool bypass guards.
+
+New module: `false`.
+
+- Required symbol: `p0_pool_acquisitions_use_typed_operation_pairs_without_other`
+- Verify: `cargo test -p buzz-db --test observability_source`
+
+## `crates/buzz-relay/src/handlers/ingest/postgres_tests/managed_delivery_tests.rs`
+
+Use the armed production writer and authenticated CLI/router to test absent/accepted/deleted recovery, races, WS acknowledgment correlation, escaped-size limits and callback Home Mentions after lost acknowledgments.
+
+New module: `true`.
+
+- Required symbol: `managed_recovery_and_original_race_share_one_election`
+- Required symbol: `managed_ws_original_ack_correlates_after_recovery_wins`
+- Required symbol: `managed_recovery_mention_history_survives_lost_ack`
+- Required symbol: `buzz.created_at_floor`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
+
+## `crates/buzz-relay/src/handlers/ingest/timestamp.rs`
+
+Keep the future ceiling and ordinary age checks; permit old self-marked reports to acknowledge retained acceptance while absent old inserts remain subject to the 960-second writer floor.
+
+New module: `true`.
+
+- Required symbol: `pub(super) fn validate(`
+- Required symbol: `fn managed_report(`
+- Required symbol: `managed_timestamp_exception_preserves_future_and_marker_authority_boundaries`
+- Invocation: `crates/buzz-relay/src/handlers/ingest.rs` → `validate`; exact call `timestamp::validate(&event, &auth, nostr::Timestamp::now().as_secs())?;`; behavior test `managed_old_report_still_enforces_signature_route_membership_and_archive`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib managed_old_report_still_enforces_signature_route_membership_and_archive -- --ignored --test-threads=1`
+- Verify: `cargo test -p buzz-relay --lib timestamp::tests -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
+
+## `docs/superpowers/plans/2026-10-14-background-result-atomic-recovery.md`
+
+Record the owner-approved atomic canonical recovery plan and preserved replica-floor safety contract.
+
+New module: `true`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `docs/superpowers/plans/2026-10-14-background-result-delivery.md`
+
+Record original-session collection and durable managed publication implementation/verification plan.
+
+New module: `true`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `docs/superpowers/reports/2026-10-14-background-result-delivery.md`
+
+Preserve implementation scope, actual validation receipts, mutation evidence and remaining runtime/acceptance limits.
+
+New module: `true`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `migrations/0056_managed_report_delivery.sql`
+
+Create bounded canonical delivery bindings independent of event redaction with community write fencing and per-author completion-key uniqueness.
+
+New module: `true`.
+
+- Required symbol: `CREATE TABLE managed_deliveries`
+- Required symbol: `PRIMARY KEY (community_id, author, delivery_key)`
+- Required symbol: `SELECT attach_community_write_fence('managed_deliveries');`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
+
+## `desktop/src/shared/api/relayReconnectReplay.test.mjs`
+
+Keep channel replay lookback coupled to the shared relay timestamp helper and production ingest wiring plus the unchanged DB floor/clock margin.
+
+New module: `false`.
+
+- Required symbol: `channel replay lookback stays coupled to relay and DB source constants`
+- Verify: `pnpm -C desktop test`
+
+## `scripts/check-postgres-test-discovery.py`
+
+Resolve conventional out-of-line Rust tests inside inline postgres_tests modules, retaining ancestor discovery context.
+
+New module: `false`.
+
+- Required symbol: `inline_ranges = module_ranges(source)`
+- Verify: `bash scripts/test-postgres-test-discovery.sh`
+
+## `scripts/test-postgres-test-discovery.sh`
+
+Exercise nested file and directory Rust modules in the PostgreSQL discovery contract.
+
+New module: `false`.
+
+- Required symbol: `nested_out_of_line_recovery_test`
+- Verify: `bash scripts/test-postgres-test-discovery.sh`
+
+## `deny.toml`
+
+Track the owner-approved RUSTSEC-2024-0449 exception for fork-v0.5.26-4 only, with YAML replacement issue19 and mandatory reassessment before another release. Other advisory policies remain unchanged.
+
+New module: `false`.
+
+- Required symbol: `RUSTSEC-2024-0449`
+- Required symbol: `https://github.com/reynholm/buzz/issues/19`
+- Verify: `cargo-deny check`
+
+## `crates/buzz-relay/src/mesh_boot.rs`
+
+Preserve one in-flight demo echo receive across drain ticks; retain bounded explicit shutdown and the existing validated frame/Goodbye handling.
+
+New module: `false`.
+
+- Required symbol: `tokio::pin!(receive);`
+- Required symbol: `demo_echo_keeps_inflight_read_across_ticks_and_still_drains`
+- Verify: `cargo test -p buzz-relay -- --test-threads=1`
+
+## `crates/buzz-acp/src/process_tree/codex_helpers.rs`
+
+Confirm late Codex code-mode host identity with one bounded ps call: macOS comm and Linux exe; missing identity and work arguments cannot free slots.
+
+New module: `true`.
+
+- Required symbol: `pub(super) fn classify(`
+- Required symbol: `fn confirmed_hosts(`
+- Invocation: `crates/buzz-acp/src/process_tree.rs` → `classify`; exact call `let tree = codex_helpers::classify(tree);`; behavior test `six_finished_threads_reuse_five_slots_with_late_codex_hosts`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1`
+- Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/resident_helper_tests.rs`
+
+Real local ACP/process regressions for sixth-thread admission, nested child exit and original-session collection on macOS/Linux; Linux executable unlink and symlink boundaries.
+
+New module: `true`.
+
+- Required symbol: `six_finished_threads_reuse_five_slots_with_late_codex_hosts`
+- Required symbol: `work_under_late_codex_host_holds_slot_until_child_exits`
+- Required symbol: `work_mentioning_codex_host_in_arguments_still_holds_slot`
+- Required symbol: `child_of_codex_host_queues_original_collection_before_releasing_slot`
+- Required symbol: `symlink_named_codex_host_does_not_hide_ordinary_work`
+- Required symbol: `unlinked_codex_host_does_not_retain_finished_turn`
+- Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1`
+
+## `desktop/src/features/messages/lib/useComposerAutofocus.ts`
+
+Preserve focus inside an open dialog/popover when late composer readiness or draft changes trigger autofocus; fixes the reproduced huddle smoke CI blocker.
+
+New module: `false`.
+
+- Required symbol: `useComposerAutofocus`
+- Required symbol: `active.closest('[role="dialog"]')`
+- Invocation: `desktop/src/features/messages/ui/MessageComposer.tsx` → `useComposerAutofocus`; exact call `  useComposerAutofocus(richText.focus, effectiveDraftKey, composerDisabled);`; behavior test `late composer readiness preserves focus on a dialog switch; existing huddle assigns distinct agent voices E2E`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/useComposerAutofocus.test.mjs`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/useComposerAutofocus.test.mjs`
+- Verify: `just desktop-test desktop-typecheck`
+
+## `desktop/src/features/messages/lib/useComposerAutofocus.test.mjs`
+
+Production-hook regression for late readiness and draft-switch focus retention in dialogs, preserving ordinary navigation autofocus.
+
+New module: `true`.
+
+- Required symbol: `late composer readiness preserves focus on a dialog switch`
+- Required symbol: `a draft change preserves focus on an open dialog button`
+- Required symbol: `initial mount and navigation from an ordinary button still focus the editor`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/useComposerAutofocus.test.mjs`
+
+## `desktop/tests/e2e/voice-note.spec.ts`
+
+Bind duplicate voice-note playback assertions to stable emitted message IDs through live reordering; loop the short media fixture so natural completion cannot impersonate mutual pause.
+
+New module: `false`.
+
+- Required symbol: `const messageIds = await page.evaluate(`
+- Required symbol: `const firstCard = page.locator(`
+- Required symbol: `(player as HTMLAudioElement).loop = true;`
+- Verify: `cd desktop && pnpm exec playwright test --project=smoke tests/e2e/voice-note.spec.ts --retries=0`

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Existing Tauri/Rust, serde, SQLite retention, OS keychain, React/TypeScript, Node test runner and jsdom; Hermit toolchain.
 
-**Spec:** [Approved design](../specs/2026-10-03-device-bound-agents-design.md). Approved by Andrey B. in Buzz event `6bfd6a11243107b0c5a47086cb56e2d06190cb7513536ba1b2375946819973b2`.
+**Spec:** Approved design (`docs/local/specs/2026-10-03-device-bound-agents-design.md`, kept outside the repository). Approved by Andrey B. in Buzz event `6bfd6a11243107b0c5a47086cb56e2d06190cb7513536ba1b2375946819973b2`.
 
 ## Global Constraints
 
