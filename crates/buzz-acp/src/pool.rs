@@ -3051,7 +3051,7 @@ pub async fn run_prompt_task(
                                 target: "pool::session",
                                 "cancel_with_cleanup failed during initial_message timeout: {e}"
                             );
-                            agent.state.invalidate(&source);
+                            agent.state.invalidate_after_error(&source, &e);
                         }
                     }
                     send_prompt_result(
@@ -3087,7 +3087,7 @@ pub async fn run_prompt_task(
                         target: "pool::session",
                         "initial_message failed for channel {cid}: {e} — invalidating session"
                     );
-                    agent.state.invalidate(&source);
+                    agent.state.invalidate_after_error(&source, &e);
                     send_prompt_result(
                         &result_tx,
                         &turn_id,
@@ -3694,7 +3694,7 @@ pub async fn run_prompt_task(
                         target: "pool::prompt",
                         "cancel_with_cleanup error: {e} — invalidating session"
                     );
-                    agent.state.invalidate(&source);
+                    agent.state.invalidate_after_error(&source, &e);
                     let usage = agent.acp.take_turn_usage();
                     publish_agent_turn_metric(
                         &ctx,
@@ -3749,7 +3749,7 @@ pub async fn run_prompt_task(
             // session state (e.g. bad LLM response). The session is healthy —
             // don't invalidate it. Other errors may have corrupted state.
             if !matches!(e, AcpError::AgentError { .. }) {
-                agent.state.invalidate(&source);
+                agent.state.invalidate_after_error(&source, &e);
             }
             let usage = agent.acp.take_turn_usage();
             publish_agent_turn_metric(

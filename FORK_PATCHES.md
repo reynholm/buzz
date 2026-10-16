@@ -2713,6 +2713,8 @@ Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
 New module: `false`.
 
+- Required symbol: `pub async fn session_resume(`
+- Required symbol: `self.resume_supported = result`
 - Verify: `just ci`
 
 ## `crates/buzz-acp/src/acp/launch.rs`
@@ -2753,6 +2755,8 @@ Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
 New module: `false`.
 
+- Required symbol: `BUZZ_ACP_SESSION_STORE_DIR`
+- Required symbol: `BUZZ_ACP_NO_SESSION_RESUME`
 - Verify: `just ci`
 
 ## `crates/buzz-acp/src/edit_routing.rs`
@@ -2780,6 +2784,11 @@ New module: `false`.
 - Required symbol: `pool.queue_finished_background_work(&mut queue);`
 - Required symbol: `fn result_refreshes_idle_clock(source: &PromptSource) -> bool`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `result_refreshes_idle_clock`; exact call `if result_refreshes_idle_clock(&result.source) {`; behavior test `error_outcome_emission_tests::channel_result_refreshes_idle_clock_wiring`; verify `cargo test -p buzz-acp --lib error_outcome_emission_tests::channel_result_refreshes_idle_clock_wiring -- --exact`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `depart_idle_sessions`; exact call `pool.depart_idle_sessions(session_store::Departure::IdleSleep);`; behavior test `pool_sleep_marks_every_idle_session`; verify `cargo test -p buzz-acp -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `discard_durable_scope`; exact call `pool.discard_durable_scope(&scope);`; behavior test `rotate_before_first_resume_discards_disk_session`; verify `cargo test -p buzz-acp -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `discard_durable_channel`; exact call `pool.discard_durable_channel(ch);`; behavior test `channel_removal_then_readd_starts_new_session`; verify `cargo test -p buzz-acp -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `open_session_store`; exact call `let session_store = pool::open_session_store(`; behavior test `resume_advertised_uses_session_resume_not_new`; verify `cargo test -p buzz-acp -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `set_session_store`; exact call `pool.set_session_store(session_store.clone());`; behavior test `rotate_before_first_resume_discards_disk_session`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Verify: `just ci`
 
 ## `crates/buzz-acp/src/pool.rs`
@@ -2788,6 +2797,13 @@ Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
 New module: `false`.
 
+- Invocation: `crates/buzz-acp/src/pool.rs` → `discard_durable`; exact call `self.discard_durable(scope);`; behavior test `invalidate_scope_writes_tombstone`; verify `cargo test -p buzz-acp -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `depart_durable_all`; exact call `self.depart_durable_all(crate::session_store::Departure::WorkerCrash);`; behavior test `invalidate_all_marks_worker_crash_without_tombstone`; verify `cargo test -p buzz-acp -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `persist_delivery`; exact call `self.persist_delivery(`; behavior test `delivery_success_persists_ids`; verify `cargo test -p buzz-acp -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `acquire_session`; exact call `match session_continuity::acquire_session(`; behavior test `resume_advertised_uses_session_resume_not_new`; verify `cargo test -p buzz-acp -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `persist_turns`; exact call `agent.state.persist_turns(scope);`; behavior test `max_turns_survives_resume`; verify `cargo test -p buzz-acp -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `insert_session_marker`; exact call `session_continuity::insert_session_marker(`; behavior test `marker_present_once_after_start`; verify `cargo test -p buzz-acp -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `invalidate_after_error`; exact call `agent.state.invalidate_after_error(&source, &e);`; behavior test `idle_worker_transport_death_keeps_session_resumable`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Verify: `just ci`
 
 ## `crates/buzz-acp/src/queue.rs`
@@ -5461,6 +5477,8 @@ New module: `true`.
 - Required symbol: `pub fn snapshot()`
 - Required symbol: `pub fn blocking_pids(`
 - Required symbol: `pub fn is_resident_helper(`
+- Required symbol: `npm_exec_mcp_chain_is_resident`
+- Required symbol: `launcher_into_scoped_mcp_package_is_resident`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `snapshot`; exact call `let tree = crate::process_tree::snapshot()?;`; behavior test `prompt_work_is_tracked_under_worker_and_resident_provider`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp prompt_work_is_tracked_under_worker_and_resident_provider -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `blocking_pids`; exact call `blocking.extend(tree.blocking_pids(parent, &self.resident_pids));`; behavior test `work_under_late_codex_host_holds_slot_until_child_exits`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `is_resident_helper`; exact call `self.resident_pids.contains(&child.pid) || tree.is_resident_helper(child)`; behavior test `work_under_late_codex_host_holds_slot_until_child_exits`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1`
@@ -5856,3 +5874,94 @@ New module: `false`.
 - Required symbol: `const firstCard = page.locator(`
 - Required symbol: `(player as HTMLAudioElement).loop = true;`
 - Verify: `cd desktop && pnpm exec playwright test --project=smoke tests/e2e/voice-note.spec.ts --retries=0`
+
+## `crates/buzz-acp/src/session_store.rs`
+
+Lease-fenced, bounded per-scope session records with safe quarantine and instance liveness.
+
+New module: `true`.
+
+- Required symbol: `pub struct SessionStore`
+- Required symbol: `pub fn claim(`
+- Required symbol: `pub fn commit(`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/session_store_tests.rs`
+
+Durable record ownership, concurrency, corruption and write-failure regressions.
+
+New module: `true`.
+
+- Required symbol: `busy_does_not_quarantine_owner_record`
+- Required symbol: `quarantine_requires_matching_lease`
+- Required symbol: `instance_publication_cannot_be_reaped_before_locking`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/session_continuity.rs`
+
+Resume or create provider sessions through bounded claim/RPC/commit rounds and preserve delivery state.
+
+New module: `true`.
+
+- Required symbol: `pub(super) async fn acquire_session(`
+- Required symbol: `pub(crate) fn resume_decision(`
+- Required symbol: `pub(crate) fn insert_session_marker(`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/session_continuity_tests.rs`
+
+Production acquisition, delivery delta, rotation, crash and idle-sleep persistence regressions.
+
+New module: `true`.
+
+- Required symbol: `resume_result_after_rotate_is_dropped`
+- Required symbol: `max_turns_survives_resume`
+- Required symbol: `rotate_before_first_resume_discards_disk_session`
+- Required symbol: `one_reply_window_keeps_first_mention_over_agent_reply`
+- Required symbol: `idle_worker_transport_death_keeps_session_resumable`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/first_mention.rs`
+
+Bounded forward thread scan with a composite cursor and first-mention context pinning.
+
+New module: `true`.
+
+- Required symbol: `pub(crate) async fn find_first_mention`
+- Required symbol: `pub(crate) fn pin_first_mention`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/first_mention_tests.rs`
+
+First-mention discovery across pages, timestamp ties and scan-budget exhaustion.
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/acp/session_resume_tests.rs`
+
+ACP resume capability, request parameter and failure-code checks.
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/real_resume_tests.rs`
+
+Opt-in real-provider memory continuity after adapter process replacement.
+
+New module: `true`.
+
+- Required symbol: `real_claude_resume_remembers_previous_turn`
+- Required symbol: `real_codex_resume_remembers_previous_turn`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/Cargo.toml`
+
+Declare the filesystem-lock dependency used by durable session ownership.
+
+New module: `false`.
+
+- Required symbol: `fs2 = "0.4"`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
