@@ -1718,7 +1718,12 @@ async fn create_or_resume_session_and_apply_model(
         None => {
             agent
                 .acp
-                .session_new_full(&ctx.cwd, mcp_servers, system_prompt, session_title.as_deref())
+                .session_new_full(
+                    &ctx.cwd,
+                    mcp_servers,
+                    system_prompt,
+                    session_title.as_deref(),
+                )
                 .await?
         }
     };

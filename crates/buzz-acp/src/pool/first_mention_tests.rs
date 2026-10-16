@@ -10,7 +10,13 @@ struct Thread {
     replies: Vec<serde_json::Value>,
 }
 
-fn event(keys: &Keys, created_at: u64, root: Option<&str>, mention: Option<&Keys>, text: &str) -> serde_json::Value {
+fn event(
+    keys: &Keys,
+    created_at: u64,
+    root: Option<&str>,
+    mention: Option<&Keys>,
+    text: &str,
+) -> serde_json::Value {
     let mut tags = vec![Tag::parse(["h", CHANNEL.to_string().as_str()]).unwrap()];
     if let Some(root) = root {
         tags.push(Tag::parse(["e", root, "", "reply"]).unwrap());
@@ -50,7 +56,8 @@ fn thread_with_root(
         })
         .collect();
     replies.sort_by(|a, b| {
-        (a["created_at"].as_u64(), a["id"].as_str()).cmp(&(b["created_at"].as_u64(), b["id"].as_str()))
+        (a["created_at"].as_u64(), a["id"].as_str())
+            .cmp(&(b["created_at"].as_u64(), b["id"].as_str()))
     });
     Thread { root, replies }
 }
@@ -76,17 +83,22 @@ impl Thread {
 
     fn page(&self, filter: &serde_json::Value) -> serde_json::Value {
         let limit = filter["limit"].as_u64().unwrap() as usize;
-        let cursor = filter["thread_cursor"]
-            .as_u64()
-            .map(|at| (at, filter["thread_cursor_id"].as_str().unwrap_or("").to_owned()));
+        let cursor = filter["thread_cursor"].as_u64().map(|at| {
+            (
+                at,
+                filter["thread_cursor_id"].as_str().unwrap_or("").to_owned(),
+            )
+        });
         let page: Vec<_> = self
             .replies
             .iter()
             .filter(|reply| match &cursor {
                 None => true,
                 Some((at, id)) => {
-                    (reply["created_at"].as_u64().unwrap(), reply["id"].as_str().unwrap().to_owned())
-                        > (*at, id.clone())
+                    (
+                        reply["created_at"].as_u64().unwrap(),
+                        reply["id"].as_str().unwrap().to_owned(),
+                    ) > (*at, id.clone())
                 }
             })
             .take(limit)
@@ -141,7 +153,10 @@ async fn first_mention_found_on_second_page() {
     assert_eq!(filters[0]["#h"][0], CHANNEL.to_string());
     assert!(filters[0]["depth_limit"].is_u64());
     assert_eq!(filters[0]["limit"], FIRST_MENTION_PAGE);
-    assert_eq!(filters[1]["thread_cursor"], thread.replies[499]["created_at"]);
+    assert_eq!(
+        filters[1]["thread_cursor"],
+        thread.replies[499]["created_at"]
+    );
     assert_eq!(filters[1]["thread_cursor_id"], thread.replies[499]["id"]);
 }
 
@@ -153,7 +168,10 @@ async fn same_second_page_boundary_advances() {
     let (found, filters) = search(&thread, &agent).await;
     assert!(matches!(found, FirstMention::NotMentioned));
     assert_eq!(filters.len(), 2);
-    assert_eq!(filters[1]["thread_cursor"], thread.replies[499]["created_at"]);
+    assert_eq!(
+        filters[1]["thread_cursor"],
+        thread.replies[499]["created_at"]
+    );
     assert_eq!(filters[1]["thread_cursor_id"], thread.replies[499]["id"]);
 }
 
@@ -228,9 +246,16 @@ fn thread_context_pins_first_mention_outside_window() {
     let ids = ids(&context);
     assert_eq!(ids.len(), 13, "root + 12 replies");
     assert_eq!(ids[0], thread.root_id());
-    assert_eq!(ids[1], thread.mentioned_id(2), "pinned right after the root");
+    assert_eq!(
+        ids[1],
+        thread.mentioned_id(2),
+        "pinned right after the root"
+    );
     assert!(!ids.contains(&thread.replies[18]["id"].as_str().unwrap().to_owned()));
-    let ConversationContext::Thread { truncated, total, .. } = context else {
+    let ConversationContext::Thread {
+        truncated, total, ..
+    } = context
+    else {
         unreachable!()
     };
     assert!(truncated);
@@ -243,7 +268,12 @@ fn first_mention_inside_window_is_not_duplicated() {
     let thread = thread(&agent, 30, Some(25), false);
     let mut context = window(&thread, 12);
     let before = ids(&context);
-    pin_first_mention(&mut context, &thread.replies[25].clone(), 12, &agent.public_key().to_hex());
+    pin_first_mention(
+        &mut context,
+        &thread.replies[25].clone(),
+        12,
+        &agent.public_key().to_hex(),
+    );
     assert_eq!(ids(&context), before);
 }
 
@@ -253,6 +283,11 @@ fn first_mention_equal_to_root_is_not_pinned() {
     let thread = thread(&agent, 30, None, false);
     let mut context = window(&thread, 12);
     let before = ids(&context);
-    pin_first_mention(&mut context, &thread.root.clone(), 12, &agent.public_key().to_hex());
+    pin_first_mention(
+        &mut context,
+        &thread.root.clone(),
+        12,
+        &agent.public_key().to_hex(),
+    );
     assert_eq!(ids(&context), before);
 }

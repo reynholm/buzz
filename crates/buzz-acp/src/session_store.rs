@@ -151,7 +151,7 @@ pub struct SessionRecord {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LoadOutcome {
     Missing,
-    Found(SessionRecord),
+    Found(Box<SessionRecord>),
     /// The record could not be read; it was moved aside to `.corrupt`.
     Unreadable,
 }
@@ -171,12 +171,12 @@ impl Expect {
         match outcome {
             // An unreadable record was moved aside, so the path is empty now.
             LoadOutcome::Missing | LoadOutcome::Unreadable => Self::Missing,
-            LoadOutcome::Found(SessionRecord { live: None, .. }) => Self::Tombstone,
-            LoadOutcome::Found(SessionRecord {
-                live: Some(live), ..
-            }) => Self::Live {
-                session_id: live.session_id.clone(),
-                lease: live.lease,
+            LoadOutcome::Found(record) => match &record.live {
+                None => Self::Tombstone,
+                Some(live) => Self::Live {
+                    session_id: live.session_id.clone(),
+                    lease: live.lease,
+                },
             },
         }
     }
@@ -296,7 +296,9 @@ impl SessionStore {
     }
 
     fn instance_lock_path(&self, instance: Uuid) -> PathBuf {
-        self.dir.join(INSTANCES_DIR).join(format!("{instance}.lock"))
+        self.dir
+            .join(INSTANCES_DIR)
+            .join(format!("{instance}.lock"))
     }
 
     /// Whether the harness process `instance` is still running.
@@ -326,7 +328,7 @@ impl SessionStore {
         let path = self.record_path(scope);
         match read_record(&path) {
             Ok(None) => LoadOutcome::Missing,
-            Ok(Some(record)) => LoadOutcome::Found(record),
+            Ok(Some(record)) => LoadOutcome::Found(Box::new(record)),
             Err(()) => {
                 if let Ok(_guard) = self.lock_record(&path) {
                     // Re-check under the lock: a writer may have replaced it.
