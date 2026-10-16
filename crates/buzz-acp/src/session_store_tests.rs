@@ -28,7 +28,7 @@ fn live(store: &SessionStore, session_id: &str) -> LiveSession {
 
 fn found(outcome: LoadOutcome) -> SessionRecord {
     match outcome {
-        LoadOutcome::Found(record) => record,
+        LoadOutcome::Found(record) => *record,
         other => panic!("expected a record, got {other:?}"),
     }
 }
@@ -85,7 +85,10 @@ fn claim_conflicts_when_record_changed() {
         store.claim(&scope, &expect, live(&store, "s-mine")),
         Err(StoreError::Conflict)
     ));
-    assert_eq!(found(store.load(&scope)).live.unwrap().session_id, "s-other");
+    assert_eq!(
+        found(store.load(&scope)).live.unwrap().session_id,
+        "s-other"
+    );
     assert!(!store.is_poisoned(&scope));
 }
 
@@ -164,10 +167,7 @@ fn busy_does_not_quarantine_owner_record() {
     let path = owner.record_path(&scope);
     let holder = owner.lock_record(&path).unwrap();
     other.fail_writes(true);
-    assert!(matches!(
-        other.discard_scope(&scope),
-        Err(StoreError::Busy)
-    ));
+    assert!(matches!(other.discard_scope(&scope), Err(StoreError::Busy)));
     drop(holder);
     assert!(path.exists());
     assert!(!with_suffix(&path, "stale").exists());
@@ -247,7 +247,7 @@ fn discard_leaves_tombstone_with_reason() {
     assert_eq!(record.live, None);
     assert_eq!(record.reason, Some(SessionReason::Discarded));
     assert_eq!(
-        Expect::from_outcome(&LoadOutcome::Found(record)),
+        Expect::from_outcome(&LoadOutcome::Found(Box::new(record))),
         Expect::Tombstone
     );
 }
@@ -326,7 +326,10 @@ fn open_does_not_touch_disk_until_first_write() {
     store
         .claim(&thread("o"), &Expect::Missing, live(&store, "s"))
         .unwrap();
-    assert!(root.join(INSTANCES_DIR).join(format!("{}.lock", store.instance())).exists());
+    assert!(root
+        .join(INSTANCES_DIR)
+        .join(format!("{}.lock", store.instance()))
+        .exists());
 }
 
 #[test]
@@ -341,7 +344,10 @@ fn dead_instance_locks_are_swept_and_own_lock_removed_on_drop() {
         .join(INSTANCES_DIR)
         .join(format!("{}.lock", first.instance()));
     // A crashed process leaves its lock file behind but no longer holds it.
-    let crashed = dir.path().join(INSTANCES_DIR).join(format!("{}.lock", Uuid::new_v4()));
+    let crashed = dir
+        .path()
+        .join(INSTANCES_DIR)
+        .join(format!("{}.lock", Uuid::new_v4()));
     fs::write(&crashed, b"").unwrap();
     let second = SessionStore::open(dir.path().to_path_buf()).unwrap();
     second

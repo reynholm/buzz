@@ -1,9 +1,9 @@
 use super::super::{run_prompt_task, ChannelInfoResolver, FlushBatch, PromptOutcome, RestClient};
 use super::*;
 use crate::acp::{AcpClient, StopReason};
+use crate::session_store::SessionRecord;
 use nostr::{EventBuilder, Keys, Kind, Tag};
 use std::collections::HashMap;
-use crate::session_store::SessionRecord;
 use std::time::Duration;
 
 /// Fake ACP adapter. Logs every method to `$LOG`; `RESUME_CAP=1` advertises
@@ -96,7 +96,11 @@ impl Fixture {
     fn departed_record(&self, scope: &SessionScope, ctx: &PromptContext, delivered: &[&str]) {
         let lease = self
             .store
-            .claim(scope, &Expect::Missing, live_session(&self.store, ctx, "old-1"))
+            .claim(
+                scope,
+                &Expect::Missing,
+                live_session(&self.store, ctx, "old-1"),
+            )
             .unwrap();
         self.store
             .commit(scope, lease, |live| {
@@ -109,7 +113,7 @@ impl Fixture {
 
     fn record(&self, scope: &SessionScope) -> SessionRecord {
         match self.store.load(scope) {
-            LoadOutcome::Found(record) => record,
+            LoadOutcome::Found(record) => *record,
             other => panic!("expected record, got {other:?}"),
         }
     }
@@ -185,11 +189,11 @@ fn stored(live: impl FnOnce(&mut LiveSession)) -> LoadOutcome {
         hydrated_thread_roots: Vec::new(),
     };
     live(&mut session);
-    LoadOutcome::Found(SessionRecord {
+    LoadOutcome::Found(Box::new(SessionRecord {
         version: 1,
         live: Some(session),
         reason: None,
-    })
+    }))
 }
 
 fn decide(record: LoadOutcome, me: ResumeContext, alive: bool) -> ResumeDecision {
@@ -240,11 +244,11 @@ fn decision_unreadable_is_resume_failed() {
 
 #[test]
 fn decision_tombstone_is_discarded() {
-    let tombstone = LoadOutcome::Found(SessionRecord {
+    let tombstone = LoadOutcome::Found(Box::new(SessionRecord {
         version: 1,
         live: None,
         reason: Some(SessionReason::Discarded),
-    });
+    }));
     assert_eq!(
         new_reason(decide(tombstone, me(ME), false)),
         SessionReason::Discarded
@@ -262,7 +266,11 @@ fn decision_unfinished_claim_is_first_in_thread() {
 #[test]
 fn decision_model_change_is_config_changed() {
     assert_eq!(
-        new_reason(decide(stored(|l| l.model = Some("other".into())), me(ME), false)),
+        new_reason(decide(
+            stored(|l| l.model = Some("other".into())),
+            me(ME),
+            false
+        )),
         SessionReason::ConfigChanged
     );
 }
@@ -272,7 +280,11 @@ fn decision_without_capability_is_unsupported() {
     let mut ctx = me(ME);
     ctx.resume_supported = false;
     assert_eq!(
-        new_reason(decide(stored(|l| l.departed = Some(Departure::IdleSleep)), ctx, false)),
+        new_reason(decide(
+            stored(|l| l.departed = Some(Departure::IdleSleep)),
+            ctx,
+            false
+        )),
         SessionReason::ResumeUnsupported
     );
 }
@@ -280,7 +292,11 @@ fn decision_without_capability_is_unsupported() {
 #[test]
 fn decision_other_live_instance_is_live_elsewhere() {
     assert_eq!(
-        new_reason(decide(stored(|l| l.instance = Uuid::from_u128(2)), me(ME), true)),
+        new_reason(decide(
+            stored(|l| l.instance = Uuid::from_u128(2)),
+            me(ME),
+            true
+        )),
         SessionReason::LiveElsewhere
     );
 }
@@ -288,7 +304,11 @@ fn decision_other_live_instance_is_live_elsewhere() {
 #[test]
 fn decision_dead_instance_resumes_as_harness_restart() {
     assert_eq!(
-        resume_reason(decide(stored(|l| l.instance = Uuid::from_u128(2)), me(ME), false)),
+        resume_reason(decide(
+            stored(|l| l.instance = Uuid::from_u128(2)),
+            me(ME),
+            false
+        )),
         SessionReason::HarnessRestart
     );
 }
@@ -330,7 +350,11 @@ fn owned_state(fixture: &Fixture, scope: &SessionScope, sid: &str) -> (SessionSt
     let ctx = ctx();
     let lease = fixture
         .store
-        .claim(scope, &Expect::Missing, live_session(&fixture.store, &ctx, sid))
+        .claim(
+            scope,
+            &Expect::Missing,
+            live_session(&fixture.store, &ctx, sid),
+        )
         .unwrap();
     let mut state = SessionState::with_store(Some(fixture.store.clone()));
     state.sessions.insert(scope.clone(), sid.into());
@@ -668,7 +692,16 @@ fn batch(scope: &SessionScope, event: nostr::Event) -> FlushBatch {
 
 async fn run_turn(agent: OwnedAgent, ctx: &Arc<PromptContext>, batch: FlushBatch) -> OwnedAgent {
     let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel();
-    run_prompt_task(agent, Some(batch), None, ctx.clone(), result_tx, None, "turn".into()).await;
+    run_prompt_task(
+        agent,
+        Some(batch),
+        None,
+        ctx.clone(),
+        result_tx,
+        None,
+        "turn".into(),
+    )
+    .await;
     let result = result_rx.recv().await.expect("prompt result");
     assert!(
         matches!(result.outcome, PromptOutcome::Ok(StopReason::EndTurn)),
@@ -713,14 +746,23 @@ async fn max_turns_survives_resume() {
 
 #[tokio::test]
 async fn resumed_session_gets_only_delta() {
-
     let fixture = Fixture::new();
     let human = Keys::generate();
     let channel_id = Uuid::from_u128(42);
     let root = mention(&human, channel_id, None, "original question");
     let root_id = root.id.to_hex();
-    let old_reply = mention(&human, channel_id, Some(&root_id), "OLD-CONTEXT-ALREADY-SEEN");
-    let new_reply = mention(&human, channel_id, Some(&root_id), "NEW-CONTEXT-AFTER-SLEEP");
+    let old_reply = mention(
+        &human,
+        channel_id,
+        Some(&root_id),
+        "OLD-CONTEXT-ALREADY-SEEN",
+    );
+    let new_reply = mention(
+        &human,
+        channel_id,
+        Some(&root_id),
+        "NEW-CONTEXT-AFTER-SLEEP",
+    );
     let trigger = mention(&human, channel_id, Some(&root_id), "follow-up mention");
     let scope = SessionScope::Thread {
         channel_id,
@@ -729,7 +771,12 @@ async fn resumed_session_gets_only_delta() {
 
     let (ctx, server) = relay_context(
         channel_id,
-        vec![root.clone(), old_reply.clone(), new_reply.clone(), trigger.clone()],
+        vec![
+            root.clone(),
+            old_reply.clone(),
+            new_reply.clone(),
+            trigger.clone(),
+        ],
     )
     .await;
     let ctx = Arc::new(ctx);
@@ -751,7 +798,12 @@ async fn resumed_session_gets_only_delta() {
 
 // ---- pool control paths (sleep, !rotate, channel removal) ----
 
-async fn idle_worker(fixture: &Fixture, index: usize, scope: &SessionScope, sid: &str) -> OwnedAgent {
+async fn idle_worker(
+    fixture: &Fixture,
+    index: usize,
+    scope: &SessionScope,
+    sid: &str,
+) -> OwnedAgent {
     let acp = AcpClient::spawn("cat", &[], &[], false).await.unwrap();
     let (mut state, _) = owned_state(fixture, scope, sid);
     state.store = Some(fixture.store.clone());
@@ -1004,11 +1056,17 @@ fn marker_reports_first_mention_not_found() {
         reason: SessionReason::FirstInThread,
     };
     assert_eq!(
-        format_session_marker(&start, Some(&super::super::first_mention::FirstMention::NotFound)),
+        format_session_marker(
+            &start,
+            Some(&super::super::first_mention::FirstMention::NotFound)
+        ),
         r#"<session state="new" reason="first_in_thread" first_mention="not_found"/>"#
     );
     assert_eq!(
-        format_session_marker(&start, Some(&super::super::first_mention::FirstMention::InRoot)),
+        format_session_marker(
+            &start,
+            Some(&super::super::first_mention::FirstMention::InRoot)
+        ),
         r#"<session state="new" reason="first_in_thread"/>"#
     );
 }

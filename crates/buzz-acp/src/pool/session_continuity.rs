@@ -25,8 +25,8 @@ use super::{
 use crate::acp::resume_failure_code;
 use crate::scope::SessionScope;
 use crate::session_store::{
-    append_delivered, Departure, Expect, LiveSession, LoadOutcome, SessionReason,
-    SessionStore, StoreError,
+    append_delivered, Departure, Expect, LiveSession, LoadOutcome, SessionReason, SessionStore,
+    StoreError,
 };
 
 /// Acquisition rounds before a turn gives up on owning the scope's record.
@@ -285,8 +285,8 @@ pub(super) async fn acquire_session(
     scope: &SessionScope,
 ) -> Result<(String, SessionStart), AcpError> {
     let Some(store) = agent.state.store.clone() else {
-        let sid = create_or_resume_session_and_apply_model(agent, ctx, agent_core, channel, None)
-            .await?;
+        let sid =
+            create_or_resume_session_and_apply_model(agent, ctx, agent_core, channel, None).await?;
         return Ok((
             sid,
             SessionStart::New {
@@ -311,8 +311,14 @@ pub(super) async fn acquire_session(
         } = &decision
         {
             if code == "not_persisted" {
-                return new_unpersisted(agent, ctx, agent_core, channel, decision_reason(&decision))
-                    .await;
+                return new_unpersisted(
+                    agent,
+                    ctx,
+                    agent_core,
+                    channel,
+                    decision_reason(&decision),
+                )
+                .await;
             }
         }
         let claim = match &decision {
@@ -392,10 +398,9 @@ pub(super) async fn acquire_session(
                 }
             }
             ResumeDecision::New { reason } => {
-                let sid = create_or_resume_session_and_apply_model(
-                    agent, ctx, agent_core, channel, None,
-                )
-                .await?;
+                let sid =
+                    create_or_resume_session_and_apply_model(agent, ctx, agent_core, channel, None)
+                        .await?;
                 (sid, SessionStart::New { reason }, None)
             }
         };
@@ -428,7 +433,14 @@ pub(super) async fn acquire_session(
             }
         }
     }
-    new_unpersisted(agent, ctx, agent_core, channel, SessionReason::LiveElsewhere).await
+    new_unpersisted(
+        agent,
+        ctx,
+        agent_core,
+        channel,
+        SessionReason::LiveElsewhere,
+    )
+    .await
 }
 
 /// The agent-facing marker for the first prompt of a new or resumed session:
@@ -484,7 +496,8 @@ async fn new_unpersisted(
     channel: NewSessionChannelContext<'_>,
     reason: SessionReason,
 ) -> Result<(String, SessionStart), AcpError> {
-    let sid = create_or_resume_session_and_apply_model(agent, ctx, agent_core, channel, None).await?;
+    let sid =
+        create_or_resume_session_and_apply_model(agent, ctx, agent_core, channel, None).await?;
     Ok((sid, SessionStart::New { reason }))
 }
 

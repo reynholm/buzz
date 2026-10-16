@@ -94,7 +94,10 @@ where
         {
             return FirstMention::Found(mention.clone());
         }
-        let Some(last) = replies.last().filter(|_| replies.len() >= FIRST_MENTION_PAGE) else {
+        let Some(last) = replies
+            .last()
+            .filter(|_| replies.len() >= FIRST_MENTION_PAGE)
+        else {
             return FirstMention::NotMentioned;
         };
         let (Some(created_at), Some(id)) = (last["created_at"].as_u64(), last["id"].as_str())
