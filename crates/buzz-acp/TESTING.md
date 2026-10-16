@@ -94,18 +94,26 @@ collection guarantee; successful ACP completion alone does not confirm publicati
 Process tracking follows children under the worker and resident providers;
 detached/reparented processes are outside that topology.
 
-### macOS Codex service processes and completed slots
+### macOS/Linux Codex service processes and completed slots
 
 The Codex code-mode host may start after `session/new` and stay alive after a
-turn. On macOS, a bounded executable-name lookup recognizes this service,
-including installation paths containing spaces. Its real child processes still
-protect the worker. Other platforms retain their existing classification; Linux's
-truncated `comm` value is not accepted as executable identity.
+turn. A bounded executable-name lookup recognizes this service, including
+installation paths containing spaces. macOS uses `ps comm`; Linux uses `ps exe`
+and accepts the kernel's ` (deleted)` suffix for a still-running unlinked binary.
+Linux's truncated `comm`, argv-only impersonation and symlinks to unrelated
+executables do not establish identity. Failed/unsupported lookups keep the work
+held. Its real child processes still protect the worker; other platforms retain
+their existing classification.
 
 The `resident_helper_tests` regressions run real local ACP adapters and shell
 processes through pool return/claim. They cover six finished threads with five
 slots, child exit beneath a live host, and ordinary shell work mentioning the
-host path in arguments. The fixtures require no provider credentials or relay.
+host path in arguments. They also verify that child exit queues collection in
+the original session and retains the slot until collection finishes. Linux-only
+cases cover an unlinked helper executable and a symlink to ordinary work. The
+fixtures require no provider credentials or relay. Run them on native Linux:
+Rosetta may expose its own executable in `/proc/<pid>/exe`, so emulated x86_64
+containers on ARM do not attest Linux helper identity.
 
 For native acceptance, run the patched harness with Codex, `--agents 5` and
 `--session-policy thread` (or the equivalent desktop settings).

@@ -7977,7 +7977,7 @@
     },
     {
       "path": "crates/buzz-acp/src/process_tree.rs",
-      "responsibility": "Bounded process snapshots and resident-helper classification; macOS executable confirmation releases completed Codex turns while preserving actual child work.",
+      "responsibility": "Bounded process snapshots and resident-helper classification; macOS/Linux executable confirmation releases completed Codex turns while preserving actual child work.",
       "is_new": true,
       "required_symbols": [
         "pub fn snapshot()",
@@ -8483,8 +8483,8 @@
       ]
     },
     {
-      "path": "crates/buzz-acp/src/process_tree/macos_helpers.rs",
-      "responsibility": "Confirm late Codex code-mode host executable identity on macOS with one bounded ps call; arguments, missing identity, and truncated names cannot free slots.",
+      "path": "crates/buzz-acp/src/process_tree/codex_helpers.rs",
+      "responsibility": "Confirm late Codex code-mode host identity with one bounded ps call: macOS comm and Linux exe; missing identity and work arguments cannot free slots.",
       "is_new": true,
       "required_symbols": [
         "pub(super) fn classify(",
@@ -8494,7 +8494,7 @@
         {
           "caller_path": "crates/buzz-acp/src/process_tree.rs",
           "callee_symbol": "classify",
-          "invocation": "let tree = macos_helpers::classify(tree);",
+          "invocation": "let tree = codex_helpers::classify(tree);",
           "behavior_test": "six_finished_threads_reuse_five_slots_with_late_codex_hosts",
           "verification_command": "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1"
         }
@@ -8505,12 +8505,15 @@
     },
     {
       "path": "crates/buzz-acp/src/pool/resident_helper_tests.rs",
-      "responsibility": "Real local ACP/process regressions for sixth-thread admission, late resident host, nested child exit and work mentioning host in arguments on macOS.",
+      "responsibility": "Real local ACP/process regressions for sixth-thread admission, nested child exit and original-session collection on macOS/Linux; Linux executable unlink and symlink boundaries.",
       "is_new": true,
       "required_symbols": [
         "six_finished_threads_reuse_five_slots_with_late_codex_hosts",
         "work_under_late_codex_host_holds_slot_until_child_exits",
-        "work_mentioning_codex_host_in_arguments_still_holds_slot"
+        "work_mentioning_codex_host_in_arguments_still_holds_slot",
+        "child_of_codex_host_queues_original_collection_before_releasing_slot",
+        "symlink_named_codex_host_does_not_hide_ordinary_work",
+        "unlinked_codex_host_does_not_retain_finished_turn"
       ],
       "invocation_seams": [],
       "verification_commands": [
