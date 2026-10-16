@@ -467,6 +467,8 @@ pub const KIND_PRESENCE_UPDATE: u32 = 20001;
 pub const KIND_PAIRING: u32 = 24134;
 /// Ephemeral: typing indicator for a channel.
 pub const KIND_TYPING_INDICATOR: u32 = 20002;
+/// Ephemeral command: elect one author-signed managed report; never fan out the wrapper.
+pub const KIND_MANAGED_DELIVERY_RECOVERY: u32 = 20003;
 /// Ephemeral: owner-scoped encrypted agent observer telemetry and control frame.
 pub const KIND_AGENT_OBSERVER_FRAME: u32 = 24200;
 /// Ephemeral: huddle emoji reaction burst. Channel-scoped to the ephemeral

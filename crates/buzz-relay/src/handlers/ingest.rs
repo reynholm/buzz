@@ -44,6 +44,7 @@ use nostr::Event;
 use crate::state::AppState;
 
 use super::event::dispatch_persistent_event;
+mod timestamp;
 
 use crate::conformance::{
     self as conf, channel_label, claimed_community_from_event, emit, msg_id_label,
@@ -2362,6 +2363,29 @@ async fn ingest_event_inner(
     event: Event,
     auth: IngestAuth,
 ) -> Result<IngestResult, IngestError> {
+    let recovery = if event_kind_u32(&event) == buzz_core::kind::KIND_MANAGED_DELIVERY_RECOVERY {
+        if event.pubkey != *auth.pubkey() {
+            return Err(IngestError::AuthFailed(
+                "invalid: recovery author does not match authenticated identity".into(),
+            ));
+        }
+        Some(
+            buzz_core::managed_delivery::RecoveryRequest::decode(
+                &event,
+                nostr::Timestamp::now().as_secs(),
+            )
+            .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?,
+        )
+    } else {
+        None
+    };
+    let event = match recovery.as_ref() {
+        Some(request) => request
+            .candidate
+            .restore(&request.original)
+            .map_err(IngestError::Rejected)?,
+        None => event,
+    };
     let event_id_hex = event.id.to_hex();
     let kind_u32 = event_kind_u32(&event);
     debug!(event_id = %event_id_hex, kind = kind_u32, "ingest_event");
@@ -2446,14 +2470,9 @@ async fn ingest_event_inner(
         });
     }
 
-    const MAX_TIMESTAMP_DRIFT_SECS: i64 = 900; // ±15 minutes
     let now = chrono::Utc::now().timestamp();
     let event_ts = event.created_at.as_secs() as i64;
-    if (event_ts - now).abs() > MAX_TIMESTAMP_DRIFT_SECS {
-        return Err(IngestError::Rejected(
-            "invalid: event timestamp too far from server time".into(),
-        ));
-    }
+    timestamp::validate(&event, &auth, nostr::Timestamp::now().as_secs())?;
 
     // kind:40100 canvas events carry a tighter future ceiling — see
     // `validate_canvas_future_timestamp` for the rationale and invariant.
@@ -3420,16 +3439,32 @@ async fn ingest_event_inner(
         }
     } else {
         let thread_params = thread_meta.as_ref().map(|m| m.as_params());
-        match state
-            .db
-            .insert_event_with_thread_metadata(
-                tenant.community(),
-                &event,
-                channel_id,
-                thread_params,
-            )
-            .await
-        {
+        let write_result = if let Some(request) = recovery.as_ref() {
+            let channel = channel_id.ok_or_else(|| {
+                IngestError::Rejected("invalid: recovery requires original channel".into())
+            })?;
+            state
+                .db
+                .recover_managed_delivery(
+                    tenant.community(),
+                    &event,
+                    channel,
+                    thread_params,
+                    &request.original,
+                )
+                .await
+        } else {
+            state
+                .db
+                .insert_event_with_thread_metadata(
+                    tenant.community(),
+                    &event,
+                    channel_id,
+                    thread_params,
+                )
+                .await
+        };
+        match write_result {
             Ok(result) => result,
             Err(e) => {
                 // Compensate: if we pre-created a channel for kind:9007,
@@ -3445,6 +3480,9 @@ async fn ingest_event_inner(
                     state.invalidate_channel_deleted(tenant);
                 }
                 return Err(match e {
+                    buzz_db::DbError::ManagedDeliveryConflict(message) => {
+                        IngestError::CanvasConflict(format!("conflict: {message}"))
+                    }
                     buzz_db::DbError::AuthEventRejected => {
                         IngestError::Rejected("invalid: AUTH events cannot be stored".into())
                     }
@@ -3454,11 +3492,38 @@ async fn ingest_event_inner(
         }
     };
 
+    let managed_receipt = if buzz_core::managed_delivery::delivery_key(&event).is_some() {
+        format!(
+            "{}{}",
+            buzz_core::managed_delivery::RECEIPT_PREFIX,
+            serde_json::to_string(&stored_event.event)
+                .map_err(|e| IngestError::Internal(e.to_string()))?
+        )
+    } else {
+        String::new()
+    };
     if !was_inserted {
+        if !managed_receipt.is_empty() {
+            if let Some(channel) = channel_id {
+                emit(
+                    tracer,
+                    TraceAction::WriteDuplicate {
+                        msg_id: msg_id_label(stored_event.event.id.as_bytes()),
+                        channel: channel_label(channel),
+                        claimed_community: claimed_community_from_event(&event),
+                    },
+                    state_for_request(tenant, auth.pubkey()),
+                );
+            }
+        }
         return Ok(IngestResult {
-            event_id: event_id_hex,
+            event_id: stored_event.event.id.to_hex(),
             accepted: true,
-            message: "duplicate:".into(),
+            message: if managed_receipt.is_empty() {
+                "duplicate:".into()
+            } else {
+                managed_receipt
+            },
         });
     }
 
@@ -3533,14 +3598,15 @@ async fn ingest_event_inner(
     info!(event_id = %event_id_hex, kind = kind_u32, "Event ingested via pipeline");
 
     Ok(IngestResult {
-        event_id: event_id_hex,
+        event_id: stored_event.event.id.to_hex(),
         accepted: true,
-        message: String::new(),
+        message: managed_receipt,
     })
 }
 
 #[cfg(test)]
 mod postgres_tests {
+    mod managed_delivery_tests;
     use std::sync::Mutex;
 
     use super::*;

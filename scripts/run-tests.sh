@@ -300,6 +300,9 @@ run_unit_tests() {
       cargo test -p buzz-relay --lib "$name" -- --exact --nocapture
   done
 
+  run_test_step "buzz-relay demo echo receive retention" \
+    cargo test -p buzz-relay --lib mesh_boot::tests::demo_echo_keeps_inflight_read_across_ticks_and_still_drains -- --exact --nocapture
+
   run_test_step "buzz-relay binary tests" \
     cargo test -p buzz-relay --bin buzz-relay -- --nocapture
 }

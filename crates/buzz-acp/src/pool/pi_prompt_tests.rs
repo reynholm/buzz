@@ -15,6 +15,7 @@ fn owned_pi(acp: AcpClient, protocol_version: u32) -> OwnedAgent {
         agent_name: BUZZ_PI_ACP_NAME.into(),
         goose_system_prompt_supported: None,
         protocol_version,
+        background_context: None,
     }
 }
 

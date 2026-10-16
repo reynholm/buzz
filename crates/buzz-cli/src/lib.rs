@@ -408,6 +408,27 @@ buzz agents archived"
 
 #[derive(Subcommand)]
 pub enum MessagesCmd {
+    /// Durably publish one final report per delivery UUID; retries return the first report
+    Deliver {
+        /// Stable background group UUID supplied by the harness
+        #[arg(long)]
+        delivery_key: String,
+        /// Original channel UUID
+        #[arg(long)]
+        channel: String,
+        /// Original parent event ID
+        #[arg(long)]
+        reply_to: String,
+        /// Final report text; '-' reads stdin on the first delivery
+        #[arg(long)]
+        content: String,
+        /// Persistent journal directory (default: .buzz-deliveries in the working directory)
+        #[arg(long, env = "BUZZ_DELIVERY_JOURNAL_DIR")]
+        journal_dir: Option<std::path::PathBuf>,
+        /// Pubkey to notify (hex or npub; repeatable), with the same mention rules as send
+        #[arg(long = "mention")]
+        mentions: Vec<String>,
+    },
     /// Send a message to a channel
     #[command(
         after_help = "Examples:\n  buzz messages send --channel <UUID> --content \"hello\"\n  buzz messages send --channel <UUID> --content \"@alice check this\"\n  echo \"hello from stdin\" | buzz messages send --channel <UUID> --content -"
@@ -2443,6 +2464,7 @@ mod tests {
             names(&cmd, "messages"),
             vec![
                 "delete",
+                "deliver",
                 "edit",
                 "get",
                 "search",
@@ -2587,7 +2609,7 @@ mod tests {
             ("feed", 1),
             ("issues", 6),
             ("media", 1),
-            ("messages", 8),
+            ("messages", 9),
             ("pack", 2),
             ("patches", 4),
             ("pr", 5),
@@ -2786,3 +2808,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod delivery_tests;

@@ -21,6 +21,10 @@ pub enum DbError {
     #[error("ephemeral events (kind {0}) must not be stored")]
     EphemeralEventRejected(u16),
 
+    /// A completion key was reused with a different immutable report.
+    #[error("managed delivery conflict: {0}")]
+    ManagedDeliveryConflict(String),
+
     /// The requested channel does not exist.
     #[error("channel not found: {0}")]
     ChannelNotFound(uuid::Uuid),

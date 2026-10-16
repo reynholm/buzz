@@ -740,7 +740,10 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
     // NIP-43 leave (28936) sits in the ephemeral range but is a membership
     // command: it must reach ingest, which removes membership and revokes
     // live access.
-    if is_ephemeral(kind_u32) && kind_u32 != buzz_core::kind::KIND_NIP43_LEAVE_REQUEST {
+    if is_ephemeral(kind_u32)
+        && kind_u32 != buzz_core::kind::KIND_NIP43_LEAVE_REQUEST
+        && kind_u32 != buzz_core::kind::KIND_MANAGED_DELIVERY_RECOVERY
+    {
         if !scopes.is_empty() && !scopes.contains(&buzz_auth::Scope::MessagesWrite) {
             reject("scope");
             conn.send(RelayMessage::ok(
@@ -870,7 +873,15 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
             metrics::histogram!("buzz_event_processing_seconds")
                 .record(start.elapsed().as_secs_f64());
             conn.send(RelayMessage::ok(
-                &result.event_id,
+                if kind_u32 == buzz_core::kind::KIND_MANAGED_DELIVERY_RECOVERY
+                    || result
+                        .message
+                        .starts_with(buzz_core::managed_delivery::RECEIPT_PREFIX)
+                {
+                    &event_id_hex
+                } else {
+                    &result.event_id
+                },
                 result.accepted,
                 &result.message,
             ));

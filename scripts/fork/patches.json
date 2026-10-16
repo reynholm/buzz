@@ -23,16 +23,6 @@
       ]
     },
     {
-      "path": "docs/superpowers/specs/2026-10-03-device-bound-agents-design.md",
-      "responsibility": "Approved device ownership and fork acceptance contract",
-      "is_new": true,
-      "required_symbols": [],
-      "invocation_seams": [],
-      "verification_commands": [
-        "python3 scripts/fork/sync.py validate"
-      ]
-    },
-    {
       "path": "FORK_PATCHES.md",
       "responsibility": "Reviewable generated patch inventory",
       "is_new": true,
@@ -840,7 +830,7 @@
     },
     {
       "path": "desktop/src-tauri/Cargo.lock",
-      "responsibility": "Direct Desktop gethostname dependency without version changes",
+      "responsibility": "Direct Desktop gethostname dependency without version changes Pin rustls 0.23.46 for the release, resolving RUSTSEC-2026-0346 through RUSTSEC-2026-0349 without unrelated dependency changes.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -4020,10 +4010,11 @@
     },
     {
       "path": ".gitignore",
-      "responsibility": "Exact Apple Silicon fork candidate artifact provenance and immutable About identity",
+      "responsibility": "Exact Apple Silicon fork candidate artifact provenance and immutable About identity; private design notes directory stays untracked",
       "is_new": false,
       "required_symbols": [
-        "/artifacts/fork/"
+        "/artifacts/fork/",
+        "/docs/local"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -4390,9 +4381,11 @@
     },
     {
       "path": ".github/workflows/_ci-relay.yml",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane.",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "export BUZZ_TEST_BIN_DIR=\"$PWD/target/ci\""
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "just ci"
@@ -4450,7 +4443,7 @@
     },
     {
       "path": "Cargo.lock",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Pin rustls 0.23.46 for the release, resolving RUSTSEC-2026-0346 through RUSTSEC-2026-0349 without unrelated dependency changes.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -4460,12 +4453,15 @@
     },
     {
       "path": "Justfile",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Select the infra-free demo echo cancellation regression in the required nextest unit lane.",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "test(=mesh_boot::tests::demo_echo_keeps_inflight_read_across_ticks_and_still_drains)"
+      ],
       "invocation_seams": [],
       "verification_commands": [
-        "just ci"
+        "just ci",
+        "just test-unit"
       ]
     },
     {
@@ -4590,9 +4586,11 @@
     },
     {
       "path": "crates/buzz-acp/src/lib.rs",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Preserve the heartbeat collection call with a textual drift guard; full live-service-loop behavioral mutation coverage is not claimed.",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "pool.queue_finished_background_work(&mut queue);"
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "just ci"
@@ -4860,12 +4858,13 @@
     },
     {
       "path": "crates/buzz-db/src/runtime/tests/thread_window_postgres_tests.rs",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Verify production prebuild migration reaches the latest embedded migration while preserving the ingestion witness/index checks.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
-        "just ci"
+        "just ci",
+        "scripts/postgres-test-run.sh -p buzz-db --lib --tests"
       ]
     },
     {
@@ -7585,12 +7584,16 @@
     },
     {
       "path": "scripts/run-tests.sh",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Keep the cargo-test fallback selecting the same demo echo receive-retention regression as nextest.",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "buzz-relay demo echo receive retention"
+      ],
       "invocation_seams": [],
       "verification_commands": [
-        "just ci"
+        "just ci",
+        "bash -n scripts/run-tests.sh",
+        "just test-unit"
       ]
     },
     {
@@ -7854,6 +7857,699 @@
       "invocation_seams": [],
       "verification_commands": [
         "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "TESTING.md",
+      "responsibility": "Document production-writer recovery, replica-floor premises, authenticated CLI/relay regression commands and evidence boundaries.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/TESTING.md",
+      "responsibility": "Document original-session collection, bounded ordinary preemption and bundled agent/MCP/CLI delivery runtime fixtures.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/acp/process_tracking_tests.rs",
+      "responsibility": "Inherited integration inventory: real ACP adapter regressions distinguish resident providers, active task children and unrelated sessions.",
+      "is_new": true,
+      "required_symbols": [
+        "prompt_work_is_tracked_under_worker_and_resident_provider"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp process_tracking_tests -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/isolated_execution.rs",
+      "responsibility": "Inherited integration inventory: fresh-process isolated prompt executor with cancellation, deadlines and bounded shutdown; module retention does not assert a new background-delivery invocation.",
+      "is_new": false,
+      "required_symbols": [
+        "pub(crate) async fn execute(",
+        "agent.acp.shutdown().await;"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp --lib -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/background_work.rs",
+      "responsibility": "Retain collection authority in the original worker/session, poll child exit independently of pool sleep, and compose stable-key final-report instructions.",
+      "is_new": true,
+      "required_symbols": [
+        "pub(crate) struct RuntimeHold",
+        "pub fn queue_finished_background_work",
+        "pub(super) fn followup_prompt"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "followup_prompt",
+          "invocation": "background_work::followup_prompt(batch.channel_id, continuation, &ctx.cwd)",
+          "behavior_test": "background_managed_delivery_key_stays_on_collection_across_error_and_new_message",
+          "verification_command": "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_managed_delivery_key_stays_on_collection_across_error_and_new_message -- --test-threads=1",
+          "coverage": "Stable managed key and original route in the real collection prompt; bundled process coverage is a mock-relay workflow."
+        }
+      ],
+      "verification_commands": [
+        "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_work_tests -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/background_work_tests.rs",
+      "responsibility": "Production-dispatch local-process regressions for route/session retention, collection progress under repeated preemption, cancellation, rotation and lost-task cleanup.",
+      "is_new": true,
+      "required_symbols": [
+        "background_collection_completes_under_repeated_ordinary_preemption",
+        "background_explicit_cancel_after_ordinary_control_never_resumes_collection"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_work_tests -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/delivery_runtime_tests.rs",
+      "responsibility": "Run actual bundled agent, MCP and CLI processes against a signature-checking mock relay: application-error replay, lost acknowledgments, process restart and concurrency; not real-relay evidence.",
+      "is_new": true,
+      "required_symbols": [
+        "managed_runtime_bundled_agent_publication_then_application_error_retries_one_event",
+        "managed_runtime_killed_after_relay_acceptance_replays_on_new_process"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp managed_runtime_ -- --ignored --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/pi_prompt_tests.rs",
+      "responsibility": "Inherited integration inventory: Pi ACP system-prompt metadata, workspace skill installation and restore compatibility fixtures.",
+      "is_new": false,
+      "required_symbols": [
+        "pi_composed_prompt_uses_meta_without_capability_negotiation",
+        "real_pi_preserves_buzz_prompt_and_launch_skills_on_restore"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp pi_prompt_tests -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/process_tree.rs",
+      "responsibility": "Bounded process snapshots and resident-helper classification; macOS/Linux executable confirmation releases completed Codex turns while preserving actual child work.",
+      "is_new": true,
+      "required_symbols": [
+        "pub fn snapshot()",
+        "pub fn blocking_pids(",
+        "pub fn is_resident_helper("
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/acp.rs",
+          "callee_symbol": "snapshot",
+          "invocation": "let tree = crate::process_tree::snapshot()?;",
+          "behavior_test": "prompt_work_is_tracked_under_worker_and_resident_provider",
+          "verification_command": "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp prompt_work_is_tracked_under_worker_and_resident_provider -- --test-threads=1",
+          "coverage": "Inherited production process classification exercised with real local ACP children; no new runtime mutation claim."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/acp.rs",
+          "callee_symbol": "blocking_pids",
+          "invocation": "blocking.extend(tree.blocking_pids(parent, &self.resident_pids));",
+          "behavior_test": "work_under_late_codex_host_holds_slot_until_child_exits",
+          "verification_command": "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/acp.rs",
+          "callee_symbol": "is_resident_helper",
+          "invocation": "self.resident_pids.contains(&child.pid) || tree.is_resident_helper(child)",
+          "behavior_test": "work_under_late_codex_host_holds_slot_until_child_exits",
+          "verification_command": "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1"
+        }
+      ],
+      "verification_commands": [
+        "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp process_tree -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/process_tree/snapshot_tests.rs",
+      "responsibility": "Inherited integration inventory: process-list timeout/output bounds, malformed snapshots and zombie exclusion tests.",
+      "is_new": true,
+      "required_symbols": [
+        "snapshot_rejects_partial_output_and_ignores_zombies",
+        "listing_timeout_kills_a_stalled_command"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp process_tree -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/queue/background.rs",
+      "responsibility": "Keep background collection separate from ordinary messages with stable delivery UUID, original thread/session ownership, finite retries and bounded ordinary preemption.",
+      "is_new": true,
+      "required_symbols": [
+        "pub(crate) struct RuntimeContinuation",
+        "pub ordinary_preempted: bool",
+        "background_managed_delivery_key_stays_on_collection_across_error_and_new_message"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/queue.rs",
+          "callee_symbol": "enqueue_continuation",
+          "invocation": "self.enqueue_continuation(batch.scope, continuation);",
+          "behavior_test": "background_collection_completes_under_repeated_ordinary_preemption",
+          "verification_command": "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_collection_completes_under_repeated_ordinary_preemption -- --test-threads=1",
+          "coverage": "A2_RED.log and A2_BACKGROUND_GREEN.log preserve behavioral RED/GREEN for bounded ordinary interruption; text seam mutation is separate evidence."
+        }
+      ],
+      "verification_commands": [
+        "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/Cargo.toml",
+      "responsibility": "Add filesystem locking and temporary-fixture dependencies for durable managed-report journals.",
+      "is_new": false,
+      "required_symbols": [
+        "fs2 = \"0.4\""
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-cli managed_ -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/TESTING.md",
+      "responsibility": "Specify managed publisher scope, journal durability and retention, recovery opt-in/upgrade requirements and real versus mock-relay checks.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-cli managed_ -- --test-threads=1",
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/commands/delivery.rs",
+      "responsibility": "Lock, validate and fsync a bounded original-report journal before submission; refresh signed recovery stamps and persist only verified canonical receipts while preserving original evidence.",
+      "is_new": true,
+      "required_symbols": [
+        "pub(super) async fn deliver(",
+        "fn acknowledgment(",
+        "fn durable_directory(",
+        "recovery_candidate",
+        "canonical_event"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-cli/src/commands/messages.rs",
+          "callee_symbol": "deliver",
+          "invocation": "super::delivery::deliver(\n                client,\n                &channel,\n                &reply_to,\n                &content,\n                &delivery_key,\n                journal_dir.as_deref(),\n                mentions,\n            )",
+          "behavior_test": "managed_same_key_changed_text_returns_first_signed_delivery",
+          "verification_command": "cargo test -p buzz-cli managed_same_key_changed_text_returns_first_signed_delivery -- --test-threads=1",
+          "coverage": "Actual parsed messages deliver dispatcher; signature-checking mock-relay test."
+        },
+        {
+          "caller_path": "crates/buzz-cli/src/commands/delivery.rs",
+          "callee_symbol": "submit_event",
+          "invocation": "write(&dir, &journal)?;\n    let result = client\n        .submit_event(submission)",
+          "behavior_test": "managed_same_key_changed_text_returns_first_signed_delivery",
+          "verification_command": "cargo test -p buzz-cli managed_same_key_changed_text_returns_first_signed_delivery -- --test-threads=1",
+          "coverage": "Actual CLI publisher must submit once and same-key replay must return the first signed ID and stored body."
+        }
+      ],
+      "verification_commands": [
+        "cargo test -p buzz-cli managed_ -- --test-threads=1",
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/commands/messages.rs",
+      "responsibility": "Expose messages deliver and preserve original route, stable UUID and signed callback mentions without suppressing ordinary progress or explicit edits.",
+      "is_new": false,
+      "required_symbols": [
+        "MessagesCmd::Deliver {",
+        "pub(super) fn event_mention_pubkeys(",
+        "async fn resolve_content_mentions("
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-cli/src/commands/delivery.rs",
+          "callee_symbol": "event_mention_pubkeys",
+          "invocation": "messages::event_mention_pubkeys(&chosen)",
+          "behavior_test": "managed_recovery_mention_history_survives_lost_ack",
+          "verification_command": "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib managed_recovery_mention_history_survives_lost_ack -- --ignored --test-threads=1",
+          "coverage": "Actual CLI stdout must return the elected signed recipient in mention_pubkeys after unconfirmed recovery replay; stored p-tags alone are insufficient."
+        }
+      ],
+      "verification_commands": [
+        "cargo test -p buzz-cli managed_ -- --test-threads=1",
+        "cargo test -p buzz-cli mention -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/commands/mod.rs",
+      "responsibility": "Wire the managed delivery module into the CLI message dispatcher.",
+      "is_new": false,
+      "required_symbols": [
+        "mod delivery;"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-cli managed_ -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/delivery_tests.rs",
+      "responsibility": "Production CLI regressions for same-key replay, namespace/route integrity, concurrency, durable ancestor links, bounded retention/retries and legacy wrapper rejection.",
+      "is_new": true,
+      "required_symbols": [
+        "managed_same_key_changed_text_returns_first_signed_delivery",
+        "managed_expired_journal_never_treats_legacy_wrapper_ack_as_delivery",
+        "managed_existing_nested_directory_requires_ancestor_link_sync_before_publication"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-cli managed_ -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/error.rs",
+      "responsibility": "Expose managed-delivery pending as a safe same-key retry while preserving existing ambiguous unjournaled-send errors.",
+      "is_new": false,
+      "required_symbols": [
+        "ManagedDeliveryPending"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-cli managed_ -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/lib.rs",
+      "responsibility": "Define messages deliver arguments and compile production-publisher regression tests.",
+      "is_new": false,
+      "required_symbols": [
+        "Deliver {",
+        "mod delivery_tests;"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-cli managed_ -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-core/src/kind.rs",
+      "responsibility": "Reserve ephemeral managed recovery kind 20003 for signed canonical election; upgraded relays route it through shared ingest.",
+      "is_new": false,
+      "required_symbols": [
+        "KIND_MANAGED_DELIVERY_RECOVERY: u32 = 20003"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-relay/src/handlers/event.rs",
+          "callee_symbol": "is_ephemeral",
+          "invocation": "if is_ephemeral(kind_u32)\n        && kind_u32 != buzz_core::kind::KIND_NIP43_LEAVE_REQUEST\n        && kind_u32 != buzz_core::kind::KIND_MANAGED_DELIVERY_RECOVERY",
+          "behavior_test": "managed_ws_original_ack_correlates_after_recovery_wins",
+          "verification_command": "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib managed_ws_original_ack_correlates_after_recovery_wins -- --ignored --test-threads=1",
+          "coverage": "Real WS handler keeps recovery out of ephemeral fanout and correlates original EVENT acknowledgment after another canonical event wins."
+        }
+      ],
+      "verification_commands": [
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-core/src/lib.rs",
+      "responsibility": "Export the shared signed managed-report recovery protocol.",
+      "is_new": false,
+      "required_symbols": [
+        "pub mod managed_delivery;"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-core managed_delivery -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-core/src/managed_delivery.rs",
+      "responsibility": "Validate author-signed original report and compact candidate stamp, immutable body/tags/route, canonical UUID and current wrapper/candidate timestamps.",
+      "is_new": true,
+      "required_symbols": [
+        "pub struct RecoveryRequest",
+        "pub struct ReportStamp",
+        "pub fn delivery_key(",
+        "pub fn same_report(",
+        "pub fn decode("
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-relay/src/handlers/ingest.rs",
+          "callee_symbol": "decode",
+          "invocation": "buzz_core::managed_delivery::RecoveryRequest::decode(\n                &event,\n                nostr::Timestamp::now().as_secs(),\n            )",
+          "behavior_test": "managed_old_absent_report_recovers_with_production_writer",
+          "verification_command": "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib managed_old_absent_report_recovers_with_production_writer -- --ignored --test-threads=1",
+          "coverage": "B2_ATOMIC_COMMAND_RED.log and B2_STAMP_GUARD_FINAL.log preserve real shared-ingest recovery RED/GREEN with armed writer floor."
+        }
+      ],
+      "verification_commands": [
+        "cargo test -p buzz-core managed_delivery -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/error.rs",
+      "responsibility": "Return an explicit canonical delivery conflict for UUID reuse with another report or route.",
+      "is_new": false,
+      "required_symbols": [
+        "ManagedDeliveryConflict"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/event.rs",
+      "responsibility": "Route ordinary marked kind-9 inserts through the same atomic canonical election as recovery while retaining transactional thread metadata and the production commit-time floor.",
+      "is_new": false,
+      "required_symbols": [
+        "crate::store::managed_delivery::insert("
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-db/src/store/event.rs",
+          "callee_symbol": "insert",
+          "invocation": "crate::store::managed_delivery::insert(\n                pool,\n                community_id,\n                event,\n                channel,\n                thread_meta,\n                None,\n            )",
+          "behavior_test": "managed_recovery_and_original_race_share_one_election",
+          "verification_command": "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib managed_recovery_and_original_race_share_one_election -- --ignored --test-threads=1",
+          "coverage": "Ordinary kind-9 writer participates in recovery election; text fingerprint cannot alone prove lock/transaction behavior."
+        }
+      ],
+      "verification_commands": [
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/managed_delivery.rs",
+      "responsibility": "Elect once per community/author/UUID under a transaction advisory lock; adopt accepted or soft-deleted originals, otherwise commit candidate, thread counters, callback mentions and durable binding together.",
+      "is_new": true,
+      "required_symbols": [
+        "pub async fn insert(",
+        "pub async fn recover_managed_delivery(",
+        "pg_advisory_xact_lock",
+        "INSERT INTO managed_deliveries"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-relay/src/handlers/ingest.rs",
+          "callee_symbol": "recover_managed_delivery",
+          "invocation": ".recover_managed_delivery(\n                    tenant.community(),\n                    &event,\n                    channel,\n                    thread_params,\n                    &request.original,\n                )",
+          "behavior_test": "managed_old_accepted_report_recovers_with_production_writer",
+          "verification_command": "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib managed_old_accepted_report_recovers_with_production_writer -- --ignored --test-threads=1",
+          "coverage": "Recovery must adopt the previously accepted original instead of inserting a second current candidate; ordinary insertion is not an equivalent replacement. Deleted-original adoption is independently exercised."
+        },
+        {
+          "caller_path": "crates/buzz-db/src/store/managed_delivery.rs",
+          "callee_symbol": "insert_mentions_in_transaction",
+          "invocation": "crate::runtime::insert_mentions_in_transaction(\n            &mut tx,\n            community,\n            &result.0.event,\n            Some(channel),\n        )",
+          "behavior_test": "managed_recovery_mention_history_survives_lost_ack",
+          "verification_command": "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib managed_recovery_mention_history_survives_lost_ack -- --ignored --test-threads=1",
+          "coverage": "B3_MENTIONS_RED.log and B3_MENTIONS_GREEN.log preserve callback Home Mentions RED/GREEN; mentions commit with elected report."
+        }
+      ],
+      "verification_commands": [
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/mod.rs",
+      "responsibility": "Register the canonical managed-delivery storage module.",
+      "is_new": false,
+      "required_symbols": [
+        "pub mod managed_delivery;"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/tests/observability_source.rs",
+      "responsibility": "Repair stale aggregate-cardinality and bounded-helper assumptions while retaining typed Authorization/EventWrite checkout and direct-pool bypass guards.",
+      "is_new": false,
+      "required_symbols": [
+        "p0_pool_acquisitions_use_typed_operation_pairs_without_other"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db --test observability_source"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/handlers/ingest/postgres_tests/managed_delivery_tests.rs",
+      "responsibility": "Use the armed production writer and authenticated CLI/router to test absent/accepted/deleted recovery, races, WS acknowledgment correlation, escaped-size limits and callback Home Mentions after lost acknowledgments.",
+      "is_new": true,
+      "required_symbols": [
+        "managed_recovery_and_original_race_share_one_election",
+        "managed_ws_original_ack_correlates_after_recovery_wins",
+        "managed_recovery_mention_history_survives_lost_ack",
+        "buzz.created_at_floor"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/handlers/ingest/timestamp.rs",
+      "responsibility": "Keep the future ceiling and ordinary age checks; permit old self-marked reports to acknowledge retained acceptance while absent old inserts remain subject to the 960-second writer floor.",
+      "is_new": true,
+      "required_symbols": [
+        "pub(super) fn validate(",
+        "fn managed_report(",
+        "managed_timestamp_exception_preserves_future_and_marker_authority_boundaries"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-relay/src/handlers/ingest.rs",
+          "callee_symbol": "validate",
+          "invocation": "timestamp::validate(&event, &auth, nostr::Timestamp::now().as_secs())?;",
+          "behavior_test": "managed_old_report_still_enforces_signature_route_membership_and_archive",
+          "verification_command": "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib managed_old_report_still_enforces_signature_route_membership_and_archive -- --ignored --test-threads=1",
+          "coverage": "A signed ordinary future message must fail shared ingest with timestamp admission rejection before storage, in addition to old-report authority guards."
+        }
+      ],
+      "verification_commands": [
+        "cargo test -p buzz-relay --lib timestamp::tests -- --test-threads=1",
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1"
+      ]
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-14-background-result-atomic-recovery.md",
+      "responsibility": "Record the owner-approved atomic canonical recovery plan and preserved replica-floor safety contract.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-14-background-result-delivery.md",
+      "responsibility": "Record original-session collection and durable managed publication implementation/verification plan.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "docs/superpowers/reports/2026-10-14-background-result-delivery.md",
+      "responsibility": "Preserve implementation scope, actual validation receipts, mutation evidence and remaining runtime/acceptance limits.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "migrations/0056_managed_report_delivery.sql",
+      "responsibility": "Create bounded canonical delivery bindings independent of event redaction with community write fencing and per-author completion-key uniqueness.",
+      "is_new": true,
+      "required_symbols": [
+        "CREATE TABLE managed_deliveries",
+        "PRIMARY KEY (community_id, author, delivery_key)",
+        "SELECT attach_community_write_fence('managed_deliveries');"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/api/relayReconnectReplay.test.mjs",
+      "responsibility": "Keep channel replay lookback coupled to the shared relay timestamp helper and production ingest wiring plus the unchanged DB floor/clock margin.",
+      "is_new": false,
+      "required_symbols": [
+        "channel replay lookback stays coupled to relay and DB source constants"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm -C desktop test"
+      ]
+    },
+    {
+      "path": "scripts/check-postgres-test-discovery.py",
+      "responsibility": "Resolve conventional out-of-line Rust tests inside inline postgres_tests modules, retaining ancestor discovery context.",
+      "is_new": false,
+      "required_symbols": [
+        "inline_ranges = module_ranges(source)"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "bash scripts/test-postgres-test-discovery.sh"
+      ]
+    },
+    {
+      "path": "scripts/test-postgres-test-discovery.sh",
+      "responsibility": "Exercise nested file and directory Rust modules in the PostgreSQL discovery contract.",
+      "is_new": false,
+      "required_symbols": [
+        "nested_out_of_line_recovery_test"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "bash scripts/test-postgres-test-discovery.sh"
+      ]
+    },
+    {
+      "path": "deny.toml",
+      "responsibility": "Track the owner-approved RUSTSEC-2024-0449 exception for fork-v0.5.26-4 only, with YAML replacement issue19 and mandatory reassessment before another release. Other advisory policies remain unchanged.",
+      "is_new": false,
+      "required_symbols": [
+        "RUSTSEC-2024-0449",
+        "https://github.com/reynholm/buzz/issues/19"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo-deny check"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/mesh_boot.rs",
+      "responsibility": "Preserve one in-flight demo echo receive across drain ticks; retain bounded explicit shutdown and the existing validated frame/Goodbye handling.",
+      "is_new": false,
+      "required_symbols": [
+        "tokio::pin!(receive);",
+        "demo_echo_keeps_inflight_read_across_ticks_and_still_drains"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-relay -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/process_tree/codex_helpers.rs",
+      "responsibility": "Confirm late Codex code-mode host identity with one bounded ps call: macOS comm and Linux exe; missing identity and work arguments cannot free slots.",
+      "is_new": true,
+      "required_symbols": [
+        "pub(super) fn classify(",
+        "fn confirmed_hosts("
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/process_tree.rs",
+          "callee_symbol": "classify",
+          "invocation": "let tree = codex_helpers::classify(tree);",
+          "behavior_test": "six_finished_threads_reuse_five_slots_with_late_codex_hosts",
+          "verification_command": "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1"
+        }
+      ],
+      "verification_commands": [
+        "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/resident_helper_tests.rs",
+      "responsibility": "Real local ACP/process regressions for sixth-thread admission, nested child exit and original-session collection on macOS/Linux; Linux executable unlink and symlink boundaries.",
+      "is_new": true,
+      "required_symbols": [
+        "six_finished_threads_reuse_five_slots_with_late_codex_hosts",
+        "work_under_late_codex_host_holds_slot_until_child_exits",
+        "work_mentioning_codex_host_in_arguments_still_holds_slot",
+        "child_of_codex_host_queues_original_collection_before_releasing_slot",
+        "symlink_named_codex_host_does_not_hide_ordinary_work",
+        "unlinked_codex_host_does_not_retain_finished_turn"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/lib/useComposerAutofocus.ts",
+      "responsibility": "Preserve focus inside an open dialog/popover when late composer readiness or draft changes trigger autofocus; fixes the reproduced huddle smoke CI blocker.",
+      "is_new": false,
+      "required_symbols": [
+        "useComposerAutofocus",
+        "active.closest('[role=\"dialog\"]')"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/messages/ui/MessageComposer.tsx",
+          "callee_symbol": "useComposerAutofocus",
+          "invocation": "  useComposerAutofocus(richText.focus, effectiveDraftKey, composerDisabled);",
+          "behavior_test": "late composer readiness preserves focus on a dialog switch; existing huddle assigns distinct agent voices E2E",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/useComposerAutofocus.test.mjs",
+          "coverage": "Real React hook/DOM focus behavior and existing browser workflow RED/GREEN; removing the dialog guard fails two hook tests."
+        }
+      ],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/useComposerAutofocus.test.mjs",
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/lib/useComposerAutofocus.test.mjs",
+      "responsibility": "Production-hook regression for late readiness and draft-switch focus retention in dialogs, preserving ordinary navigation autofocus.",
+      "is_new": true,
+      "required_symbols": [
+        "late composer readiness preserves focus on a dialog switch",
+        "a draft change preserves focus on an open dialog button",
+        "initial mount and navigation from an ordinary button still focus the editor"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/useComposerAutofocus.test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/tests/e2e/voice-note.spec.ts",
+      "responsibility": "Bind duplicate voice-note playback assertions to stable emitted message IDs through live reordering; loop the short media fixture so natural completion cannot impersonate mutual pause.",
+      "is_new": false,
+      "required_symbols": [
+        "const messageIds = await page.evaluate(",
+        "const firstCard = page.locator(",
+        "(player as HTMLAudioElement).loop = true;"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && pnpm exec playwright test --project=smoke tests/e2e/voice-note.spec.ts --retries=0"
       ]
     }
   ]

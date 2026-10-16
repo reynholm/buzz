@@ -1746,6 +1746,19 @@ pub async fn insert_event_with_thread_metadata(
 ) -> Result<(StoredEvent, bool)> {
     use crate::store::replaceable::event_replacement_lock_key;
 
+    if let Some(channel) = channel_id {
+        if buzz_core::managed_delivery::delivery_key(event).is_some() {
+            return crate::store::managed_delivery::insert(
+                pool,
+                community_id,
+                event,
+                channel,
+                thread_meta,
+                None,
+            )
+            .await;
+        }
+    }
     let connection = crate::observability::acquire_writer(
         pool,
         crate::observability::WriterOperation::EventWrite,
