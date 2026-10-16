@@ -2722,11 +2722,17 @@ async fn run_harness(
         );
     }
 
+    let session_store = pool::open_session_store(
+        config.session_store_dir.clone(),
+        config.session_resume,
+        &config.keys.public_key().to_hex(),
+    );
     let mut pool = if config.lazy_pool {
         AgentPool::from_slots((0..config.agents).map(|_| None).collect())
     } else {
         initialize_agent_pool(&runtime.startup(observer.clone()), None).await?
     };
+    pool.set_session_store(session_store.clone());
     let mut pool_ready = !config.lazy_pool;
     let mut pool_lifecycle: PoolLifecycle<AgentPool> = PoolLifecycle::listening();
 
@@ -3729,6 +3735,7 @@ async fn run_harness(
                         pool = AgentPool::from_slots(
                             (0..config.agents).map(|_| None).collect(),
                         );
+                        pool.set_session_store(session_store.clone());
                         pool_ready = false;
                         pool_lifecycle = PoolLifecycle::listening();
                         last_activity = tokio::time::Instant::now();
@@ -3823,7 +3830,7 @@ async fn run_harness(
                                 let agent = OwnedAgent {
                                     index: rr.index,
                                     acp,
-                                    state: SessionState::default(),
+                                    state: SessionState::with_store(session_store.clone()),
                                     model_capabilities: None,
                                     desired_model: config.model.clone(),
                                     model_overridden: false,
@@ -4110,6 +4117,7 @@ async fn run_harness(
                         pool = pool_lifecycle
                             .take_ready()
                             .expect("successful wake stores a ready pool");
+                        pool.set_session_store(session_store.clone());
                         pool_ready = true;
                         emit_runtime_lifecycle(
                             observer.as_ref(),
