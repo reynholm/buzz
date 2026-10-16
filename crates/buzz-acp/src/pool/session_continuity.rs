@@ -247,6 +247,30 @@ impl AgentPool {
         }
         self.store = store;
     }
+
+    /// Before the pool sleeps: mark every idle worker's owned sessions
+    /// departed so the next turn resumes them.
+    pub(crate) fn depart_idle_sessions(&mut self, departure: Departure) {
+        for agent in self.agents.iter_mut().flatten() {
+            agent.state.depart_all(departure);
+        }
+    }
+
+    /// Owner rotate: tombstone the scope's record whoever owns it, including
+    /// a session that lives only on disk after a sleep or respawn. Leases in
+    /// memory stay, so a late write of the previous owner is a conflict.
+    pub(crate) fn discard_durable_scope(&mut self, scope: &SessionScope) {
+        if let Some(store) = &self.store {
+            let _ = store.discard_scope(scope);
+        }
+    }
+
+    /// Channel removal: tombstone every record of the channel.
+    pub(crate) fn discard_durable_channel(&mut self, channel_id: Uuid) {
+        if let Some(store) = &self.store {
+            let _ = store.discard_channel(channel_id);
+        }
+    }
 }
 
 /// Provide a provider session for `scope` on a session miss: resume the
