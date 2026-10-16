@@ -6,6 +6,33 @@ code style, PR process, architecture), see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
+## Fork: public text is in English
+
+This repository is a fork of `block/buzz`. Everything public in it is written
+in English. Public means anything that leaves a contributor's machine:
+
+- GitHub: PR and issue titles, descriptions and comments, review comments,
+  release notes and discussions, in this fork and upstream;
+- Git: commit messages, branch and tag names, tag annotations;
+- tracked repository content: docs, plans, `FORK_PATCHES.md`,
+  `scripts/fork/patches.json` descriptions, code comments, test names, log and
+  error messages.
+
+Conversation with the people you work for stays in the language of that
+conversation.
+
+Public text carries no internal details: no agent or teammate names, chat
+channel names, relay hosts, pubkeys or event ids of a private workspace, home
+paths with user names, or references to files that exist only on a
+contributor's machine. Use neutral wording ("agent A", "a team channel",
+`<relay>`, `~/<workspace>/…`).
+
+When you touch existing public text written in another language, write new
+text in English and leave the existing text as is unless asked to translate
+it; say so to the person you work for when mixed-language text remains.
+
+---
+
 ## Product Contract
 
 Before planning or reviewing a non-trivial change:

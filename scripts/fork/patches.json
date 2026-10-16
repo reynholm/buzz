@@ -8551,6 +8551,18 @@
       "verification_commands": [
         "cd desktop && pnpm exec playwright test --project=smoke tests/e2e/voice-note.spec.ts --retries=0"
       ]
+    },
+    {
+      "path": "AGENTS.md",
+      "responsibility": "Fork rule: public text is in English and carries no internal workspace details",
+      "is_new": false,
+      "required_symbols": [
+        "## Fork: public text is in English"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
     }
   ]
 }

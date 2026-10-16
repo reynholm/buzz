@@ -5854,3 +5854,12 @@ New module: `false`.
 - Required symbol: `const firstCard = page.locator(`
 - Required symbol: `(player as HTMLAudioElement).loop = true;`
 - Verify: `cd desktop && pnpm exec playwright test --project=smoke tests/e2e/voice-note.spec.ts --retries=0`
+
+## `AGENTS.md`
+
+Fork rule: public text is in English and carries no internal workspace details
+
+New module: `false`.
+
+- Required symbol: `## Fork: public text is in English`
+- Verify: `python3 scripts/fork/sync.py validate`
