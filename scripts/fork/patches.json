@@ -8553,6 +8553,20 @@
       "verification_commands": [
         "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/useComposerAutofocus.test.mjs"
       ]
+    },
+    {
+      "path": "desktop/tests/e2e/voice-note.spec.ts",
+      "responsibility": "Bind duplicate voice-note playback assertions to stable emitted message IDs through live reordering; loop the short media fixture so natural completion cannot impersonate mutual pause.",
+      "is_new": false,
+      "required_symbols": [
+        "const messageIds = await page.evaluate(",
+        "const firstCard = page.locator(",
+        "(player as HTMLAudioElement).loop = true;"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && pnpm exec playwright test --project=smoke tests/e2e/voice-note.spec.ts --retries=0"
+      ]
     }
   ]
 }
