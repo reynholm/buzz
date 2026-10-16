@@ -736,6 +736,54 @@ async fn max_turns_survives_resume() {
 }
 
 #[tokio::test]
+async fn idle_worker_transport_death_keeps_session_resumable() {
+    let fixture = Fixture::new();
+    let human = Keys::generate();
+    let channel_id = Uuid::from_u128(44);
+    let root = mention(&human, channel_id, None, "first");
+    let scope = SessionScope::Thread {
+        channel_id,
+        root_event_id: root.id.to_hex(),
+    };
+    let mut ctx = ctx();
+    ctx.context_message_limit = 0;
+    let ctx = Arc::new(ctx);
+    let agent = fixture.agent(&[("RESUME_CAP", "1")]).await;
+    let mut agent = run_turn(agent, &ctx, batch(&scope, root.clone())).await;
+    let sid = agent.state.sessions[&scope].clone();
+    agent.acp.shutdown().await;
+    let follow = mention(&human, channel_id, Some(&root.id.to_hex()), "after death");
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    run_prompt_task(
+        agent,
+        Some(batch(&scope, follow.clone())),
+        None,
+        ctx.clone(),
+        tx,
+        None,
+        "dead-worker".into(),
+    )
+    .await;
+    let result = rx.recv().await.unwrap();
+    assert!(matches!(
+        result.outcome,
+        PromptOutcome::Error(AcpError::Io(_)) | PromptOutcome::AgentExited
+    ));
+    let live = fixture
+        .record(&scope)
+        .live
+        .expect("transport death must not tombstone the provider session");
+    assert_eq!(live.session_id, sid);
+    assert_eq!(live.departed, Some(Departure::WorkerCrash));
+    drop(result.agent);
+    let replacement = fixture.agent(&[("RESUME_CAP", "1")]).await;
+    let mut replacement = run_turn(replacement, &ctx, batch(&scope, follow)).await;
+    assert_eq!(replacement.state.sessions[&scope], sid);
+    assert!(fixture.methods().contains(&"session/resume".to_owned()));
+    replacement.acp.shutdown().await;
+}
+
+#[tokio::test]
 async fn resumed_session_gets_only_delta() {
     let fixture = Fixture::new();
     let human = Keys::generate();

@@ -149,6 +149,26 @@ pub(crate) fn open_session_store(
 }
 
 impl SessionState {
+    /// The result handler replaces workers after transport failures. Preserve
+    /// their provider sessions just as on an observed process exit.
+    pub(super) fn invalidate_after_error(
+        &mut self,
+        source: &super::PromptSource,
+        error: &AcpError,
+    ) {
+        if matches!(
+            error,
+            AcpError::Io(_)
+                | AcpError::WriteTimeout(_)
+                | AcpError::Timeout(_)
+                | AcpError::Protocol(_)
+        ) {
+            self.invalidate_all();
+        } else {
+            self.invalidate(source);
+        }
+    }
+
     pub(crate) fn with_store(store: Option<Arc<SessionStore>>) -> Self {
         Self {
             store,

@@ -4508,7 +4508,10 @@
       "path": "crates/buzz-acp/src/acp.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "pub async fn session_resume(",
+        "self.resume_supported = result"
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "just ci"
@@ -4558,7 +4561,10 @@
       "path": "crates/buzz-acp/src/config.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "BUZZ_ACP_SESSION_STORE_DIR",
+        "BUZZ_ACP_NO_SESSION_RESUME"
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "just ci"
@@ -4600,6 +4606,46 @@
           "behavior_test": "error_outcome_emission_tests::channel_result_refreshes_idle_clock_wiring",
           "verification_command": "cargo test -p buzz-acp --lib error_outcome_emission_tests::channel_result_refreshes_idle_clock_wiring -- --exact",
           "coverage": "handle_prompt_result wiring; the run_harness loop itself is not exercised"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "depart_idle_sessions",
+          "invocation": "pool.depart_idle_sessions(session_store::Departure::IdleSleep);",
+          "behavior_test": "pool_sleep_marks_every_idle_session",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
+          "coverage": "Textual guard for run_harness wiring; named tests exercise pool/store behavior, not the live run_harness loop. Live loop acceptance uses an isolated relay."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "discard_durable_scope",
+          "invocation": "pool.discard_durable_scope(&scope);",
+          "behavior_test": "rotate_before_first_resume_discards_disk_session",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
+          "coverage": "Textual guard for run_harness wiring; named tests exercise pool/store behavior, not the live run_harness loop. Live loop acceptance uses an isolated relay."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "discard_durable_channel",
+          "invocation": "pool.discard_durable_channel(ch);",
+          "behavior_test": "channel_removal_then_readd_starts_new_session",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
+          "coverage": "Textual guard for run_harness wiring; named tests exercise pool/store behavior, not the live run_harness loop. Live loop acceptance uses an isolated relay."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "open_session_store",
+          "invocation": "let session_store = pool::open_session_store(",
+          "behavior_test": "resume_advertised_uses_session_resume_not_new",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
+          "coverage": "Textual guard for run_harness wiring; named tests exercise pool/store behavior, not the live run_harness loop. Live loop acceptance uses an isolated relay."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "set_session_store",
+          "invocation": "pool.set_session_store(session_store.clone());",
+          "behavior_test": "rotate_before_first_resume_discards_disk_session",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
+          "coverage": "Textual guard for run_harness wiring; named tests exercise pool/store behavior, not the live run_harness loop. Live loop acceptance uses an isolated relay."
         }
       ],
       "verification_commands": [
@@ -4611,7 +4657,64 @@
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
       "is_new": false,
       "required_symbols": [],
-      "invocation_seams": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "discard_durable",
+          "invocation": "self.discard_durable(scope);",
+          "behavior_test": "invalidate_scope_writes_tombstone",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
+          "coverage": "Production path exercised by the named behavior test; textual registry guard also detects wiring drift."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "depart_durable_all",
+          "invocation": "self.depart_durable_all(crate::session_store::Departure::WorkerCrash);",
+          "behavior_test": "invalidate_all_marks_worker_crash_without_tombstone",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
+          "coverage": "Production path exercised by the named behavior test; textual registry guard also detects wiring drift."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "persist_delivery",
+          "invocation": "self.persist_delivery(",
+          "behavior_test": "delivery_success_persists_ids",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
+          "coverage": "Production path exercised by the named behavior test; textual registry guard also detects wiring drift."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "acquire_session",
+          "invocation": "match session_continuity::acquire_session(",
+          "behavior_test": "resume_advertised_uses_session_resume_not_new",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
+          "coverage": "Production path exercised by the named behavior test; textual registry guard also detects wiring drift."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "persist_turns",
+          "invocation": "agent.state.persist_turns(scope);",
+          "behavior_test": "max_turns_survives_resume",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
+          "coverage": "Production path exercised by the named behavior test; textual registry guard also detects wiring drift."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "insert_session_marker",
+          "invocation": "session_continuity::insert_session_marker(",
+          "behavior_test": "marker_present_once_after_start",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
+          "coverage": "Production path exercised by the named behavior test; textual registry guard also detects wiring drift."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "invalidate_after_error",
+          "invocation": "agent.state.invalidate_after_error(&source, &e);",
+          "behavior_test": "idle_worker_transport_death_keeps_session_resumable",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
+          "coverage": "Real local adapter death reaches production run_prompt_task via broken pipe and preserves resumable provider state."
+        }
+      ],
       "verification_commands": [
         "just ci"
       ]
@@ -7983,7 +8086,9 @@
       "required_symbols": [
         "pub fn snapshot()",
         "pub fn blocking_pids(",
-        "pub fn is_resident_helper("
+        "pub fn is_resident_helper(",
+        "npm_exec_mcp_chain_is_resident",
+        "launcher_into_scoped_mcp_package_is_resident"
       ],
       "invocation_seams": [
         {
@@ -8560,6 +8665,122 @@
       "invocation_seams": [],
       "verification_commands": [
         "cd desktop && pnpm exec playwright test --project=smoke tests/e2e/voice-note.spec.ts --retries=0"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/session_store.rs",
+      "responsibility": "Lease-fenced, bounded per-scope session records with safe quarantine and instance liveness.",
+      "is_new": true,
+      "required_symbols": [
+        "pub struct SessionStore",
+        "pub fn claim(",
+        "pub fn commit("
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/session_store_tests.rs",
+      "responsibility": "Durable record ownership, concurrency, corruption and write-failure regressions.",
+      "is_new": true,
+      "required_symbols": [
+        "busy_does_not_quarantine_owner_record",
+        "quarantine_requires_matching_lease",
+        "instance_publication_cannot_be_reaped_before_locking"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/session_continuity.rs",
+      "responsibility": "Resume or create provider sessions through bounded claim/RPC/commit rounds and preserve delivery state.",
+      "is_new": true,
+      "required_symbols": [
+        "pub(super) async fn acquire_session(",
+        "pub(crate) fn resume_decision(",
+        "pub(crate) fn insert_session_marker("
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/session_continuity_tests.rs",
+      "responsibility": "Production acquisition, delivery delta, rotation, crash and idle-sleep persistence regressions.",
+      "is_new": true,
+      "required_symbols": [
+        "resume_result_after_rotate_is_dropped",
+        "max_turns_survives_resume",
+        "rotate_before_first_resume_discards_disk_session",
+        "one_reply_window_keeps_first_mention_over_agent_reply",
+        "idle_worker_transport_death_keeps_session_resumable"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/first_mention.rs",
+      "responsibility": "Bounded forward thread scan with a composite cursor and first-mention context pinning.",
+      "is_new": true,
+      "required_symbols": [
+        "pub(crate) async fn find_first_mention",
+        "pub(crate) fn pin_first_mention"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/first_mention_tests.rs",
+      "responsibility": "First-mention discovery across pages, timestamp ties and scan-budget exhaustion.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/acp/session_resume_tests.rs",
+      "responsibility": "ACP resume capability, request parameter and failure-code checks.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/real_resume_tests.rs",
+      "responsibility": "Opt-in real-provider memory continuity after adapter process replacement.",
+      "is_new": true,
+      "required_symbols": [
+        "real_claude_resume_remembers_previous_turn",
+        "real_codex_resume_remembers_previous_turn"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/Cargo.toml",
+      "responsibility": "Declare the filesystem-lock dependency used by durable session ownership.",
+      "is_new": false,
+      "required_symbols": [
+        "fs2 = \"0.4\""
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
       ]
     }
   ]
