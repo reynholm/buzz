@@ -132,7 +132,11 @@ impl Device {
                             Ok(())
                         },
                         |operation| {
-                            enqueue_home_events(&mut open_retention_db(&self.db())?, operation)
+                            enqueue_home_events(
+                                self.dir.path(),
+                                &mut open_retention_db(&self.db())?,
+                                operation,
+                            )
                         },
                     )?;
                 } else {
@@ -340,7 +344,9 @@ fn release_then_reclaim() {
                 a.save(rows);
                 Ok(())
             },
-            |operation| enqueue_home_events(&mut open_retention_db(&a.db())?, operation),
+            |operation| {
+                enqueue_home_events(a.dir.path(), &mut open_retention_db(&a.db())?, operation)
+            },
         )
         .unwrap();
         assert!(!a.rows().iter().any(|r| r.pubkey == first));

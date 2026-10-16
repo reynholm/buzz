@@ -44,7 +44,9 @@ fn retain_definition(dir: &Path, relay: &str, keys: &Keys, known: bool) -> Conne
         &RetainedEvent {
             kind: 30175,
             pubkey: owner,
-            d_tag: "one".into(),
+            d_tag: super::super::persona_events::persona_d_tag(
+                &raw[0].to_definition_view().unwrap(),
+            ),
             content: event.content.clone(),
             created_at: event.created_at.as_secs() as i64,
             raw_event: event.as_json(),
@@ -74,14 +76,14 @@ fn newer_successful_label_survives_older_sql_enqueue_failure_and_recovery() {
     let scopes = [(relay, owner)];
     conn.execute_batch("CREATE TRIGGER reject_label BEFORE INSERT ON persona_events BEGIN SELECT RAISE(ABORT,'label enqueue failure'); END;").unwrap();
     label::set_label_in_dir(dir.path(), identity.clone(), "A", &scopes, &keys, |op| {
-        enqueue_home_events(&mut conn, op)
+        enqueue_home_events(dir.path(), &mut conn, op)
     })
     .unwrap();
     assert_eq!(read_journal(dir.path()).unwrap().len(), 1);
     assert!(get_pending_sync(&conn).unwrap().is_empty());
     conn.execute_batch("DROP TRIGGER reject_label").unwrap();
     label::set_label_in_dir(dir.path(), identity, "B", &scopes, &keys, |op| {
-        enqueue_home_events(&mut conn, op)
+        enqueue_home_events(dir.path(), &mut conn, op)
     })
     .unwrap();
     assert_label(dir.path(), "B");
@@ -89,7 +91,7 @@ fn newer_successful_label_survives_older_sql_enqueue_failure_and_recovery() {
     recover_in_dir(
         dir.path(),
         |_| panic!("label proof"),
-        |op| enqueue_home_events(&mut conn, op),
+        |op| enqueue_home_events(dir.path(), &mut conn, op),
     )
     .unwrap();
     assert_label(dir.path(), "B");
@@ -130,7 +132,7 @@ fn newer_label_preserves_other_relay_owner_and_unresolved_scope_worklists() {
         &keys,
         |op| {
             if op.relay_url == relay {
-                enqueue_home_events(&mut active, op)
+                enqueue_home_events(dir.path(), &mut active, op)
             } else {
                 Err("other relay offline".into())
             }
@@ -188,21 +190,140 @@ fn newer_label_preserves_other_relay_owner_and_unresolved_scope_worklists() {
 
 #[test]
 fn newer_label_is_signed_after_superseded_unenqueued_event() {
+    for (id, source) in [
+        ("one", None),
+        ("builtin:fizz", None),
+        ("builtin:honey", None),
+        ("one", Some("CodeReviewer")),
+    ] {
+        let (dir, identity, keys, relay) = setup_label();
+        let mut raw = read_policy_records(&dir.path().join("agents/managed-agents.json")).unwrap();
+        raw[0].slug = Some(id.into());
+        raw[0].source_team_persona_slug = source.map(str::to_string);
+        save(dir.path(), &raw).unwrap();
+        let mut conn = retain_definition(dir.path(), &relay, &keys, true);
+        let scopes = [(relay, keys.public_key().to_hex())];
+        label::set_label_in_dir(dir.path(), identity.clone(), "A", &scopes, &keys, |_| {
+            Err("offline".into())
+        })
+        .unwrap();
+        let old = read_journal(dir.path()).unwrap()[0].signed_events[0].clone();
+        label::set_label_in_dir(dir.path(), identity, "B", &scopes, &keys, |op| {
+            enqueue_home_events(dir.path(), &mut conn, op)
+        })
+        .unwrap();
+        let pending = get_pending_sync(&conn).unwrap();
+        assert_eq!(pending.len(), 1);
+        let event = Event::from_json(&pending[0].raw_event).unwrap();
+        assert!(event.content.contains("B"));
+        assert!(
+            event.created_at > old.created_at,
+            "newest label must dominate signed pending A for {id}/{source:?}"
+        );
+    }
+}
+
+#[test]
+fn builtin_labels_enqueue_and_replay_exact_signed_heads_without_duplicate_coordinates() {
+    for id in ["builtin:fizz", "builtin:honey"] {
+        for offline in [false, true] {
+            let (dir, identity, keys, relay) = setup_label();
+            let mut raw =
+                read_policy_records(&dir.path().join("agents/managed-agents.json")).unwrap();
+            raw[0].slug = Some(id.into());
+            save(dir.path(), &raw).unwrap();
+            let mut conn = retain_definition(dir.path(), &relay, &keys, true);
+            let scopes = [(relay, keys.public_key().to_hex())];
+            label::set_label_in_dir(dir.path(), identity, "After", &scopes, &keys, |op| {
+                if offline {
+                    Err("offline".into())
+                } else {
+                    enqueue_home_events(dir.path(), &mut conn, op)
+                }
+            })
+            .unwrap();
+            let signed: Vec<_> = read_journal(dir.path())
+                .unwrap()
+                .iter()
+                .flat_map(|op| op.signed_events.iter().map(Event::as_json))
+                .collect();
+            if offline {
+                assert_eq!(signed.len(), 1);
+            }
+            recover_in_dir(
+                dir.path(),
+                |_| panic!("label proof"),
+                |op| enqueue_home_events(dir.path(), &mut conn, op),
+            )
+            .unwrap();
+            let pending = get_pending_sync(&conn).unwrap();
+            assert_eq!(pending.len(), 1);
+            assert_eq!(pending[0].d_tag, id.replace(':', "-"));
+            assert!(pending[0].content.contains("After"));
+            for event in signed {
+                assert_eq!(pending[0].raw_event, event);
+            }
+            assert!(read_journal(dir.path()).unwrap().is_empty());
+        }
+    }
+}
+
+#[test]
+fn retained_label_coordinate_survives_unrelated_local_id_collision_in_original_owner_scope() {
+    let (dir, identity, original_keys, relay) = setup_label();
+    let mut conn = retain_definition(dir.path(), &relay, &original_keys, true);
+    label::set_label_in_dir(
+        dir.path(),
+        identity,
+        "After",
+        &[(relay, original_keys.public_key().to_hex())],
+        &original_keys,
+        |_| Err("offline".into()),
+    )
+    .unwrap();
+    let op = read_journal(dir.path()).unwrap().pop().unwrap();
+    let signed = op.signed_events[0].as_json();
+    let mut raw = read_policy_records(&dir.path().join("agents/managed-agents.json")).unwrap();
+    raw[0].source_team_persona_slug = Some("CodeReviewer".into());
+    save(dir.path(), &raw).unwrap();
+    let active_keys = Keys::generate();
+    assert_ne!(active_keys.public_key().to_hex(), op.owner_pubkey);
+    recover_in_dir(
+        dir.path(),
+        |_| panic!("label proof"),
+        |op| enqueue_home_events(dir.path(), &mut conn, op),
+    )
+    .unwrap();
+    let pending = get_pending_sync(&conn).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].d_tag, "one");
+    assert_eq!(pending[0].pubkey, original_keys.public_key().to_hex());
+    assert_eq!(pending[0].raw_event, signed);
+    assert!(read_journal(dir.path()).unwrap().is_empty());
+}
+
+#[test]
+fn unsigned_old_builtin_label_worklist_is_not_dropped_during_retained_only_resigning() {
     let (dir, identity, keys, relay) = setup_label();
-    let mut conn = retain_definition(dir.path(), &relay, &keys, true);
-    let scopes = [(relay, keys.public_key().to_hex())];
-    label::set_label_in_dir(dir.path(), identity.clone(), "A", &scopes, &keys, |_| {
-        Err("offline".into())
-    })
+    let mut raw = read_policy_records(&dir.path().join("agents/managed-agents.json")).unwrap();
+    raw[0].slug = Some("builtin:fizz".into());
+    save(dir.path(), &raw).unwrap();
+    let conn = retain_definition(dir.path(), &relay, &keys, true);
+    label::set_label_in_dir(
+        dir.path(),
+        identity,
+        "After",
+        &[(relay, keys.public_key().to_hex())],
+        &keys,
+        |_| Err("offline".into()),
+    )
     .unwrap();
-    let old = read_journal(dir.path()).unwrap()[0].signed_events[0].clone();
-    label::set_label_in_dir(dir.path(), identity, "B", &scopes, &keys, |op| {
-        enqueue_home_events(&mut conn, op)
-    })
-    .unwrap();
-    let event = Event::from_json(&get_pending_sync(&conn).unwrap()[0].raw_event).unwrap();
-    assert!(
-        event.created_at > old.created_at,
-        "newest label must dominate signed pending A"
-    );
+    let mut ops = read_journal(dir.path()).unwrap();
+    ops[0].signed_events.clear();
+    save_journal(dir.path(), &ops).unwrap();
+    label::prepare_label_retries(dir.path(), &keys).unwrap();
+    let replay = read_journal(dir.path()).unwrap();
+    assert_eq!(replay[0].signed_events.len(), 1);
+    assert!(replay[0].signed_events[0].content.contains("After"));
+    assert!(get_pending_sync(&conn).unwrap().is_empty());
 }

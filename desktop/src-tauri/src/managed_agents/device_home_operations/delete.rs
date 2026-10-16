@@ -81,7 +81,12 @@ fn prepare_authorized_delete(
             })
         {
             d.origin_released = Some(true);
-            let prior = get_retained_event(&conn, 30175, &scope.owner_pubkey, &d.id)?;
+            let prior = get_retained_event(
+                &conn,
+                30175,
+                &scope.owner_pubkey,
+                &super::super::persona_events::persona_d_tag(&d),
+            )?;
             d.shared = prior
                 .as_ref()
                 .and_then(|r| Event::from_json(&r.raw_event).ok())
