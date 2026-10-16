@@ -2755,6 +2755,8 @@ pub async fn run_prompt_task(
         PromptSource::Heartbeat => None,
     };
 
+    // How this turn's session came to be, when this turn created or resumed it.
+    let mut session_start: Option<SessionStart> = None;
     let (session_id, is_new_session) = match &source {
         PromptSource::Channel(scope) => {
             let cid = &scope.channel_id();
@@ -2792,6 +2794,7 @@ pub async fn run_prompt_task(
                         );
                         agent.state.sessions.insert(scope.clone(), sid.clone());
                         let resumed = start.is_resumed();
+                        session_start = Some(start);
                         if !resumed {
                             agent
                                 .state
@@ -3221,7 +3224,7 @@ pub async fn run_prompt_task(
             );
         }
 
-        crate::queue::format_prompt(
+        let mut sections = crate::queue::format_prompt(
             b,
             &crate::queue::FormatPromptArgs {
                 agent_core: standing.agent_core,
@@ -3237,7 +3240,14 @@ pub async fn run_prompt_task(
                 agent_canvas: standing.agent_canvas,
                 standing_context_sent,
             },
-        )
+        );
+        if let Some(start) = &session_start {
+            session_continuity::insert_session_marker(
+                &mut sections,
+                session_continuity::format_session_marker(start, first_mention.as_ref()),
+            );
+        }
+        sections
     } else {
         // Should not happen — batch is None only for heartbeats which have prompt_text.
         // Return the agent to the pool to prevent a permanent slot leak.
