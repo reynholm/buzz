@@ -2246,6 +2246,46 @@ fn idle_pool_sleep_due(
         && inactivity_expired(last_activity, now, bound, turn_in_flight)
 }
 
+/// Whether a completed prompt result counts as activity for the idle clocks
+/// (`idle_pool_sleep_secs` and `exit_after_inactivity_secs`).
+///
+/// Turn completion must refresh `last_activity`: measured from dispatch, a
+/// turn longer than the idle bound would look idle on the first tick after it
+/// completes, and teardown would take the worker's children with it.
+/// Heartbeat results are excluded: heartbeats are dispatched only into an idle
+/// pool, so a pool kept alive by its own heartbeats would never sleep.
+fn result_refreshes_idle_clock(source: &PromptSource) -> bool {
+    // Exhaustive on purpose: a new PromptSource variant must decide
+    // explicitly whether its completion keeps the pool awake.
+    match source {
+        PromptSource::Channel(_) => true,
+        PromptSource::Heartbeat => false,
+    }
+}
+
+#[cfg(test)]
+mod idle_clock_refresh_tests {
+    use super::*;
+
+    #[test]
+    fn channel_turn_completion_refreshes_idle_clock() {
+        // A completed channel turn is activity: otherwise a turn longer than
+        // the idle bound is torn down on the first tick after it completes.
+        assert!(result_refreshes_idle_clock(&PromptSource::Channel(
+            scope::SessionScope::Conversation {
+                channel_id: Uuid::new_v4()
+            }
+        )));
+    }
+
+    #[test]
+    fn heartbeat_completion_does_not_refresh_idle_clock() {
+        // Heartbeats fire only into an idle pool; counting them as activity
+        // would keep a heartbeat-enabled pool awake forever.
+        assert!(!result_refreshes_idle_clock(&PromptSource::Heartbeat));
+    }
+}
+
 #[cfg(test)]
 mod inactivity_tests {
     use super::*;
