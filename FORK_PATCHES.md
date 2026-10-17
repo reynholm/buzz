@@ -5877,13 +5877,15 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/session_store.rs`
 
-Lease-fenced, bounded per-scope session records with safe quarantine and instance liveness.
+Community-and-agent isolated, lease-fenced session records with bounded locks, identity validation and channel-wide failure fencing.
 
 New module: `true`.
 
 - Required symbol: `pub struct SessionStore`
 - Required symbol: `pub fn claim(`
 - Required symbol: `pub fn commit(`
+- Required symbol: `fn store_namespace(`
+- Required symbol: `poisoned_channels`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/session_store_tests.rs`
@@ -5895,6 +5897,10 @@ New module: `true`.
 - Required symbol: `busy_does_not_quarantine_owner_record`
 - Required symbol: `quarantine_requires_matching_lease`
 - Required symbol: `instance_publication_cannot_be_reaped_before_locking`
+- Required symbol: `namespace_normalizes_url_spelling_without_aliasing_communities`
+- Required symbol: `copied_foreign_namespace_record_is_not_resumable`
+- Required symbol: `legacy_unscoped_records_are_not_adopted`
+- Required symbol: `channel_enumeration_failure_poisons_unknown_scopes_until_restart`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/session_continuity.rs`
@@ -5919,6 +5925,9 @@ New module: `true`.
 - Required symbol: `rotate_before_first_resume_discards_disk_session`
 - Required symbol: `one_reply_window_keeps_first_mention_over_agent_reply`
 - Required symbol: `idle_worker_transport_death_keeps_session_resumable`
+- Required symbol: `acquisition_does_not_resume_another_community_or_agent`
+- Required symbol: `acquisition_resumes_canonical_same_community_after_restart`
+- Required symbol: `failed_channel_removal_during_sleep_never_resumes_after_readd`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/first_mention.rs`

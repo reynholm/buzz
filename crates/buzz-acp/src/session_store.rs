@@ -37,7 +37,7 @@ pub const MAX_RECORD_BYTES: u64 = 256 * 1024;
 /// Longest wait for a record lock before the operation gives up as busy.
 pub const STORE_LOCK_WAIT: Duration = Duration::from_secs(2);
 
-const RECORD_VERSION: u32 = 1;
+const RECORD_VERSION: u32 = 2;
 const LOCK_RETRY: Duration = Duration::from_millis(20);
 const INSTANCES_DIR: &str = "instances";
 
@@ -143,6 +143,8 @@ pub struct LiveSession {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionRecord {
     pub version: u32,
+    /// Hash of the canonical relay identity and agent public key.
+    pub namespace: String,
     pub live: Option<LiveSession>,
     pub reason: Option<SessionReason>,
 }
@@ -233,6 +235,7 @@ pub fn append_delivered(ids: &mut Vec<String>, new: impl IntoIterator<Item = Str
 /// Per-agent directory of session records.
 pub struct SessionStore {
     dir: PathBuf,
+    namespace: String,
     instance: Uuid,
     /// Registered on the first write and held for the life of the process;
     /// the OS releases it on exit, which is how other processes tell a dead
@@ -240,6 +243,7 @@ pub struct SessionStore {
     /// after the lock exists.
     instance_lock: Mutex<Option<File>>,
     poisoned: Mutex<HashSet<PathBuf>>,
+    poisoned_channels: Mutex<HashSet<Uuid>>,
     #[cfg(test)]
     fail_writes: std::sync::atomic::AtomicBool,
     #[cfg(test)]
@@ -247,13 +251,18 @@ pub struct SessionStore {
 }
 
 impl SessionStore {
-    /// Open the store. Nothing touches the disk until the first write.
-    pub fn open(dir: PathBuf) -> io::Result<Self> {
+    /// Open an isolated namespace under either the default or configured root.
+    /// Legacy unscoped records are deliberately not migrated. Nothing touches
+    /// the disk until the first write.
+    pub fn open(root: PathBuf, relay: &str, agent: &str) -> io::Result<Self> {
+        let namespace = store_namespace(relay, agent)?;
         Ok(Self {
-            dir,
+            dir: root.join("v2").join(&namespace),
+            namespace,
             instance: Uuid::new_v4(),
             instance_lock: Mutex::new(None),
             poisoned: Mutex::new(HashSet::new()),
+            poisoned_channels: Mutex::new(HashSet::new()),
             #[cfg(test)]
             fail_writes: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
@@ -342,13 +351,13 @@ impl SessionStore {
     /// Read a scope's record. A record that cannot be parsed is moved aside.
     pub fn load(&self, scope: &SessionScope) -> LoadOutcome {
         let path = self.record_path(scope);
-        match read_record(&path) {
+        match read_record(&path, &self.namespace) {
             Ok(None) => LoadOutcome::Missing,
             Ok(Some(record)) => LoadOutcome::Found(Box::new(record)),
             Err(()) => {
                 if let Ok(_guard) = self.lock_record(&path) {
                     // Re-check under the lock: a writer may have replaced it.
-                    if read_record(&path).is_err() {
+                    if read_record(&path, &self.namespace).is_err() {
                         let _ = fs::rename(&path, with_suffix(&path, "corrupt"));
                     }
                 }
@@ -374,6 +383,7 @@ impl SessionStore {
             }
             Ok(SessionRecord {
                 version: RECORD_VERSION,
+                namespace: self.namespace.clone(),
                 live: Some(live),
                 reason: None,
             })
@@ -410,18 +420,32 @@ impl SessionStore {
     pub fn discard(&self, scope: &SessionScope, lease: Uuid) -> Result<(), StoreError> {
         self.update(&self.record_path(scope), |current| {
             owned_record(current, lease)?;
-            Ok(tombstone())
+            Ok(self.tombstone())
         })
     }
 
     /// Tombstone the record whoever owns it (owner commands, channel removal).
     pub fn discard_scope(&self, scope: &SessionScope) -> Result<(), StoreError> {
-        self.update(&self.record_path(scope), |_| Ok(tombstone()))
+        self.update(&self.record_path(scope), |_| Ok(self.tombstone()))
     }
 
     /// Tombstone every record of a channel. Returns how many were changed.
     pub fn discard_channel(&self, channel_id: uuid::Uuid) -> Result<usize, StoreError> {
-        let dir = self.dir.join(channel_id.to_string());
+        let result = self.discard_channel_records(channel_id);
+        if let Err(err) = &result {
+            // Enumeration can fail before any record is known. A per-record
+            // poison cannot fence these disk-only scopes after pool sleep.
+            if let Ok(mut channels) = self.poisoned_channels.lock() {
+                channels.insert(channel_id);
+            }
+            tracing::warn!(target: "session_store", %channel_id,
+                "channel invalidation failed, channel will not resume: {err}");
+        }
+        result
+    }
+
+    fn discard_channel_records(&self, channel_id: Uuid) -> Result<usize, StoreError> {
+        let dir = self.channel_dir(channel_id);
         let entries = match fs::read_dir(&dir) {
             Ok(entries) => entries,
             Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(0),
@@ -429,12 +453,19 @@ impl SessionStore {
         };
         let mut changed = 0;
         let mut first_error = None;
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(err) => {
+                    first_error.get_or_insert(StoreError::Io(err));
+                    continue;
+                }
+            };
             let path = entry.path();
             if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
                 continue;
             }
-            match self.update(&path, |_| Ok(tombstone())) {
+            match self.update(&path, |_| Ok(self.tombstone())) {
                 Ok(()) => changed += 1,
                 Err(err) => {
                     first_error.get_or_insert(err);
@@ -448,10 +479,15 @@ impl SessionStore {
     }
 
     pub fn is_poisoned(&self, scope: &SessionScope) -> bool {
-        self.poisoned
+        self.poisoned_channels
             .lock()
-            .map(|set| set.contains(&self.record_path(scope)))
+            .map(|channels| channels.contains(&scope.channel_id()))
             .unwrap_or(true)
+            || self
+                .poisoned
+                .lock()
+                .map(|set| set.contains(&self.record_path(scope)))
+                .unwrap_or(true)
     }
 
     #[cfg(test)]
@@ -475,9 +511,22 @@ impl SessionStore {
             } => format!("thread:{channel_id}:{root_event_id}"),
         };
         let digest = hex::encode(Sha256::digest(key.as_bytes()));
-        self.dir
-            .join(scope.channel_id().to_string())
+        self.channel_dir(scope.channel_id())
             .join(format!("{digest}.json"))
+    }
+
+    /// Directory containing this namespace's records for one channel.
+    pub(crate) fn channel_dir(&self, channel_id: Uuid) -> PathBuf {
+        self.dir.join(channel_id.to_string())
+    }
+
+    fn tombstone(&self) -> SessionRecord {
+        SessionRecord {
+            version: RECORD_VERSION,
+            namespace: self.namespace.clone(),
+            live: None,
+            reason: Some(SessionReason::Discarded),
+        }
     }
 
     fn lock_record(&self, path: &Path) -> Result<File, StoreError> {
@@ -530,7 +579,7 @@ impl SessionStore {
     ) -> Result<(), StoreError> {
         self.register_instance().map_err(StoreError::Io)?;
         let lock = self.lock_record(path)?;
-        let current = read_record(path).map_err(|()| StoreError::Unreadable)?;
+        let current = read_record(path, &self.namespace).map_err(|()| StoreError::Unreadable)?;
         let next = decide(current.as_ref())?;
         if let Err(err) = self.write_record(path, &next) {
             // Still inside the critical section, on a record `decide`
@@ -571,12 +620,26 @@ impl Drop for SessionStore {
     }
 }
 
-fn tombstone() -> SessionRecord {
-    SessionRecord {
-        version: RECORD_VERSION,
-        live: None,
-        reason: Some(SessionReason::Discarded),
+fn store_namespace(relay: &str, agent: &str) -> io::Result<String> {
+    let invalid = |message| io::Error::new(io::ErrorKind::InvalidInput, message);
+    let relay = url::Url::parse(relay.trim()).map_err(|_| invalid("invalid relay URL"))?;
+    if !matches!(relay.scheme(), "ws" | "wss")
+        || relay.host().is_none()
+        || !relay.username().is_empty()
+        || relay.password().is_some()
+        || relay.fragment().is_some()
+    {
+        return Err(invalid("invalid relay identity"));
     }
+    // URL serialization normalizes case, default ports and the root slash.
+    // Keep distinct hosts (including loopback hosts), paths and queries:
+    // the relay host selects the community, unlike runtime process aliases.
+    let agent = nostr::PublicKey::from_hex(agent)
+        .map_err(|_| invalid("invalid agent public key"))?
+        .to_hex();
+    let identity = serde_json::to_vec(&("buzz-session-store-v2", relay.as_str(), agent))
+        .map_err(io::Error::other)?;
+    Ok(hex::encode(Sha256::digest(identity)))
 }
 
 /// The current record, if its live session carries `lease`.
@@ -590,7 +653,7 @@ fn owned_record(current: Option<&SessionRecord>, lease: Uuid) -> Result<SessionR
 }
 
 /// `Ok(None)` when absent, `Err(())` when present but unusable.
-fn read_record(path: &Path) -> Result<Option<SessionRecord>, ()> {
+fn read_record(path: &Path, namespace: &str) -> Result<Option<SessionRecord>, ()> {
     let metadata = match fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -605,7 +668,9 @@ fn read_record(path: &Path) -> Result<Option<SessionRecord>, ()> {
         Err(_) => return Err(()),
     };
     match serde_json::from_slice::<SessionRecord>(&bytes) {
-        Ok(record) if record.version == RECORD_VERSION => Ok(Some(record)),
+        Ok(record) if record.version == RECORD_VERSION && record.namespace == namespace => {
+            Ok(Some(record))
+        }
         _ => Err(()),
     }
 }

@@ -124,18 +124,16 @@ pub(crate) fn open_session_store(
     configured_dir: Option<PathBuf>,
     resume_enabled: bool,
     agent_pubkey_hex: &str,
+    relay_url: &str,
 ) -> Option<Arc<SessionStore>> {
     if !resume_enabled {
         return None;
     }
     let dir = match configured_dir {
         Some(dir) => dir,
-        None => std::env::current_dir()
-            .ok()?
-            .join(".buzz-sessions")
-            .join(agent_pubkey_hex),
+        None => std::env::current_dir().ok()?.join(".buzz-sessions"),
     };
-    match SessionStore::open(dir.clone()) {
+    match SessionStore::open(dir.clone(), relay_url, agent_pubkey_hex) {
         Ok(store) => Some(Arc::new(store)),
         Err(err) => {
             tracing::warn!(

@@ -2,6 +2,11 @@ use super::*;
 use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 
+const TEST_AGENT: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+fn open_store(root: PathBuf) -> io::Result<SessionStore> {
+    SessionStore::open(root, "wss://relay.example", TEST_AGENT)
+}
+
 fn thread(root: &str) -> SessionScope {
     SessionScope::Thread {
         channel_id: Uuid::from_u128(7),
@@ -36,7 +41,7 @@ fn found(outcome: LoadOutcome) -> SessionRecord {
 #[test]
 fn roundtrip_live_record() {
     let dir = tempfile::tempdir().unwrap();
-    let store = SessionStore::open(dir.path().to_path_buf()).unwrap();
+    let store = open_store(dir.path().to_path_buf()).unwrap();
     let scope = thread("a");
     let lease = store
         .claim(&scope, &Expect::Missing, live(&store, "s-1"))
@@ -51,7 +56,7 @@ fn roundtrip_live_record() {
 #[test]
 fn corrupt_file_is_renamed_and_reported_unreadable() {
     let dir = tempfile::tempdir().unwrap();
-    let store = SessionStore::open(dir.path().to_path_buf()).unwrap();
+    let store = open_store(dir.path().to_path_buf()).unwrap();
     let scope = thread("b");
     let path = store.record_path(&scope);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -64,7 +69,7 @@ fn corrupt_file_is_renamed_and_reported_unreadable() {
 #[test]
 fn oversized_file_is_unreadable() {
     let dir = tempfile::tempdir().unwrap();
-    let store = SessionStore::open(dir.path().to_path_buf()).unwrap();
+    let store = open_store(dir.path().to_path_buf()).unwrap();
     let scope = thread("c");
     let path = store.record_path(&scope);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -75,7 +80,7 @@ fn oversized_file_is_unreadable() {
 #[test]
 fn claim_conflicts_when_record_changed() {
     let dir = tempfile::tempdir().unwrap();
-    let store = SessionStore::open(dir.path().to_path_buf()).unwrap();
+    let store = open_store(dir.path().to_path_buf()).unwrap();
     let scope = thread("d");
     let expect = Expect::from_outcome(&store.load(&scope));
     store
@@ -95,7 +100,7 @@ fn claim_conflicts_when_record_changed() {
 #[test]
 fn late_write_from_previous_lease_is_ignored() {
     let dir = tempfile::tempdir().unwrap();
-    let store = SessionStore::open(dir.path().to_path_buf()).unwrap();
+    let store = open_store(dir.path().to_path_buf()).unwrap();
     let scope = thread("e");
     let lease_a = store
         .claim(&scope, &Expect::Missing, live(&store, "s-a"))
@@ -119,7 +124,7 @@ fn late_write_from_previous_lease_is_ignored() {
 #[test]
 fn concurrent_claims_have_one_winner() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Arc::new(SessionStore::open(dir.path().to_path_buf()).unwrap());
+    let store = Arc::new(open_store(dir.path().to_path_buf()).unwrap());
     let scope = thread("f");
     let barrier = Arc::new(std::sync::Barrier::new(2));
     let handles: Vec<_> = ["s-1", "s-2"]
@@ -144,7 +149,7 @@ fn concurrent_claims_have_one_winner() {
 #[test]
 fn lock_wait_is_bounded() {
     let dir = tempfile::tempdir().unwrap();
-    let store = SessionStore::open(dir.path().to_path_buf()).unwrap();
+    let store = open_store(dir.path().to_path_buf()).unwrap();
     let scope = thread("g");
     let holder = store.lock_record(&store.record_path(&scope)).unwrap();
     let started = Instant::now();
@@ -158,8 +163,8 @@ fn lock_wait_is_bounded() {
 #[test]
 fn busy_does_not_quarantine_owner_record() {
     let dir = tempfile::tempdir().unwrap();
-    let owner = SessionStore::open(dir.path().to_path_buf()).unwrap();
-    let other = SessionStore::open(dir.path().to_path_buf()).unwrap();
+    let owner = open_store(dir.path().to_path_buf()).unwrap();
+    let other = open_store(dir.path().to_path_buf()).unwrap();
     let scope = thread("h");
     let lease = owner
         .claim(&scope, &Expect::Missing, live(&owner, "s-a"))
@@ -178,7 +183,7 @@ fn busy_does_not_quarantine_owner_record() {
 #[test]
 fn quarantine_requires_matching_lease() {
     let dir = tempfile::tempdir().unwrap();
-    let store = SessionStore::open(dir.path().to_path_buf()).unwrap();
+    let store = open_store(dir.path().to_path_buf()).unwrap();
     let scope = thread("i");
     store
         .claim(&scope, &Expect::Missing, live(&store, "s-a"))
@@ -196,7 +201,7 @@ fn quarantine_requires_matching_lease() {
 #[test]
 fn failed_update_of_existing_record_poisons_scope() {
     let dir = tempfile::tempdir().unwrap();
-    let store = SessionStore::open(dir.path().to_path_buf()).unwrap();
+    let store = open_store(dir.path().to_path_buf()).unwrap();
     let scope = thread("j");
     let lease = store
         .claim(&scope, &Expect::Missing, live(&store, "s-a"))
@@ -217,7 +222,7 @@ fn failed_discard_moves_record_aside_across_restart() {
     let dir = tempfile::tempdir().unwrap();
     let path;
     {
-        let store = SessionStore::open(dir.path().to_path_buf()).unwrap();
+        let store = open_store(dir.path().to_path_buf()).unwrap();
         let scope = thread("k");
         let lease = store
             .claim(&scope, &Expect::Missing, live(&store, "s-a"))
@@ -229,7 +234,7 @@ fn failed_discard_moves_record_aside_across_restart() {
         ));
         path = store.record_path(&scope);
     }
-    let restarted = SessionStore::open(dir.path().to_path_buf()).unwrap();
+    let restarted = open_store(dir.path().to_path_buf()).unwrap();
     assert_eq!(restarted.load(&thread("k")), LoadOutcome::Missing);
     assert!(with_suffix(&path, "stale").exists());
 }
@@ -237,7 +242,7 @@ fn failed_discard_moves_record_aside_across_restart() {
 #[test]
 fn discard_leaves_tombstone_with_reason() {
     let dir = tempfile::tempdir().unwrap();
-    let store = SessionStore::open(dir.path().to_path_buf()).unwrap();
+    let store = open_store(dir.path().to_path_buf()).unwrap();
     let scope = thread("l");
     let lease = store
         .claim(&scope, &Expect::Missing, live(&store, "s-a"))
@@ -255,7 +260,7 @@ fn discard_leaves_tombstone_with_reason() {
 #[test]
 fn discard_channel_tombstones_only_that_channel() {
     let dir = tempfile::tempdir().unwrap();
-    let store = SessionStore::open(dir.path().to_path_buf()).unwrap();
+    let store = open_store(dir.path().to_path_buf()).unwrap();
     let ours = [thread("m"), thread("n")];
     let theirs = SessionScope::Conversation {
         channel_id: Uuid::from_u128(8),
@@ -275,8 +280,8 @@ fn discard_channel_tombstones_only_that_channel() {
 #[test]
 fn other_live_instance_is_alive_dead_one_is_not() {
     let dir = tempfile::tempdir().unwrap();
-    let store = SessionStore::open(dir.path().to_path_buf()).unwrap();
-    let other = SessionStore::open(dir.path().to_path_buf()).unwrap();
+    let store = open_store(dir.path().to_path_buf()).unwrap();
+    let other = open_store(dir.path().to_path_buf()).unwrap();
     // An instance registers on its first write; only then can it own records.
     other
         .claim(&thread("r"), &Expect::Missing, live(&other, "s"))
@@ -319,14 +324,15 @@ fn reason_wire_strings_roundtrip() {
 fn open_does_not_touch_disk_until_first_write() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("store");
-    let store = SessionStore::open(root.clone()).unwrap();
+    let store = open_store(root.clone()).unwrap();
     assert!(!root.exists());
     assert_eq!(store.load(&thread("o")), LoadOutcome::Missing);
     assert!(!root.exists());
     store
         .claim(&thread("o"), &Expect::Missing, live(&store, "s"))
         .unwrap();
-    assert!(root
+    assert!(store
+        .dir
         .join(INSTANCES_DIR)
         .join(format!("{}.lock", store.instance()))
         .exists());
@@ -335,21 +341,21 @@ fn open_does_not_touch_disk_until_first_write() {
 #[test]
 fn dead_instance_locks_are_swept_and_own_lock_removed_on_drop() {
     let dir = tempfile::tempdir().unwrap();
-    let first = SessionStore::open(dir.path().to_path_buf()).unwrap();
+    let first = open_store(dir.path().to_path_buf()).unwrap();
     first
         .claim(&thread("p"), &Expect::Missing, live(&first, "s"))
         .unwrap();
-    let first_lock = dir
-        .path()
+    let first_lock = first
+        .dir
         .join(INSTANCES_DIR)
         .join(format!("{}.lock", first.instance()));
     // A crashed process leaves its lock file behind but no longer holds it.
-    let crashed = dir
-        .path()
+    let crashed = first
+        .dir
         .join(INSTANCES_DIR)
         .join(format!("{}.lock", Uuid::new_v4()));
     fs::write(&crashed, b"").unwrap();
-    let second = SessionStore::open(dir.path().to_path_buf()).unwrap();
+    let second = open_store(dir.path().to_path_buf()).unwrap();
     second
         .claim(&thread("q"), &Expect::Missing, live(&second, "s"))
         .unwrap();
@@ -362,8 +368,8 @@ fn dead_instance_locks_are_swept_and_own_lock_removed_on_drop() {
 #[test]
 fn instance_publication_cannot_be_reaped_before_locking() {
     let dir = tempfile::tempdir().unwrap();
-    let first = Arc::new(SessionStore::open(dir.path().to_path_buf()).unwrap());
-    let second = SessionStore::open(dir.path().to_path_buf()).unwrap();
+    let first = Arc::new(open_store(dir.path().to_path_buf()).unwrap());
+    let second = open_store(dir.path().to_path_buf()).unwrap();
     let (opened_tx, opened_rx) = std::sync::mpsc::sync_channel(0);
     let (continue_tx, continue_rx) = std::sync::mpsc::sync_channel(0);
     *first.before_instance_lock.lock().unwrap() = Some(Box::new(move || {
@@ -386,4 +392,113 @@ fn instance_publication_cannot_be_reaped_before_locking() {
         second.instance_alive(first.instance()),
         "registered owner must remain discoverable"
     );
+}
+
+#[test]
+fn channel_enumeration_failure_poisons_unknown_scopes_until_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open_store(dir.path().to_path_buf()).unwrap();
+    let scope = thread("t");
+    let neighbor = SessionScope::Conversation {
+        channel_id: Uuid::from_u128(8),
+    };
+    for scope in [&scope, &neighbor] {
+        store
+            .claim(scope, &Expect::Missing, live(&store, "before-removal"))
+            .unwrap();
+    }
+    let channel_dir = store.record_path(&scope).parent().unwrap().to_path_buf();
+    fs::set_permissions(&channel_dir, fs::Permissions::from_mode(0o000)).unwrap();
+    let result = store.discard_channel(scope.channel_id());
+    fs::set_permissions(&channel_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(matches!(result, Err(StoreError::Io(_))));
+    assert!(
+        store.is_poisoned(&scope),
+        "failed removal must forbid resume in this process"
+    );
+    assert!(
+        store.is_poisoned(&thread("u")),
+        "unknown scopes in the same channel are fenced too"
+    );
+    assert!(!store.is_poisoned(&neighbor));
+}
+
+#[test]
+fn namespace_normalizes_url_spelling_without_aliasing_communities() {
+    let root = tempfile::tempdir().unwrap();
+    let a = SessionStore::open(root.path().into(), "WSS://Relay.Example:443/", TEST_AGENT).unwrap();
+    let same = SessionStore::open(root.path().into(), "wss://relay.example", TEST_AGENT).unwrap();
+    assert_eq!(a.dir, same.dir);
+    for relay in [
+        "ws://relay.example",
+        "wss://relay.example:444",
+        "wss://other.example",
+        "wss://relay.example/community",
+        "wss://relay.example/?community=2",
+    ] {
+        let other = SessionStore::open(root.path().into(), relay, TEST_AGENT).unwrap();
+        assert_ne!(a.dir, other.dir, "distinct relay: {relay}");
+    }
+    let local = SessionStore::open(root.path().into(), "ws://localhost:3030", TEST_AGENT).unwrap();
+    let ip = SessionStore::open(root.path().into(), "ws://127.0.0.1:3030", TEST_AGENT).unwrap();
+    assert_ne!(
+        local.dir, ip.dir,
+        "host-derived communities must remain distinct"
+    );
+    let agent = nostr::Keys::generate().public_key().to_hex();
+    let other = SessionStore::open(root.path().into(), "wss://relay.example", &agent).unwrap();
+    assert_ne!(a.dir, other.dir, "configured roots isolate agents too");
+}
+
+#[test]
+fn copied_foreign_namespace_record_is_not_resumable() {
+    let root = tempfile::tempdir().unwrap();
+    let a = SessionStore::open(root.path().into(), "wss://a.example", TEST_AGENT).unwrap();
+    let b = SessionStore::open(root.path().into(), "wss://b.example", TEST_AGENT).unwrap();
+    let scope = thread("v");
+    a.claim(&scope, &Expect::Missing, live(&a, "community-a"))
+        .unwrap();
+    let foreign_path = b.record_path(&scope);
+    fs::create_dir_all(foreign_path.parent().unwrap()).unwrap();
+    fs::copy(a.record_path(&scope), &foreign_path).unwrap();
+    assert_eq!(b.load(&scope), LoadOutcome::Unreadable);
+    assert!(with_suffix(&foreign_path, "corrupt").exists());
+    assert_eq!(
+        found(a.load(&scope)).live.unwrap().session_id,
+        "community-a"
+    );
+}
+
+#[test]
+fn legacy_unscoped_records_are_not_adopted() {
+    let root = tempfile::tempdir().unwrap();
+    let store = open_store(root.path().into()).unwrap();
+    let scope = thread("w");
+    let name = store.record_path(&scope).file_name().unwrap().to_owned();
+    let legacy = serde_json::json!({"version":1, "live":live(&store,"legacy"), "reason":null});
+    for dir in [root.path().to_path_buf(), root.path().join(TEST_AGENT)] {
+        let path = dir.join(scope.channel_id().to_string()).join(&name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        assert_eq!(store.load(&scope), LoadOutcome::Missing);
+        assert!(path.exists(), "legacy records are left intact");
+    }
+    let path = store.record_path(&scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    assert_eq!(store.load(&scope), LoadOutcome::Unreadable);
+}
+
+#[test]
+fn invalid_identity_disables_store_instead_of_sharing_a_namespace() {
+    let root = tempfile::tempdir().unwrap();
+    for relay in [
+        "not-a-url",
+        "https://relay.example",
+        "wss://user:pass@relay.example",
+        "wss://relay.example/#fragment",
+    ] {
+        assert!(SessionStore::open(root.path().into(), relay, TEST_AGENT).is_err());
+    }
+    assert!(SessionStore::open(root.path().into(), "wss://relay.example", "invalid-key").is_err());
 }

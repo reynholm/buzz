@@ -2726,6 +2726,7 @@ async fn run_harness(
         config.session_store_dir.clone(),
         config.session_resume,
         &config.keys.public_key().to_hex(),
+        &config.relay_url,
     );
     let mut pool = if config.lazy_pool {
         AgentPool::from_slots((0..config.agents).map(|_| None).collect())

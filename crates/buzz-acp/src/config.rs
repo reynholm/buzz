@@ -399,7 +399,8 @@ pub struct CliArgs {
 
     /// Directory for durable session records, used to resume provider
     /// sessions after a pool sleep, worker crash, or harness restart.
-    /// Default: `<cwd>/.buzz-sessions/<agent pubkey hex>`.
+    /// Root defaults to `<cwd>/.buzz-sessions`. Both default and configured
+    /// roots are namespaced by canonical relay URL and agent public key.
     #[arg(long, env = "BUZZ_ACP_SESSION_STORE_DIR")]
     pub session_store_dir: Option<PathBuf>,
 
