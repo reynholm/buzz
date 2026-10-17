@@ -23,6 +23,7 @@ mod run_task;
 mod runtime;
 use runtime::{AgentRuntime, PoolStartup, SessionMode};
 mod scope;
+mod session_status;
 mod session_store;
 mod setup_mode;
 mod usage;
@@ -2699,7 +2700,8 @@ async fn run_harness(
     mut shutdown_rx: watch::Receiver<()>,
     startup_ready: tokio::sync::oneshot::Sender<()>,
 ) -> Result<()> {
-    let runtime = AgentRuntime::prepare(config)?;
+    let mut runtime = AgentRuntime::prepare(config)?;
+    runtime.enable_session_status();
     let config = runtime.config();
 
     tracing::info!("buzz-acp starting: {}", config.summary());
@@ -3403,6 +3405,10 @@ async fn run_harness(
                                     // the agent lost access).
                                     let drained_ids = queue.drain_channel(ch);
                                     pool.discard_durable_channel(ch);
+                                    pool::session_visibility::retire_channel(
+                                        ctx.session_status.as_ref(),
+                                        ch,
+                                    );
                                     let invalidated = if pool_ready {
                                         pool.invalidate_channel_sessions(ch)
                                     } else {
@@ -3559,6 +3565,10 @@ async fn run_harness(
                                     );
                                     queue.remove_continuation(&scope);
                                     pool.discard_durable_scope(&scope);
+                                    pool::session_visibility::retire_scope(
+                                        ctx.session_status.as_ref(),
+                                        &scope,
+                                    );
                                     let fired = signal_in_flight_task_for_scope(
                                         &mut pool,
                                         &scope,
@@ -6522,7 +6532,7 @@ fn build_mcp_servers(config: &Config) -> Vec<McpServer> {
                 }
             }
             for (name, value) in &config.persona_env_vars {
-                if git::is_managed_env(name) {
+                if git::is_managed_env(name) || name == session_status::SESSION_STATUS_DIR_ENV {
                     env.retain(|entry| entry.name != *name);
                     env.push(EnvVar {
                         name: name.clone(),

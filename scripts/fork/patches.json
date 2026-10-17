@@ -4506,13 +4506,31 @@
     },
     {
       "path": "crates/buzz-acp/src/acp.rs",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Route standard usage_update occupancy to the status binding of its own session ID; the harness owns BUZZ_SESSION_STATUS_DIR in adapter spawns.",
       "is_new": false,
       "required_symbols": [
         "pub async fn session_resume(",
-        "self.resume_supported = result"
+        "self.resume_supported = result",
+        "pub(crate) fn bind_session_status(",
+        "pub(crate) fn clear_session_status("
       ],
-      "invocation_seams": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/acp.rs",
+          "callee_symbol": "record_usage_update",
+          "invocation": "crate::session_status::record_usage_update(&self.session_status, msg);",
+          "behavior_test": "claude_usage_updates_route_by_their_own_session_id",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/acp.rs",
+          "callee_symbol": "apply_status_dir_env",
+          "invocation": "crate::session_status::apply_status_dir_env(&mut cmd, extra_env);",
+          "behavior_test": "status_dir_env_is_owned_by_the_harness",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
+          "coverage": "The helper is unit-tested; the spawn call is a textual guard (no test mutates the process environment)."
+        }
+      ],
       "verification_commands": [
         "just ci"
       ]
@@ -4592,11 +4610,13 @@
     },
     {
       "path": "crates/buzz-acp/src/lib.rs",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Preserve the heartbeat collection call with a textual drift guard; full live-service-loop behavioral mutation coverage is not claimed. Refresh idle clocks when a non-heartbeat prompt result is handled (port of block/buzz#7173).",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Preserve the heartbeat collection call with a textual drift guard; full live-service-loop behavioral mutation coverage is not claimed. Refresh idle clocks when a non-heartbeat prompt result is handled (port of block/buzz#7173). Enable session status once per harness and retire status on owner rotate and channel removal; forward the status directory to the managed MCP server.",
       "is_new": false,
       "required_symbols": [
         "pool.queue_finished_background_work(&mut queue);",
-        "fn result_refreshes_idle_clock(source: &PromptSource) -> bool"
+        "fn result_refreshes_idle_clock(source: &PromptSource) -> bool",
+        "mod session_status;",
+        "name == session_status::SESSION_STATUS_DIR_ENV"
       ],
       "invocation_seams": [
         {
@@ -4646,6 +4666,30 @@
           "behavior_test": "rotate_before_first_resume_discards_disk_session",
           "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
           "coverage": "Textual guard for run_harness wiring; named tests exercise pool/store behavior, not the live run_harness loop. Live loop acceptance uses an isolated relay."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "enable_session_status",
+          "invocation": "runtime.enable_session_status();",
+          "behavior_test": "every_spawn_path_and_managed_mcp_get_the_current_status_dir",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
+          "coverage": "Textual guard for run_harness wiring; the named test calls the same method on a prepared runtime."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "retire_scope",
+          "invocation": "pool::session_visibility::retire_scope(",
+          "behavior_test": "rotate_during_a_delayed_turn_retires_before_late_usage",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
+          "coverage": "Textual guard for run_harness wiring; the named test exercises the same retirement call on the status runtime, not the live loop."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "retire_channel",
+          "invocation": "pool::session_visibility::retire_channel(",
+          "behavior_test": "channel_removal_retires_every_scope_of_that_channel",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
+          "coverage": "Textual guard for run_harness wiring; the named test exercises the same retirement call on the status runtime, not the live loop."
         }
       ],
       "verification_commands": [
@@ -4713,6 +4757,27 @@
           "behavior_test": "idle_worker_transport_death_keeps_session_resumable",
           "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
           "coverage": "Real local adapter death reaches production run_prompt_task via broken pipe and preserves resumable provider state."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "publish_session_start",
+          "invocation": "agent.publish_session_start(",
+          "behavior_test": "new_session_status_precedes_the_prompt_and_spans_ordinary_turns",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "rebind_session_status",
+          "invocation": "agent.rebind_session_status(ctx.session_status.as_ref(), scope, &sid);",
+          "behavior_test": "new_session_status_precedes_the_prompt_and_spans_ordinary_turns",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "history_coverage",
+          "invocation": "binding.set_history(session_visibility::history_coverage(",
+          "behavior_test": "pinned_assignment_outside_the_window_counts_supplied_events_once",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1"
         }
       ],
       "verification_commands": [
@@ -8724,14 +8789,30 @@
     },
     {
       "path": "crates/buzz-acp/src/pool/session_continuity.rs",
-      "responsibility": "Resume or create provider sessions through bounded claim/RPC/commit rounds and preserve delivery state.",
+      "responsibility": "Resume or create provider sessions through bounded claim/RPC/commit rounds and preserve delivery state. Retire status generations on the existing discard and depart paths.",
       "is_new": true,
       "required_symbols": [
         "pub(super) async fn acquire_session(",
         "pub(crate) fn resume_decision(",
         "pub(crate) fn insert_session_marker("
       ],
-      "invocation_seams": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/pool/session_continuity.rs",
+          "callee_symbol": "retire_status",
+          "invocation": "self.retire_status(scope);",
+          "behavior_test": "new_session_status_precedes_the_prompt_and_spans_ordinary_turns",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool/session_continuity.rs",
+          "callee_symbol": "retire_all_status",
+          "invocation": "self.retire_all_status();",
+          "behavior_test": "worker_crash_retires_status_before_the_replacement_prompt",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
+          "coverage": "Covers both depart_durable_all (crash) and depart_all (sleep, pool_sleep_retires_status_and_wake_starts_a_new_transition)."
+        }
+      ],
       "verification_commands": [
         "cargo test -p buzz-acp -- --test-threads=1"
       ]
@@ -8809,6 +8890,110 @@
         "fs2 = \"0.4\""
       ],
       "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/session_status.rs",
+      "responsibility": "Session status runtime: private instance directory held by an instance lock, atomic bounded per-scope snapshots, generation locks with shared revocable guards, per-scope failure disabling, usage routing by notification session ID and harness-owned status directory env.",
+      "is_new": true,
+      "required_symbols": [
+        "pub(crate) const SESSION_STATUS_DIR_ENV: &str = \"BUZZ_SESSION_STATUS_DIR\";",
+        "pub(crate) struct SessionStatusRuntime",
+        "pub(crate) fn begin(",
+        "pub(crate) fn bind_existing(",
+        "pub(crate) fn retire_channel(",
+        "fn revoke_locked(",
+        "pub(crate) fn record_usage_update(",
+        "pub(crate) fn apply_status_dir_env(",
+        "pub(crate) fn open_for_config("
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/session_status_tests.rs",
+      "responsibility": "Status runtime layout, lock, revocation, failed removal/write and wire usage-routing regressions.",
+      "is_new": true,
+      "required_symbols": [
+        "open_holds_instance_lock_in_private_layout",
+        "successor_generation_revokes_predecessor",
+        "retire_releases_lock_and_late_callbacks_never_recreate",
+        "failed_snapshot_removal_still_revokes_generation",
+        "write_failure_disables_only_that_scope",
+        "retire_waits_for_a_delayed_writer_then_removes_snapshot",
+        "status_dir_env_is_owned_by_the_harness",
+        "claude_usage_updates_route_by_their_own_session_id",
+        "codex_usage_updates_route_by_their_own_session_id"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/session_visibility.rs",
+      "responsibility": "Adapt canonical session scope, acquisition result and final cold-start prompt history to the status runtime; worker-level retirement hooks.",
+      "is_new": true,
+      "required_symbols": [
+        "pub(crate) fn status_scope(",
+        "pub(crate) fn status_reason(",
+        "pub(super) fn publish_session_start(",
+        "pub(super) fn rebind_session_status(",
+        "pub(super) fn retire_status(",
+        "pub(super) fn retire_all_status(",
+        "pub(super) fn history_coverage(",
+        "pub(crate) fn retire_scope(",
+        "pub(crate) fn retire_channel("
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/session_visibility_tests.rs",
+      "responsibility": "Production run_prompt_task status lifecycle, usage routing, history coverage and spawn/MCP environment regressions.",
+      "is_new": true,
+      "required_symbols": [
+        "new_session_status_precedes_the_prompt_and_spans_ordinary_turns",
+        "resumed_session_reports_idle_sleep",
+        "failed_resume_reports_the_actual_fallback_reason",
+        "interleaved_sessions_on_one_worker_keep_their_own_occupancy",
+        "heartbeat_turn_never_touches_scope_status",
+        "rotate_during_a_delayed_turn_retires_before_late_usage",
+        "pool_sleep_retires_status_and_wake_starts_a_new_transition",
+        "worker_crash_retires_status_before_the_replacement_prompt",
+        "successor_acquisition_revokes_the_old_generation_before_its_prompt",
+        "status_write_failure_never_fails_the_turn",
+        "pinned_assignment_outside_the_window_counts_supplied_events_once",
+        "counts_need_no_extra_history_walk",
+        "every_spawn_path_and_managed_mcp_get_the_current_status_dir"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/runtime.rs",
+      "responsibility": "Open the instance session status directory once and route it through the shared adapter spawn environment and prompt context.",
+      "is_new": false,
+      "required_symbols": [
+        "pub(crate) fn enable_session_status("
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/runtime.rs",
+          "callee_symbol": "open_for_config",
+          "invocation": "let runtime = session_status::open_for_config(&self.config)?;",
+          "behavior_test": "every_spawn_path_and_managed_mcp_get_the_current_status_dir",
+          "verification_command": "cargo test -p buzz-acp -- --test-threads=1"
+        }
+      ],
       "verification_commands": [
         "cargo test -p buzz-acp -- --test-threads=1"
       ]

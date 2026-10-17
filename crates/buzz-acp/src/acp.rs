@@ -10,7 +10,7 @@
 
 mod launch;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use futures_util::StreamExt;
 use tokio::process::{Child, ChildStdin, ChildStdout};
@@ -235,6 +235,10 @@ pub struct AcpClient {
     /// Seeded at `initialize`, extended by newly created `session/new`
     /// processes and MCP helpers. Their own turn-work children still block sleep.
     resident_pids: HashSet<u32>,
+    /// Status snapshots of this worker's provider sessions, keyed by the
+    /// provider session ID. Usage notifications select an entry by their own
+    /// `params.sessionId`, never by the current turn.
+    session_status: HashMap<String, crate::session_status::StatusBinding>,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -573,6 +577,7 @@ impl AcpClient {
         // over the harness-owned agent identity in native shells.
         cmd.env_remove("GIT_CONFIG_PARAMETERS");
         cmd.env_remove("NOSTR_PRIVATE_KEY");
+        crate::session_status::apply_status_dir_env(&mut cmd, extra_env);
         if extra_env.iter().any(|(name, _)| name == "GIT_CONFIG_COUNT") {
             // Native shells inherit these overrides, while buzz-agent clears
             // them for MCP. Let both paths use the harness's agent identity.
@@ -646,6 +651,7 @@ impl AcpClient {
             standard_adapter,
             claude_thinking_summaries,
             resident_pids: HashSet::new(),
+            session_status: HashMap::new(),
         })
     }
 
@@ -1114,6 +1120,28 @@ impl AcpClient {
     pub(crate) fn notify_session_spawned(&mut self, session_id: &str) {
         self.goose_usage.seed_zero_baseline(session_id);
         self.standard_usage.seed_zero_baseline(session_id);
+    }
+
+    /// Route context-occupancy notifications of `session_id` to `binding`.
+    pub(crate) fn bind_session_status(
+        &mut self,
+        session_id: &str,
+        binding: crate::session_status::StatusBinding,
+    ) {
+        self.session_status.retain(|_, bound| bound.is_live());
+        self.session_status.insert(session_id.to_owned(), binding);
+    }
+
+    /// Stop routing context-occupancy notifications of `session_id`.
+    pub(crate) fn clear_session_status(&mut self, session_id: &str) {
+        self.session_status.remove(session_id);
+    }
+
+    /// Whether `session_id` still routes to a live status generation.
+    pub(crate) fn has_session_status(&self, session_id: &str) -> bool {
+        self.session_status
+            .get(session_id)
+            .is_some_and(crate::session_status::StatusBinding::is_live)
     }
 
     /// Install a per-turn steer request channel for goose-native
@@ -2070,6 +2098,9 @@ impl AcpClient {
     /// Claude. Unlike Goose's payload, `used`/`size` are context occupancy and
     /// are intentionally not mapped to token accounting.
     fn handle_standard_usage_update(&mut self, msg: &serde_json::Value) {
+        // Context occupancy is display status, routed by the notification's
+        // own session ID before (and independently of) cost accounting.
+        crate::session_status::record_usage_update(&self.session_status, msg);
         if self.standard_adapter != Some(StandardAdapterKind::Claude) {
             return;
         }
