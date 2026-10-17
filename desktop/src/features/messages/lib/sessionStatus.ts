@@ -299,8 +299,9 @@ function isEarlier(a: TimelineMessage, b: TimelineMessage) {
  * `(createdAt, id)`, of one transition: (signer, channel, scope kind and
  * thread root, transition UUID). Every other message keeps only its
  * percentage. Without valid supporting metadata there is no grouping key,
- * so such a message shows only its percentage. The result depends only on
- * the loaded events: no "already seen" state is kept anywhere.
+ * so each such message keeps its primary explanation without history counts.
+ * The result depends only on the loaded events: no "already seen" state is
+ * kept anywhere.
  */
 export function attachSessionStatuses(
   messages: TimelineMessage[],
@@ -348,11 +349,12 @@ export function attachSessionStatuses(
 
   for (const { message, parsed, key } of candidates) {
     const status: MessageSessionStatus = {};
-    if (key !== null && owners.get(key) === message) {
+    if (key === null || owners.get(key) === message) {
       const explanation: SessionStatusExplanation = describeSessionTransition(
         parsed.primary,
       );
-      const history = parsed.info ? describeHistory(parsed.info) : [];
+      const history =
+        key !== null && parsed.info ? describeHistory(parsed.info) : [];
       if (history.length > 0) explanation.history = history;
       status.explanation = explanation;
     }

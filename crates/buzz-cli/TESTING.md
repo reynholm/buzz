@@ -764,7 +764,12 @@ canonical NIP-10 root (thread policy) or the channel's conversation scope
 (channel policy and DMs); a top-level message matches only the conversation
 scope. A message in another thread never borrows a thread's status. If both a
 thread and a conversation snapshot are current, the scope is ambiguous and no
-tags are added.
+tags are added. Mixed execution scopes can exist after unresolved channel metadata
+was conservatively admitted as a DM. Under thread policy, the harness withholds
+or retires conversation display status unless metadata verifies a DM; this
+includes ordinary turns of a retained session. Channel policy still permits
+conversation status without channel metadata. A thread whose optional status
+fails therefore cannot fall back to an uncertain conversation's telemetry.
 
 Absence and failure never block or alter a valid publication: the message is
 sent exactly as before, without status tags and without a diagnostic, when

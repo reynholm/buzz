@@ -392,33 +392,47 @@ test("non-message kinds from an agent carry no status", () => {
   assert.equal(project([system]).get(system.id), undefined);
 });
 
-test("missing or invalid supporting metadata yields no explanation or counts", () => {
-  const missing = message({
-    createdAt: 10,
-    tags: [status("new", "first_in_thread", "12")],
-  });
-  const invalid = message({
-    createdAt: 11,
-    tags: [
-      status("new", "first_in_thread", "13"),
-      ["buzz-session-info", "2", T1, "conversation", "3", "4", "exact"],
-    ],
-  });
-  const unknownNoPercent = message({
-    createdAt: 12,
-    tags: [status("new", "first_in_thread")],
-  });
-  const out = project([missing, invalid, unknownNoPercent]);
-  assert.deepEqual(out.get(missing.id), { percent: 12 });
-  assert.deepEqual(out.get(invalid.id), { percent: 13 });
-  assert.equal(out.get(unknownNoPercent.id), undefined);
+test("valid primary-only status keeps its explanation per message without counts", () => {
+  const supporting = [
+    [],
+    [["buzz-session-info", "1", "invalid", "conversation", "3", "4", "exact"]],
+    [["buzz-session-info", "2", T1, "conversation", "3", "4", "exact"]],
+    [info(T1, "conversation", "3", "4", "exact"), info(T2, "conversation")],
+  ];
+  for (const tags of supporting) {
+    for (const percent of ["", "64"]) {
+      const first = message({
+        createdAt: 10,
+        tags: [status("resumed", "idle_sleep", percent), ...tags],
+      });
+      const second = message({
+        createdAt: 11,
+        tags: [status("resumed", "idle_sleep", percent), ...tags],
+      });
+      const out = project([second, first]);
+      const expected = { explanation: { title: "Resumed after sleep" } };
+      if (percent) expected.percent = 64;
+      assert.deepEqual(out.get(first.id), expected);
+      assert.deepEqual(
+        out.get(second.id),
+        expected,
+        "no invented grouping key",
+      );
+    }
+  }
 });
 
-test("thread scope without a thread root has no grouping key", () => {
+test("thread scope without a thread root falls back to primary text without counts", () => {
   const orphan = message({
-    tags: [status("new", "first_in_thread", "8"), info(T1, "thread")],
+    tags: [
+      status("new", "first_in_thread", "8"),
+      info(T1, "thread", "3", "4", "exact"),
+    ],
   });
-  assert.deepEqual(project([orphan]).get(orphan.id), { percent: 8 });
+  assert.deepEqual(project([orphan]).get(orphan.id), {
+    explanation: { title: "New session" },
+    percent: 8,
+  });
 });
 
 test("invalid primary tag yields no status even with valid supporting metadata", () => {

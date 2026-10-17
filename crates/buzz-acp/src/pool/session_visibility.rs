@@ -13,8 +13,8 @@ use buzz_core::session_status::{
 };
 use uuid::Uuid;
 
-use super::{ConversationContext, OwnedAgent, SessionStart, SessionState};
-use crate::scope::SessionScope;
+use super::{ConversationContext, OwnedAgent, PromptChannelInfo, SessionStart, SessionState};
+use crate::scope::{SessionPolicy, SessionScope};
 use crate::session_status::SessionStatusRuntime;
 use crate::session_store::SessionReason;
 
@@ -103,6 +103,32 @@ impl SessionState {
 }
 
 impl OwnedAgent {
+    /// Validate display provenance independently of the admitted execution scope.
+    /// The author gate may conservatively admit an unresolved channel as a DM;
+    /// only verified DM metadata justifies Conversation display under Thread policy.
+    pub(super) fn reconcile_session_status_scope(
+        &mut self,
+        runtime: Option<&SessionStatusRuntime>,
+        scope: &SessionScope,
+        policy: SessionPolicy,
+        channel_info: Option<&PromptChannelInfo>,
+    ) -> bool {
+        if scope.is_thread()
+            || policy == SessionPolicy::Channel
+            || channel_info.is_some_and(|info| info.channel_type == "dm")
+        {
+            return true;
+        }
+        // Revoke even when ACP already has a routing entry or the worker lost
+        // its local binding. The runtime releases every clone's generation guard.
+        self.state.retire_status(scope);
+        retire_scope(runtime, scope);
+        if let Some(sid) = self.state.sessions.get(scope) {
+            self.acp.clear_session_status(sid);
+        }
+        false
+    }
+
     /// Publish the state of a session this turn just created or resumed,
     /// before any provider prompt. Status failures never fail the turn.
     pub(super) fn publish_session_start(

@@ -1277,3 +1277,6 @@ async fn every_spawn_path_and_managed_mcp_get_the_current_status_dir() {
         assert_eq!(forwarded, [dir.as_str()], "{}", call["method"]);
     }
 }
+
+#[path = "session_visibility_policy_tests.rs"]
+mod policy;
