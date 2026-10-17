@@ -8233,13 +8233,14 @@
     },
     {
       "path": "crates/buzz-cli/TESTING.md",
-      "responsibility": "Specify managed publisher scope, journal durability and retention, recovery opt-in/upgrade requirements and real versus mock-relay checks.",
+      "responsibility": "Specify managed publisher scope, journal durability and retention, recovery opt-in/upgrade requirements and real versus mock-relay checks. Document session-status enrichment, its absence/failure behavior and its automated checks.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
         "cargo test -p buzz-cli managed_ -- --test-threads=1",
-        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1"
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1",
+        "cargo test -p buzz-cli session_status -- --test-threads=1"
       ]
     },
     {
@@ -8278,7 +8279,7 @@
     },
     {
       "path": "crates/buzz-cli/src/commands/messages.rs",
-      "responsibility": "Expose messages deliver and preserve original route, stable UUID and signed callback mentions without suppressing ordinary progress or explicit edits.",
+      "responsibility": "Expose messages deliver and preserve original route, stable UUID and signed callback mentions without suppressing ordinary progress or explicit edits. Attach the sender's own best-effort session status to newly prepared kind-9 messages before signing, in the shared send/first-deliver preparation.",
       "is_new": false,
       "required_symbols": [
         "MessagesCmd::Deliver {",
@@ -8293,28 +8294,39 @@
           "behavior_test": "managed_recovery_mention_history_survives_lost_ack",
           "verification_command": "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib managed_recovery_mention_history_survives_lost_ack -- --ignored --test-threads=1",
           "coverage": "Actual CLI stdout must return the elected signed recipient in mention_pubkeys after unconfirmed recovery replay; stored p-tags alone are insufficient."
+        },
+        {
+          "caller_path": "crates/buzz-cli/src/commands/messages.rs",
+          "callee_symbol": "message_status_tags",
+          "invocation": ".tags(super::session_status::message_status_tags(\n                client,\n                channel_uuid,\n                thread_ref.as_ref().map(|t| &t.root_event_id),\n            ))",
+          "behavior_test": "status_reply_carries_thread_status_and_keeps_existing_tags",
+          "verification_command": "cargo test -p buzz-cli session_status -- --test-threads=1",
+          "coverage": "Actual parsed messages send/deliver dispatcher against the signature-checking mock relay; removing the call fails every positive status test and the binary environment test."
         }
       ],
       "verification_commands": [
         "cargo test -p buzz-cli managed_ -- --test-threads=1",
-        "cargo test -p buzz-cli mention -- --test-threads=1"
+        "cargo test -p buzz-cli mention -- --test-threads=1",
+        "cargo test -p buzz-cli session_status -- --test-threads=1"
       ]
     },
     {
       "path": "crates/buzz-cli/src/commands/mod.rs",
-      "responsibility": "Wire the managed delivery module into the CLI message dispatcher.",
+      "responsibility": "Wire the managed delivery module into the CLI message dispatcher. Register the read-only session-status lookup.",
       "is_new": false,
       "required_symbols": [
-        "mod delivery;"
+        "mod delivery;",
+        "pub(crate) mod session_status;"
       ],
       "invocation_seams": [],
       "verification_commands": [
-        "cargo test -p buzz-cli managed_ -- --test-threads=1"
+        "cargo test -p buzz-cli managed_ -- --test-threads=1",
+        "cargo test -p buzz-cli session_status -- --test-threads=1"
       ]
     },
     {
       "path": "crates/buzz-cli/src/delivery_tests.rs",
-      "responsibility": "Production CLI regressions for same-key replay, namespace/route integrity, concurrency, durable ancestor links, bounded retention/retries and legacy wrapper rejection.",
+      "responsibility": "Production CLI regressions for same-key replay, namespace/route integrity, concurrency, durable ancestor links, bounded retention/retries and legacy wrapper rejection. Shares its mock relay (palette, upload and HTTP-error modes) with session-status regressions.",
       "is_new": true,
       "required_symbols": [
         "managed_same_key_changed_text_returns_first_signed_delivery",
@@ -8323,7 +8335,8 @@
       ],
       "invocation_seams": [],
       "verification_commands": [
-        "cargo test -p buzz-cli managed_ -- --test-threads=1"
+        "cargo test -p buzz-cli managed_ -- --test-threads=1",
+        "cargo test -p buzz-cli session_status -- --test-threads=1"
       ]
     },
     {
@@ -8340,15 +8353,85 @@
     },
     {
       "path": "crates/buzz-cli/src/lib.rs",
-      "responsibility": "Define messages deliver arguments and compile production-publisher regression tests.",
+      "responsibility": "Define messages deliver arguments and compile production-publisher regression tests. Configure the client with the harness-advertised session-status directory and compile session-status regressions.",
       "is_new": false,
       "required_symbols": [
         "Deliver {",
-        "mod delivery_tests;"
+        "mod delivery_tests;",
+        "mod session_status_tests;"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-cli/src/lib.rs",
+          "callee_symbol": "status_dir_from_env",
+          "invocation": ".with_session_status_dir(commands::session_status::status_dir_from_env());",
+          "behavior_test": "binary_reads_the_status_directory_from_the_environment",
+          "verification_command": "cargo test -p buzz-cli --test session_status_env",
+          "coverage": "Runs the built buzz binary with BUZZ_SESSION_STATUS_DIR set and unset against a local mock relay."
+        }
+      ],
+      "verification_commands": [
+        "cargo test -p buzz-cli managed_ -- --test-threads=1",
+        "cargo test -p buzz-cli session_status -- --test-threads=1",
+        "cargo test -p buzz-cli --test session_status_env"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/client.rs",
+      "responsibility": "Carry the optional session-status instance directory with the client's relay URL and signing key.",
+      "is_new": false,
+      "required_symbols": [
+        "pub fn with_session_status_dir(",
+        "pub fn session_status_dir(&self)"
       ],
       "invocation_seams": [],
       "verification_commands": [
-        "cargo test -p buzz-cli managed_ -- --test-threads=1"
+        "cargo test -p buzz-cli session_status -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/commands/session_status.rs",
+      "responsibility": "Bounded read-only status lookup: absolute instance directory, nonblocking instance and generation lock probes, identity/scope/instance validation, thread-or-conversation destination with ambiguity rejection; any failure yields no tags.",
+      "is_new": true,
+      "required_symbols": [
+        "pub(crate) const SESSION_STATUS_DIR_ENV: &str = \"BUZZ_SESSION_STATUS_DIR\";",
+        "pub(crate) fn status_tags(",
+        "pub(crate) fn message_status_tags(",
+        "fn held_by_producer(",
+        "status_dir_value_must_be_a_nonempty_absolute_path"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-cli session_status -- --test-threads=1",
+        "cargo test -p buzz-cli --test session_status_env"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/session_status_tests.rs",
+      "responsibility": "Production send/deliver regressions against a harness-shaped status directory: destination scopes, absence/invalid/stale snapshots, released generation and instance locks, no directory mutation, failed sends, kind-9 only and managed retry/recovery keeping the original tags.",
+      "is_new": true,
+      "required_symbols": [
+        "status_released_generation_lock_rejects_remaining_snapshot",
+        "status_released_instance_lock_rejects_live_looking_snapshot",
+        "status_publication_into_another_thread_never_inherits_status",
+        "managed_status_retry_keeps_the_originally_prepared_tags",
+        "managed_status_timestamp_recovery_preserves_original_tags"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-cli session_status -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/tests/session_status_env.rs",
+      "responsibility": "Prove the built buzz binary reads BUZZ_SESSION_STATUS_DIR from its environment.",
+      "is_new": true,
+      "required_symbols": [
+        "binary_reads_the_status_directory_from_the_environment"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-cli --test session_status_env"
       ]
     },
     {

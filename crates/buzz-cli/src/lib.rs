@@ -2210,7 +2210,8 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         _ => (None, None),
     };
 
-    let client = BuzzClient::new(relay_url, keys, auth_tag, auth_tag_json)?;
+    let client = BuzzClient::new(relay_url, keys, auth_tag, auth_tag_json)?
+        .with_session_status_dir(commands::session_status::status_dir_from_env());
 
     match cli.command {
         Cmd::Agents(sub) => commands::agents::dispatch(sub, &client).await,
@@ -2811,3 +2812,6 @@ mod tests {
 
 #[cfg(test)]
 mod delivery_tests;
+
+#[cfg(test)]
+mod session_status_tests;

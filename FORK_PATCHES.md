@@ -5529,12 +5529,13 @@ New module: `false`.
 
 ## `crates/buzz-cli/TESTING.md`
 
-Specify managed publisher scope, journal durability and retention, recovery opt-in/upgrade requirements and real versus mock-relay checks.
+Specify managed publisher scope, journal durability and retention, recovery opt-in/upgrade requirements and real versus mock-relay checks. Document session-status enrichment, its absence/failure behavior and its automated checks.
 
 New module: `false`.
 
 - Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
+- Verify: `cargo test -p buzz-cli session_status -- --test-threads=1`
 
 ## `crates/buzz-cli/src/commands/delivery.rs`
 
@@ -5564,7 +5565,7 @@ New module: `true`.
 
 ## `crates/buzz-cli/src/commands/messages.rs`
 
-Expose messages deliver and preserve original route, stable UUID and signed callback mentions without suppressing ordinary progress or explicit edits.
+Expose messages deliver and preserve original route, stable UUID and signed callback mentions without suppressing ordinary progress or explicit edits. Attach the sender's own best-effort session status to newly prepared kind-9 messages before signing, in the shared send/first-deliver preparation.
 
 New module: `false`.
 
@@ -5572,21 +5573,29 @@ New module: `false`.
 - Required symbol: `pub(super) fn event_mention_pubkeys(`
 - Required symbol: `async fn resolve_content_mentions(`
 - Invocation: `crates/buzz-cli/src/commands/delivery.rs` → `event_mention_pubkeys`; exact call `messages::event_mention_pubkeys(&chosen)`; behavior test `managed_recovery_mention_history_survives_lost_ack`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib managed_recovery_mention_history_survives_lost_ack -- --ignored --test-threads=1`
+- Invocation: `crates/buzz-cli/src/commands/messages.rs` → `message_status_tags`; exact call `.tags(super::session_status::message_status_tags(
+                client,
+                channel_uuid,
+                thread_ref.as_ref().map(|t| &t.root_event_id),
+            ))`; behavior test `status_reply_carries_thread_status_and_keeps_existing_tags`; verify `cargo test -p buzz-cli session_status -- --test-threads=1`
 - Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
 - Verify: `cargo test -p buzz-cli mention -- --test-threads=1`
+- Verify: `cargo test -p buzz-cli session_status -- --test-threads=1`
 
 ## `crates/buzz-cli/src/commands/mod.rs`
 
-Wire the managed delivery module into the CLI message dispatcher.
+Wire the managed delivery module into the CLI message dispatcher. Register the read-only session-status lookup.
 
 New module: `false`.
 
 - Required symbol: `mod delivery;`
+- Required symbol: `pub(crate) mod session_status;`
 - Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
+- Verify: `cargo test -p buzz-cli session_status -- --test-threads=1`
 
 ## `crates/buzz-cli/src/delivery_tests.rs`
 
-Production CLI regressions for same-key replay, namespace/route integrity, concurrency, durable ancestor links, bounded retention/retries and legacy wrapper rejection.
+Production CLI regressions for same-key replay, namespace/route integrity, concurrency, durable ancestor links, bounded retention/retries and legacy wrapper rejection. Shares its mock relay (palette, upload and HTTP-error modes) with session-status regressions.
 
 New module: `true`.
 
@@ -5594,6 +5603,7 @@ New module: `true`.
 - Required symbol: `managed_expired_journal_never_treats_legacy_wrapper_ack_as_delivery`
 - Required symbol: `managed_existing_nested_directory_requires_ancestor_link_sync_before_publication`
 - Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
+- Verify: `cargo test -p buzz-cli session_status -- --test-threads=1`
 
 ## `crates/buzz-cli/src/error.rs`
 
@@ -5606,13 +5616,63 @@ New module: `false`.
 
 ## `crates/buzz-cli/src/lib.rs`
 
-Define messages deliver arguments and compile production-publisher regression tests.
+Define messages deliver arguments and compile production-publisher regression tests. Configure the client with the harness-advertised session-status directory and compile session-status regressions.
 
 New module: `false`.
 
 - Required symbol: `Deliver {`
 - Required symbol: `mod delivery_tests;`
+- Required symbol: `mod session_status_tests;`
+- Invocation: `crates/buzz-cli/src/lib.rs` → `status_dir_from_env`; exact call `.with_session_status_dir(commands::session_status::status_dir_from_env());`; behavior test `binary_reads_the_status_directory_from_the_environment`; verify `cargo test -p buzz-cli --test session_status_env`
 - Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
+- Verify: `cargo test -p buzz-cli session_status -- --test-threads=1`
+- Verify: `cargo test -p buzz-cli --test session_status_env`
+
+## `crates/buzz-cli/src/client.rs`
+
+Carry the optional session-status instance directory with the client's relay URL and signing key.
+
+New module: `false`.
+
+- Required symbol: `pub fn with_session_status_dir(`
+- Required symbol: `pub fn session_status_dir(&self)`
+- Verify: `cargo test -p buzz-cli session_status -- --test-threads=1`
+
+## `crates/buzz-cli/src/commands/session_status.rs`
+
+Bounded read-only status lookup: absolute instance directory, nonblocking instance and generation lock probes, identity/scope/instance validation, thread-or-conversation destination with ambiguity rejection; any failure yields no tags.
+
+New module: `true`.
+
+- Required symbol: `pub(crate) const SESSION_STATUS_DIR_ENV: &str = "BUZZ_SESSION_STATUS_DIR";`
+- Required symbol: `pub(crate) fn status_tags(`
+- Required symbol: `pub(crate) fn message_status_tags(`
+- Required symbol: `fn held_by_producer(`
+- Required symbol: `status_dir_value_must_be_a_nonempty_absolute_path`
+- Verify: `cargo test -p buzz-cli session_status -- --test-threads=1`
+- Verify: `cargo test -p buzz-cli --test session_status_env`
+
+## `crates/buzz-cli/src/session_status_tests.rs`
+
+Production send/deliver regressions against a harness-shaped status directory: destination scopes, absence/invalid/stale snapshots, released generation and instance locks, no directory mutation, failed sends, kind-9 only and managed retry/recovery keeping the original tags.
+
+New module: `true`.
+
+- Required symbol: `status_released_generation_lock_rejects_remaining_snapshot`
+- Required symbol: `status_released_instance_lock_rejects_live_looking_snapshot`
+- Required symbol: `status_publication_into_another_thread_never_inherits_status`
+- Required symbol: `managed_status_retry_keeps_the_originally_prepared_tags`
+- Required symbol: `managed_status_timestamp_recovery_preserves_original_tags`
+- Verify: `cargo test -p buzz-cli session_status -- --test-threads=1`
+
+## `crates/buzz-cli/tests/session_status_env.rs`
+
+Prove the built buzz binary reads BUZZ_SESSION_STATUS_DIR from its environment.
+
+New module: `true`.
+
+- Required symbol: `binary_reads_the_status_directory_from_the_environment`
+- Verify: `cargo test -p buzz-cli --test session_status_env`
 
 ## `crates/buzz-core/src/kind.rs`
 
