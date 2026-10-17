@@ -757,6 +757,13 @@ pub(super) async fn prepare_message(
                 &emoji_tags,
             )
             .map_err(|e| CliError::Other(format!("build_message failed: {e}")))?
+            // Best-effort, read-only session status of the agent's own session
+            // for this destination. Kind 9 only; absence adds nothing.
+            .tags(super::session_status::message_status_tags(
+                client,
+                channel_uuid,
+                thread_ref.as_ref().map(|t| &t.root_event_id),
+            ))
         }
         Some(k) => {
             return Err(CliError::Usage(format!(

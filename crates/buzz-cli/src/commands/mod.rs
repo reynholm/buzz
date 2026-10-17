@@ -19,6 +19,7 @@ pub mod projects;
 pub mod reactions;
 mod repo_default_branch;
 pub mod repos;
+pub(crate) mod session_status;
 pub mod social;
 pub mod upload;
 pub mod users;

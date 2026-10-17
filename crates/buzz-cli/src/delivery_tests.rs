@@ -5,16 +5,18 @@ use nostr::{Event, EventBuilder, Kind, Tag};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
-struct Relay {
-    keys: Keys,
-    channel: String,
-    parent: Event,
-    member: Arc<Mutex<bool>>,
-    ack: Arc<Mutex<&'static str>>,
-    membership_channel: Arc<Mutex<Option<String>>>,
-    extra_members: Arc<Mutex<Vec<String>>>,
-    events: Arc<Mutex<Vec<Event>>>,
-    bodies: Arc<Mutex<Vec<Vec<u8>>>>,
+pub(super) struct Relay {
+    pub(super) keys: Keys,
+    pub(super) channel: String,
+    pub(super) parent: Event,
+    pub(super) member: Arc<Mutex<bool>>,
+    pub(super) ack: Arc<Mutex<&'static str>>,
+    pub(super) membership_channel: Arc<Mutex<Option<String>>>,
+    pub(super) extra_members: Arc<Mutex<Vec<String>>>,
+    pub(super) events: Arc<Mutex<Vec<Event>>>,
+    pub(super) bodies: Arc<Mutex<Vec<Vec<u8>>>>,
+    /// Workspace emoji sets served for kind-30030 palette queries.
+    pub(super) palette: Arc<Mutex<Vec<Event>>>,
 }
 
 async fn query(
@@ -53,6 +55,9 @@ async fn query(
             .unwrap();
         return Json(serde_json::json!([e]));
     }
+    if filter["kinds"][0] == 30030 {
+        return Json(serde_json::json!(*r.palette.lock().unwrap()));
+    }
     if filter["kinds"][0] == 0 {
         let e = EventBuilder::new(Kind::Metadata, r#"{"name":"Callback"}"#)
             .sign_with_keys(&r.keys)
@@ -75,9 +80,16 @@ async fn publish(State(r): State<Relay>, body: axum::body::Bytes) -> axum::respo
     let event: Event = serde_json::from_slice(&body).unwrap();
     event.verify().unwrap();
     r.bodies.lock().unwrap().push(body.to_vec());
+    let ack = *r.ack.lock().unwrap();
+    if ack == "http-error" {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"invalid: rejected by test relay"})),
+        )
+            .into_response();
+    }
     let mut events = r.events.lock().unwrap();
     let duplicate = events.iter().any(|e| e.id == event.id);
-    let ack = *r.ack.lock().unwrap();
     if !duplicate && ack != "rejected" {
         events.push(event.clone());
     }
@@ -97,11 +109,33 @@ async fn publish(State(r): State<Relay>, body: axum::body::Bytes) -> axum::respo
     }.into_response()
 }
 
-async fn fixture() -> (Relay, String, tempfile::TempDir) {
+/// Blossom upload stub: describes the received blob without storing it.
+async fn upload(
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Json<serde_json::Value> {
+    let header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let sha256 = header("x-sha-256");
+    Json(serde_json::json!({
+        "url": format!("https://media.example/{sha256}"),
+        "sha256": sha256,
+        "size": body.len(),
+        "type": header("content-type"),
+        "uploaded": 1,
+    }))
+}
+
+pub(super) async fn fixture() -> (Relay, String, tempfile::TempDir) {
     fixture_with_keys(Keys::generate()).await
 }
 
-async fn fixture_with_keys(keys: Keys) -> (Relay, String, tempfile::TempDir) {
+pub(super) async fn fixture_with_keys(keys: Keys) -> (Relay, String, tempfile::TempDir) {
     let channel = "123e4567-e89b-12d3-a456-426614174000".to_string();
     let parent = EventBuilder::new(Kind::Custom(9), "original task")
         .tag(Tag::parse(["h", &channel]).unwrap())
@@ -117,12 +151,14 @@ async fn fixture_with_keys(keys: Keys) -> (Relay, String, tempfile::TempDir) {
         extra_members: Arc::new(Mutex::new(vec![])),
         events: Arc::new(Mutex::new(vec![])),
         bodies: Arc::new(Mutex::new(vec![])),
+        palette: Arc::new(Mutex::new(vec![])),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let app = Router::new()
         .route("/query", post(query))
         .route("/events", post(publish))
+        .route("/upload", axum::routing::put(upload))
         .with_state(relay.clone());
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -130,7 +166,25 @@ async fn fixture_with_keys(keys: Keys) -> (Relay, String, tempfile::TempDir) {
     (relay, url, tempfile::tempdir().unwrap())
 }
 
-async fn deliver(r: &Relay, url: &str, dir: &std::path::Path, key: &str, content: &str) -> i32 {
+pub(super) async fn deliver(
+    r: &Relay,
+    url: &str,
+    dir: &std::path::Path,
+    key: &str,
+    content: &str,
+) -> i32 {
+    deliver_with_status(r, url, dir, key, content, None).await
+}
+
+/// [`deliver`] from a CLI configured with a session-status directory.
+pub(super) async fn deliver_with_status(
+    r: &Relay,
+    url: &str,
+    dir: &std::path::Path,
+    key: &str,
+    content: &str,
+    status_dir: Option<&std::path::Path>,
+) -> i32 {
     let cli = match parse_args([
         "buzz",
         "messages",
@@ -152,7 +206,9 @@ async fn deliver(r: &Relay, url: &str, dir: &std::path::Path, key: &str, content
     let Cmd::Messages(command) = cli.command else {
         panic!("expected messages command");
     };
-    let client = BuzzClient::new(url.into(), r.keys.clone(), None, None).unwrap();
+    let client = BuzzClient::new(url.into(), r.keys.clone(), None, None)
+        .unwrap()
+        .with_session_status_dir(status_dir.map(std::path::Path::to_owned));
     match commands::messages::dispatch(command, &client, &OutputFormat::Json).await {
         Ok(()) => 0,
         Err(e) => {
