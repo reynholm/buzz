@@ -174,8 +174,10 @@ impl SessionState {
         }
     }
 
-    /// Tombstone the record this state owns for `scope`, if any.
+    /// Tombstone the record this state owns for `scope`, if any, and retire
+    /// its status generation.
     pub(super) fn discard_durable(&mut self, scope: &SessionScope) {
+        self.retire_status(scope);
         if let (Some(store), Some(lease)) = (&self.store, self.leases.remove(scope)) {
             let _ = store.discard(scope, lease);
         }
@@ -184,6 +186,7 @@ impl SessionState {
     /// Mark every owned record departed and forget the leases: the worker's
     /// memory is gone, the provider sessions are not.
     pub(super) fn depart_durable_all(&mut self, departure: Departure) {
+        self.retire_all_status();
         let leases = std::mem::take(&mut self.leases);
         if let Some(store) = &self.store {
             for (scope, lease) in leases {
@@ -195,6 +198,7 @@ impl SessionState {
     /// Mark every owned record departed while keeping memory and leases
     /// (the pool is about to sleep).
     pub(crate) fn depart_all(&mut self, departure: Departure) {
+        self.retire_all_status();
         if let Some(store) = &self.store {
             for (scope, lease) in &self.leases {
                 let _ = store.mark_departed(scope, *lease, departure);

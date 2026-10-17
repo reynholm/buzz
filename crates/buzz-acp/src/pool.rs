@@ -165,6 +165,8 @@ pub struct SessionState {
     pub(crate) store: Option<Arc<crate::session_store::SessionStore>>,
     /// Lease of every durable record this state owns, by scope.
     leases: HashMap<SessionScope, Uuid>,
+    /// Status generation of every session this worker acquired, by scope.
+    pub(crate) status: HashMap<SessionScope, crate::session_status::StatusBinding>,
 }
 
 impl SessionState {
@@ -211,6 +213,7 @@ impl SessionState {
             .chain(self.canvas_sections.keys())
             .chain(self.deliveries.keys())
             .chain(self.scope_owner_generations.keys())
+            .chain(self.status.keys())
             .filter(|s| s.channel_id() == *channel_id)
             .cloned()
             .collect::<HashSet<_>>()
@@ -337,6 +340,7 @@ pub(crate) use background_work::{ContinuationState, RuntimeHold};
 mod first_mention;
 mod session_continuity;
 pub(crate) use session_continuity::{open_session_store, SessionStart};
+pub(crate) mod session_visibility;
 
 /// Package name reported by `claude-agent-acp` in its `initialize` response.
 /// Any adapter reporting this name supports `_meta.systemPrompt: {append: ...}`
@@ -975,6 +979,8 @@ pub struct PromptContext {
     /// the desktop keys per (agent, relay) pair, e.g. `session_config_captured`,
     /// mirroring the `managed_agent_runtime_lifecycle` frames.
     pub relay_url: String,
+    /// Per-scope session status snapshots; `None` disables status publication.
+    pub(crate) session_status: Option<crate::session_status::SessionStatusRuntime>,
 }
 
 impl AgentPool {
@@ -2765,8 +2771,9 @@ pub async fn run_prompt_task(
     let (session_id, is_new_session) = match &source {
         PromptSource::Channel(scope) => {
             let cid = &scope.channel_id();
-            if let Some(sid) = agent.state.sessions.get(scope) {
-                (sid.clone(), false)
+            if let Some(sid) = agent.state.sessions.get(scope).cloned() {
+                agent.rebind_session_status(ctx.session_status.as_ref(), scope, &sid);
+                (sid, false)
             } else {
                 // The title includes channel and, for thread sessions, the
                 // canonical root prefix so sibling sessions are distinguishable.
@@ -2798,6 +2805,12 @@ pub async fn run_prompt_task(
                             }
                         );
                         agent.state.sessions.insert(scope.clone(), sid.clone());
+                        agent.publish_session_start(
+                            ctx.session_status.as_ref(),
+                            scope,
+                            &sid,
+                            &start,
+                        );
                         let resumed = start.is_resumed();
                         session_start = Some(start);
                         if !resumed {
@@ -3192,6 +3205,13 @@ pub async fn run_prompt_task(
             }
             _ => None,
         };
+        // A new session's first prompt reports what it was given.
+        let fetched_history = matches!(session_start, Some(SessionStart::New { .. })).then(|| {
+            session_visibility::FetchedHistory::capture(
+                ctx.context_message_limit > 0 && context_target != ContextTarget::None,
+                conversation_context.as_ref(),
+            )
+        });
         if let Some(root) =
             fetched_thread_root_to_hydrate(&context_target, conversation_context.as_ref(), is_dm)
         {
@@ -3205,6 +3225,17 @@ pub async fn run_prompt_task(
             });
         let conversation_context =
             conversation_context_delta(conversation_context, &delivered_ids, &rendered_batch_ids);
+        if let (Some(fetched), Some(binding)) = (&fetched_history, agent.state.status.get(&b.scope))
+        {
+            binding.set_history(session_visibility::history_coverage(
+                fetched,
+                conversation_context.as_ref(),
+                &rendered_batch_ids,
+                matches!(first_mention, Some(first_mention::FirstMention::NotFound)),
+                &b.scope,
+                is_dm,
+            ));
+        }
         pending_delivered_event_ids.extend(rendered_batch_ids);
         pending_delivered_event_ids.extend(conversation_context_event_ids(
             conversation_context.as_ref(),
@@ -10642,6 +10673,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             memory_enabled: false,
             harness_name: "goose".to_string(),
             relay_url: "ws://127.0.0.1:3000".to_string(),
+            session_status: None,
         }
     }
 
