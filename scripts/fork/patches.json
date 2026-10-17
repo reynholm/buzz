@@ -8947,7 +8947,8 @@
         "pub(super) fn retire_all_status(",
         "pub(super) fn history_coverage(",
         "pub(crate) fn retire_scope(",
-        "pub(crate) fn retire_channel("
+        "pub(crate) fn retire_channel(",
+        "const KNOWN_FAILURE_CODES: &[&str]"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -8971,7 +8972,8 @@
         "status_write_failure_never_fails_the_turn",
         "pinned_assignment_outside_the_window_counts_supplied_events_once",
         "counts_need_no_extra_history_walk",
-        "every_spawn_path_and_managed_mcp_get_the_current_status_dir"
+        "every_spawn_path_and_managed_mcp_get_the_current_status_dir",
+        "fallback_codes_outside_the_allowlist_become_unknown"
       ],
       "invocation_seams": [],
       "verification_commands": [

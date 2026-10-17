@@ -9,7 +9,7 @@
 use std::collections::HashSet;
 
 use buzz_core::session_status::{
-    HistoryCoverage, SessionState as StatusState, StatusReason, StatusScope, MAX_REASON_BYTES,
+    HistoryCoverage, SessionState as StatusState, StatusReason, StatusScope,
 };
 use uuid::Uuid;
 
@@ -17,8 +17,6 @@ use super::{ConversationContext, OwnedAgent, SessionStart, SessionState};
 use crate::scope::SessionScope;
 use crate::session_status::SessionStatusRuntime;
 use crate::session_store::SessionReason;
-
-const RESUME_FAILED_PREFIX: &str = "resume_failed:";
 
 /// The status scope of a session scope; `None` for a malformed thread root.
 pub(crate) fn status_scope(scope: &SessionScope) -> Option<StatusScope> {
@@ -30,35 +28,48 @@ pub(crate) fn status_scope(scope: &SessionScope) -> Option<StatusScope> {
     Some(status)
 }
 
-/// Map a harness reason onto the bounded status vocabulary. An unexpected
-/// failure code becomes a safe `resume_failed:<token>`, never raw text.
+/// Failure codes the harness produces today; anything else may carry raw
+/// adapter or store text and is reported as `unknown`.
+const KNOWN_FAILURE_CODES: &[&str] = &[
+    "not_persisted",
+    "store_unreadable",
+    "store_busy",
+    "not_found",
+    "timeout",
+    "protocol",
+];
+/// Decimal digits of the widest JSON-RPC error code (`i64`).
+const MAX_RPC_CODE_DIGITS: usize = 19;
+
+/// Map a harness reason onto the bounded status vocabulary. A failure code
+/// outside the allowlist becomes `resume_failed:unknown`, never raw text.
 pub(crate) fn status_reason(reason: &SessionReason) -> StatusReason {
-    if let Ok(reason) = StatusReason::from_wire(&reason.as_wire()) {
-        return reason;
-    }
-    let code = match reason {
-        SessionReason::ResumeFailed(code) => code.as_str(),
-        _ => "",
-    };
-    let budget = MAX_REASON_BYTES - RESUME_FAILED_PREFIX.len();
-    let token: String = code
-        .chars()
-        .map(|c| {
-            let c = c.to_ascii_lowercase();
-            if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' {
-                c
+    match reason {
+        SessionReason::IdleSleep => StatusReason::IdleSleep,
+        SessionReason::WorkerCrash => StatusReason::WorkerCrash,
+        SessionReason::HarnessRestart => StatusReason::HarnessRestart,
+        SessionReason::FirstInThread => StatusReason::FirstInThread,
+        SessionReason::Discarded => StatusReason::Discarded,
+        SessionReason::ConfigChanged => StatusReason::ConfigChanged,
+        SessionReason::LiveElsewhere => StatusReason::LiveElsewhere,
+        SessionReason::ResumeUnsupported => StatusReason::ResumeUnsupported,
+        SessionReason::ResumeFailed(code) => StatusReason::ResumeFailed(
+            if KNOWN_FAILURE_CODES.contains(&code.as_str()) || is_rpc_code(code) {
+                code.clone()
             } else {
-                '_'
-            }
-        })
-        .take(budget)
-        .collect();
-    let token = token.trim_matches('_');
-    StatusReason::ResumeFailed(if token.is_empty() {
-        "unknown".into()
-    } else {
-        token.into()
-    })
+                "unknown".into()
+            },
+        ),
+    }
+}
+
+/// `rpc_<integer>` as produced by `resume_failure_code`.
+fn is_rpc_code(code: &str) -> bool {
+    let Some(number) = code.strip_prefix("rpc_") else {
+        return false;
+    };
+    let digits = number.strip_prefix('-').unwrap_or(number);
+    (1..=MAX_RPC_CODE_DIGITS).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// Retire `scope`'s status whichever worker owns it (owner rotate).
