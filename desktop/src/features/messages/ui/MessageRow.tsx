@@ -4,6 +4,7 @@ import {
   depthGuideActionsEqual,
   numberArrayEqual,
   reactionsEqual,
+  sessionStatusEqual,
   tagsEqual,
 } from "@/features/messages/lib/messageRowEquality";
 import {
@@ -55,6 +56,7 @@ import {
   MessageHeaderRow,
   MessageMetaSegments,
 } from "./MessageHeader";
+import { MessageSessionStatus } from "./MessageSessionStatus";
 import { MessageTimestamp } from "./MessageTimestamp";
 import { SentFromThreadLine } from "./SentFromThreadLine";
 import { WaveMessageAttachment } from "./WaveMessageAttachment";
@@ -688,6 +690,9 @@ export const MessageRow = React.memo(
         <SentFromThreadLine channelId={channelId} tags={message.tags} />
         {renderBody()}
         {continuationMetadataNode}
+        {message.sessionStatus ? (
+          <MessageSessionStatus status={message.sessionStatus} />
+        ) : null}
         <MessageReactions
           messageId={message.id}
           reactions={reactions}
@@ -962,6 +967,10 @@ export const MessageRow = React.memo(
     // thread (see messageRowEquality.ts).
     reactionsEqual(prev.message.reactions, next.message.reactions) &&
     tagsEqual(prev.message.tags, next.message.tags) &&
+    sessionStatusEqual(
+      prev.message.sessionStatus,
+      next.message.sessionStatus,
+    ) &&
     prev.message.role === next.message.role &&
     prev.message.personaDisplayName === next.message.personaDisplayName &&
     prev.currentPubkey === next.currentPubkey &&
