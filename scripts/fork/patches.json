@@ -8309,14 +8309,35 @@
     },
     {
       "path": "crates/buzz-core/src/lib.rs",
-      "responsibility": "Export the shared signed managed-report recovery protocol.",
+      "responsibility": "Export the shared signed managed-report recovery protocol and the shared session-status contract.",
       "is_new": false,
       "required_symbols": [
-        "pub mod managed_delivery;"
+        "pub mod managed_delivery;",
+        "pub mod session_status;"
       ],
       "invocation_seams": [],
       "verification_commands": [
-        "cargo test -p buzz-core managed_delivery -- --test-threads=1"
+        "cargo test -p buzz-core managed_delivery -- --test-threads=1",
+        "cargo test -p buzz-core session_status -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-core/src/session_status.rs",
+      "responsibility": "Pure shared session-status contract: canonical status identity, scope file names, instance layout names, bounded reason vocabulary, snapshot format v1 with size/version validation, and the buzz-session wire tags.",
+      "is_new": true,
+      "required_symbols": [
+        "pub fn canonical_identity(",
+        "pub fn scope_file_name(",
+        "pub fn generation_lock_path(",
+        "pub fn parse_snapshot(",
+        "pub fn event_tags(",
+        "pub struct StatusEnvelope",
+        "pub struct ContextOccupancy",
+        "pub struct HistoryCoverage"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-core session_status -- --test-threads=1"
       ]
     },
     {
