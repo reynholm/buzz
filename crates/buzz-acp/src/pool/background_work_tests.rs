@@ -1087,6 +1087,7 @@ async fn background_lost_prompt_task_releases_pool_side_hold_before_respawn() {
         &mut pool,
         &mut queue,
         &config,
+        &Default::default(),
         error,
         &mut false,
         &HashSet::new(),

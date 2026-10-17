@@ -2814,6 +2814,10 @@ New module: `false`.
 - Invocation: `crates/buzz-acp/src/lib.rs` → `return_for_retirement`; exact call `pool.return_for_retirement(result.agent);`; behavior test `retirement_return_boundary_bypasses_crash_budget_for_fatal_old_outcome`; verify `cargo test -p buzz-acp --lib retirement_return_boundary_bypasses_crash_budget_for_fatal_old_outcome -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `publish_result`; exact call `session_controls::publish::publish_result(&rest, &publication).await`; behavior test `control_result_publication_has_three_total_signed_attempts`; verify `cargo test -p buzz-acp --lib control_result_publication_has_three_total_signed_attempts -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `plan_retirement`; exact call `ctx.session_controls.plan_retirement(&scope, targets);`; behavior test `checked_retirement_requires_every_clean_report_and_retries_after_uncertainty`; verify `cargo test -p buzz-acp --lib checked_retirement_requires_every_clean_report_and_retries_after_uncertainty -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `drive`; exact call `orphan_reconciliation.drive(&ctx.session_controls, publication_capacity);`; behavior test `orphan_reconciliation_retries_failed_writes_with_capped_backoff_without_capacity_spin`; verify `cargo test -p buzz-acp --lib orphan_reconciliation_retries_failed_writes_with_capped_backoff_without_capacity_spin -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `wake`; exact call `_ = orphan_reconciliation.wake() => {`; behavior test `orphan_reconciliation_retries_failed_writes_with_capped_backoff_without_capacity_spin`; verify `cargo test -p buzz-acp --lib orphan_reconciliation_retries_failed_writes_with_capped_backoff_without_capacity_spin -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `join_next`; exact call `Some(result) = result_publications.join_next(), if !result_publications.is_empty() => {`; behavior test `orphan_reconciliation_retries_failed_writes_with_capped_backoff_without_capacity_spin`; verify `cargo test -p buzz-acp --lib orphan_reconciliation_retries_failed_writes_with_capped_backoff_without_capacity_spin -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `lose_retirement_evidence`; exact call `controls.lose_retirement_evidence(i);`; behavior test `retirement_foreground_panic_cannot_attest_replacement_or_forget_original_on_retry`; verify `cargo test -p buzz-acp --lib retirement_foreground_panic_cannot_attest_replacement_or_forget_original_on_retry -- --test-threads=1`
 - Verify: `just ci`
 
 ## `crates/buzz-acp/src/pool.rs`
@@ -6607,7 +6611,9 @@ New module: `true`.
 - Required symbol: `fn plan_retirement`
 - Required symbol: `fn retirement_report`
 - Required symbol: `fn take_publications_up_to`
-- Required symbol: `fn sweep_orphans`
+- Required symbol: `fn lose_retirement_evidence`
+- Required symbol: `fn retirement_evidence_lost`
+- Required symbol: `fn owns_retirement`
 - Invocation: `crates/buzz-acp/src/session_controls/retirement.rs` → `finish_control_attempt`; exact call `store.finish_control_attempt(scope, &job.origin.command_event_id, &outcome)`; behavior test `checked_retirement_terminal_store_failure_retains_gate_and_reports_uncertainty`; verify `cargo test -p buzz-acp --lib checked_retirement_terminal_store_failure_retains_gate_and_reports_uncertainty -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 
@@ -6629,6 +6635,8 @@ Dead-owner durable Started receipt reconciliation at startup
 New module: `true`.
 
 - Required symbol: `fn sweep_orphan_controls`
+- Invocation: `crates/buzz-acp/src/session_store_orphans.rs` → `canonical_key`; exact call `let Some(path) = canonical_key(&entry_path) else {`; behavior test `startup_sweep_recovers_stale_only_started_receipt_and_deduplicates_record_key`; verify `cargo test -p buzz-acp --lib startup_sweep_recovers_stale_only_started_receipt_and_deduplicates_record_key -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/session_store_orphans.rs` → `instance_alive`; exact call `if self.instance_alive(receipt.owner_instance) {`; behavior test `startup_sweep_terminalizes_dead_started_controls_but_preserves_live_owner`; verify `cargo test -p buzz-acp --lib startup_sweep_terminalizes_dead_started_controls_but_preserves_live_owner -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/worker_retirement.rs`
@@ -6644,4 +6652,27 @@ New module: `true`.
 - Invocation: `crates/buzz-acp/src/worker_retirement.rs` → `terminate`; exact call `Some(agent) => agent.acp.terminate().await,`; behavior test `checked_retirement_executor_waits_for_verified_kill_and_excludes_refill`; verify `cargo test -p buzz-acp --lib checked_retirement_executor_waits_for_verified_kill_and_excludes_refill -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/worker_retirement.rs` → `retirement_report`; exact call `controls.retirement_report(result.index, TerminationReport::Clean);`; behavior test `checked_retirement_executor_waits_for_verified_kill_and_excludes_refill`; verify `cargo test -p buzz-acp --lib checked_retirement_executor_waits_for_verified_kill_and_excludes_refill -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/worker_retirement.rs` → `prepare_retired_neighbors`; exact call `agent.prepare_retired_neighbors(&scopes, &controls)`; behavior test `checked_retirement_cannot_depart_neighbor_owned_by_a_newer_worker`; verify `cargo test -p buzz-acp --lib checked_retirement_cannot_depart_neighbor_owned_by_a_newer_worker -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/worker_retirement.rs` → `lose_retirement_evidence`; exact call `controls.lose_retirement_evidence(result.index);`; behavior test `retirement_foreground_panic_cannot_attest_replacement_or_forget_original_on_retry`; verify `cargo test -p buzz-acp --lib retirement_foreground_panic_cannot_attest_replacement_or_forget_original_on_retry -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/session_controls/orphans.rs`
+
+Idle-waking bounded-backoff orphan reconciliation with partial durable publication
+
+New module: `true`.
+
+- Required symbol: `struct OrphanReconciliation`
+- Required symbol: `fn sweep_orphans`
+- Required symbol: `fn drive(`
+- Required symbol: `fn wake(`
+- Invocation: `crates/buzz-acp/src/session_controls/orphans.rs` → `sweep_orphan_controls`; exact call `store.sweep_orphan_controls(capacity)?`; behavior test `startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records`; verify `cargo test -p buzz-acp --lib startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/session_controls/orphans.rs` → `publish`; exact call `state.publish(Publication {`; behavior test `startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records`; verify `cargo test -p buzz-acp --lib startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/session_retirement_review_tests.rs`
+
+Actual executor no-resume neighbor race and panic escaped-group false-Clean regressions
+
+New module: `true`.
+
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`

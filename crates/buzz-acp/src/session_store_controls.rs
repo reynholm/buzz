@@ -62,10 +62,15 @@ pub enum ControlAttempt {
 impl SessionStore {
     pub(crate) fn record_worker_recycled(&self, scope: &SessionScope) -> Result<(), StoreError> {
         self.update_control(&self.record_path(scope), |current| {
-            let mut record = self.tombstone(current);
-            if record.pending_restart.is_none() {
-                record.reason = Some(SessionReason::WorkerRecycled);
+            // A restart admitted while another scope's worker is stopping owns
+            // this record. Preserve its policy and receipts, never provider identity.
+            if let Some(current) = current.filter(|record| record.pending_restart.is_some()) {
+                let mut record = current.clone();
+                record.live = None;
+                return Ok(record);
             }
+            let mut record = self.tombstone(current);
+            record.reason = Some(SessionReason::WorkerRecycled);
             Ok(record)
         })
     }

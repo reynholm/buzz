@@ -26,6 +26,7 @@ pub(super) struct Worker {
     since: tokio::time::Instant,
     running: bool,
     failed: bool,
+    evidence_lost: bool,
 }
 
 #[derive(Clone)]
@@ -54,10 +55,56 @@ impl SessionControlRuntime {
                 since: tokio::time::Instant::now(),
                 running: false,
                 failed: false,
+                evidence_lost: false,
             });
-            worker.failed = false;
+            worker.failed = worker.evidence_lost;
+        }
+        if state.scopes.get(scope).is_some_and(|entry| {
+            entry.retirement.targets.iter().any(|index| {
+                state
+                    .workers
+                    .get(index)
+                    .is_some_and(|worker| worker.evidence_lost)
+            })
+        }) {
+            Self::terminal(
+                &mut state,
+                self.store.as_deref(),
+                scope,
+                Err(ControlFailure::Unconfirmed),
+                false,
+            );
         }
         Self::finish_ready(&mut state, self.store.as_deref());
+    }
+
+    pub(crate) fn owns_retirement(&self, index: usize) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .workers
+            .contains_key(&index)
+    }
+
+    pub(crate) fn retirement_evidence_lost(&self, index: usize) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .workers
+            .get(&index)
+            .is_some_and(|worker| worker.evidence_lost)
+    }
+
+    /// A foreground unwind already dropped the original client without a checked
+    /// snapshot. No replacement or later retry can attest those escaped groups.
+    pub(crate) fn lose_retirement_evidence(&self, index: usize) {
+        {
+            let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+            if let Some(worker) = state.workers.get_mut(&index) {
+                worker.evidence_lost = true;
+            }
+        }
+        self.retirement_report(index, TerminationReport::Unverified);
     }
 
     pub(crate) fn retiring_workers(&self) -> Vec<(usize, HashSet<SessionScope>, bool)> {
@@ -65,7 +112,7 @@ impl SessionControlRuntime {
         state
             .workers
             .iter()
-            .filter(|(_, worker)| !worker.running && !worker.failed)
+            .filter(|(_, worker)| !worker.running && !worker.failed && !worker.evidence_lost)
             .map(|(index, worker)| {
                 let scopes = state
                     .scopes
@@ -98,6 +145,15 @@ impl SessionControlRuntime {
 
     pub(crate) fn retirement_report(&self, index: usize, report: TerminationReport) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let report = if state
+            .workers
+            .get(&index)
+            .is_some_and(|worker| worker.evidence_lost)
+        {
+            TerminationReport::Unverified
+        } else {
+            report
+        };
         if report == TerminationReport::Clean {
             state.workers.remove(&index);
             for entry in state.scopes.values_mut() {
@@ -224,22 +280,6 @@ impl SessionControlRuntime {
 }
 
 impl SessionControlRuntime {
-    pub(crate) fn sweep_orphans(&self, capacity: usize) -> Result<bool, StoreError> {
-        if let Some(store) = &self.store {
-            let orphans = store.sweep_orphan_controls(capacity)?;
-            let more = orphans.len() == capacity;
-            let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-            for command_id in orphans {
-                state.publish(Publication {
-                    command_id,
-                    result: ControlResult::Terminal(Err(ControlFailure::Unconfirmed)),
-                });
-            }
-            return Ok(more);
-        }
-        Ok(false)
-    }
-
     pub(crate) fn prior_result(
         &self,
         scope: &SessionScope,

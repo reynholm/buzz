@@ -637,9 +637,16 @@ fn startup_sweep_terminalizes_dead_started_controls_but_preserves_live_owner() {
     let (dir, first, scope) = fixture();
     first.request_restart(&scope, &intent(1)).unwrap();
     let second = SessionStore::open(dir.path().into(), "wss://relay.example", AGENT).unwrap();
-    assert!(second.sweep_orphan_controls(128).unwrap().is_empty());
+    assert!(second
+        .sweep_orphan_controls(128)
+        .unwrap()
+        .finished
+        .is_empty());
     drop(first);
-    assert_eq!(second.sweep_orphan_controls(128).unwrap(), vec![id(1)]);
+    assert_eq!(
+        second.sweep_orphan_controls(128).unwrap().finished,
+        vec![id(1)]
+    );
     assert_eq!(
         record(&second, &scope).control_receipts[0].state,
         ControlReceiptState::Finished(Err(ControlFailure::Unconfirmed))
@@ -648,7 +655,11 @@ fn startup_sweep_terminalizes_dead_started_controls_but_preserves_live_owner() {
         record(&second, &scope).pending_restart.is_some(),
         "restart depth survives orphan reconciliation"
     );
-    assert!(second.sweep_orphan_controls(128).unwrap().is_empty());
+    assert!(second
+        .sweep_orphan_controls(128)
+        .unwrap()
+        .finished
+        .is_empty());
 }
 
 #[test]
@@ -668,11 +679,11 @@ fn startup_sweep_chunks_orphan_outcomes_without_losing_remaining_started_receipt
     }
     drop(first);
     let second = SessionStore::open(dir.path().into(), "wss://relay.example", AGENT).unwrap();
-    let a = second.sweep_orphan_controls(2).unwrap();
-    let b = second.sweep_orphan_controls(2).unwrap();
+    let a = second.sweep_orphan_controls(2).unwrap().finished;
+    let b = second.sweep_orphan_controls(2).unwrap().finished;
     assert_eq!((a.len(), b.len()), (2, 1));
     assert_eq!(a.into_iter().chain(b).collect::<HashSet<_>>().len(), 3);
-    assert!(second.sweep_orphan_controls(2).unwrap().is_empty());
+    assert!(second.sweep_orphan_controls(2).unwrap().finished.is_empty());
     for scope in scopes {
         assert!(record(&second, &scope)
             .control_receipts
@@ -680,4 +691,110 @@ fn startup_sweep_chunks_orphan_outcomes_without_losing_remaining_started_receipt
             .all(|receipt| receipt.state
                 == ControlReceiptState::Finished(Err(ControlFailure::Unconfirmed))));
     }
+}
+
+#[test]
+fn startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records() {
+    for busy in [false, true] {
+        let (dir, first, scope) = fixture();
+        let mut scopes: Vec<_> = (0..3)
+            .map(|index| SessionScope::Thread {
+                channel_id: scope.channel_id(),
+                root_event_id: format!("{index:064x}"),
+            })
+            .collect();
+        scopes.sort_by_key(|scope| first.record_path(scope));
+        for (index, scope) in scopes.iter().enumerate() {
+            first.request_restart(scope, &intent(index + 1)).unwrap();
+        }
+        let observed_order: Vec<_> = fs::read_dir(first.channel_dir(scope.channel_id()))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|e| e == "json"))
+            .collect();
+        let bad_path = observed_order[1].clone();
+        let prefix_scope = scopes
+            .iter()
+            .find(|scope| first.record_path(scope) == observed_order[0])
+            .unwrap()
+            .clone();
+        let bad_scope = scopes
+            .iter()
+            .find(|scope| first.record_path(scope) == bad_path)
+            .unwrap()
+            .clone();
+        let bad_id = record(&first, &bad_scope).control_receipts[0]
+            .command_id
+            .clone();
+        let expected: HashSet<_> = scopes
+            .iter()
+            .filter(|scope| **scope != bad_scope)
+            .map(|scope| record(&first, scope).control_receipts[0].command_id.clone())
+            .collect();
+        let good_bytes = fs::read(&bad_path).unwrap();
+        drop(first);
+        let second = std::sync::Arc::new(
+            SessionStore::open(dir.path().into(), "wss://relay.example", AGENT).unwrap(),
+        );
+        let lock = if busy {
+            Some(second.lock_record(&bad_path).unwrap())
+        } else {
+            fs::write(&bad_path, b"corrupt").unwrap();
+            None
+        };
+        let controls = crate::session_controls::SessionControlRuntime::new(Some(second.clone()));
+        let result = controls.sweep_orphans(128);
+        assert!(result.is_ok(), "one bad record must not discard the committed prefix or abandon healthy scopes: {result:?}");
+        let results: HashSet<_> = controls
+            .take_publications()
+            .into_iter()
+            .map(|item| item.command_id)
+            .collect();
+        assert_eq!(results, expected);
+        assert!(record(&second, &prefix_scope)
+            .control_receipts
+            .iter()
+            .all(|r| matches!(r.state, ControlReceiptState::Finished(_))));
+        if busy {
+            drop(lock);
+        } else {
+            fs::write(&bad_path, good_bytes).unwrap();
+        }
+        controls.sweep_orphans(128).unwrap();
+        assert_eq!(
+            controls
+                .take_publications()
+                .into_iter()
+                .map(|p| p.command_id)
+                .collect::<Vec<_>>(),
+            vec![bad_id]
+        );
+    }
+}
+
+#[test]
+fn startup_sweep_recovers_stale_only_started_receipt_and_deduplicates_record_key() {
+    let (dir, first, scope) = fixture();
+    first.request_restart(&scope, &intent(1)).unwrap();
+    let path = first.record_path(&scope);
+    fs::rename(&path, with_suffix(&path, "stale")).unwrap();
+    drop(first);
+    let second = SessionStore::open(dir.path().into(), "wss://relay.example", AGENT).unwrap();
+    assert_eq!(
+        second.sweep_orphan_controls(128).unwrap().finished,
+        vec![id(1)]
+    );
+    assert!(record(&second, &scope).pending_restart.is_some());
+    assert!(
+        path.exists(),
+        "existing reader and locked writer recover the canonical key"
+    );
+    assert!(
+        second
+            .sweep_orphan_controls(128)
+            .unwrap()
+            .finished
+            .is_empty(),
+        "canonical plus stale must not publish twice"
+    );
 }

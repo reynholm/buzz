@@ -3051,7 +3051,7 @@ async fn run_harness(
     let mut respawn_tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
     let mut parked_retirements = HashMap::new();
     let mut result_publications = tokio::task::JoinSet::new();
-    let mut orphan_sweep_pending = true;
+    let mut orphan_reconciliation = session_controls::OrphanReconciliation::default();
     let (wake_tx, mut wake_rx) = mpsc::channel::<(u32, Result<AgentPool, String>)>(1);
     let mut wake_tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
 
@@ -3122,16 +3122,13 @@ async fn run_harness(
     }
 
     loop {
-        let publication_capacity = 128usize.saturating_sub(result_publications.len());
-        if orphan_sweep_pending && publication_capacity > 0 {
-            match ctx.session_controls.sweep_orphans(publication_capacity) {
-                Ok(more) => orphan_sweep_pending = more,
-                Err(error) => {
-                    tracing::warn!(%error, "orphan session control reconciliation failed; durable Started receipts retained");
-                    orphan_sweep_pending = false;
-                }
+        while let Some(Some(result)) = result_publications.join_next().now_or_never() {
+            if let Err(error) = result {
+                tracing::warn!(%error, "control result publication task failed; durable outcome retained");
             }
         }
+        let publication_capacity = 128usize.saturating_sub(result_publications.len());
+        orphan_reconciliation.drive(&ctx.session_controls, publication_capacity);
         worker_retirement::drive(
             &mut pool,
             &ctx.session_controls,
@@ -3153,12 +3150,6 @@ async fn run_harness(
                 }
             });
         }
-        while result_publications
-            .join_next()
-            .now_or_never()
-            .flatten()
-            .is_some()
-        {}
         // Whether buffered work is waiting on a lazy pool. Also gates the
         // retry-deadline sleep arm below: a `Failed` lifecycle keeps its
         // (possibly past) `retry_at` until the next wake, so sleeping on it
@@ -3272,6 +3263,15 @@ async fn run_harness(
                 _ = shutdown_rx.changed() => {
                     tracing::info!("shutting down");
                     break;
+                }
+                Some(result) = result_publications.join_next(), if !result_publications.is_empty() => {
+                    let _ = result_rx;
+                    if let Err(error) = result { tracing::warn!(%error, "control result publication task failed; durable outcome retained"); }
+                    None
+                }
+                _ = orphan_reconciliation.wake() => {
+                    let _ = result_rx;
+                    None
                 }
                 wake = recovery_wake::wait(&mut respawn_rx, retry_at, maintenance_at) => {
                     Some(PoolEvent::Recovery(wake))
@@ -3955,6 +3955,7 @@ async fn run_harness(
                     &mut pool,
                     &mut queue,
                     config,
+                    &ctx.session_controls,
                     &mut heartbeat_in_flight,
                     &removed_channels,
                     &mut typing_channels,
@@ -3982,6 +3983,7 @@ async fn run_harness(
                     &mut pool,
                     &mut queue,
                     config,
+                    &ctx.session_controls,
                     join_error,
                     &mut heartbeat_in_flight,
                     &removed_channels,
@@ -5787,6 +5789,7 @@ fn recover_panicked_agent(
     pool: &mut AgentPool,
     queue: &mut EventQueue,
     config: &Config,
+    controls: &session_controls::SessionControlRuntime,
     join_error: tokio::task::JoinError,
     heartbeat_in_flight: &mut bool,
     removed_channels: &HashSet<Uuid>,
@@ -5863,6 +5866,19 @@ fn recover_panicked_agent(
         );
     }
 
+    if controls.owns_retirement(i) {
+        // run_prompt_task's client has already unwound. The existing completion,
+        // liveness and reaction guards retain no process ownership or snapshot.
+        pool.mark_retire_on_return(i);
+        controls.lose_retirement_evidence(i);
+        crash_history[i].respawn_in_flight = true;
+        tracing::error!(
+            agent = i,
+            "foreground panic lost original retirement evidence; gate remains unconfirmed"
+        );
+        return;
+    }
+
     // Panics count as crashes for the circuit breaker.
     // The panicked task already dropped the AcpClient, so we just need to
     // check the circuit and spawn a fresh agent in the background.
@@ -5908,6 +5924,7 @@ fn drain_ready_join_results(
     pool: &mut AgentPool,
     queue: &mut EventQueue,
     config: &Config,
+    controls: &session_controls::SessionControlRuntime,
     heartbeat_in_flight: &mut bool,
     removed_channels: &HashSet<Uuid>,
     typing_channels: &mut HashMap<scope::SessionScope, ThreadTags>,
@@ -5923,6 +5940,7 @@ fn drain_ready_join_results(
                 pool,
                 queue,
                 config,
+                controls,
                 join_error,
                 heartbeat_in_flight,
                 removed_channels,
@@ -11168,6 +11186,7 @@ mod error_outcome_emission_tests {
             &mut pool,
             &mut queue,
             &config,
+            &Default::default(),
             join_error,
             &mut heartbeat_in_flight,
             &removed_channels,
@@ -11262,6 +11281,7 @@ mod error_outcome_emission_tests {
             &mut pool,
             &mut queue,
             &config,
+            &Default::default(),
             join_error,
             &mut heartbeat_in_flight,
             &removed_channels,

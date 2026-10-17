@@ -4771,6 +4771,38 @@
           "behavior_test": "checked_retirement_requires_every_clean_report_and_retries_after_uncertainty",
           "verification_command": "cargo test -p buzz-acp --lib checked_retirement_requires_every_clean_report_and_retries_after_uncertainty -- --test-threads=1",
           "coverage": "Text guard for restart admission wiring; all-target controller regression and native gate bind live behavior."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "drive",
+          "invocation": "orphan_reconciliation.drive(&ctx.session_controls, publication_capacity);",
+          "behavior_test": "orphan_reconciliation_retries_failed_writes_with_capped_backoff_without_capacity_spin",
+          "verification_command": "cargo test -p buzz-acp --lib orphan_reconciliation_retries_failed_writes_with_capped_backoff_without_capacity_spin -- --test-threads=1",
+          "coverage": "Text guard for main-loop scheduling; real store failures, repair and bounded retry through scheduler regression."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "wake",
+          "invocation": "_ = orphan_reconciliation.wake() => {",
+          "behavior_test": "orphan_reconciliation_retries_failed_writes_with_capped_backoff_without_capacity_spin",
+          "verification_command": "cargo test -p buzz-acp --lib orphan_reconciliation_retries_failed_writes_with_capped_backoff_without_capacity_spin -- --test-threads=1",
+          "coverage": "Text guard for idle select wake; actual scheduler completion and deadline behavior tested."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "join_next",
+          "invocation": "Some(result) = result_publications.join_next(), if !result_publications.is_empty() => {",
+          "behavior_test": "orphan_reconciliation_retries_failed_writes_with_capped_backoff_without_capacity_spin",
+          "verification_command": "cargo test -p buzz-acp --lib orphan_reconciliation_retries_failed_writes_with_capped_backoff_without_capacity_spin -- --test-threads=1",
+          "coverage": "Text guard for idle publisher capacity release; scheduler regression covers zero-capacity no-spin."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "lose_retirement_evidence",
+          "invocation": "controls.lose_retirement_evidence(i);",
+          "behavior_test": "retirement_foreground_panic_cannot_attest_replacement_or_forget_original_on_retry",
+          "verification_command": "cargo test -p buzz-acp --lib retirement_foreground_panic_cannot_attest_replacement_or_forget_original_on_retry -- --test-threads=1",
+          "coverage": "Actual foreground Tokio panic and escaped-group lifetime; ordinary crash recovery remains separately tested."
         }
       ],
       "verification_commands": [
@@ -9926,7 +9958,9 @@
         "fn plan_retirement",
         "fn retirement_report",
         "fn take_publications_up_to",
-        "fn sweep_orphans"
+        "fn lose_retirement_evidence",
+        "fn retirement_evidence_lost",
+        "fn owns_retirement"
       ],
       "invocation_seams": [
         {
@@ -9971,7 +10005,24 @@
       "required_symbols": [
         "fn sweep_orphan_controls"
       ],
-      "invocation_seams": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/session_store_orphans.rs",
+          "callee_symbol": "canonical_key",
+          "invocation": "let Some(path) = canonical_key(&entry_path) else {",
+          "behavior_test": "startup_sweep_recovers_stale_only_started_receipt_and_deduplicates_record_key",
+          "verification_command": "cargo test -p buzz-acp --lib startup_sweep_recovers_stale_only_started_receipt_and_deduplicates_record_key -- --test-threads=1",
+          "coverage": "Stale-only canonical reader recovery, locked receipt CAS and duplicate suppression."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/session_store_orphans.rs",
+          "callee_symbol": "instance_alive",
+          "invocation": "if self.instance_alive(receipt.owner_instance) {",
+          "behavior_test": "startup_sweep_terminalizes_dead_started_controls_but_preserves_live_owner",
+          "verification_command": "cargo test -p buzz-acp --lib startup_sweep_terminalizes_dead_started_controls_but_preserves_live_owner -- --test-threads=1",
+          "coverage": "Live foreign owner proof rechecked under canonical record lock."
+        }
+      ],
       "verification_commands": [
         "cargo test -p buzz-acp -- --test-threads=1"
       ]
@@ -10010,8 +10061,58 @@
           "behavior_test": "checked_retirement_cannot_depart_neighbor_owned_by_a_newer_worker",
           "verification_command": "cargo test -p buzz-acp --lib checked_retirement_cannot_depart_neighbor_owned_by_a_newer_worker -- --test-threads=1",
           "coverage": "Actual retirement executor marks only its original neighbor lease after checked Clean."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/worker_retirement.rs",
+          "callee_symbol": "lose_retirement_evidence",
+          "invocation": "controls.lose_retirement_evidence(result.index);",
+          "behavior_test": "retirement_foreground_panic_cannot_attest_replacement_or_forget_original_on_retry",
+          "verification_command": "cargo test -p buzz-acp --lib retirement_foreground_panic_cannot_attest_replacement_or_forget_original_on_retry -- --test-threads=1",
+          "coverage": "Late ordinary replacement cannot attest the original; explicit retry remains unconfirmed."
         }
       ],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/session_controls/orphans.rs",
+      "responsibility": "Idle-waking bounded-backoff orphan reconciliation with partial durable publication",
+      "is_new": true,
+      "required_symbols": [
+        "struct OrphanReconciliation",
+        "fn sweep_orphans",
+        "fn drive(",
+        "fn wake("
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/session_controls/orphans.rs",
+          "callee_symbol": "sweep_orphan_controls",
+          "invocation": "store.sweep_orphan_controls(capacity)?",
+          "behavior_test": "startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records",
+          "verification_command": "cargo test -p buzz-acp --lib startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records -- --test-threads=1",
+          "coverage": "Actual corrupt and busy records preserve committed healthy prefix publication."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/session_controls/orphans.rs",
+          "callee_symbol": "publish",
+          "invocation": "state.publish(Publication {",
+          "behavior_test": "startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records",
+          "verification_command": "cargo test -p buzz-acp --lib startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records -- --test-threads=1",
+          "coverage": "Successful prefix IDs publish despite unrelated per-record failures."
+        }
+      ],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/session_retirement_review_tests.rs",
+      "responsibility": "Actual executor no-resume neighbor race and panic escaped-group false-Clean regressions",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
       "verification_commands": [
         "cargo test -p buzz-acp -- --test-threads=1"
       ]

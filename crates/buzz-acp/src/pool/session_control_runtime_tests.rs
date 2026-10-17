@@ -1359,3 +1359,6 @@ async fn retired_resume_transport_preserves_health_without_fallback_new() {
 
 #[path = "session_retirement_runtime_tests.rs"]
 mod retirement_runtime_tests;
+
+#[path = "session_retirement_review_tests.rs"]
+mod retirement_review_tests;

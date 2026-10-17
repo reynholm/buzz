@@ -116,6 +116,17 @@ pub(crate) fn finish(
     parked: &mut HashMap<usize, Option<OwnedAgent>>,
     result: &mut RespawnResult,
 ) -> bool {
+    if controls.retirement_evidence_lost(result.index)
+        || (result.retirement.is_none() && controls.owns_retirement(result.index))
+    {
+        pool.mark_retire_on_return(result.index);
+        controls.lose_retirement_evidence(result.index);
+        tracing::error!(
+            agent = result.index,
+            "replacement cannot verify the lost original worker; restart remains unconfirmed"
+        );
+        return true;
+    }
     let Some(retirement) = result.retirement.take() else {
         return false;
     };
