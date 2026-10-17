@@ -29,8 +29,15 @@
 //! - `["buzz-session-info", "1", "<transition UUID>", "thread|conversation",
 //!   "<read or empty>", "<total or empty>", "exact|lower_bound|unknown"]`.
 //!
-//! In the info tag, `unknown` with a non-empty `<read>` means that the total
-//! is unavailable (for example because the cold-start fetch was incomplete).
+//! The info tag's mode carries the completeness of the cold-start history:
+//!
+//! - `exact`: the history was complete; `<read>` and `<total>` are both set;
+//! - `lower_bound`: the history is known to be incomplete, or `<total>` is
+//!   present but only a proven lower bound. `<total>` may be empty (readers
+//!   then say earlier history may be omitted) and `<read>` may be empty when
+//!   event identities are missing;
+//! - `unknown`: no completeness claim: there is no total and the history is
+//!   not known to be incomplete. `<read>` may still be set.
 
 use std::fmt;
 
@@ -53,6 +60,8 @@ pub const GENERATIONS_DIR: &str = "generations";
 pub const SESSION_TAG: &str = "buzz-session";
 /// Name of the supporting status tag.
 pub const SESSION_INFO_TAG: &str = "buzz-session-info";
+/// Version field of the supporting tag; independent of [`STATUS_FORMAT_VERSION`].
+pub const SESSION_INFO_VERSION: &str = "1";
 
 const RESUME_FAILED_PREFIX: &str = "resume_failed:";
 const THREAD_ROOT_HEX_LEN: usize = 64;
@@ -303,15 +312,21 @@ impl HistoryCoverage {
     }
 
     /// Wire fields `(read, total, mode)` for the supporting tag.
+    ///
+    /// - `exact`: complete history; read and total are both present;
+    /// - `lower_bound`: known incomplete, or a total that is not exact (a
+    ///   proven lower bound); total and read may be empty;
+    /// - `unknown`: no completeness claim (no total, not incomplete).
     fn wire(&self) -> (String, String, &'static str) {
-        let Some(read) = self.read else {
-            return (String::new(), String::new(), "unknown");
+        let count = |value: Option<u64>| value.map(|v| v.to_string()).unwrap_or_default();
+        let mode = if self.exact {
+            "exact"
+        } else if self.incomplete || self.total.is_some() {
+            "lower_bound"
+        } else {
+            "unknown"
         };
-        match (self.total, self.exact) {
-            (Some(total), true) => (read.to_string(), total.to_string(), "exact"),
-            (Some(total), false) => (read.to_string(), total.to_string(), "lower_bound"),
-            (None, _) => (read.to_string(), String::new(), "unknown"),
-        }
+        (count(self.read), count(self.total), mode)
     }
 }
 
@@ -519,7 +534,7 @@ impl SessionStatus {
             ],
             vec![
                 SESSION_INFO_TAG.to_owned(),
-                "1".to_owned(),
+                SESSION_INFO_VERSION.to_owned(),
                 self.transition_id.as_hyphenated().to_string(),
                 scope.kind().to_owned(),
                 read,
@@ -784,6 +799,7 @@ mod tests {
             ]
         );
 
+        // Known incomplete, total unavailable: lower_bound with empty total.
         s.history = Some(HistoryCoverage {
             read: Some(12),
             total: None,
@@ -792,13 +808,91 @@ mod tests {
         });
         assert_eq!(
             info(&s, &thread),
-            ["buzz-session-info", "1", &id, "thread", "12", "", "unknown"]
+            [
+                "buzz-session-info",
+                "1",
+                &id,
+                "thread",
+                "12",
+                "",
+                "lower_bound"
+            ]
         );
 
-        // No identities at all: no counts, never zeros.
+        // Known incomplete and no event identities: still lower_bound.
+        s.history = Some(HistoryCoverage {
+            read: None,
+            total: None,
+            exact: false,
+            incomplete: true,
+        });
+        assert_eq!(
+            info(&s, &thread),
+            [
+                "buzz-session-info",
+                "1",
+                &id,
+                "thread",
+                "",
+                "",
+                "lower_bound"
+            ]
+        );
+
+        // Incomplete with a total: the total is a lower bound too.
+        s.history = Some(HistoryCoverage {
+            read: Some(12),
+            total: Some(30),
+            exact: false,
+            incomplete: true,
+        });
+        assert_eq!(
+            info(&s, &thread),
+            [
+                "buzz-session-info",
+                "1",
+                &id,
+                "thread",
+                "12",
+                "30",
+                "lower_bound"
+            ]
+        );
+
+        // Missing event identities with a proven lower-bound total.
         s.history = Some(HistoryCoverage {
             read: None,
             total: Some(7),
+            exact: false,
+            incomplete: false,
+        });
+        assert_eq!(
+            info(&s, &thread),
+            [
+                "buzz-session-info",
+                "1",
+                &id,
+                "thread",
+                "",
+                "7",
+                "lower_bound"
+            ]
+        );
+
+        // No completeness claim: no total, not incomplete, not exact.
+        s.history = Some(HistoryCoverage {
+            read: Some(12),
+            total: None,
+            exact: false,
+            incomplete: false,
+        });
+        assert_eq!(
+            info(&s, &thread),
+            ["buzz-session-info", "1", &id, "thread", "12", "", "unknown"]
+        );
+        s.history = Some(HistoryCoverage {
+            read: None,
+            total: None,
             exact: false,
             incomplete: false,
         });
@@ -812,6 +906,7 @@ mod tests {
             info(&s, &thread),
             ["buzz-session-info", "1", &id, "thread", "", "", "unknown"]
         );
+        assert_eq!(SESSION_INFO_VERSION, "1");
     }
 
     #[test]
