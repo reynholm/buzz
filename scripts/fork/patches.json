@@ -8669,12 +8669,14 @@
     },
     {
       "path": "crates/buzz-acp/src/session_store.rs",
-      "responsibility": "Lease-fenced, bounded per-scope session records with safe quarantine and instance liveness.",
+      "responsibility": "Community-and-agent isolated, lease-fenced session records with bounded locks, identity validation and channel-wide failure fencing.",
       "is_new": true,
       "required_symbols": [
         "pub struct SessionStore",
         "pub fn claim(",
-        "pub fn commit("
+        "pub fn commit(",
+        "fn store_namespace(",
+        "poisoned_channels"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -8688,7 +8690,11 @@
       "required_symbols": [
         "busy_does_not_quarantine_owner_record",
         "quarantine_requires_matching_lease",
-        "instance_publication_cannot_be_reaped_before_locking"
+        "instance_publication_cannot_be_reaped_before_locking",
+        "namespace_normalizes_url_spelling_without_aliasing_communities",
+        "copied_foreign_namespace_record_is_not_resumable",
+        "legacy_unscoped_records_are_not_adopted",
+        "channel_enumeration_failure_poisons_unknown_scopes_until_restart"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -8718,7 +8724,10 @@
         "max_turns_survives_resume",
         "rotate_before_first_resume_discards_disk_session",
         "one_reply_window_keeps_first_mention_over_agent_reply",
-        "idle_worker_transport_death_keeps_session_resumable"
+        "idle_worker_transport_death_keeps_session_resumable",
+        "acquisition_does_not_resume_another_community_or_agent",
+        "acquisition_resumes_canonical_same_community_after_restart",
+        "failed_channel_removal_during_sleep_never_resumes_after_readd"
       ],
       "invocation_seams": [],
       "verification_commands": [

@@ -52,7 +52,14 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(SessionStore::open(dir.path().join("store")).unwrap());
+        let store = Arc::new(
+            SessionStore::open(
+                dir.path().join("store"),
+                "wss://relay.example",
+                &Keys::generate().public_key().to_hex(),
+            )
+            .unwrap(),
+        );
         Self { dir, store }
     }
 
@@ -190,7 +197,8 @@ fn stored(live: impl FnOnce(&mut LiveSession)) -> LoadOutcome {
     };
     live(&mut session);
     LoadOutcome::Found(Box::new(SessionRecord {
-        version: 1,
+        version: 2,
+        namespace: String::new(),
         live: Some(session),
         reason: None,
     }))
@@ -245,7 +253,8 @@ fn decision_unreadable_is_resume_failed() {
 #[test]
 fn decision_tombstone_is_discarded() {
     let tombstone = LoadOutcome::Found(Box::new(SessionRecord {
-        version: 1,
+        version: 2,
+        namespace: String::new(),
         live: None,
         reason: Some(SessionReason::Discarded),
     }));
@@ -518,11 +527,7 @@ async fn failed_claim_never_calls_resume() {
     let scope = scope();
     let ctx = ctx();
     fixture.departed_record(&scope, &ctx, &[]);
-    let channel_dir = fixture
-        .dir
-        .path()
-        .join("store")
-        .join(scope.channel_id().to_string());
+    let channel_dir = fixture.store.channel_dir(scope.channel_id());
     let record = std::fs::read_dir(&channel_dir)
         .unwrap()
         .flatten()
@@ -1201,4 +1206,115 @@ async fn marker_present_once_after_start() {
     assert_eq!(lines.len(), 2);
     assert!(lines[0].contains(r#"<session state=\"new\" reason=\"first_in_thread\"/>"#));
     assert!(!lines[1].contains("<session state="));
+}
+
+// Store creation follows the same entry point as run_harness.
+fn scoped_store(root: PathBuf, ctx: &PromptContext) -> Arc<SessionStore> {
+    open_session_store(
+        Some(root),
+        true,
+        &ctx.agent_keys.public_key().to_hex(),
+        &ctx.relay_url,
+    )
+    .unwrap()
+}
+
+async fn acquire_after_context_change(
+    first: PromptContext,
+    next: PromptContext,
+) -> (String, Vec<String>) {
+    let root = tempfile::tempdir().unwrap();
+    let scope = SessionScope::Conversation {
+        channel_id: Uuid::from_u128(42),
+    };
+    {
+        let fixture = Fixture {
+            dir: tempfile::tempdir().unwrap(),
+            store: scoped_store(root.path().to_path_buf(), &first),
+        };
+        fixture.departed_record(&scope, &first, &[]);
+    }
+    let fixture = Fixture {
+        dir: tempfile::tempdir().unwrap(),
+        store: scoped_store(root.path().to_path_buf(), &next),
+    };
+    let mut agent = fixture.agent(&[("RESUME_CAP", "1")]).await;
+    let (sid, _) = acquire_session(&mut agent, &next, None, channel_context(&scope), &scope)
+        .await
+        .unwrap();
+    agent.acp.shutdown().await;
+    (sid, fixture.methods())
+}
+
+#[tokio::test]
+async fn acquisition_does_not_resume_another_community_or_agent() {
+    for (first_url, next_url, different_agent) in [
+        ("wss://a.example", "wss://b.example", false),
+        ("ws://localhost:3030", "ws://127.0.0.1:3030", false),
+        ("wss://a.example", "wss://a.example", true),
+    ] {
+        let mut first = ctx();
+        first.relay_url = first_url.into();
+        let mut next = ctx();
+        next.agent_keys = first.agent_keys.clone();
+        next.relay_url = next_url.into();
+        if different_agent {
+            next.agent_keys = Keys::generate();
+        }
+        let (sid, methods) = acquire_after_context_change(first, next).await;
+        assert!(
+            !methods.contains(&"session/resume".into()),
+            "foreign identity must create a session: {first_url} -> {next_url}"
+        );
+        assert_eq!(sid, "new-1");
+    }
+}
+
+#[tokio::test]
+async fn acquisition_resumes_canonical_same_community_after_restart() {
+    let mut first = ctx();
+    first.relay_url = "WSS://Relay.Example:443/".into();
+    let mut next = ctx();
+    next.agent_keys = first.agent_keys.clone();
+    next.relay_url = "wss://relay.example".into();
+    let (sid, methods) = acquire_after_context_change(first, next).await;
+    assert!(methods.contains(&"session/resume".into()));
+    assert_eq!(sid, "old-1");
+}
+
+#[tokio::test]
+async fn failed_channel_removal_during_sleep_never_resumes_after_readd() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new();
+    let scope = thread_scope(42, "a");
+    let neighbor = thread_scope(43, "a");
+    let ctx = ctx();
+    for scope in [&scope, &neighbor] {
+        fixture.departed_record(scope, &ctx, &[]);
+    }
+    let mut pool = AgentPool::from_slots(vec![None]);
+    pool.set_session_store(Some(fixture.store.clone()));
+    let dir = fixture.store.channel_dir(scope.channel_id());
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+    pool.discard_durable_channel(scope.channel_id());
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    // A subsequent re-add uses the same shared store, with empty worker memory.
+    let mut agent = fixture.agent(&[("RESUME_CAP", "1")]).await;
+    let (sid, start) = acquire_session(&mut agent, &ctx, None, channel_context(&scope), &scope)
+        .await
+        .unwrap();
+    agent.acp.shutdown().await;
+    assert_eq!(sid, "new-1");
+    assert_eq!(
+        start,
+        SessionStart::New {
+            reason: SessionReason::ResumeFailed("not_persisted".into())
+        }
+    );
+    assert!(!fixture.methods().contains(&"session/resume".into()));
+    assert_eq!(
+        resume_reason(decision_now(&fixture, &neighbor)),
+        SessionReason::IdleSleep
+    );
+    assert_eq!(fixture.record(&scope).live.unwrap().session_id, "old-1");
 }
