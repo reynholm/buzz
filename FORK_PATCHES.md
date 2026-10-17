@@ -5616,12 +5616,30 @@ New module: `false`.
 
 ## `crates/buzz-core/src/lib.rs`
 
-Export the shared signed managed-report recovery protocol.
+Export the shared signed managed-report recovery protocol and the shared session-status contract.
 
 New module: `false`.
 
 - Required symbol: `pub mod managed_delivery;`
+- Required symbol: `pub mod session_status;`
 - Verify: `cargo test -p buzz-core managed_delivery -- --test-threads=1`
+- Verify: `cargo test -p buzz-core session_status -- --test-threads=1`
+
+## `crates/buzz-core/src/session_status.rs`
+
+Pure shared session-status contract: canonical status identity, scope file names, instance layout names, bounded reason vocabulary, snapshot format v1 with size/version validation, and the buzz-session wire tags.
+
+New module: `true`.
+
+- Required symbol: `pub fn canonical_identity(`
+- Required symbol: `pub fn scope_file_name(`
+- Required symbol: `pub fn generation_lock_path(`
+- Required symbol: `pub fn parse_snapshot(`
+- Required symbol: `pub fn event_tags(`
+- Required symbol: `pub struct StatusEnvelope`
+- Required symbol: `pub struct ContextOccupancy`
+- Required symbol: `pub struct HistoryCoverage`
+- Verify: `cargo test -p buzz-core session_status -- --test-threads=1`
 
 ## `crates/buzz-core/src/managed_delivery.rs`
 
