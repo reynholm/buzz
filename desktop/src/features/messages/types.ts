@@ -11,6 +11,27 @@ export type TimelineReaction = {
   }>;
 };
 
+/**
+ * Explanation of an agent session transition (see `lib/sessionStatus.ts`).
+ * Copy only: built from the bounded wire vocabulary, never raw tag text.
+ */
+export type SessionStatusExplanation = {
+  title: string;
+  detail?: string;
+  history?: string[];
+};
+
+/**
+ * Derived, self-reported session status of an agent's own message. Present
+ * only when there is something to show; `percent` is absent (never 0) when
+ * the agent reported no context occupancy.
+ */
+export type MessageSessionStatus = {
+  /** Only on the earliest loaded message of its transition. */
+  explanation?: SessionStatusExplanation;
+  percent?: number;
+};
+
 export type TimelineMessage = {
   id: string;
   /** Stable local key used to avoid remounting optimistic rows on send ack. */
@@ -49,4 +70,6 @@ export type TimelineMessage = {
   kind?: number;
   tags?: string[][];
   reactions?: TimelineReaction[];
+  /** Derived from the original signed tags; see `lib/sessionStatus.ts`. */
+  sessionStatus?: MessageSessionStatus;
 };

@@ -5657,12 +5657,15 @@
     },
     {
       "path": "desktop/playwright.config.ts",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec.",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "\"**/session-status.spec.ts\","
+      ],
       "invocation_seams": [],
       "verification_commands": [
-        "just ci"
+        "just ci",
+        "cd desktop && pnpm test:e2e:smoke"
       ]
     },
     {
@@ -9015,6 +9018,168 @@
       "invocation_seams": [],
       "verification_commands": [
         "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/lib/sessionStatus.ts",
+      "responsibility": "Strictly parse an agent's self-reported buzz-session and buzz-session-info tags, map the bounded state/reason vocabulary to fixed English copy with truthful exact, lower-bound and omitted-history wording, and attach one transition explanation per loaded (signer, channel, scope, transition) to its earliest message; other messages keep only their reported percentage.",
+      "is_new": true,
+      "required_symbols": [
+        "export function parseSessionStatusTags(",
+        "export function attachSessionStatuses(",
+        "export const CONTEXT_HIGHLIGHT_PERCENT = 80;",
+        "normalizePubkey(message.pubkey) !== message.signerPubkey"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionStatus.test.mjs src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs src/features/messages/lib/messageRowEquality.test.mjs src/features/messages/ui/MessageSessionStatus.test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/lib/sessionStatus.test.mjs",
+      "responsibility": "Parser and copy regressions: states, known and unknown reasons, resume failure codes, percent boundaries, malformed numbers, duplicate/conflicting tags, malformed supporting metadata and hostile reason strings.",
+      "is_new": true,
+      "required_symbols": [
+        "conflicting primary tags yield no status",
+        "unknown but well-formed reasons get neutral copy without the raw string"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionStatus.test.mjs src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs src/features/messages/lib/messageRowEquality.test.mjs src/features/messages/ui/MessageSessionStatus.test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs",
+      "responsibility": "Projection regressions through the production timeline formatter: agents, scopes, channels, interleaving, same-second order, deletion, pagination, edit overlays, signer/author identity and missing supporting metadata.",
+      "is_new": true,
+      "required_symbols": [
+        "first message of a transition explains it; later ones keep only the percentage",
+        "an edit cannot add or change status; the original signed tags win",
+        "a relay-signed event attributed to an agent cannot claim its session state"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionStatus.test.mjs src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs src/features/messages/lib/messageRowEquality.test.mjs src/features/messages/ui/MessageSessionStatus.test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/MessageSessionStatus.tsx",
+      "responsibility": "Render the derived session status as a muted, noninteractive line with screen-reader pauses and warning emphasis plus readable text from 80%.",
+      "is_new": true,
+      "required_symbols": [
+        "export function MessageSessionStatus(",
+        "font-medium text-warning"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionStatus.test.mjs src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs src/features/messages/lib/messageRowEquality.test.mjs src/features/messages/ui/MessageSessionStatus.test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/MessageSessionStatus.test.mjs",
+      "responsibility": "Rendered status line text, emphasis threshold, absence of tab stops, live regions or labels, and MessageRow memo invalidation when only the derived status moves.",
+      "is_new": true,
+      "required_symbols": [
+        "MessageRow memo rerenders when only the derived status moves"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionStatus.test.mjs src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs src/features/messages/lib/messageRowEquality.test.mjs src/features/messages/ui/MessageSessionStatus.test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/tests/e2e/session-status.spec.ts",
+      "responsibility": "Mock-bridge smoke workflow for session status: new session with exact history, continuation rows at 79% and 80%, unknown context, thread navigation and one explanation per loaded transition.",
+      "is_new": true,
+      "required_symbols": [
+        "session status explains each transition once and shows reported context"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && pnpm test:e2e:smoke"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/lib/formatTimelineMessages.ts",
+      "responsibility": "Attach the derived agent session status to formatted rows from each event's original signed tags.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/messages/lib/formatTimelineMessages.ts",
+          "callee_symbol": "attachSessionStatuses",
+          "invocation": "return attachSessionStatuses(messages, visibleEvents, channel?.id ?? null);",
+          "behavior_test": "first message of a transition explains it; later ones keep only the percentage",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern=\"first message of a transition\" src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs"
+        }
+      ],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionStatus.test.mjs src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs src/features/messages/lib/messageRowEquality.test.mjs src/features/messages/ui/MessageSessionStatus.test.mjs",
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/MessageRow.tsx",
+      "responsibility": "Render the session status line in the shared message body below content and above reactions, and compare the derived status by value in the row memo.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/messages/ui/MessageRow.tsx",
+          "callee_symbol": "MessageSessionStatus",
+          "invocation": "<MessageSessionStatus status={message.sessionStatus} />",
+          "behavior_test": "session status explains each transition once and shows reported context",
+          "verification_command": "cd desktop && pnpm test:e2e:smoke"
+        },
+        {
+          "caller_path": "desktop/src/features/messages/ui/MessageRow.tsx",
+          "callee_symbol": "sessionStatusEqual",
+          "invocation": "sessionStatusEqual(\n      prev.message.sessionStatus,\n      next.message.sessionStatus,\n    )",
+          "behavior_test": "MessageRow memo rerenders when only the derived status moves",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern=\"MessageRow memo rerenders\" src/features/messages/ui/MessageSessionStatus.test.mjs"
+        }
+      ],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionStatus.test.mjs src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs src/features/messages/lib/messageRowEquality.test.mjs src/features/messages/ui/MessageSessionStatus.test.mjs",
+        "cd desktop && pnpm test:e2e:smoke",
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/types.ts",
+      "responsibility": "Declare the optional derived session status field of a timeline message.",
+      "is_new": false,
+      "required_symbols": [
+        "export type MessageSessionStatus = {",
+        "sessionStatus?: MessageSessionStatus;"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test desktop-typecheck"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/lib/messageRowEquality.ts",
+      "responsibility": "Value equality for the derived session status used by the MessageRow memo.",
+      "is_new": false,
+      "required_symbols": [
+        "export function sessionStatusEqual("
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionStatus.test.mjs src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs src/features/messages/lib/messageRowEquality.test.mjs src/features/messages/ui/MessageSessionStatus.test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/lib/messageRowEquality.test.mjs",
+      "responsibility": "Session status value-equality regressions.",
+      "is_new": false,
+      "required_symbols": [
+        "sessionStatusEqual: value equality over explanation, history and percent"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionStatus.test.mjs src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs src/features/messages/lib/messageRowEquality.test.mjs src/features/messages/ui/MessageSessionStatus.test.mjs"
       ]
     },
     {

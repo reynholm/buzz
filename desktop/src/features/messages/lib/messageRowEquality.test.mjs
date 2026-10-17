@@ -5,6 +5,7 @@ import {
   depthGuideActionsEqual,
   numberArrayEqual,
   reactionsEqual,
+  sessionStatusEqual,
   tagsEqual,
 } from "./messageRowEquality.ts";
 
@@ -109,6 +110,42 @@ test("depthGuideActionsEqual: same values (message by id) → equal", () => {
       [{ active: false, depth: 1, label: "Collapse replies", message }],
       [{ active: true, depth: 1, label: "Collapse replies", message }],
     ),
+    false,
+  );
+});
+
+test("sessionStatusEqual: value equality over explanation, history and percent", () => {
+  const status = () => ({
+    explanation: {
+      title: "New session",
+      detail: "resume failed",
+      history: ["read 1 of 2 messages"],
+    },
+    percent: 40,
+  });
+  assert.equal(sessionStatusEqual(undefined, undefined), true);
+  assert.equal(sessionStatusEqual(status(), status()), true);
+  assert.equal(sessionStatusEqual(status(), undefined), false);
+  assert.equal(sessionStatusEqual(status(), { percent: 40 }), false);
+  assert.equal(
+    sessionStatusEqual(status(), { ...status(), percent: 41 }),
+    false,
+  );
+  assert.equal(
+    sessionStatusEqual(status(), {
+      ...status(),
+      explanation: { ...status().explanation, detail: undefined },
+    }),
+    false,
+  );
+  assert.equal(
+    sessionStatusEqual(status(), {
+      ...status(),
+      explanation: {
+        ...status().explanation,
+        history: ["read 1 of at least 2 messages"],
+      },
+    }),
     false,
   );
 });

@@ -45,6 +45,7 @@ import { formatTime } from "@/features/messages/lib/dateFormatters";
 // Pure overlay helper lives in a sibling .mjs so node:test (no TS loader)
 // can exercise the exact same source the renderer uses.
 import { applyEditTagOverlay } from "@/features/messages/lib/applyEditTagOverlay.mjs";
+import { attachSessionStatuses } from "@/features/messages/lib/sessionStatus";
 import { truncateNpub } from "@/shared/lib/pubkey";
 
 const HEX_RE = /^[0-9a-f]+$/i;
@@ -459,7 +460,7 @@ export function formatTimelineMessages(
     return depth;
   }
 
-  return visibleEvents.map((event) => {
+  const messages: TimelineMessage[] = visibleEvents.map((event) => {
     const author = getAuthorLabel(event);
     const authorPubkey =
       authorPubkeyByEventId.get(event.id) ??
@@ -542,6 +543,8 @@ export function formatTimelineMessages(
       })(),
     };
   });
+  // Self-reported agent session status, from each event's original tags.
+  return attachSessionStatuses(messages, visibleEvents, channel?.id ?? null);
 }
 
 function extractSystemMessagePubkeys(event: RelayEvent): string[] {
