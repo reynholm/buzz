@@ -4,6 +4,27 @@
 // create/update record shaping.
 
 use super::*;
+
+#[test]
+fn workflow_yaml_json_projection_preserves_words_and_fallbacks() {
+    let value =
+        parse_definition("name: no\ntext: |\n  Привет\n  world\nunknown: [true, null, 42]\n");
+    assert_eq!(value["name"], "no");
+    assert_eq!(value["text"], "Привет\nworld\n");
+    assert_eq!(value["unknown"], serde_json::json!([true, null, 42]));
+    for invalid in [
+        "name: [unclosed",
+        "[1, 2]",
+        "name: !custom tagged",
+        "name: *missing",
+    ] {
+        assert_eq!(
+            parse_definition(invalid),
+            serde_json::json!({}),
+            "{invalid}"
+        );
+    }
+}
 use nostr::{EventBuilder, Keys, Kind, Tag};
 
 /// Build a signed kind:30620 workflow definition event with the given YAML

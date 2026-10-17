@@ -404,7 +404,7 @@ fn advisory_check_skill_names(
             None => continue,
         };
 
-        let yaml_val: serde_yaml::Value = match serde_yaml::from_str(fm_str) {
+        let yaml_val: yaml_serde::Value = match yaml_serde::from_str(fm_str) {
             Ok(v) => v,
             Err(_) => continue,
         };
@@ -414,7 +414,7 @@ fn advisory_check_skill_names(
             None => continue,
         };
 
-        if let Some(name_val) = mapping.get(serde_yaml::Value::String("name".into())) {
+        if let Some(name_val) = mapping.get(yaml_serde::Value::String("name".into())) {
             if let Some(name_str) = name_val.as_str() {
                 if let Some(dir_name) = skill_dir.file_name().and_then(|n| n.to_str()) {
                     if name_str != dir_name {

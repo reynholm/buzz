@@ -78,6 +78,12 @@ ensure_infra() {
 run_unit_tests() {
   section "Unit Tests (no infra required)"
 
+  # Match the YAML dependency and complete consumer suites in just test-unit.
+  run_test_step "shipping YAML dependency policy" \
+    python3 -m unittest discover -s scripts/fork/tests -p test_yaml_dependencies.py -v
+  run_test_step "persona and workflow YAML consumers" \
+    cargo test --locked -p buzz-persona -p buzz-workflow
+
   run_test_step "buzz-core tests" \
     cargo test -p buzz-core --lib -- --nocapture
 

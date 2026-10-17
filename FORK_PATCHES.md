@@ -1205,7 +1205,10 @@ Document owner-dependent device-home migration belongs after fold/detach in work
 New module: `false`.
 
 - Required symbol: `Device-home migration deliberately waits for owner/workspace hydration`
+- Required symbol: `yaml_serde::from_str::<yaml_serde::Value>(frontmatter).ok()?`
+- Invocation: `desktop/src-tauri/src/migration.rs` → `from_str`; exact call `yaml_serde::from_str::<yaml_serde::Value>(frontmatter).ok()?`; behavior test `migration::yaml_tests::runtime_rewrite_preserves_unknown_yaml_values_and_markdown`; verify `cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --lib migration::yaml_tests`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --lib migration::yaml_tests`
 
 ## `desktop/src-tauri/src/managed_agents/reconcile/tests.rs`
 
@@ -5778,13 +5781,13 @@ New module: `false`.
 
 ## `deny.toml`
 
-Track the owner-approved RUSTSEC-2024-0449 exception for fork-v0.5.26-4 only, with YAML replacement issue19 and mandatory reassessment before another release. Other advisory policies remain unchanged.
+Enforce RUSTSEC-2024-0449 after removing the retired YAML graph; preserve all unrelated advisory policies.
 
 New module: `false`.
 
-- Required symbol: `RUSTSEC-2024-0449`
-- Required symbol: `https://github.com/reynholm/buzz/issues/19`
-- Verify: `cargo-deny check`
+- Required symbol: `[advisories]`
+- Verify: `cargo deny check`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -p test_yaml_dependencies.py -v`
 
 ## `crates/buzz-relay/src/mesh_boot.rs`
 
@@ -5854,6 +5857,255 @@ New module: `false`.
 - Required symbol: `const firstCard = page.locator(`
 - Required symbol: `(player as HTMLAudioElement).loop = true;`
 - Verify: `cd desktop && pnpm exec playwright test --project=smoke tests/e2e/voice-note.spec.ts --retries=0`
+
+## `Cargo.toml`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `crates/buzz-agent/Cargo.toml`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `crates/buzz-agent/src/hints.rs`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `false`.
+
+- Required symbol: `yaml_serde::from_str(yaml_block).ok()?`
+- Invocation: `crates/buzz-agent/src/hints.rs` → `from_str`; exact call `yaml_serde::from_str(yaml_block).ok()?`; behavior test `hints::yaml_tests::skill_yaml_preserves_words_tags_aliases_and_multiline_text`; verify `cargo test --locked -p buzz-agent --lib hints::yaml_tests`
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+- Verify: `cargo test --locked -p buzz-agent --lib hints::yaml_tests`
+
+## `crates/buzz-agent/src/hints_yaml_tests.rs`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `true`.
+
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `crates/buzz-backend-kubernetes/src/client.rs`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `false`.
+
+- Required symbol: `let config = config_for(context).await?;`
+- Invocation: `crates/buzz-backend-kubernetes/src/client.rs` → `config_for`; exact call `let config = config_for(context).await?;`; behavior test `client::yaml_tests::kubeconfig_connect_and_exec_lookup_use_the_selected_context`; verify `cargo test --locked -p buzz-backend-kubernetes`
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+- Verify: `cargo test --locked -p buzz-backend-kubernetes`
+
+## `crates/buzz-backend-kubernetes/src/client_yaml_tests.rs`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `true`.
+
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `crates/buzz-backend-kubernetes/src/cluster.rs`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `crates/buzz-backend-kubernetes/src/gc.rs`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `false`.
+
+- Required symbol: `let age_nanos = now_nanos - created.0.as_nanosecond();`
+- Invocation: `crates/buzz-backend-kubernetes/src/gc.rs` → `as_nanosecond`; exact call `let age_nanos = now_nanos - created.0.as_nanosecond();`; behavior test `gc::tests::age_gate_boundary_is_exact`; verify `cargo test --locked -p buzz-backend-kubernetes`
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+- Verify: `cargo test --locked -p buzz-backend-kubernetes`
+
+## `crates/buzz-backend-kubernetes/src/observe.rs`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `crates/buzz-backend-kubernetes/src/reconcile.rs`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `crates/buzz-persona/Cargo.toml`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `crates/buzz-persona/src/persona.rs`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `false`.
+
+- Required symbol: `yaml_serde::from_str(fm_str)?`
+- Invocation: `crates/buzz-persona/src/persona.rs` → `from_str`; exact call `yaml_serde::from_str(fm_str)?`; behavior test `persona_yaml_preserves_scalar_types_aliases_and_multiline_unicode`; verify `cargo test --locked -p buzz-persona --test yaml_compatibility`
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+- Verify: `cargo test --locked -p buzz-persona --test yaml_compatibility`
+
+## `crates/buzz-persona/src/validate.rs`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `false`.
+
+- Required symbol: `yaml_serde::from_str(fm_str)`
+- Invocation: `crates/buzz-persona/src/validate.rs` → `from_str`; exact call `yaml_serde::from_str(fm_str)`; behavior test `pack_validation_preserves_skill_name_warnings_with_unknown_yaml_values`; verify `cargo test --locked -p buzz-persona --test yaml_compatibility`
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+- Verify: `cargo test --locked -p buzz-persona --test yaml_compatibility`
+
+## `crates/buzz-persona/tests/yaml_compatibility.rs`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `true`.
+
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `crates/buzz-workflow/Cargo.toml`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `crates/buzz-workflow/src/error.rs`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `crates/buzz-workflow/src/schema.rs`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `false`.
+
+- Required symbol: `yaml_serde::from_str(yaml)?`
+- Invocation: `crates/buzz-workflow/src/schema.rs` → `from_str`; exact call `yaml_serde::from_str(yaml)?`; behavior test `schema::yaml_tests::workflow_yaml_preserves_trigger_aliases_and_message_text`; verify `cargo test --locked -p buzz-workflow --lib schema::yaml_tests`
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+- Verify: `cargo test --locked -p buzz-workflow --lib schema::yaml_tests`
+
+## `crates/buzz-workflow/src/schema_yaml_tests.rs`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `true`.
+
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `desktop/src-tauri/src/commands/workflows.rs`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `false`.
+
+- Required symbol: `yaml_serde::from_str::<Value>(yaml)`
+- Invocation: `desktop/src-tauri/src/commands/workflows.rs` → `from_str`; exact call `yaml_serde::from_str::<Value>(yaml)`; behavior test `commands::workflows::tests::workflow_yaml_json_projection_preserves_words_and_fallbacks`; verify `cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --lib commands::workflows::tests::workflow_yaml_json_projection_preserves_words_and_fallbacks`
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+- Verify: `cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --lib commands::workflows::tests::workflow_yaml_json_projection_preserves_words_and_fallbacks`
+
+## `desktop/src-tauri/src/commands/workflows_tests.rs`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `desktop/src-tauri/src/managed_agents/config_bridge/goose.rs`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `false`.
+
+- Required symbol: `yaml_serde::from_str(yaml_str).ok()?`
+- Invocation: `desktop/src-tauri/src/managed_agents/config_bridge/goose.rs` → `from_str`; exact call `yaml_serde::from_str(yaml_str).ok()?`; behavior test `managed_agents::config_bridge::goose::yaml_tests::goose_yaml_preserves_nested_providers_and_ignores_unknown_tagged_fields`; verify `cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::config_bridge::goose::yaml_tests`
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+- Verify: `cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::config_bridge::goose::yaml_tests`
+
+## `desktop/src-tauri/src/managed_agents/config_bridge/goose_yaml_tests.rs`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `true`.
+
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `desktop/src-tauri/src/migration_yaml_tests.rs`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `true`.
+
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `docs/fork/YAML_COMPATIBILITY.md`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `true`.
+
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `scripts/fork/tests/test_yaml_dependencies.py`
+
+Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).
+
+New module: `true`.
+
+- Verify: `just ci`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
 
 ## `AGENTS.md`
 

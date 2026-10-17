@@ -16,8 +16,8 @@ fn read_config_from_path(path: &std::path::Path) -> Option<RuntimeFileConfig> {
 fn parse_goose_config(yaml_str: &str) -> Option<RuntimeFileConfig> {
     // TODO: replace hardcoded field extraction with schema_walker once goose publishes
     // a JSON Schema. Tracked separately.
-    let map: std::collections::HashMap<String, serde_yaml::Value> =
-        serde_yaml::from_str(yaml_str).ok()?;
+    let map: std::collections::HashMap<String, yaml_serde::Value> =
+        yaml_serde::from_str(yaml_str).ok()?;
 
     let active_provider = yaml_string(&map, "active_provider");
 
@@ -83,18 +83,22 @@ fn parse_goose_config(yaml_str: &str) -> Option<RuntimeFileConfig> {
     })
 }
 
+#[cfg(test)]
+#[path = "goose_yaml_tests.rs"]
+mod yaml_tests;
+
 struct NestedProviderFields {
     model: Option<String>,
     host: Option<String>,
 }
 
 fn nested_provider_fields(
-    map: &std::collections::HashMap<String, serde_yaml::Value>,
+    map: &std::collections::HashMap<String, yaml_serde::Value>,
     active_provider: &str,
 ) -> Option<NestedProviderFields> {
     let providers = map.get("providers").and_then(|v| v.as_mapping())?;
     let entry = providers
-        .get(serde_yaml::Value::String(active_provider.to_owned()))?
+        .get(yaml_serde::Value::String(active_provider.to_owned()))?
         .as_mapping()?;
 
     let model = mapping_string(entry, "model");
@@ -104,7 +108,7 @@ fn nested_provider_fields(
 }
 
 fn parse_extensions(
-    map: &std::collections::HashMap<String, serde_yaml::Value>,
+    map: &std::collections::HashMap<String, yaml_serde::Value>,
 ) -> Vec<ExtensionEntry> {
     let extensions = match map.get("extensions").and_then(|v| v.as_mapping()) {
         Some(m) => m,
@@ -122,7 +126,7 @@ fn parse_extensions(
             let enabled = v
                 .as_mapping()
                 .and_then(|m| {
-                    m.get(serde_yaml::Value::String("enabled".to_owned()))
+                    m.get(yaml_serde::Value::String("enabled".to_owned()))
                         .and_then(|v| v.as_bool())
                 })
                 .unwrap_or(true);
@@ -136,7 +140,7 @@ fn parse_extensions(
 }
 
 fn yaml_string(
-    map: &std::collections::HashMap<String, serde_yaml::Value>,
+    map: &std::collections::HashMap<String, yaml_serde::Value>,
     key: &str,
 ) -> Option<String> {
     map.get(key)?
@@ -146,8 +150,8 @@ fn yaml_string(
         .map(str::to_string)
 }
 
-fn mapping_string(map: &serde_yaml::Mapping, key: &str) -> Option<String> {
-    map.get(serde_yaml::Value::String(key.to_owned()))
+fn mapping_string(map: &yaml_serde::Mapping, key: &str) -> Option<String> {
+    map.get(yaml_serde::Value::String(key.to_owned()))
         .and_then(|v| v.as_str())
         .map(str::trim)
         .filter(|s| !s.is_empty())

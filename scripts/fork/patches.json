@@ -1990,11 +1990,21 @@
       "responsibility": "Document owner-dependent device-home migration belongs after fold/detach in workspace apply, never preidentity boot",
       "is_new": false,
       "required_symbols": [
-        "Device-home migration deliberately waits for owner/workspace hydration"
+        "Device-home migration deliberately waits for owner/workspace hydration",
+        "yaml_serde::from_str::<yaml_serde::Value>(frontmatter).ok()?"
       ],
-      "invocation_seams": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/migration.rs",
+          "callee_symbol": "from_str",
+          "invocation": "yaml_serde::from_str::<yaml_serde::Value>(frontmatter).ok()?",
+          "behavior_test": "migration::yaml_tests::runtime_rewrite_preserves_unknown_yaml_values_and_markdown",
+          "verification_command": "cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --lib migration::yaml_tests"
+        }
+      ],
       "verification_commands": [
-        "just desktop-tauri-test desktop-tauri-check"
+        "just desktop-tauri-test desktop-tauri-check",
+        "cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --lib migration::yaml_tests"
       ]
     },
     {
@@ -8439,15 +8449,15 @@
     },
     {
       "path": "deny.toml",
-      "responsibility": "Track the owner-approved RUSTSEC-2024-0449 exception for fork-v0.5.26-4 only, with YAML replacement issue19 and mandatory reassessment before another release. Other advisory policies remain unchanged.",
+      "responsibility": "Enforce RUSTSEC-2024-0449 after removing the retired YAML graph; preserve all unrelated advisory policies.",
       "is_new": false,
       "required_symbols": [
-        "RUSTSEC-2024-0449",
-        "https://github.com/reynholm/buzz/issues/19"
+        "[advisories]"
       ],
       "invocation_seams": [],
       "verification_commands": [
-        "cargo-deny check"
+        "cargo deny check",
+        "python3 -m unittest discover -s scripts/fork/tests -p test_yaml_dependencies.py -v"
       ]
     },
     {
@@ -8550,6 +8560,369 @@
       "invocation_seams": [],
       "verification_commands": [
         "cd desktop && pnpm exec playwright test --project=smoke tests/e2e/voice-note.spec.ts --retries=0"
+      ]
+    },
+    {
+      "path": "Cargo.toml",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "crates/buzz-agent/Cargo.toml",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "crates/buzz-agent/src/hints.rs",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": false,
+      "required_symbols": [
+        "yaml_serde::from_str(yaml_block).ok()?"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-agent/src/hints.rs",
+          "callee_symbol": "from_str",
+          "invocation": "yaml_serde::from_str(yaml_block).ok()?",
+          "behavior_test": "hints::yaml_tests::skill_yaml_preserves_words_tags_aliases_and_multiline_text",
+          "verification_command": "cargo test --locked -p buzz-agent --lib hints::yaml_tests"
+        }
+      ],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v",
+        "cargo test --locked -p buzz-agent --lib hints::yaml_tests"
+      ]
+    },
+    {
+      "path": "crates/buzz-agent/src/hints_yaml_tests.rs",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "crates/buzz-backend-kubernetes/src/client.rs",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": false,
+      "required_symbols": [
+        "let config = config_for(context).await?;"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-backend-kubernetes/src/client.rs",
+          "callee_symbol": "config_for",
+          "invocation": "let config = config_for(context).await?;",
+          "behavior_test": "client::yaml_tests::kubeconfig_connect_and_exec_lookup_use_the_selected_context",
+          "verification_command": "cargo test --locked -p buzz-backend-kubernetes"
+        }
+      ],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v",
+        "cargo test --locked -p buzz-backend-kubernetes"
+      ]
+    },
+    {
+      "path": "crates/buzz-backend-kubernetes/src/client_yaml_tests.rs",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "crates/buzz-backend-kubernetes/src/cluster.rs",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "crates/buzz-backend-kubernetes/src/gc.rs",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": false,
+      "required_symbols": [
+        "let age_nanos = now_nanos - created.0.as_nanosecond();"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-backend-kubernetes/src/gc.rs",
+          "callee_symbol": "as_nanosecond",
+          "invocation": "let age_nanos = now_nanos - created.0.as_nanosecond();",
+          "behavior_test": "gc::tests::age_gate_boundary_is_exact",
+          "verification_command": "cargo test --locked -p buzz-backend-kubernetes"
+        }
+      ],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v",
+        "cargo test --locked -p buzz-backend-kubernetes"
+      ]
+    },
+    {
+      "path": "crates/buzz-backend-kubernetes/src/observe.rs",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "crates/buzz-backend-kubernetes/src/reconcile.rs",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "crates/buzz-persona/Cargo.toml",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "crates/buzz-persona/src/persona.rs",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": false,
+      "required_symbols": [
+        "yaml_serde::from_str(fm_str)?"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-persona/src/persona.rs",
+          "callee_symbol": "from_str",
+          "invocation": "yaml_serde::from_str(fm_str)?",
+          "behavior_test": "persona_yaml_preserves_scalar_types_aliases_and_multiline_unicode",
+          "verification_command": "cargo test --locked -p buzz-persona --test yaml_compatibility"
+        }
+      ],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v",
+        "cargo test --locked -p buzz-persona --test yaml_compatibility"
+      ]
+    },
+    {
+      "path": "crates/buzz-persona/src/validate.rs",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": false,
+      "required_symbols": [
+        "yaml_serde::from_str(fm_str)"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-persona/src/validate.rs",
+          "callee_symbol": "from_str",
+          "invocation": "yaml_serde::from_str(fm_str)",
+          "behavior_test": "pack_validation_preserves_skill_name_warnings_with_unknown_yaml_values",
+          "verification_command": "cargo test --locked -p buzz-persona --test yaml_compatibility"
+        }
+      ],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v",
+        "cargo test --locked -p buzz-persona --test yaml_compatibility"
+      ]
+    },
+    {
+      "path": "crates/buzz-persona/tests/yaml_compatibility.rs",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "crates/buzz-workflow/Cargo.toml",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "crates/buzz-workflow/src/error.rs",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "crates/buzz-workflow/src/schema.rs",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": false,
+      "required_symbols": [
+        "yaml_serde::from_str(yaml)?"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-workflow/src/schema.rs",
+          "callee_symbol": "from_str",
+          "invocation": "yaml_serde::from_str(yaml)?",
+          "behavior_test": "schema::yaml_tests::workflow_yaml_preserves_trigger_aliases_and_message_text",
+          "verification_command": "cargo test --locked -p buzz-workflow --lib schema::yaml_tests"
+        }
+      ],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v",
+        "cargo test --locked -p buzz-workflow --lib schema::yaml_tests"
+      ]
+    },
+    {
+      "path": "crates/buzz-workflow/src/schema_yaml_tests.rs",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/workflows.rs",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": false,
+      "required_symbols": [
+        "yaml_serde::from_str::<Value>(yaml)"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/commands/workflows.rs",
+          "callee_symbol": "from_str",
+          "invocation": "yaml_serde::from_str::<Value>(yaml)",
+          "behavior_test": "commands::workflows::tests::workflow_yaml_json_projection_preserves_words_and_fallbacks",
+          "verification_command": "cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --lib commands::workflows::tests::workflow_yaml_json_projection_preserves_words_and_fallbacks"
+        }
+      ],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v",
+        "cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --lib commands::workflows::tests::workflow_yaml_json_projection_preserves_words_and_fallbacks"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/workflows_tests.rs",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/config_bridge/goose.rs",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": false,
+      "required_symbols": [
+        "yaml_serde::from_str(yaml_str).ok()?"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/config_bridge/goose.rs",
+          "callee_symbol": "from_str",
+          "invocation": "yaml_serde::from_str(yaml_str).ok()?",
+          "behavior_test": "managed_agents::config_bridge::goose::yaml_tests::goose_yaml_preserves_nested_providers_and_ignores_unknown_tagged_fields",
+          "verification_command": "cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::config_bridge::goose::yaml_tests"
+        }
+      ],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v",
+        "cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::config_bridge::goose::yaml_tests"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/config_bridge/goose_yaml_tests.rs",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/migration_yaml_tests.rs",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "docs/fork/YAML_COMPATIBILITY.md",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "scripts/fork/tests/test_yaml_dependencies.py",
+      "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
       ]
     },
     {

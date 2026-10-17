@@ -70,7 +70,6 @@ s3 = { version = "0.37", package = "rust-s3", default-features = false, features
 tempfile = "3"
 bytes = "1"
 infer = "0.19"
-serde_yaml      = { workspace = true }
 sha2            = { workspace = true }
 hmac            = { workspace = true }
 subtle          = { workspace = true }
