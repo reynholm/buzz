@@ -1,7 +1,8 @@
 //! Session visibility: adapt the canonical session scope, the acquisition
 //! result and the final cold-start prompt to the status runtime.
 //!
-//! Only `new` and `resumed` states are produced here. History counts describe
+//! Acquisitions publish `new`, `resumed`, or an explicitly `restarted` state.
+//! History counts describe
 //! the unique message events actually supplied in a new session's first
 //! prompt; they come from data the prompt already fetched, never from an
 //! extra history walk.
@@ -150,7 +151,29 @@ impl OwnedAgent {
             SessionStart::New { reason } => (StatusState::New, reason),
             SessionStart::Resumed { reason } => (StatusState::Resumed, reason),
         };
-        if let Some(binding) = runtime.begin(status, session_id, state, status_reason(reason)) {
+        let intent = self
+            .state
+            .control_dispatch
+            .as_ref()
+            .filter(|dispatch| dispatch.current())
+            .and_then(|dispatch| dispatch.intent.as_ref());
+        let state = if intent.is_some() && !start.is_resumed() {
+            StatusState::Restarted
+        } else {
+            state
+        };
+        let origin = intent.map(|intent| intent.origin.clone());
+        let binding = match origin {
+            Some(origin) => runtime.begin_with_origin(
+                status,
+                session_id,
+                state,
+                status_reason(reason),
+                Some(origin),
+            ),
+            None => runtime.begin(status, session_id, state, status_reason(reason)),
+        };
+        if let Some(binding) = binding {
             self.acp.bind_session_status(session_id, binding.clone());
             self.state.status.insert(scope.clone(), binding);
         }

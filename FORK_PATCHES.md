@@ -2791,13 +2791,22 @@ New module: `false`.
 - Required symbol: `name == session_status::SESSION_STATUS_DIR_ENV`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `result_refreshes_idle_clock`; exact call `if result_refreshes_idle_clock(&result.source) {`; behavior test `error_outcome_emission_tests::channel_result_refreshes_idle_clock_wiring`; verify `cargo test -p buzz-acp --lib error_outcome_emission_tests::channel_result_refreshes_idle_clock_wiring -- --exact`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `depart_idle_sessions`; exact call `pool.depart_idle_sessions(session_store::Departure::IdleSleep);`; behavior test `pool_sleep_marks_every_idle_session`; verify `cargo test -p buzz-acp -- --test-threads=1`
-- Invocation: `crates/buzz-acp/src/lib.rs` → `discard_durable_scope`; exact call `pool.discard_durable_scope(&scope);`; behavior test `rotate_before_first_resume_discards_disk_session`; verify `cargo test -p buzz-acp -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `restart`; exact call `match ctx.session_controls.restart(job) {`; behavior test `restart_during_delayed_acquisition_fences_old_dispatch`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `discard_durable_channel`; exact call `pool.discard_durable_channel(ch);`; behavior test `channel_removal_then_readd_starts_new_session`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `open_session_store`; exact call `let session_store = pool::open_session_store(`; behavior test `resume_advertised_uses_session_resume_not_new`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `set_session_store`; exact call `pool.set_session_store(session_store.clone());`; behavior test `rotate_before_first_resume_discards_disk_session`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `enable_session_status`; exact call `runtime.enable_session_status();`; behavior test `every_spawn_path_and_managed_mcp_get_the_current_status_dir`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `retire_scope`; exact call `pool::session_visibility::retire_scope(`; behavior test `rotate_during_a_delayed_turn_retires_before_late_usage`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `retire_channel`; exact call `pool::session_visibility::retire_channel(`; behavior test `channel_removal_retires_every_scope_of_that_channel`; verify `cargo test -p buzz-acp -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `admit_authorized`; exact call `session_controls::admit_authorized(`; behavior test `controls_use_author_capability_before_subscription_and_reserve_wrong_targets`; verify `cargo test -p buzz-acp --lib controls_use_author_capability_before_subscription_and_reserve_wrong_targets -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `capture`; exact call `agent.state.control_dispatch = Some(ctx.session_controls.capture(&scope));`; behavior test `busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue`; verify `cargo test -p buzz-acp --lib busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `retirement_pending`; exact call `if ctx.session_controls.retirement_pending(&scope) {`; behavior test `busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue`; verify `cargo test -p buzz-acp --lib busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `current`; exact call `    if result
+        .agent
+        .state
+        .control_dispatch
+        .as_ref()
+        .is_some_and(|dispatch| !dispatch.current())`; behavior test `late_cancelled_result_cannot_requeue_old_batch_after_restart`; verify `cargo test -p buzz-acp --lib late_cancelled_result_cannot_requeue_old_batch_after_restart -- --test-threads=1`
 - Verify: `just ci`
 
 ## `crates/buzz-acp/src/pool.rs`
@@ -2817,6 +2826,20 @@ New module: `false`.
 - Invocation: `crates/buzz-acp/src/pool.rs` → `rebind_session_status`; exact call `agent.rebind_session_status(status_runtime, scope, &sid);`; behavior test `new_session_status_precedes_the_prompt_and_spans_ordinary_turns`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `history_coverage`; exact call `binding.set_history(session_visibility::history_coverage(`; behavior test `pinned_assignment_outside_the_window_counts_supplied_events_once`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `reconcile_session_status_scope`; exact call `if agent.reconcile_session_status_scope(`; behavior test `retained_conversation_revokes_generation_before_rebind_or_late_updates`; verify `cargo test -p buzz-acp --lib session_visibility::tests::policy -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `selected`; exact call `session_history::selected(&context_target, b.channel_id, depth, &ctx).await`; behavior test `selected_restart_depths_reach_actual_prompt_and_supplied_ids`; verify `cargo test -p buzz-acp --lib selected_restart_depths_reach_actual_prompt_and_supplied_ids -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `reserved_raw`; exact call `if crate::session_controls::reserved_raw(obj) {`; behavior test `human_target_reserved_syntax_is_filtered_but_not_executed`; verify `cargo test -p buzz-acp --lib human_target_reserved_syntax_is_filtered_but_not_executed -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `foreground_success`; exact call `dispatch.foreground_success();`; behavior test `bootstrap_success_and_failed_foreground_preserve_restart_policy`; verify `cargo test -p buzz-acp --lib bootstrap_success_and_failed_foreground_preserve_restart_policy -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `current`; exact call `    let stale = agent
+        .state
+        .control_dispatch
+        .as_ref()
+        .is_some_and(|dispatch| !dispatch.current())`; behavior test `second_restart_survives_old_result`; verify `cargo test -p buzz-acp --lib second_restart_survives_old_result -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `supplied_mention`; exact call `first_mention = session_history::supplied_mention(
+                first_mention,
+                &context_target,
+                conversation_context.as_ref(),
+                &rendered_batch_ids,
+            );`; behavior test `none_assignment_omitted_after_profile_render_is_explicitly_not_found`; verify `cargo test -p buzz-acp --lib none_assignment_omitted_after_profile_render_is_explicitly_not_found -- --test-threads=1`
 - Verify: `just ci`
 
 ## `crates/buzz-acp/src/queue.rs`
@@ -6030,6 +6053,9 @@ New module: `true`.
 - Required symbol: `pub(crate) fn insert_session_marker(`
 - Invocation: `crates/buzz-acp/src/pool/session_continuity.rs` → `retire_status`; exact call `self.retire_status(scope);`; behavior test `new_session_status_precedes_the_prompt_and_spans_ordinary_turns`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool/session_continuity.rs` → `retire_all_status`; exact call `self.retire_all_status();`; behavior test `worker_crash_retires_status_before_the_replacement_prompt`; verify `cargo test -p buzz-acp -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool/session_continuity.rs` → `ensure_dispatch_current`; exact call `ensure_dispatch_current(agent)?;`; behavior test `restart_during_delayed_acquisition_fences_old_dispatch`; verify `cargo test -p buzz-acp --lib restart_during_delayed_acquisition_fences_old_dispatch -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool/session_continuity.rs` → `ensure_dispatch_current`; exact call `ensure_dispatch_current(agent)?;
+                        let code = resume_failure_code(&err);`; behavior test `restart_during_failed_resume_never_calls_fallback_new`; verify `cargo test -p buzz-acp --lib restart_during_failed_resume_never_calls_fallback_new -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/session_continuity_tests.rs`
@@ -6261,6 +6287,7 @@ New module: `true`.
 - Required symbol: `pub(crate) fn retire_channel(`
 - Required symbol: `const KNOWN_FAILURE_CODES: &[&str]`
 - Required symbol: `pub(super) fn reconcile_session_status_scope(`
+- Invocation: `crates/buzz-acp/src/pool/session_visibility.rs` → `begin_with_origin`; exact call `Some(origin) => runtime.begin_with_origin(`; behavior test `selected_restart_depths_reach_actual_prompt_and_supplied_ids`; verify `cargo test -p buzz-acp --lib selected_restart_depths_reach_actual_prompt_and_supplied_ids -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/session_visibility_tests.rs`
@@ -6389,4 +6416,85 @@ New module: `true`.
 - Required symbol: `fn malformed_or_oversized_receipt_records_are_rejected()`
 - Required symbol: `fn failed_attempt_discard_preserves_restart_until_matching_completion()`
 - Required symbol: `fn explicit_scope_and_channel_revocation_clear_intent_but_keep_receipts()`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/session_controls.rs`
+
+Authorized session-control admission, per-dispatch generation fences and bounded selected restart history
+
+New module: `true`.
+
+- Required symbol: `pub(crate) fn restart_intent`
+- Required symbol: `pub(crate) fn complete_restart`
+- Required symbol: `pub(crate) fn restart(`
+- Required symbol: `pub(crate) fn retirement_pending`
+- Required symbol: `pub(crate) fn capture(`
+- Required symbol: `pub(crate) fn current(`
+- Required symbol: `pub(crate) fn revoke_channel`
+- Required symbol: `pub(crate) fn finish(`
+- Required symbol: `self.runtime.epoch(&self.scope) == self.epoch`
+- Invocation: `crates/buzz-acp/src/session_controls.rs` → `request_restart`; exact call `store.request_restart(&job.scope, &intent)?;`; behavior test `second_restart_survives_old_result`; verify `cargo test -p buzz-acp --lib second_restart_survives_old_result -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/session_history.rs`
+
+Authorized session-control admission, per-dispatch generation fences and bounded selected restart history
+
+New module: `true`.
+
+- Required symbol: `HISTORY_BYTES: usize = 256 * 1024`
+- Required symbol: `RESPONSE_BYTES: usize = 4 * 1024 * 1024`
+- Required symbol: `MAX_PAGES: usize = 20`
+- Required symbol: `MAX_CANDIDATES: usize = 10_000`
+- Required symbol: `pub(super) async fn selected`
+- Required symbol: `pub(super) fn enforce_render_budget`
+- Required symbol: `while crate::queue::format_conversation_context(context, profiles).len() > HISTORY_BYTES {`
+- Required symbol: `const RETAINED_HEAD_BYTES: usize = HISTORY_BYTES + MAX_CANDIDATES * 5;`
+- Required symbol: `pub(super) fn supplied_mention`
+- Invocation: `crates/buzz-acp/src/pool/session_history.rs` → `query_raw_bounded`; exact call `.query_raw_bounded(filters, RESPONSE_BYTES),`; behavior test `bounded_history_reader_rejects_chunked_actual_bytes_and_times_out`; verify `cargo test -p buzz-acp --lib bounded_history_reader_rejects_chunked_actual_bytes_and_times_out -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool/session_history.rs` → `saturating_sub`; exact call `if requested > MAX_CANDIDATES.saturating_sub(self.candidates) {`; behavior test `all_history_request_budget_reserves_tail_without_overfetching_candidates`; verify `cargo test -p buzz-acp --lib all_history_request_budget_reserves_tail_without_overfetching_candidates -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool/session_history.rs` → `saturating_sub`; exact call `rendered.len().saturating_sub(empty.len()) + 5`; behavior test `all_history_many_small_messages_fit_the_actual_rendered_budget`; verify `cargo test -p buzz-acp --lib all_history_many_small_messages_fit_the_actual_rendered_budget -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/session_history_tests.rs`
+
+Production-seam regressions for authorized session controls and bounded selected history
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/session_control_runtime_tests.rs`
+
+Production-seam regressions for authorized session controls and bounded selected history
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/session_control_history_tests.rs`
+
+Production-seam regressions for authorized session controls and bounded selected history
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/filter.rs`
+
+Authorized session-control admission, per-dispatch generation fences and bounded selected restart history
+
+New module: `false`.
+
+- Invocation: `crates/buzz-acp/src/filter.rs` → `reserved_raw`; exact call `crate::session_controls::reserved_raw(&raw)`; behavior test `stale_replay_does_not_overwrite_completed_ack`; verify `cargo test -p buzz-acp --lib stale_replay_does_not_overwrite_completed_ack -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/relay.rs`
+
+Authorized session-control admission, per-dispatch generation fences and bounded selected restart history
+
+New module: `false`.
+
+- Required symbol: `pub async fn query_raw_bounded`
+- Required symbol: `chunk.len() > max_bytes.saturating_sub(bytes.len())`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`

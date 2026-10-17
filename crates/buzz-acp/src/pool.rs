@@ -92,6 +92,7 @@ pub struct TaskMeta {
     /// Successful non-cancelling steers acknowledged while this task owned the
     /// live session. The session ID prevents a late ack from contaminating a
     /// replacement session after task return.
+    pub(crate) control_dispatch: Option<crate::session_controls::ControlDispatch>,
     pub successful_steer_deliveries: HashSet<SuccessfulSteerDelivery>,
 }
 
@@ -132,6 +133,8 @@ pub struct ChannelDeliveryState {
 /// spawning a real agent subprocess.
 #[derive(Default)]
 pub struct SessionState {
+    /// Task-captured restart generation and token; independent of live lease.
+    pub(crate) control_dispatch: Option<crate::session_controls::ControlDispatch>,
     /// session scope → session_id
     pub sessions: HashMap<SessionScope, String>,
     pub heartbeat_session: Option<String>,
@@ -339,6 +342,7 @@ mod background_work;
 pub(crate) use background_work::{ContinuationState, RuntimeHold};
 mod first_mention;
 mod session_continuity;
+mod session_history;
 pub(crate) use session_continuity::{open_session_store, SessionStart};
 pub(crate) mod session_visibility;
 
@@ -983,6 +987,7 @@ pub struct PromptContext {
     pub session_policy: crate::scope::SessionPolicy,
     /// Per-scope session status snapshots; `None` disables status publication.
     pub(crate) session_status: Option<crate::session_status::SessionStatusRuntime>,
+    pub(crate) session_controls: crate::session_controls::SessionControlRuntime,
 }
 
 impl AgentPool {
@@ -2487,6 +2492,18 @@ fn send_prompt_result(
     outcome: PromptOutcome,
     batch: Option<FlushBatch>,
 ) {
+    let stale = agent
+        .state
+        .control_dispatch
+        .as_ref()
+        .is_some_and(|dispatch| !dispatch.current());
+    let (outcome, batch) = if stale {
+        agent.state.invalidate(&source);
+        agent.background_context = None;
+        (PromptOutcome::Cancelled, None)
+    } else {
+        (outcome, batch)
+    };
     agent.acp.clear_steer_rx();
     if !matches!(outcome, PromptOutcome::Ok(_)) && !agent.has_background_collection() {
         if let Some(context) = &mut agent.background_context {
@@ -2527,6 +2544,11 @@ pub async fn run_prompt_task(
         Some(batch) => PromptSource::Channel(batch.scope.clone()),
         None => PromptSource::Heartbeat,
     };
+    if let Some(scope) = source.scope() {
+        if agent.state.control_dispatch.is_none() {
+            agent.state.control_dispatch = Some(ctx.session_controls.capture(scope));
+        }
+    }
     let prompt_text = batch
         .as_ref()
         .and_then(|batch| {
@@ -2812,6 +2834,22 @@ pub async fn run_prompt_task(
                 .await
                 {
                     Ok((sid, start)) => {
+                        if agent
+                            .state
+                            .control_dispatch
+                            .as_ref()
+                            .is_some_and(|dispatch| !dispatch.current())
+                        {
+                            send_prompt_result(
+                                &result_tx,
+                                &turn_id,
+                                agent,
+                                source,
+                                PromptOutcome::Cancelled,
+                                None,
+                            );
+                            return;
+                        }
                         tracing::info!(
                             target: "pool::session",
                             "{} session {sid} for channel {cid} (scope {}, {})",
@@ -3173,7 +3211,19 @@ pub async fn run_prompt_task(
             .as_ref()
             .map(|info| info.channel_type == "dm")
             .unwrap_or(false);
-        let context_target = resolve_context_target(b, is_dm);
+        let selected_depth = agent
+            .state
+            .control_dispatch
+            .as_ref()
+            .and_then(|dispatch| dispatch.intent.as_ref())
+            .map(|intent| intent.depth);
+        let context_target = if selected_depth
+            .is_some_and(|depth| depth != buzz_core::session_control::RestartDepth::Recent)
+        {
+            session_history::target(b, is_dm)
+        } else {
+            resolve_context_target(b, is_dm)
+        };
         let hydrated_thread_root = match &context_target {
             ContextTarget::Thread(root) => Some(root),
             ContextTarget::Dm | ContextTarget::None => None,
@@ -3198,30 +3248,54 @@ pub async fn run_prompt_task(
             .map(|delivery| &delivery.delivered_event_ids)
             .cloned()
             .unwrap_or_default();
-        let mut conversation_context = if ctx.context_message_limit > 0 {
-            fetch_conversation_context_for_target(
-                b.channel_id,
-                &context_target,
-                &ctx,
-                thread_context_is_hydrated,
-                &delivered_ids,
-            )
-            .await
+        let (conversation_context, mut first_mention) = if let Some(
+            depth @ (buzz_core::session_control::RestartDepth::None
+            | buzz_core::session_control::RestartDepth::All),
+        ) = selected_depth
+        {
+            session_history::selected(&context_target, b.channel_id, depth, &ctx).await
         } else {
-            None
+            let mut context = if ctx.context_message_limit > 0 {
+                fetch_conversation_context_for_target(
+                    b.channel_id,
+                    &context_target,
+                    &ctx,
+                    thread_context_is_hydrated,
+                    &delivered_ids,
+                )
+                .await
+            } else {
+                None
+            };
+            let mention = match (&context_target, context.as_mut()) {
+                (ContextTarget::Thread(root), Some(context)) if !thread_context_is_hydrated => {
+                    Some(first_mention::cold_start_pin(root, b.channel_id, context, &ctx).await)
+                }
+                _ => None,
+            };
+            (context, mention)
         };
-        // Cold start of this thread in this session: make sure its first
-        // mention of the agent is in context, however old.
-        let first_mention = match (&context_target, conversation_context.as_mut()) {
-            (ContextTarget::Thread(root), Some(context)) if !thread_context_is_hydrated => {
-                Some(first_mention::cold_start_pin(root, b.channel_id, context, &ctx).await)
+        if selected_depth.is_some() {
+            if let ContextTarget::Thread(root) = &context_target {
+                if b.events.iter().any(|event| {
+                    event.event.id.to_hex() == *root
+                        && event.event.tags.iter().any(|tag| {
+                            let parts = tag.as_slice();
+                            parts.first().is_some_and(|part| part == "p")
+                                && parts.get(1).is_some_and(|part| {
+                                    *part == ctx.agent_keys.public_key().to_hex()
+                                })
+                        })
+                }) {
+                    first_mention = Some(first_mention::FirstMention::InRoot);
+                }
             }
-            _ => None,
-        };
+        }
         // A new session's first prompt reports what it was given.
         let fetched_history = matches!(session_start, Some(SessionStart::New { .. })).then(|| {
             session_visibility::FetchedHistory::capture(
-                ctx.context_message_limit > 0 && context_target != ContextTarget::None,
+                (selected_depth.is_some() || ctx.context_message_limit > 0)
+                    && context_target != ContextTarget::None,
                 conversation_context.as_ref(),
             )
         });
@@ -3236,8 +3310,34 @@ pub async fn run_prompt_task(
                     .iter()
                     .any(|event_id| delivered_ids.contains(event_id))
             });
-        let conversation_context =
+        let mut conversation_context =
             conversation_context_delta(conversation_context, &delivered_ids, &rendered_batch_ids);
+        let profile_lookup =
+            fetch_prompt_profile_lookup(b, conversation_context.as_ref(), &ctx.rest_client).await;
+        if selected_depth
+            .is_some_and(|depth| depth != buzz_core::session_control::RestartDepth::Recent)
+        {
+            let mut pins = HashSet::new();
+            if let ContextTarget::Thread(root) = &context_target {
+                pins.insert(root.clone());
+            }
+            if let Some(first_mention::FirstMention::Found(event)) = &first_mention {
+                if let Some(id) = event["id"].as_str() {
+                    pins.insert(id.to_owned());
+                }
+            }
+            session_history::enforce_render_budget(
+                &mut conversation_context,
+                profile_lookup.as_ref(),
+                &pins,
+            );
+            first_mention = session_history::supplied_mention(
+                first_mention,
+                &context_target,
+                conversation_context.as_ref(),
+                &rendered_batch_ids,
+            );
+        }
         if let (Some(fetched), Some(binding)) = (&fetched_history, agent.state.status.get(&b.scope))
         {
             binding.set_history(session_visibility::history_coverage(
@@ -3253,9 +3353,6 @@ pub async fn run_prompt_task(
         pending_delivered_event_ids.extend(conversation_context_event_ids(
             conversation_context.as_ref(),
         ));
-
-        let profile_lookup =
-            fetch_prompt_profile_lookup(b, conversation_context.as_ref(), &ctx.rest_client).await;
 
         let known_names: Vec<&str> = profile_lookup
             .iter()
@@ -3312,6 +3409,22 @@ pub async fn run_prompt_task(
         return;
     };
 
+    if agent
+        .state
+        .control_dispatch
+        .as_ref()
+        .is_some_and(|dispatch| !dispatch.current())
+    {
+        send_prompt_result(
+            &result_tx,
+            &turn_id,
+            agent,
+            source,
+            PromptOutcome::Cancelled,
+            None,
+        );
+        return;
+    }
     // 💬 — fire-and-forget so the prompt fires immediately.
     // The guard's cleanup (spawned on drop) removes 💬 after the turn completes.
     // A brief race where 💬 appears slightly after the agent starts is acceptable.
@@ -3520,6 +3633,9 @@ pub async fn run_prompt_task(
                         log_stop_reason(&source, &StopReason::EndTurn);
                         if let PromptSource::Channel(scope) = &source {
                             let standing_sent = !agent.has_system_prompt_support();
+                            if batch.as_ref().is_some_and(|batch| batch.continuation.is_none()) {
+                                if let Some(dispatch) = &agent.state.control_dispatch { dispatch.foreground_success(); }
+                            }
                             record_scope_delivery_success(
                                 &mut agent,
                                 scope.clone(),
@@ -3558,12 +3674,36 @@ pub async fn run_prompt_task(
         }
     };
 
+    if agent
+        .state
+        .control_dispatch
+        .as_ref()
+        .is_some_and(|dispatch| !dispatch.current())
+    {
+        send_prompt_result(
+            &result_tx,
+            &turn_id,
+            agent,
+            source,
+            PromptOutcome::Cancelled,
+            None,
+        );
+        return;
+    }
     match prompt_result {
         Ok(stop_reason) => {
             log_stop_reason(&source, &stop_reason);
 
             if let PromptSource::Channel(scope) = &source {
                 let standing_sent = !agent.has_system_prompt_support();
+                if batch
+                    .as_ref()
+                    .is_some_and(|batch| batch.continuation.is_none())
+                {
+                    if let Some(dispatch) = &agent.state.control_dispatch {
+                        dispatch.foreground_success();
+                    }
+                }
                 record_scope_delivery_success(
                     &mut agent,
                     scope.clone(),
@@ -4854,6 +4994,9 @@ fn parse_dm_response(json: serde_json::Value, limit: u32) -> Option<Conversation
 ///
 /// Works with both thread reply objects and channel message objects.
 fn json_to_context_message(obj: &serde_json::Value) -> Option<ContextMessage> {
+    if crate::session_controls::reserved_raw(obj) {
+        return None;
+    }
     let content = obj.get("content").and_then(|v| v.as_str())?;
     let pubkey = obj
         .get("pubkey")
@@ -5226,6 +5369,11 @@ fn record_scope_delivery_success(
     event_ids: &HashSet<String>,
     hydrated_thread_roots: &HashSet<String>,
 ) {
+    if let Some(dispatch) = &agent.state.control_dispatch {
+        if !dispatch.current() {
+            return;
+        }
+    }
     tracing::info!(
         target: "pool::prompt",
         "{}",
@@ -8864,6 +9012,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -10076,6 +10225,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -10688,6 +10838,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             relay_url: "ws://127.0.0.1:3000".to_string(),
             session_policy: crate::scope::SessionPolicy::Channel,
             session_status: None,
+            session_controls: Default::default(),
         }
     }
 
@@ -12661,3 +12812,7 @@ mod real_resume_tests;
 
 #[cfg(all(test, unix))]
 mod delivery_runtime_tests;
+
+#[cfg(test)]
+#[path = "pool/session_control_history_tests.rs"]
+mod session_control_history_regressions;

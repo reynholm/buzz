@@ -140,5 +140,6 @@ fn make_prompt_context(
         relay_url: config.relay_url.clone(),
         session_policy: config.session_policy,
         session_status: None,
+        session_controls: Default::default(),
     })
 }

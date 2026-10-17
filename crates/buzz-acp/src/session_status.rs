@@ -77,6 +77,7 @@ struct Generation {
     id: Uuid,
     scope: StatusScope,
     session_id: String,
+    origin: Option<buzz_core::session_control::ControlOrigin>,
     snapshot: PathBuf,
     lock_path: PathBuf,
     state: Mutex<GenerationState>,
@@ -156,6 +157,24 @@ impl SessionStatusRuntime {
         state: SessionState,
         reason: StatusReason,
     ) -> Option<StatusBinding> {
+        self.begin_with_origin(scope, session_id, state, reason, None)
+    }
+
+    /// Start a generation with an authorized manual transition's provenance.
+    pub(crate) fn begin_with_origin(
+        &self,
+        scope: StatusScope,
+        session_id: &str,
+        state: SessionState,
+        reason: StatusReason,
+        origin: Option<buzz_core::session_control::ControlOrigin>,
+    ) -> Option<StatusBinding> {
+        if origin
+            .as_ref()
+            .is_some_and(|origin| origin.validate().is_err())
+        {
+            return None;
+        }
         let file_name = scope_file_name(&scope).ok()?;
         reason.validate().ok()?;
         let mut scopes = lock(&self.shared.scopes);
@@ -179,6 +198,7 @@ impl SessionStatusRuntime {
             id,
             scope: scope.clone(),
             session_id: session_id.to_owned(),
+            origin,
             snapshot: self.shared.dir.join(file_name),
             lock_path,
             state: Mutex::new(GenerationState {
@@ -346,13 +366,14 @@ impl Generation {
     /// Atomically replace the snapshot: a bounded temp file in the same
     /// directory, renamed into place.
     fn write(&self, shared: &Shared, status: &SessionStatus) -> io::Result<()> {
-        let envelope = StatusEnvelope::new(
+        let mut envelope = StatusEnvelope::new(
             shared.identity.clone(),
             shared.instance_id,
             self.scope.clone(),
             self.id,
             status.clone(),
         );
+        envelope.origin = self.origin.clone();
         let bytes = envelope
             .to_snapshot_bytes()
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;

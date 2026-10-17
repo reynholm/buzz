@@ -14,6 +14,7 @@ import json, os, sys, time
 log = open(os.environ['LOG'], 'a', buffering=1)
 delay = float(os.environ.get('DELAY', '0'))
 created = 0
+prompt_count = 0
 for line in sys.stdin:
     req = json.loads(line)
     method = req.get('method')
@@ -35,10 +36,14 @@ for line in sys.stdin:
         else:
             reply['result'] = {}
     elif method == 'session/prompt':
+        prompt_count += 1
         if os.environ.get('PROMPTS'):
             with open(os.environ['PROMPTS'], 'a') as out:
                 out.write(json.dumps(req['params']) + '\n')
-        reply['result'] = {'stopReason': 'end_turn'}
+        if str(prompt_count) == os.environ.get('FAIL_PROMPT'):
+            reply['error'] = {'code': -32000, 'message': 'deliberate prompt failure'}
+        else:
+            reply['result'] = {'stopReason': 'end_turn'}
     else:
         reply['result'] = {}
     print(json.dumps(reply), flush=True)
@@ -1324,3 +1329,6 @@ async fn failed_channel_removal_during_sleep_never_resumes_after_readd() {
     );
     assert_eq!(fixture.record(&scope).live.unwrap().session_id, "old-1");
 }
+
+#[path = "session_control_runtime_tests.rs"]
+mod control_tests;

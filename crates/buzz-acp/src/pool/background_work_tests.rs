@@ -89,6 +89,7 @@ async fn background_hold_does_not_arm_an_unserviceable_fork_deadline() {
             recoverable_batch: None,
             control_tx: None,
             steer_tx: None,
+            control_dispatch: None,
             successful_steer_deliveries: HashSet::new(),
         },
     );
@@ -852,7 +853,14 @@ async fn background_collection_completes_under_repeated_ordinary_preemption() {
                     edit: None,
                 },
             }
-            .steer_or_interrupt(mode, None, &mut pool, &mut queue, &ack_tx);
+            .steer_or_interrupt(
+                mode,
+                &Default::default(),
+                None,
+                &mut pool,
+                &mut queue,
+                &ack_tx,
+            );
             assert!(
                 pool.task_map.values().next().unwrap().control_tx.is_some(),
                 "repeated ordinary traffic must give collection an execution opportunity"

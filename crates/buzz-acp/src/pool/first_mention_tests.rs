@@ -291,3 +291,32 @@ fn first_mention_equal_to_root_is_not_pinned() {
     );
     assert_eq!(ids(&context), before);
 }
+
+#[tokio::test]
+async fn restart_is_never_first_assignment_or_root() {
+    let agent = Keys::generate();
+    let human = Keys::generate();
+    let root = event(&human, 1000, None, Some(&agent), "!restart");
+    let root_id = root["id"].as_str().unwrap().to_owned();
+    let control = event(&human, 1001, Some(&root_id), Some(&agent), "!restart all");
+    let assignment = event(
+        &human,
+        1002,
+        Some(&root_id),
+        Some(&agent),
+        "real assignment",
+    );
+    let fixture = Thread {
+        root,
+        replies: vec![control, assignment.clone()],
+    };
+    let found = find_first_mention(&root_id, CHANNEL, agent.public_key(), |filters| {
+        let response = fixture.answer(&filters);
+        async move { Ok(response) }
+    })
+    .await;
+    match found {
+        FirstMention::Found(value) => assert_eq!(value["id"], assignment["id"]),
+        other => panic!("expected actual assignment, got {other:?}"),
+    }
+}

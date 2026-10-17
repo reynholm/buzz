@@ -62,6 +62,7 @@ where
         let mut request = vec![filter];
         if page == 0 {
             request.push(serde_json::json!({
+                "kinds": [KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_V2],
                 "ids": [root_event_id],
                 "#h": [channel],
                 "limit": 1,
@@ -81,17 +82,21 @@ where
         let (roots, mut replies): (Vec<_>, Vec<_>) = events
             .into_iter()
             .partition(|event| event["id"].as_str() == Some(root_event_id));
-        if roots.iter().any(|root| mentions(root, &agent_hex)) {
+        if roots
+            .iter()
+            .any(|root| !crate::session_controls::reserved_raw(root) && mentions(root, &agent_hex))
+        {
             return FirstMention::InRoot;
         }
         replies.sort_by(|a, b| {
             (a["created_at"].as_u64(), a["id"].as_str())
                 .cmp(&(b["created_at"].as_u64(), b["id"].as_str()))
         });
-        if let Some(mention) = replies
-            .iter()
-            .find(|event| is_message(event) && mentions(event, &agent_hex))
-        {
+        if let Some(mention) = replies.iter().find(|event| {
+            is_message(event)
+                && !crate::session_controls::reserved_raw(event)
+                && mentions(event, &agent_hex)
+        }) {
             return FirstMention::Found(mention.clone());
         }
         let Some(last) = replies

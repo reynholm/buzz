@@ -23,6 +23,7 @@ mod run_task;
 mod runtime;
 use runtime::{AgentRuntime, PoolStartup, SessionMode};
 mod scope;
+mod session_controls;
 mod session_status;
 mod session_store;
 mod setup_mode;
@@ -372,6 +373,9 @@ mod inbound_author_gate {
     }
 
     impl AuthorizedListenerEvent {
+        pub(crate) fn event(&self) -> &relay::BuzzEvent {
+            &self.buzz_event
+        }
         pub(crate) fn into_parts(self) -> (relay::BuzzEvent, String) {
             (self.buzz_event, self.effective_author)
         }
@@ -655,12 +659,16 @@ impl QueuedNormalListenerEvent {
     fn steer_or_interrupt(
         self,
         handling: MultipleEventHandling,
+        controls: &session_controls::SessionControlRuntime,
         owner: Option<&str>,
         pool: &mut AgentPool,
         queue: &mut EventQueue,
         steer_ack_tx: &mpsc::UnboundedSender<SteerAckEvent>,
     ) {
-        if !self.accepted || !queue.is_scope_in_flight(&self.scope) {
+        if controls.retirement_pending(&self.scope)
+            || !self.accepted
+            || !queue.is_scope_in_flight(&self.scope)
+        {
             return;
         }
         let Some(signal) = mode_gate_signal(handling, &self.effective_author, owner) else {
@@ -2129,6 +2137,7 @@ struct RespawnResult {
 /// `EventQueue::withheld_native_steer`: `channel_id` is the routing key,
 /// `event_id` is the hex id of the single event the steer carried.
 struct SteerAckEvent {
+    control_dispatch: Option<session_controls::ControlDispatch>,
     channel_id: Uuid,
     /// Session scope of the steered event — the queue-side withhold/release
     /// and deadline extension target this, not the whole channel.
@@ -2926,11 +2935,23 @@ async fn run_harness(
         );
     }
 
-    let ctx = Arc::new(runtime.prompt_context(
+    let mut prompt_context = runtime.prompt_context(
         relay.rest_client(),
         channel_info_map,
         SessionMode::Conversation,
-    )?);
+    )?;
+    // Controls remain durable when provider resume is disabled. Never attach this
+    // control-only store to workers, so it cannot retain provider IDs or deliveries.
+    let control_store = session_store.clone().or_else(|| {
+        pool::open_session_store(
+            config.session_store_dir.clone(),
+            true,
+            &pubkey_hex,
+            &config.relay_url,
+        )
+    });
+    prompt_context.session_controls = session_controls::SessionControlRuntime::new(control_store);
+    let ctx = Arc::new(prompt_context);
 
     if !config.memory_enabled {
         tracing::info!(
@@ -3063,15 +3084,8 @@ async fn run_harness(
     // Cleared on re-add (KIND_MEMBER_ADDED_NOTIFICATION) so re-joined channels
     // regain session affinity.
     //
-    // Known limitation: if a batch is in-flight when the channel is removed AND
-    // re-added before the batch returns, the stale batch may be requeued. This
-    // is acceptable because: (a) the agent is a member again and has access,
-    // (b) the events are from the agent's authorized history, (c) the window
-    // is extremely narrow (membership changes are rare, prompt turns are seconds),
-    // and (d) fixing this would require per-channel epoch tracking on TaskMeta
-    // and PromptResult — significant complexity for a benign edge case. If strict
-    // causal invalidation is needed, add a monotonic epoch counter per channel
-    // and capture it in TaskMeta at dispatch time.
+    // The control dispatch epoch also fences remove/re-add while a task is
+    // checked out; a late result cannot requeue revoked work into the rejoin.
     let mut removed_channels: HashSet<Uuid> = HashSet::new();
 
     //
@@ -3404,6 +3418,9 @@ async fn run_harness(
                                     // complete normally (the relay may reject actions if
                                     // the agent lost access).
                                     let drained_ids = queue.drain_channel(ch);
+                                    if let Err(error) = ctx.session_controls.revoke_channel(ch) {
+                                        tracing::warn!(%error, "session control revocation failed");
+                                    }
                                     pool.discard_durable_channel(ch);
                                     pool::session_visibility::retire_channel(
                                         ctx.session_status.as_ref(),
@@ -3528,73 +3545,6 @@ async fn run_harness(
                                 // Not from owner — fall through to normal prompt handling.
                             }
 
-                            // Mirrors !shutdown / !cancel: kind:9, content
-                            // "!rotate", from owner, mentions THIS agent.
-                            //
-                            // Rotation is explicit owner intent to start the
-                            // next turn in this channel with a fresh ACP
-                            // session. It is consumed by the harness and never
-                            // forwarded to the agent. If a turn is in-flight,
-                            // cancel it, drop its triggering batch, and
-                            // invalidate the channel session when the task
-                            // returns. If idle, invalidate the cached channel
-                            // session immediately. Queued future events remain
-                            // queued and will create a fresh session on dispatch.
-                            let is_rotate = is_owner_control_command(
-                                &buzz_event.event,
-                                kind_u32,
-                                "!rotate",
-                                &pubkey_hex,
-                            );
-                            if is_rotate {
-                                let from_owner = owner_cache.get().is_some_and(|owner| {
-                                    buzz_event.event.pubkey.to_hex() == *owner
-                                });
-                                if from_owner {
-                                    // Scope-exact: rotate only the thread the
-                                    // owner's !rotate belongs to. Under the
-                                    // default channel policy the scope is the
-                                    // channel's sole conversation, matching the
-                                    // prior channel-wide rotate.
-                                    let scope = scope::SessionScope::derive(
-                                        config.session_policy,
-                                        buzz_event.channel_id,
-                                        is_dm_channel(buzz_event.channel_id, &ctx.channel_info)
-                                            .await,
-                                        &buzz_event.event,
-                                    );
-                                    queue.remove_continuation(&scope);
-                                    pool.discard_durable_scope(&scope);
-                                    pool::session_visibility::retire_scope(
-                                        ctx.session_status.as_ref(),
-                                        &scope,
-                                    );
-                                    let fired = signal_in_flight_task_for_scope(
-                                        &mut pool,
-                                        &scope,
-                                        ControlSignal::Rotate,
-                                    );
-                                    if fired {
-                                        tracing::info!(
-                                            channel_id = %buzz_event.channel_id,
-                                            scope = %scope.telemetry_label(),
-                                            "!rotate received — cancelling in-flight turn and rotating session"
-                                        );
-                                    } else {
-                                        let invalidated =
-                                            pool.invalidate_scope_session(&scope);
-                                        tracing::info!(
-                                            channel_id = %buzz_event.channel_id,
-                                            scope = %scope.telemetry_label(),
-                                            invalidated,
-                                            "!rotate received — invalidated idle session for scope"
-                                        );
-                                    }
-                                    continue; // consume event — do NOT push to queue
-                                }
-                                // Not from owner — fall through to normal prompt handling.
-                            }
-
                             // Coarse security policy: drop events from disallowed
                             // authors before they reach subscription rules or the
                             // agent. Must be AFTER !shutdown (owner can always
@@ -3618,6 +3568,39 @@ async fn run_harness(
                             .await
                             else {
                                 continue;
+                            };
+                            let authorized_event = match session_controls::admit_authorized(
+                                authorized_event, &ctx, nostr::Timestamp::now().as_secs(),
+                            ).await {
+                                session_controls::Admission::Normal(event) => event,
+                                session_controls::Admission::Ignored => continue,
+                                session_controls::Admission::Refused { event, origin, failure } => {
+                                    tracing::warn!(command = %event.id, actor = %origin.actor_pubkey, code = failure.as_wire(), "session control refused");
+                                    // Task 2b publishes the bounded refusal on this original event.
+                                    continue;
+                                }
+                                session_controls::Admission::Control(job) => {
+                                    if matches!(job.command, buzz_core::session_control::SessionCommand::Restart(_)) {
+                                        let scope = job.scope.clone();
+                                        match ctx.session_controls.restart(job) {
+                                            Ok(true) => {
+                                                queue.remove_continuation(&scope);
+                                                pool::session_visibility::retire_scope(ctx.session_status.as_ref(), &scope);
+                                                // Invalidate cached ownership immediately. Active task existence,
+                                                // not signal delivery, controls the retirement gate.
+                                                pool.invalidate_scope_session(&scope);
+                                                signal_in_flight_task_for_scope(&mut pool, &scope, ControlSignal::Rotate);
+                                                if !pool.task_map().values().any(|meta| meta.scope.as_ref() == Some(&scope)) {
+                                                    ctx.session_controls.release_interim(&scope);
+                                                }
+                                            }
+                                            Ok(false) => {} // Duplicate receipt: no repeated effect.
+                                            Err(error) => tracing::warn!(%error, "session restart admission failed"),
+                                        }
+                                    }
+                                    // Compact execution/result publication is supplied by Task 3.
+                                    continue;
+                                }
                             };
                             let Some(ingress) =
                                 AuthorizedNormalListenerEvent(authorized_event)
@@ -3664,6 +3647,7 @@ async fn run_harness(
                             // decision.
                             queued.steer_or_interrupt(
                                 config.multiple_event_handling,
+                                &ctx.session_controls,
                                 owner_cache.get(),
                                 &mut pool,
                                 &mut queue,
@@ -3699,7 +3683,7 @@ async fn run_harness(
                         last_activity,
                         tokio::time::Instant::now(),
                         inactivity_bound,
-                        queue.has_in_flight() || heartbeat_in_flight || pool.has_runtime_hold()
+                        !ctx.session_controls.pending_scopes().is_empty() || queue.has_in_flight() || heartbeat_in_flight || pool.has_runtime_hold()
                             || queue.has_undispatched_work(),
                     ) {
                         tracing::info!(
@@ -3732,7 +3716,7 @@ async fn run_harness(
                         idle_pool_sleep_bound,
                         queue.has_in_flight() || heartbeat_in_flight,
                         !pool.join_set.is_empty(),
-                        queue.has_undispatched_work(),
+                        queue.has_undispatched_work() || !ctx.session_controls.pending_scopes().is_empty(),
                         !wake_tasks.is_empty()
                             || any_respawn_in_flight(&crash_history),
                         pool.has_runtime_hold(),
@@ -3961,6 +3945,7 @@ async fn run_harness(
                 }
             }
             Some(PoolEvent::SteerAck(SteerAckEvent {
+                control_dispatch,
                 channel_id,
                 scope,
                 event_id,
@@ -4041,6 +4026,14 @@ async fn run_harness(
                 //     pending_steer on every return path. If it does,
                 //     treat as PromptCompletedNeutral to avoid leaking
                 //     the withheld event in `withheld_native_steer`.
+                if control_dispatch
+                    .as_ref()
+                    .is_some_and(|dispatch| !dispatch.current())
+                    || ctx.session_controls.retirement_pending(&scope)
+                {
+                    queue.release_native_steer(&scope, &event_id);
+                    continue;
+                }
                 let (release_withheld, drop_withheld, signal_fallback) = match &ack {
                     Ok(pool::SteerAck::Success { .. }) => (false, true, false),
                     // -32601 = method_not_found: agent does not implement the
@@ -4387,6 +4380,14 @@ fn signal_in_flight_task(
     if let Some(meta) = entry {
         if matches!(mode, ControlSignal::Steer | ControlSignal::Interrupt)
             && meta
+                .control_dispatch
+                .as_ref()
+                .is_some_and(|dispatch| !dispatch.current())
+        {
+            return false;
+        }
+        if matches!(mode, ControlSignal::Steer | ControlSignal::Interrupt)
+            && meta
                 .recoverable_batch
                 .as_ref()
                 .and_then(|batch| batch.continuation.as_ref())
@@ -4544,6 +4545,17 @@ fn try_native_steer(
         ack_tx,
     };
 
+    let control_dispatch = pool
+        .task_map()
+        .values()
+        .find(|meta| meta.scope.as_ref() == Some(&scope))
+        .and_then(|meta| meta.control_dispatch.clone());
+    if control_dispatch
+        .as_ref()
+        .is_some_and(|dispatch| !dispatch.current())
+    {
+        return false;
+    }
     match pool.send_steer(&scope, request) {
         Ok(()) => {
             // Withhold the queued event synchronously BEFORE spawning
@@ -4573,6 +4585,7 @@ fn try_native_steer(
             tokio::spawn(async move {
                 let ack = ack_rx.await;
                 let _ = ack_tx_clone.send(SteerAckEvent {
+                    control_dispatch,
                     channel_id,
                     scope: scope_for_watcher,
                     event_id: event_id_for_watcher,
@@ -4749,6 +4762,7 @@ mod try_native_steer_fallback_log_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -4912,6 +4926,18 @@ fn dispatch_pending(
     // Keyed by the exact session scope, not the channel: two threads dispatching
     // concurrently in one channel get distinct typing entries so completing one
     // never clears the other's indicator.
+    // Task 2 interim boundary: no checked kills/success publication is claimed.
+    // Task 2b will release this only after verified worker retirement.
+    for scope in ctx.session_controls.pending_scopes() {
+        if !pool
+            .task_map()
+            .values()
+            .any(|meta| meta.scope.as_ref() == Some(&scope))
+        {
+            pool.invalidate_scope_session(&scope);
+            ctx.session_controls.release_interim(&scope);
+        }
+    }
     let mut dispatched_channels = Vec::new();
     // Batches held back this cycle because the worker that owns their thread's
     // session is busy. They stay flushed-out of the queue (in-flight) until we
@@ -4930,6 +4956,10 @@ fn dispatch_pending(
         };
         let channel_id = batch.channel_id;
         let scope = batch.scope.clone();
+        if ctx.session_controls.retirement_pending(&scope) {
+            held.push(batch);
+            continue;
+        }
         if let Some(continuation) = &batch.continuation {
             match pool.continuation_state(&scope, continuation) {
                 pool::ContinuationState::Ready => {}
@@ -5060,6 +5090,7 @@ fn dispatch_pending(
                 None
             };
 
+        agent.state.control_dispatch = Some(ctx.session_controls.capture(&scope));
         let result_tx = pool.result_tx();
         let ctx_clone = Arc::clone(ctx);
         let agent_index = agent.index;
@@ -5082,6 +5113,7 @@ fn dispatch_pending(
         let (control_tx, control_rx) = tokio::sync::oneshot::channel::<ControlSignal>();
         let turn_id = Uuid::new_v4().to_string();
         let task_turn_id = turn_id.clone();
+        let control_dispatch = agent.state.control_dispatch.clone();
 
         let abort_handle = pool.join_set.spawn(async move {
             pool::run_prompt_task(
@@ -5106,6 +5138,7 @@ fn dispatch_pending(
                 recoverable_batch,
                 control_tx: Some(control_tx),
                 steer_tx,
+                control_dispatch,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -5243,6 +5276,28 @@ fn handle_prompt_result(
     // in particular before the in-flight guard is released below.
     if result_refreshes_idle_clock(&result.source) {
         *last_activity = tokio::time::Instant::now();
+    }
+    if result
+        .agent
+        .state
+        .control_dispatch
+        .as_ref()
+        .is_some_and(|dispatch| !dispatch.current())
+    {
+        result.agent.state.invalidate(&result.source);
+        result.agent.background_context = None;
+        result.batch = None;
+        if !matches!(
+            result.outcome,
+            PromptOutcome::AgentExited
+                | PromptOutcome::Timeout(_)
+                | PromptOutcome::CancelDrainTimeout(_)
+        ) {
+            result.outcome = PromptOutcome::Cancelled;
+        }
+    }
+    if let Some(dispatch) = result.agent.state.control_dispatch.take() {
+        dispatch.finish();
     }
     let before = pool.task_map().len();
     let agent_index = result.agent.index;
@@ -5695,10 +5750,16 @@ fn recover_panicked_agent(
     observer: Option<observer::ObserverHandle>,
 ) {
     let task_id = join_error.id();
-    let Some(meta) = pool.task_map_mut().remove(&task_id) else {
+    let Some(mut meta) = pool.task_map_mut().remove(&task_id) else {
         tracing::error!("panic for unknown task {task_id:?} — bug");
         return;
     };
+    if let Some(dispatch) = meta.control_dispatch.take() {
+        if !dispatch.current() {
+            meta.recoverable_batch = None;
+        }
+        dispatch.finish();
+    }
     let i = meta.agent_index;
     pool.clear_runtime_hold(i);
 
@@ -5840,7 +5901,7 @@ fn dispatch_heartbeat(
     if *heartbeat_in_flight {
         return;
     }
-    let agent = match pool.try_claim(None) {
+    let mut agent = match pool.try_claim(None) {
         Some(a) => a,
         None => return,
     };
@@ -5849,6 +5910,7 @@ fn dispatch_heartbeat(
         .heartbeat_prompt
         .clone()
         .unwrap_or_else(default_heartbeat_prompt);
+    agent.state.control_dispatch = None;
     let result_tx = pool.result_tx();
     let ctx_clone = Arc::clone(ctx);
     let agent_index = agent.index;
@@ -5878,6 +5940,7 @@ fn dispatch_heartbeat(
             recoverable_batch: None,
             control_tx: None,
             steer_tx: None,
+            control_dispatch: None,
             successful_steer_deliveries: HashSet::new(),
         },
     );
@@ -6690,6 +6753,7 @@ mod owner_control_command_tests {
                 recoverable_batch: None,
                 control_tx: Some(control_tx),
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -6736,6 +6800,7 @@ mod owner_control_command_tests {
                 recoverable_batch: None,
                 control_tx: Some(control_tx),
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -10335,6 +10400,7 @@ mod edit_native_steer_tests {
                 recoverable_batch: None,
                 control_tx: Some(control_tx),
                 steer_tx: Some(steer_tx),
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -10355,6 +10421,7 @@ mod edit_native_steer_tests {
             .push(&mut queue, scope.clone())
             .steer_or_interrupt(
                 MultipleEventHandling::Steer,
+                &Default::default(),
                 None,
                 &mut pool,
                 &mut queue,
@@ -10450,7 +10517,7 @@ mod error_outcome_emission_tests {
     use nostr::{EventBuilder, Keys, Kind};
     use std::collections::HashSet;
 
-    fn test_config() -> Config {
+    pub(super) fn test_config() -> Config {
         Config {
             keys: nostr::Keys::generate(),
             relay_url: "ws://localhost:3000".into(),
@@ -10575,6 +10642,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -10668,6 +10736,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::from([
                     crate::pool::SuccessfulSteerDelivery {
                         event_id: steer_event_id.into(),
@@ -10749,6 +10818,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::from([
                     crate::pool::SuccessfulSteerDelivery {
                         event_id: "stale-event".into(),
@@ -10872,6 +10942,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::from([
                     crate::pool::SuccessfulSteerDelivery {
                         event_id: "stale-event".into(),
@@ -10942,6 +11013,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -11023,6 +11095,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -11116,6 +11189,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: Some(batch),
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -11215,6 +11289,7 @@ mod error_outcome_emission_tests {
                     recoverable_batch: None,
                     control_tx: None,
                     steer_tx: None,
+                    control_dispatch: None,
                     successful_steer_deliveries: HashSet::new(),
                 },
             );
@@ -11315,6 +11390,7 @@ mod error_outcome_emission_tests {
                     recoverable_batch: None,
                     control_tx: None,
                     steer_tx: None,
+                    control_dispatch: None,
                     successful_steer_deliveries: HashSet::new(),
                 },
             );
@@ -11426,6 +11502,7 @@ mod error_outcome_emission_tests {
                     recoverable_batch: None,
                     control_tx: None,
                     steer_tx: None,
+                    control_dispatch: None,
                     successful_steer_deliveries: HashSet::new(),
                 },
             );
@@ -11505,6 +11582,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -11605,6 +11683,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -11730,6 +11809,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -11874,6 +11954,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -12011,6 +12092,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -12169,6 +12251,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -12279,6 +12362,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -12552,6 +12636,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );

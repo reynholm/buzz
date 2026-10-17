@@ -2101,7 +2101,7 @@ fn conversation_context_status(
 }
 
 /// Format a conversation context section (thread or DM).
-fn format_conversation_context(
+pub(crate) fn format_conversation_context(
     ctx: &ConversationContext,
     profile_lookup: Option<&PromptProfileLookup>,
 ) -> String {

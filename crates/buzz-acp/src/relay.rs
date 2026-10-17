@@ -505,6 +505,45 @@ impl RestClient {
             .map_err(|e| RelayError::Http(e.to_string()))
     }
 
+    /// Decode one raw history response with a byte ceiling on actual received
+    /// chunks, including when Content-Length is absent or misleading. The
+    /// deadline covers request, body reading and decoding independently of the
+    /// caller's total history budget.
+    pub async fn query_raw_bounded(
+        &self,
+        filters: &[Value],
+        max_bytes: usize,
+    ) -> Result<Value, RelayError> {
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            let body = serde_json::to_vec(filters).map_err(|e| RelayError::Http(e.to_string()))?;
+            let mut response = self.bridge_post("/query", &body).await?;
+            if response
+                .content_length()
+                .is_some_and(|size| size > max_bytes as u64)
+            {
+                return Err(RelayError::Http(
+                    "history response exceeds byte budget".into(),
+                ));
+            }
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|e| RelayError::Http(e.to_string()))?
+            {
+                if chunk.len() > max_bytes.saturating_sub(bytes.len()) {
+                    return Err(RelayError::Http(
+                        "history response exceeds byte budget".into(),
+                    ));
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            serde_json::from_slice(&bytes).map_err(|e| RelayError::Http(e.to_string()))
+        })
+        .await
+        .map_err(|_| RelayError::Http("history request deadline exceeded".into()))?
+    }
+
     /// Query every historical event matching one raw filter across bounded pages.
     ///
     /// Uses the bridge's composite `(until, before_id)` cursor so a full page

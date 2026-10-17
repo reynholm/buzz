@@ -485,6 +485,13 @@ impl SessionStore {
     }
 
     /// Tombstone the record whoever owns it (owner commands, channel removal).
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Explicit policy-revoking API retained; production restart uses one atomic request_restart instead"
+        )
+    )]
     pub fn discard_scope(&self, scope: &SessionScope) -> Result<(), StoreError> {
         self.update(&self.record_path(scope), |current| {
             Ok(self.tombstone(current))

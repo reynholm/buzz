@@ -4637,11 +4637,11 @@
         },
         {
           "caller_path": "crates/buzz-acp/src/lib.rs",
-          "callee_symbol": "discard_durable_scope",
-          "invocation": "pool.discard_durable_scope(&scope);",
-          "behavior_test": "rotate_before_first_resume_discards_disk_session",
+          "callee_symbol": "restart",
+          "invocation": "match ctx.session_controls.restart(job) {",
+          "behavior_test": "restart_during_delayed_acquisition_fences_old_dispatch",
           "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
-          "coverage": "Textual guard for run_harness wiring; named tests exercise pool/store behavior, not the live run_harness loop. Live loop acceptance uses an isolated relay."
+          "coverage": "Textual guard for main-loop admission. Named test consumes the production authorization capability, persists restart and fences actual delayed acquisition; no live harness/provider acceptance claimed."
         },
         {
           "caller_path": "crates/buzz-acp/src/lib.rs",
@@ -4690,6 +4690,38 @@
           "behavior_test": "channel_removal_retires_every_scope_of_that_channel",
           "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
           "coverage": "Textual guard for run_harness wiring; the named test exercises the same retirement call on the status runtime, not the live loop."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "admit_authorized",
+          "invocation": "session_controls::admit_authorized(",
+          "behavior_test": "controls_use_author_capability_before_subscription_and_reserve_wrong_targets",
+          "verification_command": "cargo test -p buzz-acp --lib controls_use_author_capability_before_subscription_and_reserve_wrong_targets -- --test-threads=1",
+          "coverage": "Task2 production seam; interim invalidation is not verified worker retirement or public outcome delivery."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "capture",
+          "invocation": "agent.state.control_dispatch = Some(ctx.session_controls.capture(&scope));",
+          "behavior_test": "busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue",
+          "verification_command": "cargo test -p buzz-acp --lib busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue -- --test-threads=1",
+          "coverage": "Task2 production seam; interim invalidation is not verified worker retirement or public outcome delivery."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "retirement_pending",
+          "invocation": "if ctx.session_controls.retirement_pending(&scope) {",
+          "behavior_test": "busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue",
+          "verification_command": "cargo test -p buzz-acp --lib busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue -- --test-threads=1",
+          "coverage": "Task2 production seam; interim invalidation is not verified worker retirement or public outcome delivery."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "current",
+          "invocation": "    if result\n        .agent\n        .state\n        .control_dispatch\n        .as_ref()\n        .is_some_and(|dispatch| !dispatch.current())",
+          "behavior_test": "late_cancelled_result_cannot_requeue_old_batch_after_restart",
+          "verification_command": "cargo test -p buzz-acp --lib late_cancelled_result_cannot_requeue_old_batch_after_restart -- --test-threads=1",
+          "coverage": "Task2 late-result production fence, independently falsified at this exact seam."
         }
       ],
       "verification_commands": [
@@ -4786,6 +4818,46 @@
           "behavior_test": "retained_conversation_revokes_generation_before_rebind_or_late_updates",
           "verification_command": "cargo test -p buzz-acp --lib session_visibility::tests::policy -- --test-threads=1",
           "coverage": "Real prompt path suppresses uncertain Conversation creation, revokes retained generations before rebind and preserves provider execution scopes."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "selected",
+          "invocation": "session_history::selected(&context_target, b.channel_id, depth, &ctx).await",
+          "behavior_test": "selected_restart_depths_reach_actual_prompt_and_supplied_ids",
+          "verification_command": "cargo test -p buzz-acp --lib selected_restart_depths_reach_actual_prompt_and_supplied_ids -- --test-threads=1",
+          "coverage": "Task2 production seam; interim invalidation is not verified worker retirement or public outcome delivery."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "reserved_raw",
+          "invocation": "if crate::session_controls::reserved_raw(obj) {",
+          "behavior_test": "human_target_reserved_syntax_is_filtered_but_not_executed",
+          "verification_command": "cargo test -p buzz-acp --lib human_target_reserved_syntax_is_filtered_but_not_executed -- --test-threads=1",
+          "coverage": "Task2 production seam; interim invalidation is not verified worker retirement or public outcome delivery."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "foreground_success",
+          "invocation": "dispatch.foreground_success();",
+          "behavior_test": "bootstrap_success_and_failed_foreground_preserve_restart_policy",
+          "verification_command": "cargo test -p buzz-acp --lib bootstrap_success_and_failed_foreground_preserve_restart_policy -- --test-threads=1",
+          "coverage": "Task2 production seam; interim invalidation is not verified worker retirement or public outcome delivery."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "current",
+          "invocation": "    let stale = agent\n        .state\n        .control_dispatch\n        .as_ref()\n        .is_some_and(|dispatch| !dispatch.current())",
+          "behavior_test": "second_restart_survives_old_result",
+          "verification_command": "cargo test -p buzz-acp --lib second_restart_survives_old_result -- --test-threads=1",
+          "coverage": "Task2 late-result production fence, independently falsified at this exact seam."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "supplied_mention",
+          "invocation": "first_mention = session_history::supplied_mention(\n                first_mention,\n                &context_target,\n                conversation_context.as_ref(),\n                &rendered_batch_ids,\n            );",
+          "behavior_test": "none_assignment_omitted_after_profile_render_is_explicitly_not_found",
+          "verification_command": "cargo test -p buzz-acp --lib none_assignment_omitted_after_profile_render_is_explicitly_not_found -- --test-threads=1",
+          "coverage": "Final Task2 rendered-boundary review; actual run_prompt_task, resolved profile, ACP prompt and supplied IDs."
         }
       ],
       "verification_commands": [
@@ -8959,6 +9031,22 @@
           "behavior_test": "worker_crash_retires_status_before_the_replacement_prompt",
           "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
           "coverage": "Covers both depart_durable_all (crash) and depart_all (sleep, pool_sleep_retires_status_and_wake_starts_a_new_transition)."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool/session_continuity.rs",
+          "callee_symbol": "ensure_dispatch_current",
+          "invocation": "ensure_dispatch_current(agent)?;",
+          "behavior_test": "restart_during_delayed_acquisition_fences_old_dispatch",
+          "verification_command": "cargo test -p buzz-acp --lib restart_during_delayed_acquisition_fences_old_dispatch -- --test-threads=1",
+          "coverage": "Task2 production seam; interim invalidation is not verified worker retirement or public outcome delivery."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool/session_continuity.rs",
+          "callee_symbol": "ensure_dispatch_current",
+          "invocation": "ensure_dispatch_current(agent)?;\n                        let code = resume_failure_code(&err);",
+          "behavior_test": "restart_during_failed_resume_never_calls_fallback_new",
+          "verification_command": "cargo test -p buzz-acp --lib restart_during_failed_resume_never_calls_fallback_new -- --test-threads=1",
+          "coverage": "Final Task2 self-review guard, freshly RED before fix and independently falsified after GREEN."
         }
       ],
       "verification_commands": [
@@ -9264,7 +9352,16 @@
         "const KNOWN_FAILURE_CODES: &[&str]",
         "pub(super) fn reconcile_session_status_scope("
       ],
-      "invocation_seams": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/pool/session_visibility.rs",
+          "callee_symbol": "begin_with_origin",
+          "invocation": "Some(origin) => runtime.begin_with_origin(",
+          "behavior_test": "selected_restart_depths_reach_actual_prompt_and_supplied_ids",
+          "verification_command": "cargo test -p buzz-acp --lib selected_restart_depths_reach_actual_prompt_and_supplied_ids -- --test-threads=1",
+          "coverage": "Task2 production seam; interim invalidation is not verified worker retirement or public outcome delivery."
+        }
+      ],
       "verification_commands": [
         "cargo test -p buzz-acp -- --test-threads=1"
       ]
@@ -9444,6 +9541,142 @@
         "fn malformed_or_oversized_receipt_records_are_rejected()",
         "fn failed_attempt_discard_preserves_restart_until_matching_completion()",
         "fn explicit_scope_and_channel_revocation_clear_intent_but_keep_receipts()"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/session_controls.rs",
+      "responsibility": "Authorized session-control admission, per-dispatch generation fences and bounded selected restart history",
+      "is_new": true,
+      "required_symbols": [
+        "pub(crate) fn restart_intent",
+        "pub(crate) fn complete_restart",
+        "pub(crate) fn restart(",
+        "pub(crate) fn retirement_pending",
+        "pub(crate) fn capture(",
+        "pub(crate) fn current(",
+        "pub(crate) fn revoke_channel",
+        "pub(crate) fn finish(",
+        "self.runtime.epoch(&self.scope) == self.epoch"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/session_controls.rs",
+          "callee_symbol": "request_restart",
+          "invocation": "store.request_restart(&job.scope, &intent)?;",
+          "behavior_test": "second_restart_survives_old_result",
+          "verification_command": "cargo test -p buzz-acp --lib second_restart_survives_old_result -- --test-threads=1",
+          "coverage": "Task2 production seam; interim invalidation is not verified worker retirement or public outcome delivery."
+        }
+      ],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/session_history.rs",
+      "responsibility": "Authorized session-control admission, per-dispatch generation fences and bounded selected restart history",
+      "is_new": true,
+      "required_symbols": [
+        "HISTORY_BYTES: usize = 256 * 1024",
+        "RESPONSE_BYTES: usize = 4 * 1024 * 1024",
+        "MAX_PAGES: usize = 20",
+        "MAX_CANDIDATES: usize = 10_000",
+        "pub(super) async fn selected",
+        "pub(super) fn enforce_render_budget",
+        "while crate::queue::format_conversation_context(context, profiles).len() > HISTORY_BYTES {",
+        "const RETAINED_HEAD_BYTES: usize = HISTORY_BYTES + MAX_CANDIDATES * 5;",
+        "pub(super) fn supplied_mention"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/pool/session_history.rs",
+          "callee_symbol": "query_raw_bounded",
+          "invocation": ".query_raw_bounded(filters, RESPONSE_BYTES),",
+          "behavior_test": "bounded_history_reader_rejects_chunked_actual_bytes_and_times_out",
+          "verification_command": "cargo test -p buzz-acp --lib bounded_history_reader_rejects_chunked_actual_bytes_and_times_out -- --test-threads=1",
+          "coverage": "Task2 production seam; interim invalidation is not verified worker retirement or public outcome delivery."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool/session_history.rs",
+          "callee_symbol": "saturating_sub",
+          "invocation": "if requested > MAX_CANDIDATES.saturating_sub(self.candidates) {",
+          "behavior_test": "all_history_request_budget_reserves_tail_without_overfetching_candidates",
+          "verification_command": "cargo test -p buzz-acp --lib all_history_request_budget_reserves_tail_without_overfetching_candidates -- --test-threads=1",
+          "coverage": "Final Task2 self-review guard, freshly RED before fix and independently falsified after GREEN."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool/session_history.rs",
+          "callee_symbol": "saturating_sub",
+          "invocation": "rendered.len().saturating_sub(empty.len()) + 5",
+          "behavior_test": "all_history_many_small_messages_fit_the_actual_rendered_budget",
+          "verification_command": "cargo test -p buzz-acp --lib all_history_many_small_messages_fit_the_actual_rendered_budget -- --test-threads=1",
+          "coverage": "Final Task2 rendered-boundary review; fresh compiled RED/GREEN and independently falsified body accounting."
+        }
+      ],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/session_history_tests.rs",
+      "responsibility": "Production-seam regressions for authorized session controls and bounded selected history",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/session_control_runtime_tests.rs",
+      "responsibility": "Production-seam regressions for authorized session controls and bounded selected history",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/session_control_history_tests.rs",
+      "responsibility": "Production-seam regressions for authorized session controls and bounded selected history",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/filter.rs",
+      "responsibility": "Authorized session-control admission, per-dispatch generation fences and bounded selected restart history",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/filter.rs",
+          "callee_symbol": "reserved_raw",
+          "invocation": "crate::session_controls::reserved_raw(&raw)",
+          "behavior_test": "stale_replay_does_not_overwrite_completed_ack",
+          "verification_command": "cargo test -p buzz-acp --lib stale_replay_does_not_overwrite_completed_ack -- --test-threads=1",
+          "coverage": "Task2 production seam; interim invalidation is not verified worker retirement or public outcome delivery."
+        }
+      ],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/relay.rs",
+      "responsibility": "Authorized session-control admission, per-dispatch generation fences and bounded selected restart history",
+      "is_new": false,
+      "required_symbols": [
+        "pub async fn query_raw_bounded",
+        "chunk.len() > max_bytes.saturating_sub(bytes.len())"
       ],
       "invocation_seams": [],
       "verification_commands": [

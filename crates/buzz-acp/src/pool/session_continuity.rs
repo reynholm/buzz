@@ -281,6 +281,7 @@ impl AgentPool {
     /// Owner rotate: tombstone the scope's record whoever owns it, including
     /// a session that lives only on disk after a sleep or respawn. Leases in
     /// memory stay, so a late write of the previous owner is a conflict.
+    #[cfg(test)]
     pub(crate) fn discard_durable_scope(&mut self, scope: &SessionScope) {
         if let Some(store) = &self.store {
             let _ = store.discard_scope(scope);
@@ -306,17 +307,26 @@ pub(super) async fn acquire_session(
     channel: NewSessionChannelContext<'_>,
     scope: &SessionScope,
 ) -> Result<(String, SessionStart), AcpError> {
+    ensure_dispatch_current(agent)?;
     let Some(store) = agent.state.store.clone() else {
         let sid =
             create_or_resume_session_and_apply_model(agent, ctx, agent_core, channel, None).await?;
         return Ok((
             sid,
             SessionStart::New {
-                reason: SessionReason::FirstInThread,
+                reason: agent
+                    .state
+                    .control_dispatch
+                    .as_ref()
+                    .and_then(|dispatch| dispatch.intent.as_ref())
+                    .map_or(SessionReason::FirstInThread, |intent| {
+                        SessionReason::UserRestart(intent.depth)
+                    }),
             },
         ));
     };
     for _ in 0..MAX_ACQUIRE_ROUNDS {
+        ensure_dispatch_current(agent)?;
         let outcome = store.load(scope);
         let me = ResumeContext {
             adapter: agent.agent_name.clone(),
@@ -327,7 +337,18 @@ pub(super) async fn acquire_session(
             resume_supported: agent.acp.resume_supported(),
             poisoned: store.is_poisoned(scope),
         };
-        let decision = resume_decision(&outcome, &me, |instance| store.instance_alive(instance));
+        let mut decision =
+            resume_decision(&outcome, &me, |instance| store.instance_alive(instance));
+        if let Some(intent) = agent
+            .state
+            .control_dispatch
+            .as_ref()
+            .and_then(|dispatch| dispatch.intent.as_ref())
+        {
+            decision = ResumeDecision::New {
+                reason: SessionReason::UserRestart(intent.depth),
+            };
+        }
         if let ResumeDecision::New {
             reason: SessionReason::ResumeFailed(code),
         } = &decision
@@ -399,6 +420,8 @@ pub(super) async fn acquire_session(
                     Ok(sid) => (sid, SessionStart::Resumed { reason }, Some(live)),
                     Err(AcpError::AgentExited) => return Err(AcpError::AgentExited),
                     Err(err) => {
+                        // A restart during resume also forbids the fallback RPC.
+                        ensure_dispatch_current(agent)?;
                         let code = resume_failure_code(&err);
                         tracing::warn!(
                             target: "pool::session",
@@ -427,6 +450,7 @@ pub(super) async fn acquire_session(
             }
         };
 
+        ensure_dispatch_current(agent)?;
         let committed = store.commit(scope, lease, |live| {
             live.session_id = sid.clone();
             if restored.is_none() {
@@ -526,11 +550,28 @@ async fn new_unpersisted(
     channel: NewSessionChannelContext<'_>,
     reason: SessionReason,
 ) -> Result<(String, SessionStart), AcpError> {
+    ensure_dispatch_current(agent)?;
     let sid =
         create_or_resume_session_and_apply_model(agent, ctx, agent_core, channel, None).await?;
+    ensure_dispatch_current(agent)?;
     Ok((sid, SessionStart::New { reason }))
 }
 
 #[cfg(all(test, unix))]
 #[path = "session_continuity_tests.rs"]
 mod tests;
+
+fn ensure_dispatch_current(agent: &OwnedAgent) -> Result<(), AcpError> {
+    if agent
+        .state
+        .control_dispatch
+        .as_ref()
+        .is_some_and(|dispatch| !dispatch.current())
+    {
+        Err(AcpError::Protocol(
+            "dispatch retired by session control".into(),
+        ))
+    } else {
+        Ok(())
+    }
+}
