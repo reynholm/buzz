@@ -2814,8 +2814,9 @@ New module: `false`.
 - Invocation: `crates/buzz-acp/src/pool.rs` → `insert_session_marker`; exact call `session_continuity::insert_session_marker(`; behavior test `marker_present_once_after_start`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `invalidate_after_error`; exact call `agent.state.invalidate_after_error(&source, &e);`; behavior test `idle_worker_transport_death_keeps_session_resumable`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `publish_session_start`; exact call `agent.publish_session_start(`; behavior test `new_session_status_precedes_the_prompt_and_spans_ordinary_turns`; verify `cargo test -p buzz-acp -- --test-threads=1`
-- Invocation: `crates/buzz-acp/src/pool.rs` → `rebind_session_status`; exact call `agent.rebind_session_status(ctx.session_status.as_ref(), scope, &sid);`; behavior test `new_session_status_precedes_the_prompt_and_spans_ordinary_turns`; verify `cargo test -p buzz-acp -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `rebind_session_status`; exact call `agent.rebind_session_status(status_runtime, scope, &sid);`; behavior test `new_session_status_precedes_the_prompt_and_spans_ordinary_turns`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `history_coverage`; exact call `binding.set_history(session_visibility::history_coverage(`; behavior test `pinned_assignment_outside_the_window_counts_supplied_events_once`; verify `cargo test -p buzz-acp -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `reconcile_session_status_scope`; exact call `if agent.reconcile_session_status_scope(`; behavior test `retained_conversation_revokes_generation_before_rebind_or_late_updates`; verify `cargo test -p buzz-acp --lib session_visibility::tests::policy -- --test-threads=1`
 - Verify: `just ci`
 
 ## `crates/buzz-acp/src/queue.rs`
@@ -6105,7 +6106,7 @@ New module: `true`.
 
 ## `desktop/src/features/messages/lib/sessionStatus.ts`
 
-Strictly parse an agent's self-reported buzz-session and buzz-session-info tags, map the bounded state/reason vocabulary to fixed English copy with truthful exact, lower-bound and omitted-history wording, and attach one transition explanation per loaded (signer, channel, scope, transition) to its earliest message; other messages keep only their reported percentage.
+Strictly parse an agent's self-reported buzz-session and buzz-session-info tags, map the bounded state/reason vocabulary to fixed English copy with truthful exact, lower-bound and omitted-history wording, and attach one transition explanation per loaded (signer, channel, scope, transition) to its earliest message; other messages keep only their reported percentage. Valid primary-only status keeps a per-message explanation without inferred grouping or history.
 
 New module: `true`.
 
@@ -6113,6 +6114,7 @@ New module: `true`.
 - Required symbol: `export function attachSessionStatuses(`
 - Required symbol: `export const CONTEXT_HIGHLIGHT_PERCENT = 80;`
 - Required symbol: `normalizePubkey(message.pubkey) !== message.signerPubkey`
+- Required symbol: `if (key === null || owners.get(key) === message)`
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionStatus.test.mjs src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs src/features/messages/lib/messageRowEquality.test.mjs src/features/messages/ui/MessageSessionStatus.test.mjs`
 
 ## `desktop/src/features/messages/lib/sessionStatus.test.mjs`
@@ -6134,6 +6136,7 @@ New module: `true`.
 - Required symbol: `first message of a transition explains it; later ones keep only the percentage`
 - Required symbol: `an edit cannot add or change status; the original signed tags win`
 - Required symbol: `a relay-signed event attributed to an agent cannot claim its session state`
+- Required symbol: `valid primary-only status keeps its explanation per message without counts`
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionStatus.test.mjs src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs src/features/messages/lib/messageRowEquality.test.mjs src/features/messages/ui/MessageSessionStatus.test.mjs`
 
 ## `desktop/src/features/messages/ui/MessageSessionStatus.tsx`
@@ -6153,6 +6156,7 @@ Rendered status line text, emphasis threshold, absence of tab stops, live region
 New module: `true`.
 
 - Required symbol: `MessageRow memo rerenders when only the derived status moves`
+- Required symbol: `primary-only signed metadata renders its projected explanation with unknown occupancy`
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionStatus.test.mjs src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs src/features/messages/lib/messageRowEquality.test.mjs src/features/messages/ui/MessageSessionStatus.test.mjs`
 
 ## `desktop/tests/e2e/session-status.spec.ts`
@@ -6219,7 +6223,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/pool/session_visibility.rs`
 
-Adapt canonical session scope, acquisition result and final cold-start prompt history to the status runtime; worker-level retirement hooks.
+Adapt canonical session scope, acquisition result and final cold-start prompt history to the status runtime; worker-level retirement hooks. Validate display-scope provenance using configured policy and already resolved metadata, revoking untrusted Conversation generations.
 
 New module: `true`.
 
@@ -6233,6 +6237,7 @@ New module: `true`.
 - Required symbol: `pub(crate) fn retire_scope(`
 - Required symbol: `pub(crate) fn retire_channel(`
 - Required symbol: `const KNOWN_FAILURE_CODES: &[&str]`
+- Required symbol: `pub(super) fn reconcile_session_status_scope(`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/session_visibility_tests.rs`
@@ -6265,4 +6270,17 @@ New module: `false`.
 
 - Required symbol: `pub(crate) fn enable_session_status(`
 - Invocation: `crates/buzz-acp/src/runtime.rs` → `open_for_config`; exact call `let runtime = session_status::open_for_config(&self.config)?;`; behavior test `every_spawn_path_and_managed_mcp_get_the_current_status_dir`; verify `cargo test -p buzz-acp -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/runtime.rs` → `session_policy`; exact call `session_policy: config.session_policy,`; behavior test `configured_policy_reaches_prompt_status_context_without_base_prompt`; verify `cargo test -p buzz-acp --lib session_visibility::tests::policy -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/session_visibility_policy_tests.rs`
+
+Production prompt/status provenance regressions for uncertain Conversation acquisition, recovered metadata, failed sibling-thread status, retained-session revocation and configured-policy forwarding.
+
+New module: `true`.
+
+- Required symbol: `conversation_status_requires_channel_policy_or_verified_dm`
+- Required symbol: `uncertain_conversation_cannot_outlive_metadata_recovery_and_failed_thread_status`
+- Required symbol: `retained_conversation_revokes_generation_before_rebind_or_late_updates`
+- Required symbol: `configured_policy_reaches_prompt_status_context_without_base_prompt`
+- Verify: `cargo test -p buzz-acp --lib session_visibility::tests::policy -- --test-threads=1`

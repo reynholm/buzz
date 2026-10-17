@@ -4768,7 +4768,7 @@
         {
           "caller_path": "crates/buzz-acp/src/pool.rs",
           "callee_symbol": "rebind_session_status",
-          "invocation": "agent.rebind_session_status(ctx.session_status.as_ref(), scope, &sid);",
+          "invocation": "agent.rebind_session_status(status_runtime, scope, &sid);",
           "behavior_test": "new_session_status_precedes_the_prompt_and_spans_ordinary_turns",
           "verification_command": "cargo test -p buzz-acp -- --test-threads=1"
         },
@@ -4778,6 +4778,14 @@
           "invocation": "binding.set_history(session_visibility::history_coverage(",
           "behavior_test": "pinned_assignment_outside_the_window_counts_supplied_events_once",
           "verification_command": "cargo test -p buzz-acp -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "reconcile_session_status_scope",
+          "invocation": "if agent.reconcile_session_status_scope(",
+          "behavior_test": "retained_conversation_revokes_generation_before_rebind_or_late_updates",
+          "verification_command": "cargo test -p buzz-acp --lib session_visibility::tests::policy -- --test-threads=1",
+          "coverage": "Real prompt path suppresses uncertain Conversation creation, revokes retained generations before rebind and preserves provider execution scopes."
         }
       ],
       "verification_commands": [
@@ -9022,13 +9030,14 @@
     },
     {
       "path": "desktop/src/features/messages/lib/sessionStatus.ts",
-      "responsibility": "Strictly parse an agent's self-reported buzz-session and buzz-session-info tags, map the bounded state/reason vocabulary to fixed English copy with truthful exact, lower-bound and omitted-history wording, and attach one transition explanation per loaded (signer, channel, scope, transition) to its earliest message; other messages keep only their reported percentage.",
+      "responsibility": "Strictly parse an agent's self-reported buzz-session and buzz-session-info tags, map the bounded state/reason vocabulary to fixed English copy with truthful exact, lower-bound and omitted-history wording, and attach one transition explanation per loaded (signer, channel, scope, transition) to its earliest message; other messages keep only their reported percentage. Valid primary-only status keeps a per-message explanation without inferred grouping or history.",
       "is_new": true,
       "required_symbols": [
         "export function parseSessionStatusTags(",
         "export function attachSessionStatuses(",
         "export const CONTEXT_HIGHLIGHT_PERCENT = 80;",
-        "normalizePubkey(message.pubkey) !== message.signerPubkey"
+        "normalizePubkey(message.pubkey) !== message.signerPubkey",
+        "if (key === null || owners.get(key) === message)"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -9055,7 +9064,8 @@
       "required_symbols": [
         "first message of a transition explains it; later ones keep only the percentage",
         "an edit cannot add or change status; the original signed tags win",
-        "a relay-signed event attributed to an agent cannot claim its session state"
+        "a relay-signed event attributed to an agent cannot claim its session state",
+        "valid primary-only status keeps its explanation per message without counts"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -9080,7 +9090,8 @@
       "responsibility": "Rendered status line text, emphasis threshold, absence of tab stops, live regions or labels, and MessageRow memo invalidation when only the derived status moves.",
       "is_new": true,
       "required_symbols": [
-        "MessageRow memo rerenders when only the derived status moves"
+        "MessageRow memo rerenders when only the derived status moves",
+        "primary-only signed metadata renders its projected explanation with unknown occupancy"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -9184,7 +9195,7 @@
     },
     {
       "path": "crates/buzz-acp/src/pool/session_visibility.rs",
-      "responsibility": "Adapt canonical session scope, acquisition result and final cold-start prompt history to the status runtime; worker-level retirement hooks.",
+      "responsibility": "Adapt canonical session scope, acquisition result and final cold-start prompt history to the status runtime; worker-level retirement hooks. Validate display-scope provenance using configured policy and already resolved metadata, revoking untrusted Conversation generations.",
       "is_new": true,
       "required_symbols": [
         "pub(crate) fn status_scope(",
@@ -9196,7 +9207,8 @@
         "pub(super) fn history_coverage(",
         "pub(crate) fn retire_scope(",
         "pub(crate) fn retire_channel(",
-        "const KNOWN_FAILURE_CODES: &[&str]"
+        "const KNOWN_FAILURE_CODES: &[&str]",
+        "pub(super) fn reconcile_session_status_scope("
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -9242,10 +9254,32 @@
           "invocation": "let runtime = session_status::open_for_config(&self.config)?;",
           "behavior_test": "every_spawn_path_and_managed_mcp_get_the_current_status_dir",
           "verification_command": "cargo test -p buzz-acp -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/runtime.rs",
+          "callee_symbol": "session_policy",
+          "invocation": "session_policy: config.session_policy,",
+          "behavior_test": "configured_policy_reaches_prompt_status_context_without_base_prompt",
+          "verification_command": "cargo test -p buzz-acp --lib session_visibility::tests::policy -- --test-threads=1"
         }
       ],
       "verification_commands": [
         "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/session_visibility_policy_tests.rs",
+      "responsibility": "Production prompt/status provenance regressions for uncertain Conversation acquisition, recovered metadata, failed sibling-thread status, retained-session revocation and configured-policy forwarding.",
+      "is_new": true,
+      "required_symbols": [
+        "conversation_status_requires_channel_policy_or_verified_dm",
+        "uncertain_conversation_cannot_outlive_metadata_recovery_and_failed_thread_status",
+        "retained_conversation_revokes_generation_before_rebind_or_late_updates",
+        "configured_policy_reaches_prompt_status_context_without_base_prompt"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp --lib session_visibility::tests::policy -- --test-threads=1"
       ]
     }
   ]

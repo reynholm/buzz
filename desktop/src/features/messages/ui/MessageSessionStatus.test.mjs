@@ -169,3 +169,54 @@ test("MessageRow memo rerenders when only the derived status moves", async () =>
     "a fresh but equal status keeps the memo",
   );
 });
+
+test("primary-only signed metadata renders its projected explanation with unknown occupancy", async () => {
+  const { formatTimelineMessages } = await import(
+    "../lib/formatTimelineMessages.ts"
+  );
+  const agent = "a".repeat(64);
+  const [message] = formatTimelineMessages(
+    [
+      {
+        id: "b".repeat(64),
+        pubkey: agent,
+        kind: 9,
+        created_at: 1700000000,
+        content: "reply",
+        sig: "sig",
+        tags: [
+          ["h", "36411e44-0e2d-4cfe-bd6e-567eb169db9f"],
+          ["buzz-session", "resumed", "idle_sleep", ""],
+          [
+            "buzz-session-info",
+            "2",
+            "ignored",
+            "conversation",
+            "3",
+            "4",
+            "exact",
+          ],
+        ],
+      },
+    ],
+    null,
+    "c".repeat(64),
+    null,
+    { [agent]: { isAgent: true, displayName: "Agent" } },
+  );
+  assert.ok(
+    message.sessionStatus,
+    "valid primary state must survive projection",
+  );
+  const container = await renderStatus(message.sessionStatus);
+  const row = container.querySelector('[data-testid="message-session-status"]');
+  assert.ok(
+    row,
+    "valid primary state stays visible when supporting info is unusable",
+  );
+  assert.equal(visibleText(row), "Resumed after sleep");
+  assert.equal(
+    row.querySelector('[data-testid="message-session-status-percent"]'),
+    null,
+  );
+});

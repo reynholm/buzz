@@ -979,6 +979,8 @@ pub struct PromptContext {
     /// the desktop keys per (agent, relay) pair, e.g. `session_config_captured`,
     /// mirroring the `managed_agent_runtime_lifecycle` frames.
     pub relay_url: String,
+    /// Configured execution policy, also used to validate display-scope provenance.
+    pub session_policy: crate::scope::SessionPolicy,
     /// Per-scope session status snapshots; `None` disables status publication.
     pub(crate) session_status: Option<crate::session_status::SessionStatusRuntime>,
 }
@@ -2766,13 +2768,29 @@ pub async fn run_prompt_task(
         PromptSource::Heartbeat => None,
     };
 
+    // Reuse this turn's resolved metadata; display eligibility must not change
+    // admission or the canonical provider scope, nor issue another REST lookup.
+    let status_runtime = match &source {
+        PromptSource::Channel(scope)
+            if agent.reconcile_session_status_scope(
+                ctx.session_status.as_ref(),
+                scope,
+                ctx.session_policy,
+                resolved_channel_info.as_ref(),
+            ) =>
+        {
+            ctx.session_status.as_ref()
+        }
+        _ => None,
+    };
+
     // How this turn's session came to be, when this turn created or resumed it.
     let mut session_start: Option<SessionStart> = None;
     let (session_id, is_new_session) = match &source {
         PromptSource::Channel(scope) => {
             let cid = &scope.channel_id();
             if let Some(sid) = agent.state.sessions.get(scope).cloned() {
-                agent.rebind_session_status(ctx.session_status.as_ref(), scope, &sid);
+                agent.rebind_session_status(status_runtime, scope, &sid);
                 (sid, false)
             } else {
                 // The title includes channel and, for thread sessions, the
@@ -2805,12 +2823,7 @@ pub async fn run_prompt_task(
                             }
                         );
                         agent.state.sessions.insert(scope.clone(), sid.clone());
-                        agent.publish_session_start(
-                            ctx.session_status.as_ref(),
-                            scope,
-                            &sid,
-                            &start,
-                        );
+                        agent.publish_session_start(status_runtime, scope, &sid, &start);
                         let resumed = start.is_resumed();
                         session_start = Some(start);
                         if !resumed {
@@ -10673,6 +10686,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             memory_enabled: false,
             harness_name: "goose".to_string(),
             relay_url: "ws://127.0.0.1:3000".to_string(),
+            session_policy: crate::scope::SessionPolicy::Channel,
             session_status: None,
         }
     }
