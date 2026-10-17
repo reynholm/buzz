@@ -251,9 +251,10 @@ fn discard_leaves_tombstone_with_reason() {
     let record = found(store.load(&scope));
     assert_eq!(record.live, None);
     assert_eq!(record.reason, Some(SessionReason::Discarded));
+    let revision = record.revision;
     assert_eq!(
         Expect::from_outcome(&LoadOutcome::Found(Box::new(record))),
-        Expect::Tombstone
+        Expect::Tombstone { revision }
     );
 }
 

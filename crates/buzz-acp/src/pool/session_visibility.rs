@@ -47,6 +47,10 @@ pub(crate) fn status_reason(reason: &SessionReason) -> StatusReason {
     match reason {
         SessionReason::IdleSleep => StatusReason::IdleSleep,
         SessionReason::WorkerCrash => StatusReason::WorkerCrash,
+        SessionReason::WorkerRecycled => StatusReason::WorkerRecycled,
+        SessionReason::UserRestart(depth) => StatusReason::UserRestart(*depth),
+        SessionReason::UserCompact => StatusReason::UserCompact,
+        SessionReason::AutoCompact => StatusReason::AutoCompact,
         SessionReason::HarnessRestart => StatusReason::HarnessRestart,
         SessionReason::FirstInThread => StatusReason::FirstInThread,
         SessionReason::Discarded => StatusReason::Discarded,

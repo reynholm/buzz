@@ -5691,18 +5691,20 @@ New module: `false`.
 
 ## `crates/buzz-core/src/lib.rs`
 
-Export the shared signed managed-report recovery protocol and the shared session-status contract.
+Export the shared signed managed-report recovery protocol and the shared session-status contract. Export the pure session command, result and actor contract.
 
 New module: `false`.
 
 - Required symbol: `pub mod managed_delivery;`
 - Required symbol: `pub mod session_status;`
+- Required symbol: `pub mod session_control;`
 - Verify: `cargo test -p buzz-core managed_delivery -- --test-threads=1`
 - Verify: `cargo test -p buzz-core session_status -- --test-threads=1`
+- Verify: `cargo test -p buzz-core -- --test-threads=1`
 
 ## `crates/buzz-core/src/session_status.rs`
 
-Pure shared session-status contract: canonical status identity, scope file names, instance layout names, bounded reason vocabulary, snapshot format v1 with size/version validation, and the buzz-session wire tags.
+Pure shared session-status contract: canonical status identity, scope file names, instance layout names, bounded reason vocabulary, snapshot format v1 with size/version validation, and the buzz-session wire tags. Read legacy v1 and current v2 snapshots, keep primary/info wire shapes, validate optional manual origin and add bounded control/departure reasons.
 
 New module: `true`.
 
@@ -5714,7 +5716,19 @@ New module: `true`.
 - Required symbol: `pub struct StatusEnvelope`
 - Required symbol: `pub struct ContextOccupancy`
 - Required symbol: `pub struct HistoryCoverage`
+- Required symbol: `pub const STATUS_FORMAT_VERSION: u8 = 2;`
+- Required symbol: `pub origin: Option<ControlOrigin>`
+- Invocation: `crates/buzz-core/src/session_status.rs` → `event_tag`; exact call `tags.push(
+                ControlAction {
+                    transition_id: self.status.transition_id,
+                    origin: origin.clone(),
+                }
+                .event_tag()
+                .ok_or(StatusError::InvalidOrigin)?,
+            );`; behavior test `snapshot_legacy_v1_and_v2_actor_preserve_wire_dimensions`; verify `cargo test -p buzz-core --test session_control snapshot_legacy_v1_and_v2_actor_preserve_wire_dimensions -- --test-threads=1`
+- Invocation: `crates/buzz-core/src/session_status.rs` → `validate`; exact call `envelope.validate()?;`; behavior test `snapshot_rejects_invalid_actor_and_automatic_actor`; verify `cargo test -p buzz-core --test session_control snapshot_rejects_invalid_actor_and_automatic_actor -- --test-threads=1`
 - Verify: `cargo test -p buzz-core session_status -- --test-threads=1`
+- Verify: `cargo test -p buzz-core -- --test-threads=1`
 
 ## `crates/buzz-core/src/managed_delivery.rs`
 
@@ -5970,7 +5984,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/session_store.rs`
 
-Community-and-agent isolated, lease-fenced session records with bounded locks, identity validation and channel-wide failure fencing.
+Community-and-agent isolated, lease-fenced session records with bounded locks, identity validation and channel-wide failure fencing. Preserve restart intent and bounded receipts through claims, commits and tombstones; revision-fence tombstones, enforce byte ceilings, and recover only accepted control metadata from provider quarantine.
 
 New module: `true`.
 
@@ -5979,11 +5993,18 @@ New module: `true`.
 - Required symbol: `pub fn commit(`
 - Required symbol: `fn store_namespace(`
 - Required symbol: `poisoned_channels`
+- Required symbol: `pub revision: Option<Uuid>`
+- Required symbol: `pub pending_restart: Option<RestartIntent>`
+- Required symbol: `pub control_receipts: Vec<ControlReceipt>`
+- Required symbol: `if json.len() as u64 > MAX_RECORD_BYTES || !controls::valid_controls(record) {`
+- Invocation: `crates/buzz-acp/src/session_store.rs` → `read_record_file`; exact call `read_record_file(&with_suffix(path, "stale"), namespace)?`; behavior test `quarantine_retains_control_metadata_without_recovering_provider_state`; verify `cargo test -p buzz-acp quarantine_retains_control_metadata_without_recovering_provider_state -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/session_store.rs` → `valid_controls`; exact call `controls::valid_controls(&record)`; behavior test `malformed_or_oversized_receipt_records_are_rejected`; verify `cargo test -p buzz-acp malformed_or_oversized_receipt_records_are_rejected -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/session_store.rs` → `valid_controls`; exact call `controls::valid_controls(record)`; behavior test `malformed_or_oversized_receipt_records_are_rejected`; verify `cargo test -p buzz-acp malformed_or_oversized_receipt_records_are_rejected -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/session_store_tests.rs`
 
-Durable record ownership, concurrency, corruption and write-failure regressions.
+Durable record ownership, concurrency, corruption and write-failure regressions. Capture revision in the existing tombstone expectation assertion.
 
 New module: `true`.
 
@@ -5998,7 +6019,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/pool/session_continuity.rs`
 
-Resume or create provider sessions through bounded claim/RPC/commit rounds and preserve delivery state. Retire status generations on the existing discard and depart paths.
+Resume or create provider sessions through bounded claim/RPC/commit rounds and preserve delivery state. Retire status generations on the existing discard and depart paths. Keep acquisition fallback exhaustive for the store control error vocabulary.
 
 New module: `true`.
 
@@ -6011,7 +6032,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/pool/session_continuity_tests.rs`
 
-Production acquisition, delivery delta, rotation, crash and idle-sleep persistence regressions.
+Production acquisition, delivery delta, rotation, crash and idle-sleep persistence regressions. Supply default new control fields in existing legacy-record fixtures.
 
 New module: `true`.
 
@@ -6223,7 +6244,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/pool/session_visibility.rs`
 
-Adapt canonical session scope, acquisition result and final cold-start prompt history to the status runtime; worker-level retirement hooks. Validate display-scope provenance using configured policy and already resolved metadata, revoking untrusted Conversation generations.
+Adapt canonical session scope, acquisition result and final cold-start prompt history to the status runtime; worker-level retirement hooks. Validate display-scope provenance using configured policy and already resolved metadata, revoking untrusted Conversation generations. Map newly bounded manual/automatic compact, restart and worker-recycled reasons to shared status types.
 
 New module: `true`.
 
@@ -6284,3 +6305,84 @@ New module: `true`.
 - Required symbol: `retained_conversation_revokes_generation_before_rebind_or_late_updates`
 - Required symbol: `configured_policy_reaches_prompt_status_context_without_base_prompt`
 - Verify: `cargo test -p buzz-acp --lib session_visibility::tests::policy -- --test-threads=1`
+
+## `crates/buzz-core/src/session_control.rs`
+
+Exact kind-9 command grammar, typed terminal/pending reaction results with precedence, strict actor enrichment and freshness constants; no I/O.
+
+New module: `true`.
+
+- Required symbol: `pub enum RestartDepth`
+- Required symbol: `pub enum SessionCommand`
+- Required symbol: `pub struct ControlOrigin`
+- Required symbol: `pub enum ControlFailure`
+- Required symbol: `pub type ControlOutcome`
+- Required symbol: `pub enum ControlResult`
+- Required symbol: `pub struct SessionResult`
+- Required symbol: `pub struct ControlAction`
+- Required symbol: `pub fn control_is_fresh(`
+- Verify: `cargo test -p buzz-core -- --test-threads=1`
+
+## `crates/buzz-core/src/session_status_tests.rs`
+
+Extract unchanged status regression coverage from production module and update schema-version assertions for v2.
+
+New module: `true`.
+
+- Required symbol: `fn snapshot_round_trips()`
+- Required symbol: `fn snapshot_rejects_unknown_versions_and_bad_shapes()`
+- Verify: `cargo test -p buzz-core -- --test-threads=1`
+
+## `crates/buzz-core/tests/session_control.rs`
+
+Behavioral contract regressions for exact grammar, strict result/action parsing, precedence, v1/v2 origin rules and shared fixtures.
+
+New module: `true`.
+
+- Required symbol: `fn command_grammar_is_exact()`
+- Required symbol: `fn shared_reason_and_origin_fixture_corpus()`
+- Required symbol: `fn snapshot_rejects_invalid_actor_and_automatic_actor()`
+- Verify: `cargo test -p buzz-core -- --test-threads=1`
+
+## `crates/buzz-core/tests/fixtures/session_controls.json`
+
+Shared Rust/TypeScript fixture corpus for bounded reasons, canonical actor origins and pending/terminal precedence.
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-core -- --test-threads=1`
+
+## `crates/buzz-acp/src/session_store_controls.rs`
+
+Atomic restart tombstone/intent/Started receipts, bounded fresh deduplication, token-fenced completion and explicit owner-generation orphan reconciliation.
+
+New module: `true`.
+
+- Required symbol: `pub struct RestartIntent`
+- Required symbol: `pub enum ControlAttempt`
+- Required symbol: `pub fn request_restart(`
+- Required symbol: `pub fn complete_restart(`
+- Required symbol: `pub fn begin_control_attempt(`
+- Required symbol: `pub fn finish_control_attempt(`
+- Required symbol: `pub(crate) fn reconcile_control_attempt(`
+- Invocation: `crates/buzz-acp/src/session_store_controls.rs` → `add_started`; exact call `add_started(
+                &mut record,
+                &intent.origin.command_event_id,
+                now,
+                self.instance,
+            );`; behavior test `restart_started_receipt_is_written_with_tombstone_intent`; verify `cargo test -p buzz-acp restart_started_receipt_is_written_with_tombstone_intent -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/session_store_controls.rs` → `add_started`; exact call `add_started(&mut record, command_id, created_at, self.instance);`; behavior test `started_compact_redelivery_never_reexecutes`; verify `cargo test -p buzz-acp started_compact_redelivery_never_reexecutes -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/session_store_controls.rs` → `update_with_quarantine`; exact call `self.update_with_quarantine(path, decide, false)`; behavior test `restart_started_receipt_is_written_with_tombstone_intent`; verify `cargo test -p buzz-acp restart_started_receipt_is_written_with_tombstone_intent -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/session_store_control_tests.rs`
+
+Durable controls regression coverage including concurrency, atomic failures, legacy records, ABA, expiry/capacity, orphan fences and quarantine boundaries.
+
+New module: `true`.
+
+- Required symbol: `fn restart_intent_is_atomic()`
+- Required symbol: `fn orphan_started_becomes_terminal_without_reexecution()`
+- Required symbol: `fn quarantine_retains_control_metadata_without_recovering_provider_state()`
+- Required symbol: `fn malformed_or_oversized_receipt_records_are_rejected()`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`

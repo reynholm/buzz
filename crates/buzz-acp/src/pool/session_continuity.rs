@@ -437,7 +437,15 @@ pub(super) async fn acquire_session(
             }
         });
         match committed {
-            Ok(()) | Err(StoreError::Busy | StoreError::Io(_) | StoreError::Unreadable) => {
+            Ok(())
+            | Err(
+                StoreError::Busy
+                | StoreError::Io(_)
+                | StoreError::Unreadable
+                | StoreError::InvalidControl
+                | StoreError::StaleRequest
+                | StoreError::AlreadyRecorded,
+            ) => {
                 if let Some(live) = restored {
                     agent.state.restore_delivery(scope, live);
                 }

@@ -1,0 +1,24 @@
+{
+  "reasons": [
+    {"wire":"user_restart:none","valid":true},
+    {"wire":"user_restart:recent","valid":true},
+    {"wire":"user_restart:all","valid":true},
+    {"wire":"user_compact","valid":true},
+    {"wire":"auto_compact","valid":true},
+    {"wire":"worker_recycled","valid":true},
+    {"wire":"user_restart:foo","valid":false},
+    {"wire":"user_restart","valid":false},
+    {"wire":"resume_failed:raw/path","valid":false},
+    {"wire":"USER_COMPACT","valid":false}
+  ],
+  "origins": [
+    {"origin":{"command_event_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","actor_pubkey":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"valid":true},
+    {"origin":{"command_event_id":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","actor_pubkey":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"valid":false},
+    {"origin":{"command_event_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","actor_pubkey":"bad"},"valid":false}
+  ],
+  "precedence": [
+    {"first":"pending","second":{"terminal":{"Ok":null}},"expected":{"terminal":{"Ok":null}}},
+    {"first":{"terminal":{"Ok":null}},"second":"pending","expected":{"terminal":{"Ok":null}}},
+    {"first":{"terminal":{"Ok":null}},"second":{"terminal":{"Err":"busy"}},"expected":{"terminal":{"Err":"unconfirmed"}}}
+  ]
+}

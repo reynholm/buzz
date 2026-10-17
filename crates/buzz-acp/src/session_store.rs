@@ -29,6 +29,14 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::scope::SessionScope;
+use buzz_core::session_control::RestartDepth;
+
+#[path = "session_store_controls.rs"]
+#[allow(dead_code)]
+// Control controller consumes these durable APIs independently of provider resume.
+mod controls;
+#[allow(unused_imports)] // Durable controller contract, independent of provider acquisition.
+pub use controls::{ControlAttempt, ControlReceipt, ControlReceiptState, RestartIntent};
 
 /// Delivered event ids kept per record, oldest dropped first.
 pub const MAX_STORED_DELIVERED_IDS: usize = 2048;
@@ -47,6 +55,8 @@ const INSTANCES_DIR: &str = "instances";
 pub enum Departure {
     IdleSleep,
     WorkerCrash,
+    /// Worker retired for a sibling scope restart.
+    WorkerRecycled,
 }
 
 /// Why a scope's session is new or resumed, as reported to the agent.
@@ -55,6 +65,10 @@ pub enum Departure {
 pub enum SessionReason {
     IdleSleep,
     WorkerCrash,
+    WorkerRecycled,
+    UserRestart(RestartDepth),
+    UserCompact,
+    AutoCompact,
     HarnessRestart,
     FirstInThread,
     Discarded,
@@ -71,6 +85,10 @@ impl SessionReason {
         match self {
             Self::IdleSleep => "idle_sleep".into(),
             Self::WorkerCrash => "worker_crash".into(),
+            Self::WorkerRecycled => "worker_recycled".into(),
+            Self::UserRestart(depth) => format!("user_restart:{}", depth.as_wire()),
+            Self::UserCompact => "user_compact".into(),
+            Self::AutoCompact => "auto_compact".into(),
             Self::HarnessRestart => "harness_restart".into(),
             Self::FirstInThread => "first_in_thread".into(),
             Self::Discarded => "discarded".into(),
@@ -87,6 +105,7 @@ impl From<Departure> for SessionReason {
         match departure {
             Departure::IdleSleep => Self::IdleSleep,
             Departure::WorkerCrash => Self::WorkerCrash,
+            Departure::WorkerRecycled => Self::WorkerRecycled,
         }
     }
 }
@@ -102,6 +121,12 @@ impl From<String> for SessionReason {
         match wire.as_str() {
             "idle_sleep" => Self::IdleSleep,
             "worker_crash" => Self::WorkerCrash,
+            "worker_recycled" => Self::WorkerRecycled,
+            "user_restart:none" => Self::UserRestart(RestartDepth::None),
+            "user_restart:recent" => Self::UserRestart(RestartDepth::Recent),
+            "user_restart:all" => Self::UserRestart(RestartDepth::All),
+            "user_compact" => Self::UserCompact,
+            "auto_compact" => Self::AutoCompact,
             "harness_restart" => Self::HarnessRestart,
             "first_in_thread" => Self::FirstInThread,
             "discarded" => Self::Discarded,
@@ -147,6 +172,15 @@ pub struct SessionRecord {
     pub namespace: String,
     pub live: Option<LiveSession>,
     pub reason: Option<SessionReason>,
+    /// Fresh CAS revision; absent on legacy v2 records.
+    #[serde(default)]
+    pub revision: Option<Uuid>,
+    /// Policy for the next successful foreground delivery.
+    #[serde(default)]
+    pub pending_restart: Option<RestartIntent>,
+    /// Bounded durable control deduplication, empty on legacy v2 records.
+    #[serde(default)]
+    pub control_receipts: Vec<ControlReceipt>,
 }
 
 /// Result of reading a scope's record.
@@ -163,7 +197,7 @@ pub enum LoadOutcome {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expect {
     Missing,
-    Tombstone,
+    Tombstone { revision: Option<Uuid> },
     Live { session_id: String, lease: Uuid },
 }
 
@@ -174,7 +208,9 @@ impl Expect {
             // An unreadable record was moved aside, so the path is empty now.
             LoadOutcome::Missing | LoadOutcome::Unreadable => Self::Missing,
             LoadOutcome::Found(record) => match &record.live {
-                None => Self::Tombstone,
+                None => Self::Tombstone {
+                    revision: record.revision,
+                },
                 Some(live) => Self::Live {
                     session_id: live.session_id.clone(),
                     lease: live.lease,
@@ -186,7 +222,9 @@ impl Expect {
     fn matches(&self, current: Option<&SessionRecord>) -> bool {
         match (self, current) {
             (Self::Missing, None) => true,
-            (Self::Tombstone, Some(record)) => record.live.is_none(),
+            (Self::Tombstone { revision }, Some(record)) => {
+                record.live.is_none() && record.revision == *revision
+            }
             (Self::Live { session_id, lease }, Some(record)) => record
                 .live
                 .as_ref()
@@ -204,6 +242,12 @@ pub enum StoreError {
     Conflict,
     Io(io::Error),
     Unreadable,
+    /// Input is not a canonical control identity.
+    InvalidControl,
+    /// New signed request is outside the freshness window.
+    StaleRequest,
+    /// Internal no-write signal for an already persisted control.
+    AlreadyRecorded,
 }
 
 impl std::fmt::Display for StoreError {
@@ -213,6 +257,9 @@ impl std::fmt::Display for StoreError {
             Self::Conflict => f.write_str("record changed by another owner"),
             Self::Io(err) => write!(f, "io error: {err}"),
             Self::Unreadable => f.write_str("record unreadable"),
+            Self::InvalidControl => f.write_str("invalid control metadata"),
+            Self::StaleRequest => f.write_str("stale control request"),
+            Self::AlreadyRecorded => f.write_str("control already recorded"),
         }
     }
 }
@@ -359,6 +406,10 @@ impl SessionStore {
                     // Re-check under the lock: a writer may have replaced it.
                     if read_record(&path, &self.namespace).is_err() {
                         let _ = fs::rename(&path, with_suffix(&path, "corrupt"));
+                        // A newer canonical record supersedes quarantine metadata.
+                        // Never resurrect that older intent after corruption.
+                        let stale = with_suffix(&path, "stale");
+                        let _ = fs::rename(&stale, with_suffix(&stale, "corrupt"));
                     }
                 }
                 tracing::warn!(target: "session_store", path = %path.display(), "unreadable session record");
@@ -386,6 +437,11 @@ impl SessionStore {
                 namespace: self.namespace.clone(),
                 live: Some(live),
                 reason: None,
+                revision: Some(Uuid::new_v4()),
+                pending_restart: current.and_then(|r| r.pending_restart.clone()),
+                control_receipts: current
+                    .map(|r| r.control_receipts.clone())
+                    .unwrap_or_default(),
             })
         })?;
         Ok(lease)
@@ -420,13 +476,15 @@ impl SessionStore {
     pub fn discard(&self, scope: &SessionScope, lease: Uuid) -> Result<(), StoreError> {
         self.update(&self.record_path(scope), |current| {
             owned_record(current, lease)?;
-            Ok(self.tombstone())
+            Ok(self.tombstone(current))
         })
     }
 
     /// Tombstone the record whoever owns it (owner commands, channel removal).
     pub fn discard_scope(&self, scope: &SessionScope) -> Result<(), StoreError> {
-        self.update(&self.record_path(scope), |_| Ok(self.tombstone()))
+        self.update(&self.record_path(scope), |current| {
+            Ok(self.tombstone(current))
+        })
     }
 
     /// Tombstone every record of a channel. Returns how many were changed.
@@ -453,6 +511,7 @@ impl SessionStore {
         };
         let mut changed = 0;
         let mut first_error = None;
+        let mut visited = HashSet::new();
         for entry in entries {
             let entry = match entry {
                 Ok(entry) => entry,
@@ -461,11 +520,16 @@ impl SessionStore {
                     continue;
                 }
             };
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            let mut path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) == Some("stale") {
+                path = path.with_extension("");
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json")
+                || !visited.insert(path.clone())
+            {
                 continue;
             }
-            match self.update(&path, |_| Ok(self.tombstone())) {
+            match self.update(&path, |current| Ok(self.tombstone(current))) {
                 Ok(()) => changed += 1,
                 Err(err) => {
                     first_error.get_or_insert(err);
@@ -520,12 +584,17 @@ impl SessionStore {
         self.dir.join(channel_id.to_string())
     }
 
-    fn tombstone(&self) -> SessionRecord {
+    fn tombstone(&self, current: Option<&SessionRecord>) -> SessionRecord {
         SessionRecord {
             version: RECORD_VERSION,
             namespace: self.namespace.clone(),
             live: None,
             reason: Some(SessionReason::Discarded),
+            revision: Some(Uuid::new_v4()),
+            pending_restart: None,
+            control_receipts: current
+                .map(|r| r.control_receipts.clone())
+                .unwrap_or_default(),
         }
     }
 
@@ -557,9 +626,25 @@ impl SessionStore {
         path: &Path,
         decide: impl FnOnce(Option<&SessionRecord>) -> Result<SessionRecord, StoreError>,
     ) -> Result<(), StoreError> {
-        let result = self.update_locked(path, decide);
+        self.update_with_quarantine(path, decide, true)
+    }
+
+    fn update_with_quarantine(
+        &self,
+        path: &Path,
+        decide: impl FnOnce(Option<&SessionRecord>) -> Result<SessionRecord, StoreError>,
+        quarantine: bool,
+    ) -> Result<(), StoreError> {
+        let result = self.update_locked(path, decide, quarantine);
         match &result {
-            Ok(()) | Err(StoreError::Conflict) => {}
+            Ok(())
+            | Err(
+                StoreError::Conflict
+                | StoreError::AlreadyRecorded
+                | StoreError::StaleRequest
+                | StoreError::InvalidControl,
+            ) => {}
+            Err(StoreError::Busy) if !quarantine => {}
             Err(err) => {
                 tracing::warn!(
                     target: "session_store",
@@ -576,15 +661,17 @@ impl SessionStore {
         &self,
         path: &Path,
         decide: impl FnOnce(Option<&SessionRecord>) -> Result<SessionRecord, StoreError>,
+        quarantine: bool,
     ) -> Result<(), StoreError> {
         self.register_instance().map_err(StoreError::Io)?;
         let lock = self.lock_record(path)?;
         let current = read_record(path, &self.namespace).map_err(|()| StoreError::Unreadable)?;
-        let next = decide(current.as_ref())?;
+        let mut next = decide(current.as_ref())?;
+        next.revision = Some(Uuid::new_v4());
         if let Err(err) = self.write_record(path, &next) {
             // Still inside the critical section, on a record `decide`
             // accepted: move it aside so no later process resumes it.
-            if current.is_some() {
+            if quarantine && current.is_some() {
                 let _ = fs::rename(path, with_suffix(path, "stale"));
             }
             drop(lock);
@@ -603,10 +690,18 @@ impl SessionStore {
             .parent()
             .ok_or_else(|| io::Error::other("record path has no parent"))?;
         let json = serde_json::to_vec(record).map_err(io::Error::other)?;
+        if json.len() as u64 > MAX_RECORD_BYTES || !controls::valid_controls(record) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "record exceeds limits",
+            ));
+        }
         let mut file = tempfile::NamedTempFile::new_in(dir)?;
         file.write_all(&json)?;
         file.as_file().sync_all()?;
         file.persist(path).map_err(|err| err.error)?;
+        #[cfg(unix)]
+        File::open(dir)?.sync_all()?;
         Ok(())
     }
 }
@@ -654,21 +749,40 @@ fn owned_record(current: Option<&SessionRecord>, lease: Uuid) -> Result<SessionR
 
 /// `Ok(None)` when absent, `Err(())` when present but unusable.
 fn read_record(path: &Path, namespace: &str) -> Result<Option<SessionRecord>, ()> {
-    let metadata = match fs::metadata(path) {
-        Ok(metadata) => metadata,
+    if let Some(record) = read_record_file(path, namespace)? {
+        return Ok(Some(record));
+    }
+    // A failed provider write quarantines stale provider state. Its accepted
+    // restart policy and receipts must survive that quarantine as a tombstone.
+    Ok(read_record_file(&with_suffix(path, "stale"), namespace)?
+        .filter(|r| !r.control_receipts.is_empty() || r.pending_restart.is_some())
+        .map(|mut record| {
+            record.live = None;
+            record.reason = Some(SessionReason::ResumeFailed("not_persisted".into()));
+            record
+        }))
+}
+
+fn read_record_file(path: &Path, namespace: &str) -> Result<Option<SessionRecord>, ()> {
+    use std::io::Read;
+    let file = match File::open(path) {
+        Ok(file) => file,
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(_) => return Err(()),
     };
-    if metadata.len() > MAX_RECORD_BYTES {
+    let mut bytes = Vec::new();
+    file.take(MAX_RECORD_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ())?;
+    if bytes.len() as u64 > MAX_RECORD_BYTES {
         return Err(());
     }
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(_) => return Err(()),
-    };
     match serde_json::from_slice::<SessionRecord>(&bytes) {
-        Ok(record) if record.version == RECORD_VERSION && record.namespace == namespace => {
+        Ok(record)
+            if record.version == RECORD_VERSION
+                && record.namespace == namespace
+                && controls::valid_controls(&record) =>
+        {
             Ok(Some(record))
         }
         _ => Err(()),
@@ -685,3 +799,7 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
 #[cfg(test)]
 #[path = "session_store_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "session_store_control_tests.rs"]
+mod control_tests;

@@ -199,6 +199,9 @@ fn stored(live: impl FnOnce(&mut LiveSession)) -> LoadOutcome {
     LoadOutcome::Found(Box::new(SessionRecord {
         version: 2,
         namespace: String::new(),
+        revision: None,
+        pending_restart: None,
+        control_receipts: Vec::new(),
         live: Some(session),
         reason: None,
     }))
@@ -255,6 +258,9 @@ fn decision_tombstone_is_discarded() {
     let tombstone = LoadOutcome::Found(Box::new(SessionRecord {
         version: 2,
         namespace: String::new(),
+        revision: None,
+        pending_restart: None,
+        control_receipts: Vec::new(),
         live: None,
         reason: Some(SessionReason::Discarded),
     }));
