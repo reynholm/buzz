@@ -2809,6 +2809,11 @@ New module: `false`.
         .as_ref()
         .is_some_and(|dispatch| !dispatch.current())`; behavior test `late_cancelled_result_cannot_requeue_old_batch_after_restart`; verify `cargo test -p buzz-acp --lib late_cancelled_result_cannot_requeue_old_batch_after_restart -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `discard_retired_output`; exact call `result.outcome = result.outcome.discard_retired_output();`; behavior test `retired_transport_error_replaces_the_worker_through_result_handling`; verify `cargo test -p buzz-acp --lib retired_transport_error_replaces_the_worker_through_result_handling -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `drive`; exact call `worker_retirement::drive(`; behavior test `checked_retirement_executor_waits_for_verified_kill_and_excludes_refill`; verify `cargo test -p buzz-acp --lib checked_retirement_executor_waits_for_verified_kill_and_excludes_refill -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `finish`; exact call `worker_retirement::finish(`; behavior test `checked_retirement_executor_waits_for_verified_kill_and_excludes_refill`; verify `cargo test -p buzz-acp --lib checked_retirement_executor_waits_for_verified_kill_and_excludes_refill -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `return_for_retirement`; exact call `pool.return_for_retirement(result.agent);`; behavior test `retirement_return_boundary_bypasses_crash_budget_for_fatal_old_outcome`; verify `cargo test -p buzz-acp --lib retirement_return_boundary_bypasses_crash_budget_for_fatal_old_outcome -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `publish_result`; exact call `session_controls::publish::publish_result(&rest, &publication).await`; behavior test `control_result_publication_has_three_total_signed_attempts`; verify `cargo test -p buzz-acp --lib control_result_publication_has_three_total_signed_attempts -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `plan_retirement`; exact call `ctx.session_controls.plan_retirement(&scope, targets);`; behavior test `checked_retirement_requires_every_clean_report_and_retries_after_uncertainty`; verify `cargo test -p buzz-acp --lib checked_retirement_requires_every_clean_report_and_retries_after_uncertainty -- --test-threads=1`
 - Verify: `just ci`
 
 ## `crates/buzz-acp/src/pool.rs`
@@ -5483,6 +5488,7 @@ New module: `true`.
 - Required symbol: `pub fn queue_finished_background_work`
 - Required symbol: `pub(super) fn followup_prompt`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `followup_prompt`; exact call `background_work::followup_prompt(batch.channel_id, continuation, &ctx.cwd)`; behavior test `background_managed_delivery_key_stays_on_collection_across_error_and_new_message`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_managed_delivery_key_stays_on_collection_across_error_and_new_message -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool/background_work.rs` → `contains`; exact call `!self.retire_on_return.contains(&index)`; behavior test `retirement_targets_include_checked_out_copies_and_block_idle_claims`; verify `cargo test -p buzz-acp --lib retirement_targets_include_checked_out_copies_and_block_idle_claims -- --test-threads=1`
 - Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_work_tests -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/background_work_tests.rs`
@@ -6068,6 +6074,7 @@ New module: `true`.
 - Invocation: `crates/buzz-acp/src/pool/session_continuity.rs` → `Err`; exact call `return Err(err);
                         }
                         let code = resume_failure_code(&err);`; behavior test `retired_resume_transport_preserves_health_without_fallback_new`; verify `cargo test -p buzz-acp --lib retired_resume_transport_preserves_health_without_fallback_new -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool/session_continuity.rs` → `recycled_reason`; exact call `ctx.session_controls.recycled_reason(scope)`; behavior test `checked_retirement_neighbors_resume_or_start_new_with_recycled_reason`; verify `cargo test -p buzz-acp --lib checked_retirement_neighbors_resume_or_start_new_with_recycled_reason -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp --lib retired_successful_acquisition_keeps_worker_health_and_fences_old_state -- --test-threads=1`
 
@@ -6446,7 +6453,7 @@ New module: `true`.
 - Required symbol: `pub(crate) fn revoke_channel`
 - Required symbol: `pub(crate) fn finish(`
 - Required symbol: `self.runtime.epoch(&self.scope) == self.epoch`
-- Invocation: `crates/buzz-acp/src/session_controls.rs` → `request_restart`; exact call `store.request_restart(&job.scope, &intent)?;`; behavior test `second_restart_survives_old_result`; verify `cargo test -p buzz-acp --lib second_restart_survives_old_result -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/session_controls.rs` → `request_restart_superseding`; exact call `let superseded = store.request_restart_superseding(&job.scope, &intent)?;`; behavior test `checked_retirement_supersedes_started_compact_without_a_compact_rpc`; verify `cargo test -p buzz-acp --lib checked_retirement_supersedes_started_compact_without_a_compact_rpc -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/session_history.rs`
@@ -6517,4 +6524,124 @@ New module: `false`.
 
 - Required symbol: `pub async fn query_raw_bounded`
 - Required symbol: `chunk.len() > max_bytes.saturating_sub(bytes.len())`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/acp/terminate.rs`
+
+Checked Unix process-group retirement with conservative nonUnix outcome
+
+New module: `true`.
+
+- Required symbol: `pub enum TerminationReport`
+- Required symbol: `pub async fn terminate(`
+- Required symbol: `fn terminate_with_snapshot`
+- Required symbol: `fn probe_alive`
+- Invocation: `crates/buzz-acp/src/acp/terminate.rs` → `snapshot`; exact call `tokio::task::spawn_blocking(crate::process_tree::retirement::snapshot)`; behavior test `checked_termination_kills_snapshotted_separate_shell_group`; verify `cargo test -p buzz-acp --lib checked_termination_kills_snapshotted_separate_shell_group -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp/terminate.rs` → `verified_groups`; exact call `let mut groups = first.verified_groups(&last, pid, own_group);`; behavior test `checked_termination_kills_snapshotted_separate_shell_group`; verify `cargo test -p buzz-acp --lib checked_termination_kills_snapshotted_separate_shell_group -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp/terminate.rs` → `probe_alive`; exact call `probe_alive(killpg(Pid::from_raw(group), None))`; behavior test `permission_denied_process_group_is_alive`; verify `cargo test -p buzz-acp --lib permission_denied_process_group_is_alive -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp/terminate.rs` → `worker_present`; exact call `snapshot().await.filter(|tree| tree.worker_present(pid))`; behavior test `checked_termination_missing_worker_in_initial_snapshot_never_starts`; verify `cargo test -p buzz-acp --lib checked_termination_missing_worker_in_initial_snapshot_never_starts -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/acp/terminate_tests.rs`
+
+Actual subprocess retirement escalation and no-signal regressions
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/process_tree/retirement.rs`
+
+Bounded PGID snapshots and escaped-process identity validation
+
+New module: `true`.
+
+- Required symbol: `struct RetirementSnapshot`
+- Required symbol: `fn verified_groups`
+- Required symbol: `fn snapshot()`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/process_tree/retirement_tests.rs`
+
+Process-group parsing, harness exclusion and PID identity regressions
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/session_retirement.rs`
+
+Reserve every cached worker copy and retire only after foreign work releases
+
+New module: `true`.
+
+- Required symbol: `fn retirement_targets`
+- Required symbol: `fn mark_retire_on_return`
+- Required symbol: `fn take_retirement_target`
+- Required symbol: `fn finish_worker_retirement`
+- Invocation: `crates/buzz-acp/src/pool/session_retirement.rs` → `mark_departed`; exact call `match store.mark_departed(`; behavior test `checked_retirement_cannot_depart_neighbor_owned_by_a_newer_worker`; verify `cargo test -p buzz-acp --lib checked_retirement_cannot_depart_neighbor_owned_by_a_newer_worker -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/session_retirement_tests.rs`
+
+Pool reservation, foreign foreground/background and task-return retirement regressions
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/session_retirement_runtime_tests.rs`
+
+Controller/executor, supersession, delayed completion and neighbor lifecycle regressions
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/session_controls/retirement.rs`
+
+Controller-owned checked gates, all-target results and retained failure retry
+
+New module: `true`.
+
+- Required symbol: `fn plan_retirement`
+- Required symbol: `fn retirement_report`
+- Required symbol: `fn take_publications_up_to`
+- Required symbol: `fn sweep_orphans`
+- Invocation: `crates/buzz-acp/src/session_controls/retirement.rs` → `finish_control_attempt`; exact call `store.finish_control_attempt(scope, &job.origin.command_event_id, &outcome)`; behavior test `checked_retirement_terminal_store_failure_retains_gate_and_reports_uncertainty`; verify `cargo test -p buzz-acp --lib checked_retirement_terminal_store_failure_retains_gate_and_reports_uncertainty -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/session_controls/publish.rs`
+
+Signed bounded restart and compaction result publication
+
+New module: `true`.
+
+- Required symbol: `fn build_result`
+- Required symbol: `async fn publish_result`
+- Invocation: `crates/buzz-acp/src/session_controls/publish.rs` → `submit_event_once`; exact call `rest.submit_event_once(&event)`; behavior test `control_result_publication_has_three_total_signed_attempts`; verify `cargo test -p buzz-acp --lib control_result_publication_has_three_total_signed_attempts -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/session_store_orphans.rs`
+
+Dead-owner durable Started receipt reconciliation at startup
+
+New module: `true`.
+
+- Required symbol: `fn sweep_orphan_controls`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/worker_retirement.rs`
+
+Nonblocking checked worker replacement and retained ownership on uncertainty
+
+New module: `true`.
+
+- Required symbol: `struct RetirementReturn`
+- Required symbol: `struct RetirementGuard`
+- Required symbol: `fn drive(`
+- Required symbol: `fn finish(`
+- Invocation: `crates/buzz-acp/src/worker_retirement.rs` → `terminate`; exact call `Some(agent) => agent.acp.terminate().await,`; behavior test `checked_retirement_executor_waits_for_verified_kill_and_excludes_refill`; verify `cargo test -p buzz-acp --lib checked_retirement_executor_waits_for_verified_kill_and_excludes_refill -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/worker_retirement.rs` → `retirement_report`; exact call `controls.retirement_report(result.index, TerminationReport::Clean);`; behavior test `checked_retirement_executor_waits_for_verified_kill_and_excludes_refill`; verify `cargo test -p buzz-acp --lib checked_retirement_executor_waits_for_verified_kill_and_excludes_refill -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/worker_retirement.rs` → `prepare_retired_neighbors`; exact call `agent.prepare_retired_neighbors(&scopes, &controls)`; behavior test `checked_retirement_cannot_depart_neighbor_owned_by_a_newer_worker`; verify `cargo test -p buzz-acp --lib checked_retirement_cannot_depart_neighbor_owned_by_a_newer_worker -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`

@@ -602,6 +602,53 @@ impl RestClient {
             .map_err(|e| RelayError::Http(e.to_string()))
     }
 
+    /// Submit once when the caller owns the complete retry budget. The
+    /// acknowledgment is bounded independently from ordinary relay requests.
+    pub(crate) async fn submit_event_once(&self, event: &Event) -> Result<(), RelayError> {
+        let body = serde_json::to_vec(event)
+            .map_err(|error| RelayError::Http(format!("event serialize error: {error}")))?;
+        let url = format!("{}/events", self.base_url);
+        let auth = self.nip98_header("POST", &url, Some(&body))?;
+        let mut request = self
+            .http
+            .post(&url)
+            .header("Authorization", auth)
+            .header("Content-Type", "application/json")
+            .body(body);
+        if let Some(tag) = &self.auth_tag_json {
+            request = request.header("x-auth-tag", tag);
+        }
+        let mut response = request
+            .send()
+            .await
+            .map_err(|error| RelayError::Http(error.to_string()))?;
+        if !response.status().is_success() {
+            return Err(RelayError::Http(format!(
+                "POST /events returned HTTP {}",
+                response.status()
+            )));
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|error| RelayError::Http(error.to_string()))?
+        {
+            if body.len().saturating_add(chunk.len()) > 64 * 1024 {
+                return Err(RelayError::Http(
+                    "event acknowledgment exceeds byte limit".into(),
+                ));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let acknowledgment: Value =
+            serde_json::from_slice(&body).map_err(|error| RelayError::Http(error.to_string()))?;
+        if acknowledgment.get("accepted").and_then(Value::as_bool) != Some(true) {
+            return Err(RelayError::Http("relay did not accept event".into()));
+        }
+        Ok(())
+    }
+
     /// Submit a signed event via the HTTP bridge: `POST /events` with NIP-98 auth.
     ///
     /// The event must already be signed. Returns the relay response JSON.

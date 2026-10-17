@@ -1345,3 +1345,6 @@ async fn failed_channel_removal_during_sleep_never_resumes_after_readd() {
 
 #[path = "session_control_runtime_tests.rs"]
 mod control_tests;
+
+#[path = "session_retirement_tests.rs"]
+mod retirement_tests;

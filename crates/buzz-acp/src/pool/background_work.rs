@@ -132,9 +132,11 @@ impl AgentPool {
     }
 
     pub(super) fn runtime_claim_allowed(&self, index: usize, scope: Option<&SessionScope>) -> bool {
-        self.runtime_holds
-            .get(&index)
-            .is_none_or(|hold| scope == Some(&hold.scope))
+        !self.retire_on_return.contains(&index)
+            && self
+                .runtime_holds
+                .get(&index)
+                .is_none_or(|hold| scope == Some(&hold.scope))
     }
 
     fn continuation_matches(
@@ -218,6 +220,10 @@ impl AgentPool {
                 if let Some(hold) = self.runtime_holds.get_mut(&index) {
                     hold.blocking_pids = children;
                 }
+                continue;
+            }
+            if self.retire_on_return.contains(&index) {
+                self.runtime_holds.remove(&index);
                 continue;
             }
             let Some(hold) = self.runtime_holds.get(&index) else {

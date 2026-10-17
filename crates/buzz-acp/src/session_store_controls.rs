@@ -60,6 +60,16 @@ pub enum ControlAttempt {
 }
 
 impl SessionStore {
+    pub(crate) fn record_worker_recycled(&self, scope: &SessionScope) -> Result<(), StoreError> {
+        self.update_control(&self.record_path(scope), |current| {
+            let mut record = self.tombstone(current);
+            if record.pending_restart.is_none() {
+                record.reason = Some(SessionReason::WorkerRecycled);
+            }
+            Ok(record)
+        })
+    }
+
     /// Atomically fence the old provider and persist restart intent plus Started
     /// receipt. The caller must freshness-check signed created_at immediately
     /// before admission. Receipts here use admission time because RestartIntent
@@ -69,6 +79,25 @@ impl SessionStore {
         scope: &SessionScope,
         intent: &RestartIntent,
     ) -> Result<(), StoreError> {
+        self.request_restart_inner(scope, intent, false).map(|_| ())
+    }
+
+    /// Supersede this instance's active controls in the same atomic reset.
+    pub(crate) fn request_restart_superseding(
+        &self,
+        scope: &SessionScope,
+        intent: &RestartIntent,
+    ) -> Result<Vec<String>, StoreError> {
+        self.request_restart_inner(scope, intent, true)
+    }
+
+    fn request_restart_inner(
+        &self,
+        scope: &SessionScope,
+        intent: &RestartIntent,
+        supersede: bool,
+    ) -> Result<Vec<String>, StoreError> {
+        let mut superseded = Vec::new();
         intent
             .origin
             .validate()
@@ -82,6 +111,17 @@ impl SessionStore {
                 return Err(StoreError::AlreadyRecorded);
             }
             let mut record = self.tombstone(current);
+            if supersede {
+                for receipt in &mut record.control_receipts {
+                    if receipt.owner_instance == self.instance
+                        && receipt.state == ControlReceiptState::Started
+                    {
+                        receipt.state =
+                            ControlReceiptState::Finished(Err(ControlFailure::Superseded));
+                        superseded.push(receipt.command_id.clone());
+                    }
+                }
+            }
             make_room(&mut record.control_receipts, now)?;
             add_started(
                 &mut record,
@@ -96,7 +136,8 @@ impl SessionStore {
         .or_else(|err| match err {
             StoreError::AlreadyRecorded => Ok(()),
             other => Err(other),
-        })
+        })?;
+        Ok(superseded)
     }
 
     /// Clear only this exact restart after successful foreground prompt delivery.

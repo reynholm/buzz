@@ -119,14 +119,39 @@ struct ScopeControl {
     lifetime: Arc<()>,
     epoch: Uuid,
     retiring: Option<ControlJob>,
+    retirement: retirement::Retirement,
 }
 
 #[derive(Default)]
 struct State {
     scopes: HashMap<SessionScope, ScopeControl>,
+    workers: HashMap<usize, retirement::Worker>,
+    publications: std::collections::VecDeque<retirement::Publication>,
 }
 
 impl State {
+    fn publish(&mut self, publication: retirement::Publication) {
+        if matches!(
+            publication.result,
+            buzz_core::session_control::ControlResult::Pending
+        ) && self.publications.iter().any(|prior| {
+            prior.command_id == publication.command_id
+                && matches!(
+                    prior.result,
+                    buzz_core::session_control::ControlResult::Terminal(_)
+                )
+        }) {
+            return;
+        }
+        // Receipts retain outcomes beyond this bounded delivery cache.
+        self.publications
+            .retain(|prior| prior.command_id != publication.command_id);
+        if self.publications.len() >= 128 {
+            self.publications.pop_front();
+            tracing::warn!("session result delivery cache full; durable outcome retained");
+        }
+        self.publications.push_back(publication);
+    }
     fn prune_quiescent(&mut self) {
         self.scopes
             .retain(|_, entry| entry.retiring.is_some() || Arc::strong_count(&entry.lifetime) > 1);
@@ -168,6 +193,7 @@ impl SessionControlRuntime {
                 lifetime: Arc::new(()),
                 epoch: Uuid::new_v4(),
                 retiring: None,
+                retirement: retirement::Retirement::default(),
             });
         ControlDispatch {
             runtime: self.clone(),
@@ -219,11 +245,24 @@ impl SessionControlRuntime {
             depth,
             origin: job.origin.clone(),
         };
-        store.request_restart(&job.scope, &intent)?;
+        let superseded = store.request_restart_superseding(&job.scope, &intent)?;
         if matches!(store.load(&job.scope), LoadOutcome::Found(record) if record.pending_restart.as_ref().map(|saved| saved.token) != Some(intent.token))
         {
             return Ok(false);
         }
+        for command_id in superseded {
+            state.publish(retirement::Publication {
+                command_id,
+                result: buzz_core::session_control::ControlResult::Terminal(Err(
+                    ControlFailure::Superseded,
+                )),
+            });
+        }
+        let retirement = state
+            .scopes
+            .remove(&job.scope)
+            .map(|entry| entry.retirement)
+            .unwrap_or_default();
         job.dispatch_epoch = Uuid::new_v4();
         state.scopes.insert(
             job.scope.clone(),
@@ -231,6 +270,7 @@ impl SessionControlRuntime {
                 lifetime: Arc::new(()),
                 epoch: job.dispatch_epoch,
                 retiring: Some(job),
+                retirement: retirement.reset(),
             },
         );
         Ok(true)
@@ -274,22 +314,18 @@ impl SessionControlRuntime {
             .collect()
     }
 
-    /// Interim seam only: Task 2b replaces this release with checked retirement.
-    /// Call only after task absence and the existing invalidate/Rotate boundary.
-    pub(crate) fn release_interim(&self, scope: &SessionScope) {
-        self.state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .scopes
-            .remove(scope);
-    }
-
     /// Explicit channel revocation clears control-only records even without resume.
     pub(crate) fn revoke_channel(&self, channel: Uuid) -> Result<(), StoreError> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        state
-            .scopes
-            .retain(|scope, _| scope.channel_id() != channel);
+        state.scopes.retain(|scope, entry| {
+            if scope.channel_id() != channel {
+                return true;
+            }
+            entry.epoch = Uuid::new_v4();
+            // Revocation fences dispatch and clears durable intent, but cannot
+            // discard a checked retirement that still owns live processes.
+            entry.retiring.is_some()
+        });
         drop(state);
         if let Some(store) = &self.store {
             store.discard_channel(channel)?;
@@ -334,3 +370,8 @@ impl ControlDispatch {
         }
     }
 }
+
+mod retirement;
+pub(crate) use retirement::Publication;
+
+pub(crate) mod publish;

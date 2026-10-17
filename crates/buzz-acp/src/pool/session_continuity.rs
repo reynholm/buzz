@@ -319,9 +319,16 @@ pub(super) async fn acquire_session(
                     .control_dispatch
                     .as_ref()
                     .and_then(|dispatch| dispatch.intent.as_ref())
-                    .map_or(SessionReason::FirstInThread, |intent| {
-                        SessionReason::UserRestart(intent.depth)
-                    }),
+                    .map_or_else(
+                        || {
+                            if ctx.session_controls.recycled_reason(scope) {
+                                SessionReason::WorkerRecycled
+                            } else {
+                                SessionReason::FirstInThread
+                            }
+                        },
+                        |intent| SessionReason::UserRestart(intent.depth),
+                    ),
             },
         ));
     };

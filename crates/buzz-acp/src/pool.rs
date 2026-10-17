@@ -414,6 +414,8 @@ pub struct AgentPool {
     /// Best-effort: stale entries (rotation, crash/respawn) self-heal on the
     /// next dispatch and are pruned on channel-wide session invalidation.
     session_owners: HashMap<SessionScope, SessionOwner>,
+    scope_workers: HashMap<SessionScope, HashSet<usize>>,
+    retire_on_return: HashSet<usize>,
     /// Monotonic validity fence assigned whenever a scope is dispatched. The
     /// generation distinguishes a newly forked owner from every older copy of
     /// that scope's provider session.
@@ -1031,6 +1033,8 @@ impl AgentPool {
             join_set: JoinSet::new(),
             task_map: HashMap::new(),
             session_owners: HashMap::new(),
+            scope_workers: HashMap::new(),
+            retire_on_return: HashSet::new(),
             next_scope_owner_generation: 1,
             held_since: HashMap::new(),
             runtime_holds: HashMap::new(),
@@ -1052,6 +1056,10 @@ impl AgentPool {
             self.next_scope_owner_generation = 1;
             self.session_owners.clear();
         }
+        self.scope_workers
+            .entry(scope.clone())
+            .or_default()
+            .insert(agent_index);
         self.session_owners.insert(
             scope,
             SessionOwner {
@@ -1160,8 +1168,10 @@ impl AgentPool {
         // Pass 2: first idle agent that is not waiting on background children.
         // Stealing that worker would kill the process group under it.
         let idx = self.agents.iter().position(|slot| {
-            slot.as_ref()
-                .is_some_and(|agent| !self.runtime_holds.contains_key(&agent.index))
+            slot.as_ref().is_some_and(|agent| {
+                !self.runtime_holds.contains_key(&agent.index)
+                    && !self.retire_on_return.contains(&agent.index)
+            })
         });
         idx.map(|i| self.agents[i].take().unwrap())
     }
@@ -1182,7 +1192,11 @@ impl AgentPool {
                 "discarding stale session after ownership changed"
             );
             agent.state.invalidate_scope(&scope);
+            if let Some(workers) = self.scope_workers.get_mut(&scope) {
+                workers.remove(&agent.index);
+            }
         }
+        self.scope_workers.retain(|_, workers| !workers.is_empty());
         let live_scopes: HashSet<SessionScope> = agent.state.sessions.keys().cloned().collect();
         agent
             .state
@@ -1439,6 +1453,8 @@ impl AgentPool {
         // owner after the channel's sessions are gone.
         self.session_owners
             .retain(|scope, _| scope.channel_id() != channel_id);
+        self.scope_workers
+            .retain(|scope, _| scope.channel_id() != channel_id);
         // Prune held-since stamps for the same channel so an expiring hold cannot
         // reference a scope whose sessions are gone.
         self.held_since
@@ -1464,6 +1480,7 @@ impl AgentPool {
             }
         }
         self.session_owners.remove(scope);
+        self.scope_workers.remove(scope);
         self.held_since.remove(scope);
         count
     }
@@ -12839,3 +12856,5 @@ mod delivery_runtime_tests;
 #[cfg(test)]
 #[path = "pool/session_control_history_tests.rs"]
 mod session_control_history_regressions;
+
+mod session_retirement;

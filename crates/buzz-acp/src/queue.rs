@@ -2539,6 +2539,7 @@ mod tests {
             queue.retry_after.insert(conv(channel), deadline);
             let (tx, mut rx) = tokio::sync::mpsc::channel(1);
             tx.send(crate::RespawnResult {
+                retirement: None,
                 index: 0,
                 result: Err(anyhow::anyhow!("wake token")),
             })

@@ -814,3 +814,6 @@ mod tests;
 #[cfg(test)]
 #[path = "session_store_control_tests.rs"]
 mod control_tests;
+
+#[path = "session_store_orphans.rs"]
+mod orphan_controls;

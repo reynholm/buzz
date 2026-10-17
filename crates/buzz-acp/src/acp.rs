@@ -152,6 +152,7 @@ fn build_initialize_params() -> serde_json::Value {
 /// One `AcpClient` per agent process. Multiple sessions can be created on the
 /// same client via repeated calls to [`session_new`](AcpClient::session_new).
 pub struct AcpClient {
+    termination: terminate::TerminationState,
     /// The agent child process (kept alive to prevent zombie).
     child: Child,
     /// Sole stdin writer; None after an interrupted/failed frame closes it.
@@ -517,9 +518,9 @@ impl AcpClient {
             .stdout(Stdio::piped())
             // Inherit stderr so agent logs are visible in the harness terminal.
             .stderr(Stdio::inherit())
-            // Ensure the child is killed when the AcpClient is dropped (best-effort).
-            // Callers MUST still call shutdown().await for guaranteed cleanup.
-            .kill_on_drop(true);
+            // AcpClient owns cleanup. Tokio must not independently signal a
+            // checked retirement whose initial snapshot could not be verified.
+            .kill_on_drop(false);
 
         // Per-persona env vars (e.g., GOOSE_PROVIDER, BUZZ_AGENT_PROVIDER).
         // For most keys, operator precedence wins: skip injection if already set
@@ -635,6 +636,7 @@ impl AcpClient {
             .ok_or_else(|| AcpError::Protocol("failed to open agent stdout".into()))?;
 
         Ok(Self {
+            termination: terminate::TerminationState::default(),
             child,
             stdin: Some(stdin),
             reader: FramedRead::new(stdout, LinesCodec::new_with_max_length(MAX_LINE_SIZE)),
@@ -2546,6 +2548,10 @@ pub fn model_in_catalog(
 
 impl Drop for AcpClient {
     fn drop(&mut self) {
+        if self.termination.checked {
+            let _ = self.child.try_wait();
+            return;
+        }
         // Best-effort SIGKILL + reap. We cannot `await` in Drop (sync context).
         // Kill the process group when possible so subprocesses don't leak.
         // Callers SHOULD still call `shutdown().await` for guaranteed reaping.
@@ -5403,3 +5409,9 @@ sleep 1"#,
 
 #[cfg(all(test, unix))]
 mod process_tracking_tests;
+
+#[cfg(all(test, unix))]
+mod terminate_tests;
+
+mod terminate;
+pub use terminate::TerminationReport;

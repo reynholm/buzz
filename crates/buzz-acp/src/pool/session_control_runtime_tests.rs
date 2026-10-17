@@ -266,7 +266,7 @@ async fn selected_restart_depths_reach_actual_prompt_and_supplied_ids() {
         .unwrap();
         ctx.session_status = Some(status.clone());
         assert!(ctx.session_controls.restart(job).unwrap());
-        ctx.session_controls.release_interim(&scope);
+        ctx.session_controls.plan_retirement(&scope, []);
         let prompts = fixture.dir.path().join("prompts.ndjson");
         let agent = fixture
             .agent(&[("PROMPTS", prompts.to_str().unwrap())])
@@ -560,6 +560,13 @@ async fn busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue() {
     pool.task_map_mut().clear();
     handle.abort();
     crate::dispatch_pending(&mut pool, &mut queue, &ctx, &mut activity, None);
+    assert!(
+        ctx.session_controls.retirement_pending(&scope),
+        "ordinary task absence cannot attest worker termination"
+    );
+    ctx.session_controls.plan_retirement(&scope, [1]);
+    ctx.session_controls
+        .retirement_report(1, crate::acp::TerminationReport::Clean);
     assert!(!ctx.session_controls.retirement_pending(&scope));
     let batch = queue.flush_next().unwrap();
     assert_eq!(batch.events[0].event.id, newer.id);
@@ -1055,7 +1062,7 @@ async fn none_assignment_omitted_after_profile_render_is_explicitly_not_found() 
         crate::session_controls::SessionControlRuntime::new(Some(fixture.store.clone()));
     let job = authorized_control(&ctx, &human, &scope, "!restart none").await;
     assert!(ctx.session_controls.restart(job).unwrap());
-    ctx.session_controls.release_interim(&scope);
+    ctx.session_controls.plan_retirement(&scope, []);
     let prompts = fixture.dir.path().join("boundary-prompts.ndjson");
     let agent = fixture
         .agent(&[("PROMPTS", prompts.to_str().unwrap())])
@@ -1349,3 +1356,6 @@ async fn retired_successful_acquisition_keeps_worker_health_and_fences_old_state
 async fn retired_resume_transport_preserves_health_without_fallback_new() {
     retired_worker_health_is_preserved("resume_transport").await;
 }
+
+#[path = "session_retirement_runtime_tests.rs"]
+mod retirement_runtime_tests;

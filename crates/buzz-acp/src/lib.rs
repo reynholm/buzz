@@ -28,6 +28,7 @@ mod session_status;
 mod session_store;
 mod setup_mode;
 mod usage;
+mod worker_retirement;
 
 pub use usage::TurnUsage;
 
@@ -2123,6 +2124,7 @@ fn any_respawn_in_flight(crash_history: &[SlotCircuit]) -> bool {
 /// Result of a background respawn task.
 struct RespawnResult {
     index: usize,
+    retirement: Option<worker_retirement::RetirementReturn>,
     /// Tuple: (initialized client, protocol version, agent name).
     result: Result<(AcpClient, u32, String)>,
 }
@@ -2179,6 +2181,7 @@ impl RespawnGuard {
         // respawn_in_flight guard has drifted — that's a bug, not a transient.
         match self.tx.try_send(RespawnResult {
             index: self.index,
+            retirement: None,
             result,
         }) {
             Ok(()) => self.sent = true,
@@ -2203,6 +2206,7 @@ impl Drop for RespawnGuard {
             // Best-effort: try_send in Drop (can't await).
             let _ = self.tx.try_send(RespawnResult {
                 index: self.index,
+                retirement: None,
                 result: Err(anyhow::anyhow!("respawn task panicked or was cancelled")),
             });
         }
@@ -3045,6 +3049,9 @@ async fn run_harness(
     let (respawn_tx, mut respawn_rx) = mpsc::channel::<RespawnResult>(config.agents as usize);
     // JoinSet for respawn tasks so shutdown can abort them.
     let mut respawn_tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
+    let mut parked_retirements = HashMap::new();
+    let mut result_publications = tokio::task::JoinSet::new();
+    let mut orphan_sweep_pending = true;
     let (wake_tx, mut wake_rx) = mpsc::channel::<(u32, Result<AgentPool, String>)>(1);
     let mut wake_tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
 
@@ -3115,6 +3122,43 @@ async fn run_harness(
     }
 
     loop {
+        let publication_capacity = 128usize.saturating_sub(result_publications.len());
+        if orphan_sweep_pending && publication_capacity > 0 {
+            match ctx.session_controls.sweep_orphans(publication_capacity) {
+                Ok(more) => orphan_sweep_pending = more,
+                Err(error) => {
+                    tracing::warn!(%error, "orphan session control reconciliation failed; durable Started receipts retained");
+                    orphan_sweep_pending = false;
+                }
+            }
+        }
+        worker_retirement::drive(
+            &mut pool,
+            &ctx.session_controls,
+            &mut parked_retirements,
+            config,
+            &mut crash_history,
+            &respawn_tx,
+            &mut respawn_tasks,
+            observer.clone(),
+        );
+        for publication in ctx
+            .session_controls
+            .take_publications_up_to(128usize.saturating_sub(result_publications.len()))
+        {
+            let rest = ctx.rest_client.clone();
+            result_publications.spawn(async move {
+                if let Err(error) = session_controls::publish::publish_result(&rest, &publication).await {
+                    tracing::warn!(command = %publication.command_id, %error, "session control result delivery failed; durable outcome retained");
+                }
+            });
+        }
+        while result_publications
+            .join_next()
+            .now_or_never()
+            .flatten()
+            .is_some()
+        {}
         // Whether buffered work is waiting on a lazy pool. Also gates the
         // retry-deadline sleep arm below: a `Failed` lifecycle keeps its
         // (possibly past) `retry_at` until the next wake, so sleeping on it
@@ -3576,26 +3620,34 @@ async fn run_harness(
                                 session_controls::Admission::Ignored => continue,
                                 session_controls::Admission::Refused { event, origin, failure } => {
                                     tracing::warn!(command = %event.id, actor = %origin.actor_pubkey, code = failure.as_wire(), "session control refused");
-                                    // Task 2b publishes the bounded refusal on this original event.
+                                    ctx.session_controls.queue_result(event.id.to_hex(), buzz_core::session_control::ControlResult::Terminal(Err(failure)));
                                     continue;
                                 }
                                 session_controls::Admission::Control(job) => {
                                     if matches!(job.command, buzz_core::session_control::SessionCommand::Restart(_)) {
                                         let scope = job.scope.clone();
+                                        let command_id = job.origin.command_event_id.clone();
                                         match ctx.session_controls.restart(job) {
                                             Ok(true) => {
                                                 queue.remove_continuation(&scope);
+                                                typing_channels.remove(&scope);
                                                 pool::session_visibility::retire_scope(ctx.session_status.as_ref(), &scope);
-                                                // Invalidate cached ownership immediately. Active task existence,
-                                                // not signal delivery, controls the retirement gate.
-                                                pool.invalidate_scope_session(&scope);
+                                                let targets = pool.retirement_targets(&scope);
+                                                let waiting = targets.iter().any(|index| pool.retirement_waits_for_foreign(*index, &scope));
+                                                for index in &targets { pool.mark_retire_on_return(*index); }
+                                                ctx.session_controls.plan_retirement(&scope, targets);
+                                                if waiting { ctx.session_controls.publish_pending(&scope); }
                                                 signal_in_flight_task_for_scope(&mut pool, &scope, ControlSignal::Rotate);
-                                                if !pool.task_map().values().any(|meta| meta.scope.as_ref() == Some(&scope)) {
-                                                    ctx.session_controls.release_interim(&scope);
-                                                }
                                             }
-                                            Ok(false) => {} // Duplicate receipt: no repeated effect.
-                                            Err(error) => tracing::warn!(%error, "session restart admission failed"),
+                                            Ok(false) => {
+                                                if let Some(result) = ctx.session_controls.prior_result(&scope, &command_id) { ctx.session_controls.queue_result(command_id, result); }
+                                            }
+                                            Err(error) => {
+                                                use buzz_core::session_control::{ControlFailure, ControlResult};
+                                                let failure = match error { session_store::StoreError::Busy => ControlFailure::Busy, session_store::StoreError::StaleRequest => ControlFailure::StaleRequest, _ => ControlFailure::StoreUnavailable };
+                                                ctx.session_controls.queue_result(command_id, ControlResult::Terminal(Err(failure)));
+                                                tracing::warn!(%error, "session restart admission failed");
+                                            }
                                         }
                                     }
                                     // Compact execution/result publication is supplied by Task 3.
@@ -3821,10 +3873,19 @@ async fn run_harness(
         match pool_event {
             Some(PoolEvent::Recovery(wake)) => {
                 match wake {
-                    recovery_wake::RecoveryWake::Respawn(rr) => {
+                    recovery_wake::RecoveryWake::Respawn(mut rr) => {
+                        if worker_retirement::finish(
+                            &mut pool,
+                            &ctx.session_controls,
+                            &mut parked_retirements,
+                            &mut rr,
+                        ) {
+                            continue;
+                        }
                         crash_history[rr.index].respawn_in_flight = false;
                         match rr.result {
                             Ok((acp, protocol_version, agent_name)) => {
+                                pool.finish_worker_retirement(rr.index);
                                 let agent = OwnedAgent {
                                     index: rr.index,
                                     acp,
@@ -4926,18 +4987,6 @@ fn dispatch_pending(
     // Keyed by the exact session scope, not the channel: two threads dispatching
     // concurrently in one channel get distinct typing entries so completing one
     // never clears the other's indicator.
-    // Task 2 interim boundary: no checked kills/success publication is claimed.
-    // Task 2b will release this only after verified worker retirement.
-    for scope in ctx.session_controls.pending_scopes() {
-        if !pool
-            .task_map()
-            .values()
-            .any(|meta| meta.scope.as_ref() == Some(&scope))
-        {
-            pool.invalidate_scope_session(&scope);
-            ctx.session_controls.release_interim(&scope);
-        }
-    }
     let mut dispatched_channels = Vec::new();
     // Batches held back this cycle because the worker that owns their thread's
     // session is busy. They stay flushed-out of the queue (in-flight) until we
@@ -5540,6 +5589,11 @@ fn handle_prompt_result(
             );
         }
     };
+
+    if pool.needs_retirement(&result.agent) {
+        pool.return_for_retirement(result.agent);
+        return LoopAction::Continue;
+    }
 
     match result.outcome {
         // Successful prompt — return agent to pool.

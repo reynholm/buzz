@@ -631,3 +631,53 @@ fn malformed_or_oversized_receipt_records_are_rejected() {
         Err(StoreError::InvalidControl)
     ));
 }
+
+#[test]
+fn startup_sweep_terminalizes_dead_started_controls_but_preserves_live_owner() {
+    let (dir, first, scope) = fixture();
+    first.request_restart(&scope, &intent(1)).unwrap();
+    let second = SessionStore::open(dir.path().into(), "wss://relay.example", AGENT).unwrap();
+    assert!(second.sweep_orphan_controls(128).unwrap().is_empty());
+    drop(first);
+    assert_eq!(second.sweep_orphan_controls(128).unwrap(), vec![id(1)]);
+    assert_eq!(
+        record(&second, &scope).control_receipts[0].state,
+        ControlReceiptState::Finished(Err(ControlFailure::Unconfirmed))
+    );
+    assert!(
+        record(&second, &scope).pending_restart.is_some(),
+        "restart depth survives orphan reconciliation"
+    );
+    assert!(second.sweep_orphan_controls(128).unwrap().is_empty());
+}
+
+#[test]
+fn startup_sweep_chunks_orphan_outcomes_without_losing_remaining_started_receipts() {
+    let (dir, first, scope) = fixture();
+    let scopes = [
+        scope,
+        SessionScope::Conversation {
+            channel_id: Uuid::from_u128(10),
+        },
+        SessionScope::Conversation {
+            channel_id: Uuid::from_u128(11),
+        },
+    ];
+    for (index, scope) in scopes.iter().enumerate() {
+        first.request_restart(scope, &intent(index + 1)).unwrap();
+    }
+    drop(first);
+    let second = SessionStore::open(dir.path().into(), "wss://relay.example", AGENT).unwrap();
+    let a = second.sweep_orphan_controls(2).unwrap();
+    let b = second.sweep_orphan_controls(2).unwrap();
+    assert_eq!((a.len(), b.len()), (2, 1));
+    assert_eq!(a.into_iter().chain(b).collect::<HashSet<_>>().len(), 3);
+    assert!(second.sweep_orphan_controls(2).unwrap().is_empty());
+    for scope in scopes {
+        assert!(record(&second, &scope)
+            .control_receipts
+            .iter()
+            .all(|receipt| receipt.state
+                == ControlReceiptState::Finished(Err(ControlFailure::Unconfirmed))));
+    }
+}

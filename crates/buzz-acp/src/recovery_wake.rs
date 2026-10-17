@@ -42,6 +42,7 @@ mod tests {
     async fn respawn_wakes_without_optional_timers() {
         let (tx, mut rx) = mpsc::channel(1);
         tx.send(RespawnResult {
+            retirement: None,
             index: 0,
             result: Err(anyhow::anyhow!("fixture spawn failure")),
         })
@@ -92,6 +93,7 @@ mod tests {
             _ = wait(&mut rx, None, None) => panic!("unexpected wake"),
         }
         tx.send(RespawnResult {
+            retirement: None,
             index: 0,
             result: Err(anyhow::anyhow!("fixture")),
         })

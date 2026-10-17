@@ -182,7 +182,7 @@ fn parse_snapshot(output: &str) -> Option<ProcessTree> {
 }
 
 #[cfg(unix)]
-fn bounded_output(
+pub(crate) fn bounded_output(
     mut command: tokio::process::Command,
     timeout: std::time::Duration,
     limit: usize,
@@ -391,3 +391,9 @@ mod launcher_chain_tests {
         assert!(!is_resident_helper("python3 /home/u/my-mcp-project/run.py"));
     }
 }
+
+#[cfg(all(test, unix))]
+mod retirement_tests;
+
+#[cfg(unix)]
+pub(crate) mod retirement;
