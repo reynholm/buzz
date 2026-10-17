@@ -8869,7 +8869,7 @@
     },
     {
       "path": "crates/buzz-acp/src/session_store.rs",
-      "responsibility": "Community-and-agent isolated, lease-fenced session records with bounded locks, identity validation and channel-wide failure fencing. Preserve restart intent and bounded receipts through claims, commits and tombstones; revision-fence tombstones, enforce byte ceilings, and recover only accepted control metadata from provider quarantine.",
+      "responsibility": "Community-and-agent isolated, lease-fenced session records with bounded locks, identity validation and channel-wide failure fencing. Preserve restart intent and bounded receipts through claims, commits and tombstones; revision-fence tombstones, enforce byte ceilings, and recover only accepted control metadata from provider quarantine. Lease-fenced automatic attempt cleanup preserves accepted restart policy; explicit scope/channel revocation clears it.",
       "is_new": true,
       "required_symbols": [
         "pub struct SessionStore",
@@ -8880,7 +8880,8 @@
         "pub revision: Option<Uuid>",
         "pub pending_restart: Option<RestartIntent>",
         "pub control_receipts: Vec<ControlReceipt>",
-        "if json.len() as u64 > MAX_RECORD_BYTES || !controls::valid_controls(record) {"
+        "if json.len() as u64 > MAX_RECORD_BYTES || !controls::valid_controls(record) {",
+        "record.pending_restart = owned.pending_restart;"
       ],
       "invocation_seams": [
         {
@@ -8903,6 +8904,13 @@
           "invocation": "controls::valid_controls(record)",
           "behavior_test": "malformed_or_oversized_receipt_records_are_rejected",
           "verification_command": "cargo test -p buzz-acp malformed_or_oversized_receipt_records_are_rejected -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/session_store.rs",
+          "callee_symbol": "tombstone",
+          "invocation": "self.tombstone(Some(&owned))",
+          "behavior_test": "failed_attempt_discard_preserves_restart_until_matching_completion",
+          "verification_command": "cargo test -p buzz-acp failed_attempt_discard_preserves_restart_until_matching_completion -- --test-threads=1"
         }
       ],
       "verification_commands": [
@@ -9427,13 +9435,15 @@
     },
     {
       "path": "crates/buzz-acp/src/session_store_control_tests.rs",
-      "responsibility": "Durable controls regression coverage including concurrency, atomic failures, legacy records, ABA, expiry/capacity, orphan fences and quarantine boundaries.",
+      "responsibility": "Durable controls regression coverage including concurrency, atomic failures, legacy records, ABA, expiry/capacity, orphan fences and quarantine boundaries. Prove failed-attempt intent retention and explicit policy revocation with stale-lease rejection.",
       "is_new": true,
       "required_symbols": [
         "fn restart_intent_is_atomic()",
         "fn orphan_started_becomes_terminal_without_reexecution()",
         "fn quarantine_retains_control_metadata_without_recovering_provider_state()",
-        "fn malformed_or_oversized_receipt_records_are_rejected()"
+        "fn malformed_or_oversized_receipt_records_are_rejected()",
+        "fn failed_attempt_discard_preserves_restart_until_matching_completion()",
+        "fn explicit_scope_and_channel_revocation_clear_intent_but_keep_receipts()"
       ],
       "invocation_seams": [],
       "verification_commands": [

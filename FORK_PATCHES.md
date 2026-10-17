@@ -5984,7 +5984,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/session_store.rs`
 
-Community-and-agent isolated, lease-fenced session records with bounded locks, identity validation and channel-wide failure fencing. Preserve restart intent and bounded receipts through claims, commits and tombstones; revision-fence tombstones, enforce byte ceilings, and recover only accepted control metadata from provider quarantine.
+Community-and-agent isolated, lease-fenced session records with bounded locks, identity validation and channel-wide failure fencing. Preserve restart intent and bounded receipts through claims, commits and tombstones; revision-fence tombstones, enforce byte ceilings, and recover only accepted control metadata from provider quarantine. Lease-fenced automatic attempt cleanup preserves accepted restart policy; explicit scope/channel revocation clears it.
 
 New module: `true`.
 
@@ -5997,9 +5997,11 @@ New module: `true`.
 - Required symbol: `pub pending_restart: Option<RestartIntent>`
 - Required symbol: `pub control_receipts: Vec<ControlReceipt>`
 - Required symbol: `if json.len() as u64 > MAX_RECORD_BYTES || !controls::valid_controls(record) {`
+- Required symbol: `record.pending_restart = owned.pending_restart;`
 - Invocation: `crates/buzz-acp/src/session_store.rs` → `read_record_file`; exact call `read_record_file(&with_suffix(path, "stale"), namespace)?`; behavior test `quarantine_retains_control_metadata_without_recovering_provider_state`; verify `cargo test -p buzz-acp quarantine_retains_control_metadata_without_recovering_provider_state -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/session_store.rs` → `valid_controls`; exact call `controls::valid_controls(&record)`; behavior test `malformed_or_oversized_receipt_records_are_rejected`; verify `cargo test -p buzz-acp malformed_or_oversized_receipt_records_are_rejected -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/session_store.rs` → `valid_controls`; exact call `controls::valid_controls(record)`; behavior test `malformed_or_oversized_receipt_records_are_rejected`; verify `cargo test -p buzz-acp malformed_or_oversized_receipt_records_are_rejected -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/session_store.rs` → `tombstone`; exact call `self.tombstone(Some(&owned))`; behavior test `failed_attempt_discard_preserves_restart_until_matching_completion`; verify `cargo test -p buzz-acp failed_attempt_discard_preserves_restart_until_matching_completion -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/session_store_tests.rs`
@@ -6377,7 +6379,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/session_store_control_tests.rs`
 
-Durable controls regression coverage including concurrency, atomic failures, legacy records, ABA, expiry/capacity, orphan fences and quarantine boundaries.
+Durable controls regression coverage including concurrency, atomic failures, legacy records, ABA, expiry/capacity, orphan fences and quarantine boundaries. Prove failed-attempt intent retention and explicit policy revocation with stale-lease rejection.
 
 New module: `true`.
 
@@ -6385,4 +6387,6 @@ New module: `true`.
 - Required symbol: `fn orphan_started_becomes_terminal_without_reexecution()`
 - Required symbol: `fn quarantine_retains_control_metadata_without_recovering_provider_state()`
 - Required symbol: `fn malformed_or_oversized_receipt_records_are_rejected()`
+- Required symbol: `fn failed_attempt_discard_preserves_restart_until_matching_completion()`
+- Required symbol: `fn explicit_scope_and_channel_revocation_clear_intent_but_keep_receipts()`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`

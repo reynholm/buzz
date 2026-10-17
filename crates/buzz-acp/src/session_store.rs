@@ -472,11 +472,15 @@ impl SessionStore {
         self.commit(scope, lease, |live| live.departed = Some(departure))
     }
 
-    /// Tombstone the record if it still carries `lease`.
+    /// Invalidate the owned provider after an attempt, retaining pending restart
+    /// policy until foreground delivery completes it. Explicit scope/channel
+    /// revocation uses the separate unconditional discard methods below.
     pub fn discard(&self, scope: &SessionScope, lease: Uuid) -> Result<(), StoreError> {
         self.update(&self.record_path(scope), |current| {
-            owned_record(current, lease)?;
-            Ok(self.tombstone(current))
+            let owned = owned_record(current, lease)?;
+            let mut record = self.tombstone(Some(&owned));
+            record.pending_restart = owned.pending_restart;
+            Ok(record)
         })
     }
 

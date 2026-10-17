@@ -132,6 +132,88 @@ fn claim_preserves_pending_restart_and_commit_does_not_clear_it() {
 }
 
 #[test]
+fn failed_attempt_discard_preserves_restart_until_matching_completion() {
+    for depth in [RestartDepth::None, RestartDepth::Recent, RestartDepth::All] {
+        let (_dir, store, scope) = fixture();
+        let mut restart = intent(1);
+        restart.depth = depth;
+        store.request_restart(&scope, &restart).unwrap();
+        let receipts = record(&store, &scope).control_receipts;
+        let first_lease = store
+            .claim(
+                &scope,
+                &Expect::from_outcome(&store.load(&scope)),
+                live(&store),
+            )
+            .unwrap();
+        // Existing initial-message error/cancel cleanup discards this lease
+        // before the foreground assignment has been delivered successfully.
+        store.discard(&scope, first_lease).unwrap();
+        let discarded = record(&store, &scope);
+        assert!(discarded.live.is_none());
+        assert_eq!(discarded.pending_restart, Some(restart.clone()));
+        assert_eq!(discarded.control_receipts, receipts);
+        assert!(matches!(
+            store.commit(&scope, first_lease, |_| {}),
+            Err(StoreError::Conflict)
+        ));
+        store
+            .claim(
+                &scope,
+                &Expect::from_outcome(&store.load(&scope)),
+                live(&store),
+            )
+            .unwrap();
+        assert_eq!(
+            record(&store, &scope).pending_restart,
+            Some(restart.clone())
+        );
+        assert!(matches!(
+            store.complete_restart(&scope, Uuid::new_v4()),
+            Err(StoreError::Conflict)
+        ));
+        assert_eq!(
+            record(&store, &scope).pending_restart,
+            Some(restart.clone())
+        );
+        store.complete_restart(&scope, restart.token).unwrap();
+        assert_eq!(record(&store, &scope).pending_restart, None);
+        assert_eq!(record(&store, &scope).control_receipts, receipts);
+    }
+}
+
+#[test]
+fn explicit_scope_and_channel_revocation_clear_intent_but_keep_receipts() {
+    for channel_wide in [false, true] {
+        let (_dir, store, scope) = fixture();
+        let restart = intent(1);
+        store.request_restart(&scope, &restart).unwrap();
+        let receipts = record(&store, &scope).control_receipts;
+        let lease = store
+            .claim(
+                &scope,
+                &Expect::from_outcome(&store.load(&scope)),
+                live(&store),
+            )
+            .unwrap();
+        if channel_wide {
+            store.discard_channel(scope.channel_id()).unwrap();
+        } else {
+            store.discard_scope(&scope).unwrap();
+        }
+        // A late failed attempt cannot restore a deliberately revoked policy.
+        assert!(matches!(
+            store.discard(&scope, lease),
+            Err(StoreError::Conflict)
+        ));
+        let revoked = record(&store, &scope);
+        assert!(revoked.live.is_none());
+        assert_eq!(revoked.pending_restart, None);
+        assert_eq!(revoked.control_receipts, receipts);
+    }
+}
+
+#[test]
 fn old_token_cannot_clear_newer_intent() {
     let (_dir, store, scope) = fixture();
     let old = intent(1);
