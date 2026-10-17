@@ -30,7 +30,7 @@ python3 -m unittest discover -s scripts/fork/tests -v
 ## Clean upstream baseline
 
 Run only in the disposable detached worktree
-`/Users/reynholm/.buzz/REPOS/buzz-device-baseline-v0_5_26`; never launch the baseline
+`~/<workspace>/REPOS/buzz-device-baseline-v0_5_26`; never launch the baseline
 app against production data or keychain. Capture `git rev-parse HEAD` in the same
 shell as each gate. Install dependencies with `pnpm install`; do not run `just setup`
 or commands that bootstrap/migrate a live relay.
@@ -41,7 +41,7 @@ Build six real sidecars from this exact tree before invoking the release recipe:
 
 ```sh
 . ./bin/activate-hermit
-/Users/reynholm/.local/bin/git rev-parse HEAD
+git rev-parse HEAD  # Git 2.46+, see the helper prerequisites below
 cargo build --release --target aarch64-apple-darwin -p buzz-acp -p buzz-agent \
   -p buzz-backend-kubernetes -p buzz-dev-mcp -p git-credential-nostr -p buzz-cli
 ./scripts/bundle-sidecars.sh aarch64-apple-darwin

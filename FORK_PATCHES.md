@@ -6106,3 +6106,12 @@ New module: `true`.
 
 - Verify: `just ci`
 - Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `AGENTS.md`
+
+Fork rule: public text is in English and carries no internal workspace details
+
+New module: `false`.
+
+- Required symbol: `## Fork: public text is in English`
+- Verify: `python3 scripts/fork/sync.py validate`

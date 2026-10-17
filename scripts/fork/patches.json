@@ -8924,6 +8924,18 @@
         "just ci",
         "python3 -m unittest discover -s scripts/fork/tests -v"
       ]
+    },
+    {
+      "path": "AGENTS.md",
+      "responsibility": "Fork rule: public text is in English and carries no internal workspace details",
+      "is_new": false,
+      "required_symbols": [
+        "## Fork: public text is in English"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
     }
   ]
 }
