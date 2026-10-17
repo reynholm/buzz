@@ -208,9 +208,17 @@ pub(super) async fn selected(
             incomplete = true;
             break;
         };
-        events.sort_by(|a, b| key(a).cmp(&key(b)));
         if root.is_none() {
-            events.reverse();
+            // Ordinary relay pages use time DESC, id ASC. Reverse only time:
+            // equal-second continuation requires id > before_id.
+            events.sort_by(|a, b| {
+                b["created_at"]
+                    .as_u64()
+                    .cmp(&a["created_at"].as_u64())
+                    .then_with(|| a["id"].as_str().cmp(&b["id"].as_str()))
+            });
+        } else {
+            events.sort_by(|a, b| key(a).cmp(&key(b)));
         }
         let next = events
             .last()
@@ -224,7 +232,12 @@ pub(super) async fn selected(
             if message.event_id.is_empty() || !seen.insert(message.event_id.clone()) {
                 continue;
             }
-            if mentions(&event, &agent) && (assignment.is_none() || root.is_none()) {
+            // DM pagination order differs from chronological assignment order.
+            // Keep the minimum time/id independently, including ties on a page.
+            let replaces_assignment = assignment
+                .as_ref()
+                .is_none_or(|(prior, _)| root.is_none() && key(&event) < key(prior));
+            if mentions(&event, &agent) && replaces_assignment {
                 assignment = Some((event.clone(), message.clone()));
             }
             if depth == RestartDepth::All {

@@ -97,6 +97,10 @@ pub enum AcpError {
     #[error("Agent process exited unexpectedly")]
     AgentExited,
 
+    /// Internal generation cancellation; it says nothing about transport health.
+    #[error("Dispatch retired by session control")]
+    DispatchRetired,
+
     #[error("Idle timeout — no agent activity for {0:?}")]
     IdleTimeout(std::time::Duration),
 

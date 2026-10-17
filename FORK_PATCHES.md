@@ -2717,6 +2717,7 @@ New module: `false`.
 - Required symbol: `self.resume_supported = result`
 - Required symbol: `pub(crate) fn bind_session_status(`
 - Required symbol: `pub(crate) fn clear_session_status(`
+- Required symbol: `DispatchRetired,`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `record_usage_update`; exact call `crate::session_status::record_usage_update(&self.session_status, msg);`; behavior test `claude_usage_updates_route_by_their_own_session_id`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `apply_status_dir_env`; exact call `crate::session_status::apply_status_dir_env(&mut cmd, extra_env);`; behavior test `status_dir_env_is_owned_by_the_harness`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Verify: `just ci`
@@ -2807,6 +2808,7 @@ New module: `false`.
         .control_dispatch
         .as_ref()
         .is_some_and(|dispatch| !dispatch.current())`; behavior test `late_cancelled_result_cannot_requeue_old_batch_after_restart`; verify `cargo test -p buzz-acp --lib late_cancelled_result_cannot_requeue_old_batch_after_restart -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `discard_retired_output`; exact call `result.outcome = result.outcome.discard_retired_output();`; behavior test `retired_transport_error_replaces_the_worker_through_result_handling`; verify `cargo test -p buzz-acp --lib retired_transport_error_replaces_the_worker_through_result_handling -- --test-threads=1`
 - Verify: `just ci`
 
 ## `crates/buzz-acp/src/pool.rs`
@@ -2815,6 +2817,7 @@ Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
 New module: `false`.
 
+- Required symbol: `pub(crate) fn discard_retired_output(self) -> Self`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `discard_durable`; exact call `self.discard_durable(scope);`; behavior test `invalidate_scope_writes_tombstone`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `depart_durable_all`; exact call `self.depart_durable_all(crate::session_store::Departure::WorkerCrash);`; behavior test `invalidate_all_marks_worker_crash_without_tombstone`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `persist_delivery`; exact call `self.persist_delivery(`; behavior test `delivery_success_persists_ids`; verify `cargo test -p buzz-acp -- --test-threads=1`
@@ -2840,6 +2843,12 @@ New module: `false`.
                 conversation_context.as_ref(),
                 &rendered_batch_ids,
             );`; behavior test `none_assignment_omitted_after_profile_render_is_explicitly_not_found`; verify `cargo test -p buzz-acp --lib none_assignment_omitted_after_profile_render_is_explicitly_not_found -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `discard_retired_output`; exact call `(outcome.discard_retired_output(), None)`; behavior test `retired_cancel_drain_expiry_replaces_the_worker_through_result_handling`; verify `cargo test -p buzz-acp --lib retired_cancel_drain_expiry_replaces_the_worker_through_result_handling -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `discard_retired_output`; exact call `let outcome = match prompt_result {
+            Ok(reason) => PromptOutcome::Ok(reason),
+            Err(error) => PromptOutcome::Error(error),
+        }
+        .discard_retired_output();`; behavior test `retired_adapter_death_replaces_the_worker_through_result_handling`; verify `cargo test -p buzz-acp --lib retired_adapter_death_replaces_the_worker_through_result_handling -- --test-threads=1`
 - Verify: `just ci`
 
 ## `crates/buzz-acp/src/queue.rs`
@@ -6051,12 +6060,16 @@ New module: `true`.
 - Required symbol: `pub(super) async fn acquire_session(`
 - Required symbol: `pub(crate) fn resume_decision(`
 - Required symbol: `pub(crate) fn insert_session_marker(`
+- Required symbol: `Err(AcpError::DispatchRetired)`
 - Invocation: `crates/buzz-acp/src/pool/session_continuity.rs` → `retire_status`; exact call `self.retire_status(scope);`; behavior test `new_session_status_precedes_the_prompt_and_spans_ordinary_turns`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool/session_continuity.rs` → `retire_all_status`; exact call `self.retire_all_status();`; behavior test `worker_crash_retires_status_before_the_replacement_prompt`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool/session_continuity.rs` → `ensure_dispatch_current`; exact call `ensure_dispatch_current(agent)?;`; behavior test `restart_during_delayed_acquisition_fences_old_dispatch`; verify `cargo test -p buzz-acp --lib restart_during_delayed_acquisition_fences_old_dispatch -- --test-threads=1`
-- Invocation: `crates/buzz-acp/src/pool/session_continuity.rs` → `ensure_dispatch_current`; exact call `ensure_dispatch_current(agent)?;
-                        let code = resume_failure_code(&err);`; behavior test `restart_during_failed_resume_never_calls_fallback_new`; verify `cargo test -p buzz-acp --lib restart_during_failed_resume_never_calls_fallback_new -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool/session_continuity.rs` → `ensure_dispatch_current`; exact call `if ensure_dispatch_current(agent).is_err() {`; behavior test `restart_during_failed_resume_never_calls_fallback_new`; verify `cargo test -p buzz-acp --lib restart_during_failed_resume_never_calls_fallback_new -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool/session_continuity.rs` → `Err`; exact call `return Err(err);
+                        }
+                        let code = resume_failure_code(&err);`; behavior test `retired_resume_transport_preserves_health_without_fallback_new`; verify `cargo test -p buzz-acp --lib retired_resume_transport_preserves_health_without_fallback_new -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp --lib retired_successful_acquisition_keeps_worker_health_and_fences_old_state -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/session_continuity_tests.rs`
 
@@ -6454,6 +6467,13 @@ New module: `true`.
 - Invocation: `crates/buzz-acp/src/pool/session_history.rs` → `query_raw_bounded`; exact call `.query_raw_bounded(filters, RESPONSE_BYTES),`; behavior test `bounded_history_reader_rejects_chunked_actual_bytes_and_times_out`; verify `cargo test -p buzz-acp --lib bounded_history_reader_rejects_chunked_actual_bytes_and_times_out -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool/session_history.rs` → `saturating_sub`; exact call `if requested > MAX_CANDIDATES.saturating_sub(self.candidates) {`; behavior test `all_history_request_budget_reserves_tail_without_overfetching_candidates`; verify `cargo test -p buzz-acp --lib all_history_request_budget_reserves_tail_without_overfetching_candidates -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool/session_history.rs` → `saturating_sub`; exact call `rendered.len().saturating_sub(empty.len()) + 5`; behavior test `all_history_many_small_messages_fit_the_actual_rendered_budget`; verify `cargo test -p buzz-acp --lib all_history_many_small_messages_fit_the_actual_rendered_budget -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool/session_history.rs` → `sort_by`; exact call `events.sort_by(|a, b| {
+                b["created_at"]
+                    .as_u64()
+                    .cmp(&a["created_at"].as_u64())
+                    .then_with(|| a["id"].as_str().cmp(&b["id"].as_str()))
+            });`; behavior test `dm_same_second_all_fits_with_older_assignment_under_real_relay_cursor`; verify `cargo test -p buzz-acp --lib dm_same_second_all_fits_with_older_assignment_under_real_relay_cursor -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool/session_history.rs` → `key`; exact call `root.is_none() && key(&event) < key(prior)`; behavior test `dm_same_second_none_finds_earliest_assignment_under_real_relay_cursor`; verify `cargo test -p buzz-acp --lib dm_same_second_none_finds_earliest_assignment_under_real_relay_cursor -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/session_history_tests.rs`

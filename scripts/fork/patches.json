@@ -4512,7 +4512,8 @@
         "pub async fn session_resume(",
         "self.resume_supported = result",
         "pub(crate) fn bind_session_status(",
-        "pub(crate) fn clear_session_status("
+        "pub(crate) fn clear_session_status(",
+        "DispatchRetired,"
       ],
       "invocation_seams": [
         {
@@ -4722,6 +4723,14 @@
           "behavior_test": "late_cancelled_result_cannot_requeue_old_batch_after_restart",
           "verification_command": "cargo test -p buzz-acp --lib late_cancelled_result_cannot_requeue_old_batch_after_restart -- --test-threads=1",
           "coverage": "Task2 late-result production fence, independently falsified at this exact seam."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "discard_retired_output",
+          "invocation": "result.outcome = result.outcome.discard_retired_output();",
+          "behavior_test": "retired_transport_error_replaces_the_worker_through_result_handling",
+          "verification_command": "cargo test -p buzz-acp --lib retired_transport_error_replaces_the_worker_through_result_handling -- --test-threads=1",
+          "coverage": "Task2 fix round1: preserve fatal health at stale fences and follow real relay DM ordering; fresh production-path regression and targeted mutation."
         }
       ],
       "verification_commands": [
@@ -4732,7 +4741,9 @@
       "path": "crates/buzz-acp/src/pool.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "pub(crate) fn discard_retired_output(self) -> Self"
+      ],
       "invocation_seams": [
         {
           "caller_path": "crates/buzz-acp/src/pool.rs",
@@ -4858,6 +4869,22 @@
           "behavior_test": "none_assignment_omitted_after_profile_render_is_explicitly_not_found",
           "verification_command": "cargo test -p buzz-acp --lib none_assignment_omitted_after_profile_render_is_explicitly_not_found -- --test-threads=1",
           "coverage": "Final Task2 rendered-boundary review; actual run_prompt_task, resolved profile, ACP prompt and supplied IDs."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "discard_retired_output",
+          "invocation": "(outcome.discard_retired_output(), None)",
+          "behavior_test": "retired_cancel_drain_expiry_replaces_the_worker_through_result_handling",
+          "verification_command": "cargo test -p buzz-acp --lib retired_cancel_drain_expiry_replaces_the_worker_through_result_handling -- --test-threads=1",
+          "coverage": "Task2 fix round1: preserve fatal health at stale fences and follow real relay DM ordering; fresh production-path regression and targeted mutation."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "discard_retired_output",
+          "invocation": "let outcome = match prompt_result {\n            Ok(reason) => PromptOutcome::Ok(reason),\n            Err(error) => PromptOutcome::Error(error),\n        }\n        .discard_retired_output();",
+          "behavior_test": "retired_adapter_death_replaces_the_worker_through_result_handling",
+          "verification_command": "cargo test -p buzz-acp --lib retired_adapter_death_replaces_the_worker_through_result_handling -- --test-threads=1",
+          "coverage": "Task2 fix round1: preserve fatal health at stale fences and follow real relay DM ordering; fresh production-path regression and targeted mutation."
         }
       ],
       "verification_commands": [
@@ -9014,7 +9041,8 @@
       "required_symbols": [
         "pub(super) async fn acquire_session(",
         "pub(crate) fn resume_decision(",
-        "pub(crate) fn insert_session_marker("
+        "pub(crate) fn insert_session_marker(",
+        "Err(AcpError::DispatchRetired)"
       ],
       "invocation_seams": [
         {
@@ -9043,14 +9071,23 @@
         {
           "caller_path": "crates/buzz-acp/src/pool/session_continuity.rs",
           "callee_symbol": "ensure_dispatch_current",
-          "invocation": "ensure_dispatch_current(agent)?;\n                        let code = resume_failure_code(&err);",
+          "invocation": "if ensure_dispatch_current(agent).is_err() {",
           "behavior_test": "restart_during_failed_resume_never_calls_fallback_new",
           "verification_command": "cargo test -p buzz-acp --lib restart_during_failed_resume_never_calls_fallback_new -- --test-threads=1",
-          "coverage": "Final Task2 self-review guard, freshly RED before fix and independently falsified after GREEN."
+          "coverage": "Task2 fix round1: resume fallback remains fenced without replacing the original failure classification."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool/session_continuity.rs",
+          "callee_symbol": "Err",
+          "invocation": "return Err(err);\n                        }\n                        let code = resume_failure_code(&err);",
+          "behavior_test": "retired_resume_transport_preserves_health_without_fallback_new",
+          "verification_command": "cargo test -p buzz-acp --lib retired_resume_transport_preserves_health_without_fallback_new -- --test-threads=1",
+          "coverage": "Task2 fix round1: a real oversized resume frame produces Protocol after restart; preserve worker recovery and prohibit fallback."
         }
       ],
       "verification_commands": [
-        "cargo test -p buzz-acp -- --test-threads=1"
+        "cargo test -p buzz-acp -- --test-threads=1",
+        "cargo test -p buzz-acp --lib retired_successful_acquisition_keeps_worker_health_and_fences_old_state -- --test-threads=1"
       ]
     },
     {
@@ -9615,6 +9652,22 @@
           "behavior_test": "all_history_many_small_messages_fit_the_actual_rendered_budget",
           "verification_command": "cargo test -p buzz-acp --lib all_history_many_small_messages_fit_the_actual_rendered_budget -- --test-threads=1",
           "coverage": "Final Task2 rendered-boundary review; fresh compiled RED/GREEN and independently falsified body accounting."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool/session_history.rs",
+          "callee_symbol": "sort_by",
+          "invocation": "events.sort_by(|a, b| {\n                b[\"created_at\"]\n                    .as_u64()\n                    .cmp(&a[\"created_at\"].as_u64())\n                    .then_with(|| a[\"id\"].as_str().cmp(&b[\"id\"].as_str()))\n            });",
+          "behavior_test": "dm_same_second_all_fits_with_older_assignment_under_real_relay_cursor",
+          "verification_command": "cargo test -p buzz-acp --lib dm_same_second_all_fits_with_older_assignment_under_real_relay_cursor -- --test-threads=1",
+          "coverage": "Task2 fix round1: preserve fatal health at stale fences and follow real relay DM ordering; fresh production-path regression and targeted mutation."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool/session_history.rs",
+          "callee_symbol": "key",
+          "invocation": "root.is_none() && key(&event) < key(prior)",
+          "behavior_test": "dm_same_second_none_finds_earliest_assignment_under_real_relay_cursor",
+          "verification_command": "cargo test -p buzz-acp --lib dm_same_second_none_finds_earliest_assignment_under_real_relay_cursor -- --test-threads=1",
+          "coverage": "Task2 fix round1: preserve fatal health at stale fences and follow real relay DM ordering; fresh production-path regression and targeted mutation."
         }
       ],
       "verification_commands": [

@@ -60,12 +60,28 @@ async fn scripted(
                         if let Some(id) = filter["thread_cursor_id"].as_str() {
                             return event["id"].as_str().unwrap() > id;
                         }
+                        if let Some(until) = filter["until"].as_u64() {
+                            let at = event["created_at"].as_u64().unwrap();
+                            return at < until
+                                || (at == until
+                                    && filter["before_id"]
+                                        .as_str()
+                                        .is_none_or(|id| event["id"].as_str().unwrap() > id));
+                        }
                         true
                     })
                     .cloned()
                     .collect::<Vec<_>>();
                 page.sort_by(|a, b| key(a).cmp(&key(b)));
-                if filter["depth_limit"].is_null() && filter["ids"].is_null() {
+                if filter["#e"].is_null() {
+                    // Ordinary relay contract: time DESC, id ASC, including ties.
+                    page.sort_by(|a, b| {
+                        b["created_at"]
+                            .as_u64()
+                            .cmp(&a["created_at"].as_u64())
+                            .then_with(|| a["id"].as_str().cmp(&b["id"].as_str()))
+                    });
+                } else if filter["depth_limit"].is_null() && filter["ids"].is_null() {
                     page.reverse();
                 }
                 page.truncate(filter["limit"].as_u64().unwrap() as usize);
@@ -383,4 +399,66 @@ fn supplied_assignment_in_trigger_survives_history_delta_filtering() {
         ),
         Some(FirstMention::NotFound)
     ));
+}
+
+async fn dm_same_second_depth(depth: RestartDepth) {
+    let agent = nostr::Keys::generate();
+    let mut events = (1..=800).map(|n| json!({"kind":9,"id":format!("{n:064x}"),"pubkey":"a".repeat(64),"created_at":2000,"content":format!("same-second-{n}"),"tags":[]})).collect::<Vec<_>>();
+    for n in [900, 901] {
+        events.push(json!({"kind":9,"id":format!("{n:064x}"),"pubkey":"a".repeat(64),"created_at":1000,"content":format!("older-assignment-{n}"),"tags":[["p",agent.public_key().to_hex()]]}));
+    }
+    let mut chronological = events.clone();
+    chronological.sort_by(|a, b| key(a).cmp(&key(b)));
+    let expected = ConversationContext::Dm {
+        messages: chronological
+            .iter()
+            .map(|event| json_to_context_message(event).unwrap())
+            .collect(),
+        total: 802,
+        truncated: false,
+    };
+    assert!(crate::queue::format_conversation_context(&expected, None).len() < HISTORY_BYTES);
+    let (mut ctx, server, requests) = scripted(events).await;
+    ctx.agent_keys = agent;
+    ctx.context_message_limit = 0;
+    let (actual, mention) = selected(&ContextTarget::Dm, Uuid::from_u128(42), depth, &ctx).await;
+    assert!(
+        matches!(mention, Some(FirstMention::Found(ref event)) if event["id"] == format!("{:064x}",900)),
+        "the chronologically earliest assignment must be selected independently of page tie order"
+    );
+    let actual = actual.unwrap();
+    if depth == RestartDepth::All {
+        assert_eq!(
+            crate::queue::format_conversation_context(&actual, None),
+            crate::queue::format_conversation_context(&expected, None)
+        );
+    } else {
+        match actual {
+            ConversationContext::Dm {
+                messages, total, ..
+            } => {
+                assert_eq!(total, 802);
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].event_id, format!("{:064x}", 900));
+            }
+            _ => panic!("DM"),
+        }
+    }
+    let requests = requests.lock().unwrap();
+    assert_eq!(
+        requests.len(),
+        2,
+        "a fitting complete DM requires exactly two ordinary pages"
+    );
+    assert_eq!(requests[1]["before_id"], format!("{:064x}", 500));
+    assert_eq!(requests[1]["until"], 2000);
+    server.abort();
+}
+#[tokio::test]
+async fn dm_same_second_all_fits_with_older_assignment_under_real_relay_cursor() {
+    dm_same_second_depth(RestartDepth::All).await;
+}
+#[tokio::test]
+async fn dm_same_second_none_finds_earliest_assignment_under_real_relay_cursor() {
+    dm_same_second_depth(RestartDepth::None).await;
 }

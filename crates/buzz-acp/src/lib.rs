@@ -5287,14 +5287,7 @@ fn handle_prompt_result(
         result.agent.state.invalidate(&result.source);
         result.agent.background_context = None;
         result.batch = None;
-        if !matches!(
-            result.outcome,
-            PromptOutcome::AgentExited
-                | PromptOutcome::Timeout(_)
-                | PromptOutcome::CancelDrainTimeout(_)
-        ) {
-            result.outcome = PromptOutcome::Cancelled;
-        }
+        result.outcome = result.outcome.discard_retired_output();
     }
     if let Some(dispatch) = result.agent.state.control_dispatch.take() {
         dispatch.finish();

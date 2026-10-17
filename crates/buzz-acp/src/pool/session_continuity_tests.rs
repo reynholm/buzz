@@ -31,11 +31,24 @@ for line in sys.stdin:
         reply['result'] = {'sessionId': f'new-{created}'}
     elif method == 'session/resume':
         time.sleep(delay)
+        if os.environ.get('RESUME_PROTOCOL') == '1':
+            print('x' * 10000001, flush=True)
+            continue
         if os.environ.get('RESUME_ERROR') == '1':
             reply['error'] = {'code': -32002, 'message': 'Resource not found'}
         else:
             reply['result'] = {}
     elif method == 'session/prompt':
+        if os.environ.get('HANG_PROMPT') == '1':
+            continue
+        if os.environ.get('DIE_PROMPT'):
+            while not os.path.exists(os.environ['DIE_PROMPT']):
+                time.sleep(.01)
+            sys.exit(0)
+        if os.environ.get('BAD_PROMPT') == '1':
+            reply['result'] = {}
+            print(json.dumps(reply), flush=True)
+            continue
         prompt_count += 1
         if os.environ.get('PROMPTS'):
             with open(os.environ['PROMPTS'], 'a') as out:

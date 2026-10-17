@@ -421,7 +421,11 @@ pub(super) async fn acquire_session(
                     Err(AcpError::AgentExited) => return Err(AcpError::AgentExited),
                     Err(err) => {
                         // A restart during resume also forbids the fallback RPC.
-                        ensure_dispatch_current(agent)?;
+                        if ensure_dispatch_current(agent).is_err() {
+                            // Preserve the original error's health classification;
+                            // the retired result fence suppresses application output.
+                            return Err(err);
+                        }
                         let code = resume_failure_code(&err);
                         tracing::warn!(
                             target: "pool::session",
@@ -568,9 +572,7 @@ fn ensure_dispatch_current(agent: &OwnedAgent) -> Result<(), AcpError> {
         .as_ref()
         .is_some_and(|dispatch| !dispatch.current())
     {
-        Err(AcpError::Protocol(
-            "dispatch retired by session control".into(),
-        ))
+        Err(AcpError::DispatchRetired)
     } else {
         Ok(())
     }

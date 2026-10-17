@@ -1085,3 +1085,267 @@ async fn none_assignment_omitted_after_profile_render_is_explicitly_not_found() 
     agent.acp.shutdown().await;
     server.abort();
 }
+
+async fn retired_worker_health_is_preserved(mode: &str) {
+    let fixture = Fixture::new();
+    let scope = scope();
+    let human = Keys::generate();
+    let (mut ctx, server) = relay_context(scope.channel_id(), vec![]).await;
+    ctx.session_policy = crate::scope::SessionPolicy::Thread;
+    ctx.context_message_limit = 0;
+    ctx.session_controls =
+        crate::session_controls::SessionControlRuntime::new(Some(fixture.store.clone()));
+    let status = crate::session_status::SessionStatusRuntime::open(
+        fixture.dir.path(),
+        buzz_core::session_status::canonical_identity(
+            "wss://relay.example",
+            &ctx.agent_keys.public_key().to_hex(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let display_scope = crate::pool::session_visibility::status_scope(&scope).unwrap();
+    let snapshot = status
+        .dir()
+        .join(buzz_core::session_status::scope_file_name(&display_scope).unwrap());
+    ctx.session_status = Some(status.clone());
+    let job = authorized_control(&ctx, &human, &scope, "!restart none").await;
+    let release = fixture.dir.path().join("exit-now");
+    let env = match mode {
+        "cancel_drain" => vec![("HANG_PROMPT", "1")],
+        "adapter_death" => vec![("DIE_PROMPT", release.to_str().unwrap())],
+        "transport_after_return" => vec![("BAD_PROMPT", "1")],
+        "healthy_acquisition" => vec![("DELAY", "0.3")],
+        "resume_transport" => vec![
+            ("DELAY", "0.3"),
+            ("RESUME_CAP", "1"),
+            ("RESUME_PROTOCOL", "1"),
+        ],
+        _ => panic!("unknown health scenario"),
+    };
+    if mode == "resume_transport" {
+        fixture.departed_record(&scope, &ctx, &[]);
+    }
+    let mut agent = fixture.agent(&env).await;
+    let old_pid = agent.acp.process_id().unwrap();
+    let dispatch = ctx.session_controls.capture(&scope);
+    agent.state.control_dispatch = Some(dispatch.clone());
+    let trigger = mention(
+        &human,
+        scope.channel_id(),
+        scope.root_event_id(),
+        "OLD-TRIGGER",
+    );
+    let old_batch = batch(&scope, trigger);
+    let (control_tx, control_rx) = tokio::sync::oneshot::channel();
+    let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel();
+    let ctx = Arc::new(ctx);
+    let mut pool = AgentPool::from_slots(vec![None]);
+    let task_id = pool
+        .join_set
+        .spawn(run_prompt_task(
+            agent,
+            Some(old_batch.clone()),
+            None,
+            ctx.clone(),
+            result_tx,
+            Some(control_rx),
+            "retired-health".into(),
+        ))
+        .id();
+    pool.task_map_mut().insert(
+        task_id,
+        crate::pool::TaskMeta {
+            agent_index: 0,
+            channel_id: Some(scope.channel_id()),
+            scope: Some(scope.clone()),
+            turn_id: "retired-health".into(),
+            recoverable_batch: Some(old_batch),
+            control_tx: Some(control_tx),
+            steer_tx: None,
+            control_dispatch: Some(dispatch),
+            successful_steer_deliveries: Default::default(),
+        },
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !fixture.methods().iter().any(|method| {
+            method
+                == if mode == "healthy_acquisition" {
+                    "session/new"
+                } else if mode == "resume_transport" {
+                    "session/resume"
+                } else {
+                    "session/prompt"
+                }
+        }) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let mut result = if mode == "transport_after_return" {
+        Some(
+            tokio::time::timeout(Duration::from_secs(5), result_rx.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+        )
+    } else {
+        None
+    };
+    if !matches!(
+        mode,
+        "transport_after_return" | "healthy_acquisition" | "resume_transport"
+    ) {
+        assert!(
+            snapshot.exists(),
+            "the active old turn must have published status"
+        );
+    }
+    assert!(ctx.session_controls.restart(job).unwrap());
+    crate::pool::session_visibility::retire_scope(Some(&status), &scope);
+    let intent = ctx.session_controls.restart_intent(&scope).unwrap();
+    pool.invalidate_scope_session(&scope);
+    if mode == "cancel_drain" {
+        assert!(crate::signal_in_flight_task_for_scope(
+            &mut pool,
+            &scope,
+            crate::pool::ControlSignal::Rotate
+        ));
+    } else if mode == "adapter_death" {
+        std::fs::write(&release, "exit").unwrap();
+    }
+    let result = match result.take() {
+        Some(result) => result,
+        None => tokio::time::timeout(Duration::from_secs(8), result_rx.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+    };
+    assert!(
+        !snapshot.exists(),
+        "{mode}: stale completion must not republish retired status"
+    );
+    if mode == "resume_transport" {
+        assert!(
+            !fixture
+                .methods()
+                .iter()
+                .any(|method| method == "session/new"),
+            "retired resume transport failure cannot trigger fallback session/new"
+        );
+    }
+    let mut queue = crate::queue::EventQueue::new(crate::config::DedupMode::Queue);
+    let newer = mention(
+        &human,
+        scope.channel_id(),
+        scope.root_event_id(),
+        "NEWER-TRIGGER",
+    );
+    queue.push(crate::QueuedEvent {
+        scope: scope.clone(),
+        channel_id: scope.channel_id(),
+        event: newer.clone(),
+        received_at: std::time::Instant::now(),
+        prompt_tag: "test".into(),
+        edit: None,
+    });
+    let mut config = crate::error_outcome_emission_tests::test_config();
+    config.agent_command = "python3".into();
+    config.agent_args = vec!["-c".into(), ADAPTER.into()];
+    config.persona_env_vars = vec![("LOG".into(), fixture.log().display().to_string())];
+    let (respawn_tx, mut respawn_rx) = tokio::sync::mpsc::channel(8);
+    let mut crashes = vec![crate::SlotCircuit {
+        crash_times: vec![],
+        open_until: None,
+        respawn_in_flight: false,
+    }];
+    let mut respawns = tokio::task::JoinSet::new();
+    crate::handle_prompt_result(
+        &mut pool,
+        &mut queue,
+        &config,
+        result,
+        &mut false,
+        &Default::default(),
+        &mut crashes,
+        &respawn_tx,
+        &mut respawns,
+        None,
+        None,
+        &mut tokio::time::Instant::now(),
+    );
+    let returned = pool.try_claim(None);
+    if mode == "healthy_acquisition" {
+        assert!(
+            !crashes[0].respawn_in_flight,
+            "a benign retired acquisition must not masquerade as transport failure"
+        );
+        let mut returned = returned
+            .expect("healthy retired acquisition remains usable under the interim Rotate path");
+        assert_eq!(returned.acp.process_id(), Some(old_pid));
+        returned.acp.shutdown().await;
+    } else {
+        assert!(
+            returned.is_none(),
+            "{mode}: a retired broken worker must never return to the idle slot"
+        );
+        assert!(
+            crashes[0].respawn_in_flight,
+            "{mode}: process-health outcome must schedule replacement"
+        );
+    }
+    let next = queue.flush_next().unwrap();
+    assert!(
+        next.cancelled_events.is_empty(),
+        "retired trigger cannot be requeued"
+    );
+    assert_eq!(next.events.len(), 1);
+    assert_eq!(next.events[0].event.id, newer.id);
+    assert_eq!(ctx.session_controls.restart_intent(&scope), Some(intent));
+    assert!(fixture.record(&scope).live.is_none());
+    assert!(
+        !snapshot.exists(),
+        "{mode}: main-loop recovery must not resurrect old status"
+    );
+    if mode != "healthy_acquisition" {
+        let replacement = tokio::time::timeout(Duration::from_secs(8), respawn_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(replacement.index, 0);
+        let (mut client, _, _) = replacement.result.unwrap();
+        assert_ne!(
+            client.process_id(),
+            Some(old_pid),
+            "a new adapter process must actually initialize"
+        );
+        client.shutdown().await;
+    }
+    respawns.shutdown().await;
+    pool.join_set.shutdown().await;
+    server.abort();
+}
+
+#[tokio::test]
+async fn retired_cancel_drain_expiry_replaces_the_worker_through_result_handling() {
+    retired_worker_health_is_preserved("cancel_drain").await;
+}
+#[tokio::test]
+async fn retired_adapter_death_replaces_the_worker_through_result_handling() {
+    retired_worker_health_is_preserved("adapter_death").await;
+}
+#[tokio::test]
+async fn retired_transport_error_replaces_the_worker_through_result_handling() {
+    retired_worker_health_is_preserved("transport_after_return").await;
+}
+
+#[tokio::test]
+async fn retired_successful_acquisition_keeps_worker_health_and_fences_old_state() {
+    retired_worker_health_is_preserved("healthy_acquisition").await;
+}
+
+#[tokio::test]
+async fn retired_resume_transport_preserves_health_without_fallback_new() {
+    retired_worker_health_is_preserved("resume_transport").await;
+}

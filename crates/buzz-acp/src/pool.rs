@@ -778,6 +778,31 @@ pub enum PromptOutcome {
     CancelDrainTimeout(Duration),
 }
 
+impl PromptOutcome {
+    /// Remove obsolete task output without erasing worker-health evidence needed
+    /// by the main loop's existing crash/transport recovery paths.
+    pub(crate) fn discard_retired_output(self) -> Self {
+        match self {
+            Self::Error(AcpError::AgentExited) => Self::AgentExited,
+            Self::Error(AcpError::IdleTimeout(_)) => Self::Timeout(TimeoutKind::Idle),
+            Self::Error(AcpError::HardTimeout { silence }) => Self::Timeout(TimeoutKind::Hard {
+                recently_active: silence < RECENT_ACTIVITY_WINDOW,
+            }),
+            Self::Error(AcpError::CancelDrainTimeout(grace)) => Self::CancelDrainTimeout(grace),
+            Self::AgentExited
+            | Self::Timeout(_)
+            | Self::CancelDrainTimeout(_)
+            | Self::Error(
+                AcpError::Io(_)
+                | AcpError::WriteTimeout(_)
+                | AcpError::Timeout(_)
+                | AcpError::Protocol(_),
+            ) => self,
+            _ => Self::Cancelled,
+        }
+    }
+}
+
 /// Immutable config subset shared (via `Arc`) by all spawned prompt tasks.
 ///
 /// Built once from `Config` at startup. Avoids cloning the full config
@@ -2500,7 +2525,7 @@ fn send_prompt_result(
     let (outcome, batch) = if stale {
         agent.state.invalidate(&source);
         agent.background_context = None;
-        (PromptOutcome::Cancelled, None)
+        (outcome.discard_retired_output(), None)
     } else {
         (outcome, batch)
     };
@@ -3680,14 +3705,12 @@ pub async fn run_prompt_task(
         .as_ref()
         .is_some_and(|dispatch| !dispatch.current())
     {
-        send_prompt_result(
-            &result_tx,
-            &turn_id,
-            agent,
-            source,
-            PromptOutcome::Cancelled,
-            None,
-        );
+        let outcome = match prompt_result {
+            Ok(reason) => PromptOutcome::Ok(reason),
+            Err(error) => PromptOutcome::Error(error),
+        }
+        .discard_retired_output();
+        send_prompt_result(&result_tx, &turn_id, agent, source, outcome, None);
         return;
     }
     match prompt_result {
