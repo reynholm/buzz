@@ -443,27 +443,49 @@ async fn failed_resume_reports_the_actual_fallback_reason() {
 }
 
 #[test]
-fn unsafe_fallback_codes_become_safe_tokens() {
+fn fallback_codes_outside_the_allowlist_become_unknown() {
     use crate::session_store::SessionReason;
+    let wire = |code: &str| status_reason(&SessionReason::ResumeFailed(code.into())).as_wire();
+    for known in [
+        "not_persisted",
+        "store_unreadable",
+        "store_busy",
+        "not_found",
+        "timeout",
+        "protocol",
+        "rpc_-32603",
+        "rpc_7",
+        "rpc_-9223372036854775808",
+    ] {
+        assert_eq!(wire(known), format!("resume_failed:{known}"));
+    }
+    for leaked in [
+        "Transcript /home/u/x.jsonl: EACCES",
+        "transcript_eacces",
+        "transcript__home_u_x_jsonl__eacces",
+        "rpc_",
+        "rpc_-",
+        "rpc_12a",
+        "rpc_--1",
+        "rpc_12345678901234567890",
+        "NOT_FOUND",
+        "not_found ",
+        "",
+    ] {
+        assert_eq!(wire(leaked), "resume_failed:unknown", "{leaked:?}");
+    }
     assert_eq!(
-        status_reason(&SessionReason::ResumeFailed("rpc_-32603".into())),
-        StatusReason::ResumeFailed("rpc_-32603".into())
+        status_reason(&SessionReason::from(format!(
+            "resume_failed:{}",
+            "x".repeat(50)
+        )))
+        .as_wire(),
+        "resume_failed:unknown",
+        "an unrecognised stored wire string never reaches the tag"
     );
-    let raw = status_reason(&SessionReason::ResumeFailed(
-        "Transcript /home/u/x.jsonl: EACCES".into(),
-    ));
-    let StatusReason::ResumeFailed(code) = &raw else {
-        panic!("expected resume_failed, got {raw:?}");
-    };
-    assert!(raw.validate().is_ok(), "{code}");
-    assert!(!code.contains('/'), "{code}");
     assert_eq!(
-        status_reason(&SessionReason::ResumeFailed(String::new())),
-        StatusReason::ResumeFailed("unknown".into())
-    );
-    assert_eq!(
-        status_reason(&SessionReason::ResumeFailed("x".repeat(500))).validate(),
-        Ok(())
+        status_reason(&SessionReason::IdleSleep),
+        StatusReason::IdleSleep
     );
 }
 

@@ -6056,6 +6056,7 @@ New module: `true`.
 - Required symbol: `pub(super) fn history_coverage(`
 - Required symbol: `pub(crate) fn retire_scope(`
 - Required symbol: `pub(crate) fn retire_channel(`
+- Required symbol: `const KNOWN_FAILURE_CODES: &[&str]`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/session_visibility_tests.rs`
@@ -6077,6 +6078,7 @@ New module: `true`.
 - Required symbol: `pinned_assignment_outside_the_window_counts_supplied_events_once`
 - Required symbol: `counts_need_no_extra_history_walk`
 - Required symbol: `every_spawn_path_and_managed_mcp_get_the_current_status_dir`
+- Required symbol: `fallback_codes_outside_the_allowlist_become_unknown`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/runtime.rs`
