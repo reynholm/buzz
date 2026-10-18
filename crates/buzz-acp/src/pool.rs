@@ -58,9 +58,6 @@ const RECENT_ACTIVITY_WINDOW: Duration = Duration::from_secs(60);
 /// behavior is preferable to an ever-growing channel-policy session ledger.
 const MAX_HYDRATED_THREAD_ROOTS_PER_SCOPE: usize = 1024;
 
-// FlushBatch and BatchEvent derive Clone (added in queue.rs) so we can store
-// a recoverable copy in TaskMeta for panic recovery in Queue mode.
-
 /// Metadata stored per in-flight task for panic recovery.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct SuccessfulSteerDelivery {
@@ -12857,4 +12854,6 @@ mod delivery_runtime_tests;
 #[path = "pool/session_control_history_tests.rs"]
 mod session_control_history_regressions;
 
+#[cfg(test)]
+mod portable_retirement_tests;
 mod session_retirement;

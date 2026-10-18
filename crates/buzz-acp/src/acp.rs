@@ -5,8 +5,6 @@
 //! 1. [`AcpClient::spawn`] — launch agent binary as subprocess
 //! 2. [`AcpClient::initialize`] — protocol version negotiation
 //! 3. [`AcpClient::session_new`] — create session with MCP server config
-//! 4. [`AcpClient::session_prompt_with_idle_timeout`] — send prompt with idle/hard deadline, return stop reason
-//! 5. [`AcpClient::session_cancel`] / [`AcpClient::cancel_with_cleanup`] — cancel in-flight turn
 
 mod launch;
 
@@ -2543,8 +2541,6 @@ pub fn model_in_catalog(
                 .any(|model| model.get("modelId").and_then(|v| v.as_str()) == Some(desired_model))
         })
 }
-
-// ─── Drop: kill child process ─────────────────────────────────────────────────
 
 impl Drop for AcpClient {
     fn drop(&mut self) {
@@ -5412,6 +5408,9 @@ mod process_tracking_tests;
 
 #[cfg(all(test, unix))]
 mod terminate_tests;
+
+#[cfg(all(test, windows))]
+mod windows_retirement_tests;
 
 mod terminate;
 pub use terminate::TerminationReport;

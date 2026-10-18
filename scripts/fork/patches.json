@@ -4395,7 +4395,10 @@
       "path": ".github/workflows/_ci-rust.yml",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "python scripts/check-acp-retirement.py",
+        "python3 scripts/check-acp-retirement.py"
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "just ci"
@@ -10115,6 +10118,36 @@
       "invocation_seams": [],
       "verification_commands": [
         "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/acp/windows_retirement_tests.rs",
+      "responsibility": "Hosted Windows actual ACP containment and checked termination regressions",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/portable_retirement_tests.rs",
+      "responsibility": "Portable actual fake-ACP all-target controller/store/foreign-return gates",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "scripts/check-acp-retirement.py",
+      "responsibility": "Native hosted ACP retirement gate with test discovery and exact execution counts",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
       ]
     }
   ]

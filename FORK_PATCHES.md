@@ -2623,6 +2623,8 @@ Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
 New module: `false`.
 
+- Required symbol: `python scripts/check-acp-retirement.py`
+- Required symbol: `python3 scripts/check-acp-retirement.py`
 - Verify: `just ci`
 
 ## `.github/workflows/ci.yml`
@@ -6676,3 +6678,27 @@ Actual executor no-resume neighbor race and panic escaped-group false-Clean regr
 New module: `true`.
 
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/acp/windows_retirement_tests.rs`
+
+Hosted Windows actual ACP containment and checked termination regressions
+
+New module: `true`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `crates/buzz-acp/src/pool/portable_retirement_tests.rs`
+
+Portable actual fake-ACP all-target controller/store/foreign-return gates
+
+New module: `true`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `scripts/check-acp-retirement.py`
+
+Native hosted ACP retirement gate with test discovery and exact execution counts
+
+New module: `true`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
