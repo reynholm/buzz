@@ -15,9 +15,9 @@ const VERIFY_AFTER_KILL: Duration = Duration::from_secs(10);
 /// Confirmed outcome of explicitly retiring a worker and its observed work.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TerminationReport {
-    /// Every targeted process group disappeared and the direct child was reaped.
+    /// Every targeted process group or contained job emptied and the parent was reaped.
     Clean,
-    /// Process groups remain after the bounded verification window.
+    /// Managed processes or process groups remain after bounded verification.
     Leftover { count: usize },
     /// Ownership or enumeration could not be verified; no fresh session is safe.
     Unverified,

@@ -83,6 +83,7 @@ pub(super) fn spawn(command: Command) -> io::Result<ContainedChild> {
 pub(super) struct Retirement {
     graceful_deadline: Option<Instant>,
     verify_deadline: Option<Instant>,
+    kill_sent: bool,
 }
 
 fn parent_reaped(child: &mut ContainedChild) -> io::Result<bool> {
@@ -93,6 +94,20 @@ fn parent_reaped(child: &mut ContainedChild) -> io::Result<bool> {
 
 impl AcpClient {
     pub(super) async fn terminate_windows(&mut self) -> TerminationReport {
+        self.terminate_windows_with_query(|job| {
+            job.query_process_id_list()
+                .map(|processes| processes.len())
+                .map_err(Into::into)
+        })
+        .await
+    }
+
+    // Keep failure injection on the production retirement loop. Native Windows
+    // tests still spawn real contained children and independently observe exits.
+    pub(super) async fn terminate_windows_with_query(
+        &mut self,
+        mut query: impl FnMut(&Job) -> io::Result<usize>,
+    ) -> TerminationReport {
         self.termination.checked = true;
         let state = &mut self.termination.windows;
         // Save deadlines before any await, so cancellation/reentry never extends
@@ -106,8 +121,8 @@ impl AcpClient {
                 Ok(reaped) => reaped,
                 Err(_) => return TerminationReport::Unverified,
             };
-            let count = match self.child.job.query_process_id_list() {
-                Ok(processes) => processes.len(),
+            let count = match query(&self.child.job) {
+                Ok(count) => count,
                 // The library's bounded query also fails for oversized jobs.
                 Err(_) => return TerminationReport::Unverified,
             };
@@ -119,10 +134,13 @@ impl AcpClient {
                 let deadline = *state
                     .verify_deadline
                     .get_or_insert_with(|| now + Duration::from_secs(10));
-                // This terminates the inner job and all nested descendants.
-                // Retrying is safe and does not reset the verification deadline.
-                if self.child.start_kill().is_err() {
-                    return TerminationReport::Unverified;
+                // Terminate once after grace; a successful kill survives
+                // cancellation, while a failed attempt remains explicitly retryable.
+                if !state.kill_sent {
+                    if self.child.start_kill().is_err() {
+                        return TerminationReport::Unverified;
+                    }
+                    state.kill_sent = true;
                 }
                 if now >= deadline {
                     return TerminationReport::Leftover {

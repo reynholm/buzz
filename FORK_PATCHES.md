@@ -7127,6 +7127,8 @@ New module: `true`.
 - Required symbol: `query_process_id_list`
 - Required symbol: `graceful_deadline`
 - Required symbol: `verify_deadline`
+- Required symbol: `async fn terminate_windows_with_query`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `spawn`; exact call `let spawned = windows_job::spawn(cmd);`; behavior test `checked_termination_windows_harness_drop_kills_detached_tree`; verify `cargo test -p buzz-acp --lib checked_termination_windows -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/acp/terminate.rs` → `terminate_windows`; exact call `self.terminate_windows().await`; behavior test `checked_termination_windows_detached_grandchild_blocks_clean_after_parent_exit`; verify `cargo test -p buzz-acp --lib checked_termination_windows -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp/windows_job.rs` → `terminate_windows_with_query`; exact call `self.terminate_windows_with_query(|job| {`; behavior test `checked_termination_windows_empty_query_requires_parent_reap`; verify `python scripts/check-acp-retirement.py`
 - Verify: `cargo test -p buzz-acp --lib checked_termination_windows -- --test-threads=1`

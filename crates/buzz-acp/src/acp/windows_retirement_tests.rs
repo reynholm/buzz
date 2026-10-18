@@ -177,7 +177,7 @@ async fn checked_termination_windows_detached_grandchild_blocks_clean_after_pare
     assert!(alive(child));
     // Cancellation/reentry must not turn a cached parent exit into job proof.
     assert!(
-        tokio::time::timeout(Duration::from_secs(1), probe.client().terminate())
+        tokio::time::timeout(Duration::from_secs(5), probe.client().terminate())
             .await
             .is_err()
     );
@@ -187,9 +187,12 @@ async fn checked_termination_windows_detached_grandchild_blocks_clean_after_pare
         "the detached grandchild must outlive the adapter"
     );
     let started = Instant::now();
-    assert_eq!(probe.client().terminate().await, TerminationReport::Clean);
-    assert!(started.elapsed() >= Duration::from_secs(10));
-    assert!(started.elapsed() < Duration::from_secs(20));
+    let report = tokio::time::timeout(Duration::from_secs(12), probe.client().terminate())
+        .await
+        .expect("reentry restarted the graceful deadline");
+    assert_eq!(report, TerminationReport::Clean);
+    assert!(started.elapsed() >= Duration::from_secs(8));
+    assert!(started.elapsed() < Duration::from_secs(12));
     assert_dead(child).await;
     // A second explicit attempt must retain actual zero-job proof.
     assert_eq!(probe.client().terminate().await, TerminationReport::Clean);
@@ -229,4 +232,79 @@ async fn checked_termination_windows_harness_drop_kills_detached_tree() {
     drop(probe.client.take());
     assert_dead(parent).await;
     assert_dead(child).await;
+}
+
+#[tokio::test]
+async fn checked_termination_windows_query_error_after_parent_reap_is_unverified() {
+    let mut probe = Probe::new("detached").await;
+    let parent = probe.pid("adapter");
+    let descendant = probe.pid("descendant");
+    probe.client().stdin.take();
+    assert_dead(parent).await;
+    assert!(matches!(probe.client().child.try_wait(), Ok(Some(_))));
+    assert!(alive(descendant));
+    assert_eq!(
+        probe
+            .client()
+            .terminate_windows_with_query(|_| {
+                Err(std::io::Error::other("fixture job query failed"))
+            })
+            .await,
+        TerminationReport::Unverified
+    );
+    assert!(
+        alive(descendant),
+        "query failure is not proof of stopped work"
+    );
+    drop(probe.client.take());
+    assert_dead(descendant).await;
+}
+
+#[tokio::test]
+async fn checked_termination_windows_empty_query_requires_parent_reap() {
+    let mut probe = Probe::new("ignore").await;
+    let parent = probe.pid("adapter");
+    // An empty query alone cannot authorize replacement of a live parent.
+    assert!(
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            probe.client().terminate_windows_with_query(|_| Ok(0))
+        )
+        .await
+        .is_err(),
+        "empty job query accepted an unreaped parent"
+    );
+    assert!(alive(parent));
+    drop(probe.client.take());
+    assert_dead(parent).await;
+}
+
+#[tokio::test]
+async fn checked_termination_windows_verification_deadline_survives_cancellation() {
+    let mut probe = Probe::new("ignore").await;
+    let parent = probe.pid("adapter");
+    let started = Instant::now();
+    // Hold the queried job nonempty after the real kill to exercise the entire
+    // verification window, including cancellation five seconds into that phase.
+    assert!(tokio::time::timeout(
+        Duration::from_secs(20),
+        probe.client().terminate_windows_with_query(|_| Ok(1))
+    )
+    .await
+    .is_err());
+    assert_dead(parent).await;
+    assert!(matches!(probe.client().child.try_wait(), Ok(Some(_))));
+    let resumed = Instant::now();
+    let report = tokio::time::timeout(
+        Duration::from_secs(6),
+        probe.client().terminate_windows_with_query(|_| Ok(1)),
+    )
+    .await
+    .expect("reentry restarted a retirement deadline");
+    assert_eq!(report, TerminationReport::Leftover { count: 1 });
+    assert!(resumed.elapsed() < Duration::from_secs(6));
+    assert!(started.elapsed() >= Duration::from_secs(25));
+    assert!(started.elapsed() < Duration::from_secs(27));
+    // The real empty query and reaped parent are required even on a later retry.
+    assert_eq!(probe.client().terminate().await, TerminationReport::Clean);
 }

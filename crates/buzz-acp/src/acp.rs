@@ -457,7 +457,7 @@ mod compaction_tests;
 impl AcpClient {
     /// Kill the agent subprocess and wait for it to exit (no zombies).
     ///
-    /// `Drop` only calls `start_kill()` (sends SIGKILL but doesn't reap).
+    /// `Drop` cannot await guaranteed reaping.
     /// Call this when you need guaranteed cleanup — e.g., in `run_models`
     /// before process exit.
     pub async fn shutdown(&mut self) {
@@ -466,8 +466,8 @@ impl AcpClient {
         // ensures subprocesses (MCP servers, tool processes) are cleaned up
         // rather than orphaned to init.
         //
-        // Falls back to start_kill() (direct child only) on non-Unix or if
-        // the child has been polled to completion (id() returns None).
+        // Falls back to platform child cleanup (the whole job on Windows)
+        // on non-Unix or when id() returns None after the parent exits.
         match self.child.id() {
             Some(pid) if kill_process_group(pid) => {}
             _ => {

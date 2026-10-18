@@ -10819,7 +10819,8 @@
         "async fn terminate_windows",
         "query_process_id_list",
         "graceful_deadline",
-        "verify_deadline"
+        "verify_deadline",
+        "async fn terminate_windows_with_query"
       ],
       "invocation_seams": [
         {
@@ -10837,6 +10838,14 @@
           "behavior_test": "checked_termination_windows_detached_grandchild_blocks_clean_after_parent_exit",
           "verification_command": "cargo test -p buzz-acp --lib checked_termination_windows -- --test-threads=1",
           "coverage": "Cancellation/reentry cannot confuse a cached parent exit with an empty contained tree."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/acp/windows_job.rs",
+          "callee_symbol": "terminate_windows_with_query",
+          "invocation": "self.terminate_windows_with_query(|job| {",
+          "behavior_test": "checked_termination_windows_empty_query_requires_parent_reap",
+          "verification_command": "python scripts/check-acp-retirement.py",
+          "coverage": "Native fake-adapter test requires both job-zero and direct-parent-reap proof; hosted mutation removes guard and requires the actual assertion to fail, exact restoration and focused green recheck."
         }
       ],
       "verification_commands": [

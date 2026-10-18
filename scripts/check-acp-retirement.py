@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Run the hosted ACP retirement gate, refusing absent or zero-matched tests."""
 import datetime
+import hashlib
 import json
 import os
 import platform
+from pathlib import Path
 import re
 import subprocess
 import sys
@@ -38,7 +40,7 @@ print(json.dumps({"phase": "before", "source": before,
 
 base = ["cargo", "test", "--locked", "-p", "buzz-acp", "--lib"]
 # Discovery and execution use the same filters, then compare exact counts.
-gates = [("checked_termination", 6 if WINDOWS else 8), ("portable_retirement", 4)]
+gates = [("checked_termination", 9 if WINDOWS else 8), ("portable_retirement", 4)]
 if MACOS:
     gates.append(("checked_retirement", None))
 try:
@@ -68,6 +70,41 @@ try:
         summary = re.search(r"test result: ok\. (\d+) passed; 0 failed; 0 ignored;", result.stdout)
         if summary is None or int(summary[1]) != len(tests):
             raise SystemExit(f"{name}: executed count differs from discovered {len(tests)} tests")
+    if WINDOWS:
+        # Falsify the production parent-reap guard, require a behavioral failure,
+        # then restore exact bytes even when compilation/execution fails.
+        source = Path("crates/buzz-acp/src/acp/windows_job.rs")
+        original = source.read_bytes()
+        guard = b"if count == 0 && reaped {"
+        if original.count(guard) != 1:
+            raise SystemExit("Missing unique parent-reap guard for falsification")
+        test = ("acp::windows_retirement_tests::"
+                "checked_termination_windows_empty_query_requires_parent_reap")
+        command = base + [test, "--", "--exact", "--test-threads=1"]
+        try:
+            source.write_bytes(original.replace(guard, b"if count == 0 {"))
+            mutation = subprocess.run(command, capture_output=True,
+                                      encoding="utf-8", errors="replace")
+            print(mutation.stdout, end="", flush=True)
+            print(mutation.stderr, end="", file=sys.stderr, flush=True)
+            if (mutation.returncode == 0 or
+                "empty job query accepted an unreaped parent" not in mutation.stdout or
+                not re.search(r"test result: FAILED\. 0 passed; 1 failed; 0 ignored;",
+                              mutation.stdout)):
+                raise SystemExit("Parent-reap mutation did not fail the actual regression")
+        finally:
+            source.write_bytes(original)
+            if source.read_bytes() != original:
+                raise SystemExit("Retirement guard restoration differs")
+            print(json.dumps({"phase": "guard-restored",
+                "sha256": hashlib.sha256(original).hexdigest()}), flush=True)
+        restored = subprocess.run(command, capture_output=True,
+                                  encoding="utf-8", errors="replace")
+        print(restored.stdout, end="", flush=True)
+        print(restored.stderr, end="", file=sys.stderr, flush=True)
+        restored.check_returncode()
+        if not re.search(r"test result: ok\. 1 passed; 0 failed; 0 ignored;", restored.stdout):
+            raise SystemExit("Restored parent-reap regression did not execute once")
 finally:
     after = source_receipt()
     print(json.dumps({"phase": "after", "source": after,
