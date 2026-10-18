@@ -1147,16 +1147,20 @@ fn reconcile_legacy_persona_runtimes_in_file(path: &Path) {
 
 fn rewrite_legacy_persona_md_runtime(content: &str) -> Option<String> {
     let (frontmatter, body) = buzz_persona_pkg::persona::split_frontmatter(content).ok()?;
-    let mut value = serde_yaml::from_str::<serde_yaml::Value>(frontmatter).ok()?;
+    let mut value = yaml_serde::from_str::<yaml_serde::Value>(frontmatter).ok()?;
     let mapping = value.as_mapping_mut()?;
-    let runtime = mapping.get_mut(serde_yaml::Value::String("runtime".to_string()))?;
+    let runtime = mapping.get_mut(yaml_serde::Value::String("runtime".to_string()))?;
     if runtime.as_str()? != "sprout-agent" {
         return None;
     }
-    *runtime = serde_yaml::Value::String("buzz-agent".to_string());
-    let frontmatter = serde_yaml::to_string(&value).ok()?;
+    *runtime = yaml_serde::Value::String("buzz-agent".to_string());
+    let frontmatter = yaml_serde::to_string(&value).ok()?;
     Some(format!("---\n{frontmatter}---\n{body}"))
 }
+
+#[cfg(test)]
+#[path = "migration_yaml_tests.rs"]
+mod yaml_tests;
 
 fn reconcile_legacy_team_persona_runtime_files(dir: &Path) {
     let Ok(entries) = std::fs::read_dir(dir) else {

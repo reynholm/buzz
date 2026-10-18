@@ -14,7 +14,7 @@ buzz-deletion = { workspace = true }
 hex         = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
-serde_yaml  = { workspace = true }
+yaml_serde  = { workspace = true }
 dashmap     = { workspace = true }
 moka        = { workspace = true }
 evalexpr    = "11"

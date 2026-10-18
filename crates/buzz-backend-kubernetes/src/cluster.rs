@@ -20,7 +20,7 @@ use crate::reconcile::{CreateOutcome, DeleteOutcome, Substrate};
 use chrono::{DateTime, Utc};
 use k8s_openapi::api::core::v1::{Namespace, Pod, Secret};
 use kube::api::{Api, DeleteParams, GetParams, ListParams, PostParams, Preconditions};
-use kube::core::ErrorResponse;
+use kube::core::Status;
 use kube::{Client, Resource};
 use std::time::{Duration, Instant};
 
@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 /// These are wire strings `apimachinery` chooses, not names this crate picks:
 /// `StatusReasonAlreadyExists`, `StatusReasonConflict`, `StatusReasonNotFound`,
 /// and `StatusReasonForbidden` in `k8s.io/apimachinery/pkg/apis/meta/v1/types.go`.
-/// kube-core types `ErrorResponse::reason` as a bare `String`, so there is no
+/// kube-core types `Status::reason` as a bare `String`, so there is no
 /// upstream constant to bind to and the spelling is pinned by test instead.
 const REASON_ALREADY_EXISTS: &str = "AlreadyExists";
 const REASON_CONFLICT: &str = "Conflict";
@@ -47,7 +47,7 @@ pub struct Cluster {
 }
 
 /// The typed API error underneath a `kube::Error`, if it is one.
-fn api_error(error: &kube::Error) -> Option<&ErrorResponse> {
+fn api_error(error: &kube::Error) -> Option<&Status> {
     match error {
         kube::Error::Api(response) => Some(response),
         _ => None,
@@ -347,12 +347,7 @@ mod tests {
 
     /// A typed apiserver error, as kube-rs surfaces it.
     fn api(reason: &str, code: u16) -> kube::Error {
-        kube::Error::Api(ErrorResponse {
-            status: "Failure".into(),
-            message: String::new(),
-            reason: reason.into(),
-            code,
-        })
+        kube::Error::Api(Status::failure("", reason).with_code(code).boxed())
     }
 
     /// The one discriminator the whole file rests on, and the trap the spec

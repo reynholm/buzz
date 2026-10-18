@@ -9,6 +9,10 @@ use kube::config::{ExecConfig, KubeConfigOptions, Kubeconfig};
 use kube::{Client, Config};
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+#[path = "client_yaml_tests.rs"]
+mod yaml_tests;
+
 /// Directories prepended to `PATH` before the client is built.
 ///
 /// Kubeconfigs at Block near-universally authenticate through `exec`
@@ -105,12 +109,16 @@ fn explain(context: Option<&str>, error: &kube::Error) -> String {
 /// Build a client for the selected context.
 pub async fn connect(context: Option<&str>) -> Result<Client, String> {
     prepend_plugin_path();
+    let config = config_for(context).await?;
+    Client::try_from(config).map_err(|e| explain(context, &e))
+}
 
+async fn config_for(context: Option<&str>) -> Result<Config, String> {
     let options = KubeConfigOptions {
         context: context.map(str::to_string),
         ..Default::default()
     };
-    let config = Config::from_kubeconfig(&options).await.map_err(|e| {
+    let mut config = Config::from_kubeconfig(&options).await.map_err(|e| {
         // A named context that does not exist is a user typo, and the
         // kube-rs message for it is already specific.
         format!(
@@ -119,7 +127,12 @@ pub async fn connect(context: Option<&str>) -> Result<Client, String> {
         )
     })?;
 
-    Client::try_from(config).map_err(|e| explain(context, &e))
+    // Preserve kube 2's request policy. Kube 4 otherwise removes the read
+    // bound and retries Retry-After responses inside a single reconciler await,
+    // masking the API failure until Desktop kills the provider at its deadline.
+    config.read_timeout = Some(std::time::Duration::from_secs(295));
+    config.default_retry = false;
+    Ok(config)
 }
 
 #[cfg(test)]

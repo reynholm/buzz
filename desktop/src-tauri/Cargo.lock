@@ -1085,7 +1085,6 @@ dependencies = [
  "rmcp 1.8.0",
  "serde",
  "serde_json",
- "serde_yaml",
  "sha2 0.11.0",
  "tokio",
  "tracing",
@@ -1093,6 +1092,7 @@ dependencies = [
  "url",
  "urlencoding",
  "webbrowser",
+ "yaml_serde",
 ]
 
 [[package]]
@@ -1179,7 +1179,6 @@ dependencies = [
  "security-framework 3.7.0",
  "serde",
  "serde_json",
- "serde_yaml",
  "sha2 0.11.0",
  "sherpa-onnx",
  "strip-ansi-escapes",
@@ -1208,6 +1207,7 @@ dependencies = [
  "webkit2gtk",
  "window-vibrancy",
  "windows-sys 0.61.2",
+ "yaml_serde",
  "zeroize",
  "zip 8.6.0",
 ]
@@ -1249,8 +1249,8 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "serde_yaml",
  "thiserror 2.0.18",
+ "yaml_serde",
 ]
 
 [[package]]
@@ -2388,7 +2388,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccc2776f0c61eca1ca32528f85548abd1a4be8fb53d1b21c013e4f18da1e7090"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -4969,6 +4969,12 @@ dependencies = [
  "pkg-config",
  "vcpkg",
 ]
+
+[[package]]
+name = "libyaml-rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e126dda6f34391ab7b444f9922055facc83c07a910da3eb16f1e4d9c45dc777"
 
 [[package]]
 name = "line-clipping"
@@ -9627,19 +9633,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde_yaml"
-version = "0.9.34+deprecated"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
-dependencies = [
- "indexmap 2.14.0",
- "itoa",
- "ryu",
- "serde",
- "unsafe-libyaml",
-]
-
-[[package]]
 name = "serdect"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11115,7 +11108,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -12129,12 +12122,6 @@ name = "universal-time"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47a939edecc3c5a7b83c02e5f6b3c31d2bc69eabcc9a87ab12c6d37ee6dbc856"
-
-[[package]]
-name = "unsafe-libyaml"
-version = "0.2.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"
@@ -13743,6 +13730,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7d8a75eaf6557bb84a65ace8609883db44a29951042ada9b393151532e41fcb"
 dependencies = [
  "xml-rs",
+]
+
+[[package]]
+name = "yaml_serde"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33b729a08a9a6be689bbad3e2bf8015926db54b6622cc89c3a5f7dc174b9e918"
+dependencies = [
+ "indexmap 2.14.0",
+ "itoa",
+ "libyaml-rs",
+ "ryu",
+ "serde",
 ]
 
 [[package]]

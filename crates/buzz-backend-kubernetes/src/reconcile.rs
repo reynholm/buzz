@@ -496,7 +496,6 @@ mod tests {
         ContainerState, ContainerStateRunning, ContainerStateTerminated, ContainerStateWaiting,
         ContainerStatus, PodStatus,
     };
-    use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
     use std::cell::RefCell;
     use std::future::Future;
     use std::pin::pin;
@@ -1057,7 +1056,8 @@ mod tests {
         let id = identity();
         let cfg = config();
         let mut dying = our_pod(&id, &cfg, Some(running()));
-        dying.metadata.deletion_timestamp = Some(Time(Utc::now()));
+        dying.metadata.deletion_timestamp =
+            Some(serde_json::from_value(serde_json::json!(Utc::now().to_rfc3339())).unwrap());
         let fake = Fake::default().with_pod(dying);
         fake.on_poll.borrow_mut().push({
             let name = id.pod_name();
