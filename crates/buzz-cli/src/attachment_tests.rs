@@ -249,3 +249,36 @@ fn enforces_file_caps_without_widening_supported_media() {
         assert!(validate_upload(mime, 12).is_err());
     }
 }
+
+#[test]
+fn unicode_filenames_fit_relay_byte_limit_and_keep_extensions() {
+    use crate::attachments::sanitize_filename;
+    for (name, expected, mime) in [
+        (
+            format!("{}.md", "é".repeat(128)),
+            format!("{}.md", "é".repeat(126)),
+            "application/octet-stream",
+        ),
+        (
+            format!("{}.png", "🐝".repeat(128)),
+            format!("{}.png", "🐝".repeat(62)),
+            "image/png",
+        ),
+        (
+            format!("{}.zip", "a".repeat(300)),
+            format!("{}.zip", "a".repeat(251)),
+            "application/zip",
+        ),
+    ] {
+        let filename = sanitize_filename(&name);
+        assert_eq!(filename, expected);
+        assert!(filename.len() <= 255);
+        let desc = serde_json::from_value(serde_json::json!({
+            "url": "https://relay.test/media/blob.bin", "sha256": "ab",
+            "size": 12, "type": mime, "uploaded": 0,
+            "filename": filename,
+        }))
+        .unwrap();
+        assert!(build_imeta_tag(&desc).contains(&format!("filename {expected}")));
+    }
+}

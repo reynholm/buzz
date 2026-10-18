@@ -46,12 +46,25 @@ pub(crate) fn validate_upload(mime: &str, size: u64) -> Result<(), CliError> {
 
 pub(crate) fn sanitize_filename(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or(name).trim();
-    let cleaned: String = base.chars().filter(|c| !c.is_control()).take(255).collect();
+    let mut cleaned: String = base.chars().filter(|c| !c.is_control()).collect();
     if cleaned.is_empty() {
-        "file".into()
-    } else {
-        cleaned
+        return "file".into();
     }
+    if cleaned.len() > 255 {
+        // Relay imeta validation bounds UTF-8 bytes, not Unicode characters.
+        let suffix = cleaned
+            .rsplit_once('.')
+            .filter(|(stem, ext)| !stem.is_empty() && ext.len() < 254)
+            .map(|(_, ext)| format!(".{ext}"))
+            .unwrap_or_default();
+        let mut end = 255 - suffix.len();
+        while !cleaned.is_char_boundary(end) {
+            end -= 1;
+        }
+        cleaned.truncate(end);
+        cleaned.push_str(&suffix);
+    }
+    cleaned
 }
 
 pub(crate) fn attachment_markdown(desc: &BlobDescriptor) -> String {

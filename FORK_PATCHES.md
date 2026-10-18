@@ -6124,7 +6124,7 @@ New module: `false`.
 
 ## `crates/buzz-cli/src/attachments.rs`
 
-Preserve sanitized attachment basenames, enforce generic-file upload policy, and format download links while retaining image and video markup.
+Preserve sanitized attachment basenames, enforce generic-file upload policy, and format download links while retaining image and video markup. Bound names to 255 UTF-8 bytes at character boundaries and preserve extensions.
 
 New module: `true`.
 
@@ -6142,6 +6142,7 @@ New module: `true`.
 
 - Required symbol: `uploads_documents_archives_and_markdown_with_original_names`
 - Required symbol: `messages_emit_file_links_for_multiple_attachments_and_keep_media_markup`
+- Required symbol: `unicode_filenames_fit_relay_byte_limit_and_keep_extensions`
 - Verify: `cargo test -p buzz-cli`
 
 ## `crates/buzz-cli/src/client.rs`
@@ -6160,3 +6161,34 @@ Verify Markdown and ZIP picker uploads, file-card labels and sizes, and native d
 New module: `false`.
 
 - Verify: `cd desktop && pnpm test:e2e:smoke -- file-attachment.spec.ts`
+
+## `desktop/src-tauri/src/commands/media_download.rs`
+
+Fetch generic attachments through a bounded 100 MiB native path while retaining 50 MiB image/editor/clipboard caps and existing auth, redirect, and cancellation protections.
+
+New module: `false`.
+
+- Required symbol: `MAX_FILE_DOWNLOAD_BYTES`
+- Required symbol: `mod file_download_tests;`
+- Invocation: `desktop/src-tauri/src/commands/media_download.rs` → `fetch_blob_bytes_with_cap`; exact call `fetch_blob_bytes_with_cap(url, state, MAX_FILE_DOWNLOAD_BYTES, None).await`; behavior test `generic_download_above_fifty_mib_is_byte_exact`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib commands::media_download::file_download_tests::generic_download_above_fifty_mib_is_byte_exact -- --exact`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
+
+## `desktop/src-tauri/src/commands/media_download_file_tests.rs`
+
+Exercise the native HTTP file fetch above 50 MiB, the 100 MiB boundary, declared and streamed oversize rejection, preserved image caps, and an opt-in real-relay hash check.
+
+New module: `true`.
+
+- Required symbol: `generic_download_above_fifty_mib_is_byte_exact`
+- Required symbol: `generic_download_rejects_over_hundred_mib_with_or_without_length`
+- Required symbol: `native_download_from_relay_matches_expected_sha256`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
+
+## `desktop/src-tauri/src/commands/media_filename.rs`
+
+Bound sanitized filenames by UTF-8 bytes at character boundaries while preserving the extension for imeta ingest.
+
+New module: `false`.
+
+- Required symbol: `unicode_labels_fit_relay_utf8_byte_limit_without_losing_extensions`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`

@@ -8951,7 +8951,7 @@
     },
     {
       "path": "crates/buzz-cli/src/attachments.rs",
-      "responsibility": "Preserve sanitized attachment basenames, enforce generic-file upload policy, and format download links while retaining image and video markup.",
+      "responsibility": "Preserve sanitized attachment basenames, enforce generic-file upload policy, and format download links while retaining image and video markup. Bound names to 255 UTF-8 bytes at character boundaries and preserve extensions.",
       "is_new": true,
       "required_symbols": [
         "fn sanitize_filename(",
@@ -8970,7 +8970,8 @@
       "is_new": true,
       "required_symbols": [
         "uploads_documents_archives_and_markdown_with_original_names",
-        "messages_emit_file_links_for_multiple_attachments_and_keep_media_markup"
+        "messages_emit_file_links_for_multiple_attachments_and_keep_media_markup",
+        "unicode_filenames_fit_relay_byte_limit_and_keep_extensions"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -9003,6 +9004,53 @@
       "invocation_seams": [],
       "verification_commands": [
         "cd desktop && pnpm test:e2e:smoke -- file-attachment.spec.ts"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/media_download.rs",
+      "responsibility": "Fetch generic attachments through a bounded 100 MiB native path while retaining 50 MiB image/editor/clipboard caps and existing auth, redirect, and cancellation protections.",
+      "is_new": false,
+      "required_symbols": [
+        "MAX_FILE_DOWNLOAD_BYTES",
+        "mod file_download_tests;"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/commands/media_download.rs",
+          "callee_symbol": "fetch_blob_bytes_with_cap",
+          "invocation": "fetch_blob_bytes_with_cap(url, state, MAX_FILE_DOWNLOAD_BYTES, None).await",
+          "behavior_test": "generic_download_above_fifty_mib_is_byte_exact",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib commands::media_download::file_download_tests::generic_download_above_fifty_mib_is_byte_exact -- --exact"
+        }
+      ],
+      "verification_commands": [
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/media_download_file_tests.rs",
+      "responsibility": "Exercise the native HTTP file fetch above 50 MiB, the 100 MiB boundary, declared and streamed oversize rejection, preserved image caps, and an opt-in real-relay hash check.",
+      "is_new": true,
+      "required_symbols": [
+        "generic_download_above_fifty_mib_is_byte_exact",
+        "generic_download_rejects_over_hundred_mib_with_or_without_length",
+        "native_download_from_relay_matches_expected_sha256"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/media_filename.rs",
+      "responsibility": "Bound sanitized filenames by UTF-8 bytes at character boundaries while preserving the extension for imeta ingest.",
+      "is_new": false,
+      "required_symbols": [
+        "unicode_labels_fit_relay_utf8_byte_limit_without_losing_extensions"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace"
       ]
     }
   ]
