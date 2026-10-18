@@ -689,3 +689,83 @@ async fn compact_in_flight_restart_uses_retirement_return_and_reports_superseded
     pool.join_set.shutdown().await;
     server.abort();
 }
+
+#[tokio::test]
+async fn compact_uses_pre_ack_new_session_advertisement_after_ordinary_completion() {
+    let fixture = Fixture::new();
+    let human = Keys::generate();
+    let (mut ctx, server) = relay_context(scope().channel_id(), vec![]).await;
+    ctx.session_policy = crate::scope::SessionPolicy::Thread;
+    ctx.context_message_limit = 0;
+    ctx.session_controls =
+        crate::session_controls::SessionControlRuntime::new(Some(fixture.store.clone()));
+    ctx.session_status = Some(
+        crate::session_status::SessionStatusRuntime::open(
+            fixture.dir.path(),
+            buzz_core::session_status::canonical_identity(
+                "wss://relay.example",
+                &ctx.agent_keys.public_key().to_hex(),
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    );
+    let prompts = fixture.dir.path().join("new-advertised-prompts.jsonl");
+    let mut agent = fixture
+        .agent(&[
+            ("NEW_ADVERTISE", "1"),
+            ("COMPACT_STATUS", "completed"),
+            ("COMPACT_ONLY_SLASH", "1"),
+            ("PROMPTS", prompts.to_str().unwrap()),
+        ])
+        .await;
+    agent.state.control_dispatch = Some(ctx.session_controls.capture(&scope()));
+    let ctx = Arc::new(ctx);
+    let trigger = mention(
+        &human,
+        scope().channel_id(),
+        scope().root_event_id(),
+        "ordinary task",
+    );
+    let agent = run_turn(agent, &ctx, batch(&scope(), trigger)).await;
+    assert_eq!(agent.state.sessions[&scope()], "new-1");
+    let mut pool = crate::pool::AgentPool::from_slots(vec![Some(agent)]);
+    let generation = pool.record_scope_owner(scope(), 0);
+    let mut agent = pool.try_claim(Some(&scope())).unwrap();
+    agent.state.set_scope_owner_generation(scope(), generation);
+    pool.return_agent(agent);
+    enqueue(&ctx, &pool, &human, &scope()).await;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    crate::control_tasks::dispatch(&mut pool, &ctx, &tx);
+    let mut result = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    result.agent.acp.shutdown().await;
+    pool.join_set.shutdown().await;
+    server.abort();
+    assert_eq!(
+        result.outcome,
+        Ok(()),
+        "actual pre-ACK advertised compact must survive ordinary completion and binding"
+    );
+    assert_eq!(
+        fixture
+            .methods()
+            .iter()
+            .filter(|method| *method == "session/new")
+            .count(),
+        1
+    );
+    let frames: Vec<serde_json::Value> = std::fs::read_to_string(prompts)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(frames.len(), 2, "one ordinary and one compact prompt");
+    assert_eq!(frames[1]["sessionId"], "new-1");
+    assert_eq!(
+        frames[1]["prompt"],
+        serde_json::json!([{"type":"text","text":"/compact"}])
+    );
+}

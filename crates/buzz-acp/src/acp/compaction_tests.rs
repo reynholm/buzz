@@ -279,3 +279,122 @@ fn compaction_resume_adoption_requires_success_and_the_same_current_route() {
         "retired route revived its metadata"
     );
 }
+
+#[test]
+fn compaction_creation_adoption_is_bounded_and_fenced_by_success_token_and_retirement() {
+    use buzz_core::session_control::ControlFailure;
+    let mut tracker = compaction::CompactionTracker::default();
+    let advert = serde_json::json!({"availableCommands":[{"name":"compact"}]});
+    tracker.advertise("arbitrary-old", &advert);
+    assert_eq!(
+        tracker.begin("arbitrary-old", origin()),
+        Err(ControlFailure::StaleTarget)
+    );
+    let token = tracker.prepare_new();
+    tracker.advertise("unreturned", &advert);
+    tracker.advertise("created", &advert);
+    tracker.complete_new(token, Some("created"));
+    tracker.bind("created", uuid::Uuid::new_v4());
+    assert!(tracker.supported("created"));
+    assert_eq!(
+        tracker.begin("unreturned", origin()),
+        Err(ControlFailure::StaleTarget)
+    );
+
+    let token = tracker.prepare_new();
+    tracker.advertise("failed", &advert);
+    tracker.complete_new(token, None);
+    tracker.ensure_route("failed");
+    assert!(!tracker.supported("failed"));
+    let stale = tracker.prepare_new();
+    tracker.advertise("stale", &advert);
+    let current = tracker.prepare_new();
+    tracker.advertise("current", &advert);
+    tracker.complete_new(stale, Some("stale"));
+    tracker.complete_new(current, Some("current"));
+    assert!(tracker.supported("current"));
+    assert_eq!(
+        tracker.begin("stale", origin()),
+        Err(ControlFailure::StaleTarget)
+    );
+
+    let token = tracker.prepare_new();
+    tracker.advertise("retired", &advert);
+    tracker.clear("retired");
+    tracker.complete_new(token, Some("retired"));
+    assert_eq!(
+        tracker.begin("retired", origin()),
+        Err(ControlFailure::StaleTarget)
+    );
+    let token = tracker.prepare_new();
+    tracker.advertise("unowned", &advert);
+    tracker.retain_sessions(&Default::default());
+    tracker.complete_new(token, Some("unowned"));
+    assert_eq!(
+        tracker.begin("unowned", origin()),
+        Err(ControlFailure::StaleTarget)
+    );
+
+    let token = tracker.prepare_new();
+    for n in 0..128 {
+        tracker.advertise(&format!("candidate-{n}"), &advert);
+    }
+    tracker.advertise("overflow", &advert);
+    tracker.complete_new(token, Some("overflow"));
+    assert!(!tracker.supported("overflow"));
+    let token = tracker.prepare_new();
+    let oversized = "s".repeat(16 * 1024 + 1);
+    tracker.advertise(&oversized, &advert);
+    tracker.complete_new(token, Some(&oversized));
+    assert!(!tracker.supported(&oversized));
+}
+
+#[tokio::test]
+async fn failed_or_malformed_new_response_cannot_adopt_pre_ack_advertisement() {
+    for malformed in [false, true] {
+        let first = if malformed {
+            "reply['result'] = {}"
+        } else {
+            "reply['error'] = {'code':-32000,'message':'creation failed'}"
+        };
+        let script = format!(
+            r#"import sys,json
+created=0
+for line in sys.stdin:
+ r=json.loads(line)
+ if 'id' not in r: continue
+ reply={{'jsonrpc':'2.0','id':r['id']}}
+ if r.get('method')=='initialize': reply['result']={{'protocolVersion':2,'agentCapabilities':{{}}}}
+ elif r.get('method')=='session/new':
+  created+=1
+  if created==1:
+   print(json.dumps({{'jsonrpc':'2.0','method':'session/update','params':{{'sessionId':'reused','update':{{'sessionUpdate':'available_commands_update','availableCommands':[{{'name':'compact'}}]}}}}}}),flush=True)
+   {first}
+  else: reply['result']={{'sessionId':'reused'}}
+ else: reply['result']={{}}
+ print(json.dumps(reply),flush=True)
+"#
+        );
+        let mut c = AcpClient::spawn("/usr/bin/python3", &["-c".into(), script], &[], false)
+            .await
+            .unwrap();
+        c.initialize().await.unwrap();
+        assert!(c
+            .session_new_full("/tmp", vec![], None, None)
+            .await
+            .is_err());
+        assert!(!c.compact_supported("reused"));
+        assert_eq!(
+            c.session_new_full("/tmp", vec![], None, None)
+                .await
+                .unwrap()
+                .session_id,
+            "reused"
+        );
+        assert!(
+            !c.compact_supported("reused"),
+            "failed creation must not leak advertisement to a later success"
+        );
+        c.shutdown().await;
+    }
+}

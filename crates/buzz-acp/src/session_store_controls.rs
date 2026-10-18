@@ -166,18 +166,19 @@ impl SessionStore {
         created_at: u64,
     ) -> Result<ControlAttempt, StoreError> {
         self.begin_control_attempt_at(scope, command_id, created_at, unix_now()?)
+            .map(|(attempt, _)| attempt)
     }
 
     /// Persist an already admitted control using its original freshness check.
     /// Execution still enforces the captured logical deadline; receipt completion
     /// may follow bounded cleanup after that deadline.
-    pub(crate) fn begin_admitted_control_attempt(
+    pub(crate) fn begin_admitted_control_with_receipt(
         &self,
         scope: &SessionScope,
         command_id: &str,
         created_at: u64,
         admitted_at: u64,
-    ) -> Result<ControlAttempt, StoreError> {
+    ) -> Result<(ControlAttempt, ControlReceipt), StoreError> {
         self.begin_control_attempt_at(scope, command_id, created_at, admitted_at)
     }
 
@@ -187,7 +188,7 @@ impl SessionStore {
         command_id: &str,
         created_at: u64,
         admitted_at: u64,
-    ) -> Result<ControlAttempt, StoreError> {
+    ) -> Result<(ControlAttempt, ControlReceipt), StoreError> {
         if !is_canonical_id(command_id) {
             return Err(StoreError::InvalidControl);
         }
@@ -196,8 +197,10 @@ impl SessionStore {
             return Err(StoreError::StaleRequest);
         }
         let mut attempt = ControlAttempt::New;
+        let mut observed = None;
         let result = self.update_control(&self.record_path(scope), |current| {
             if let Some(prior) = current.and_then(|r| receipt(r, command_id)) {
+                observed = Some(prior.clone());
                 attempt = match prior.state {
                     ControlReceiptState::Started => ControlAttempt::PriorStarted,
                     ControlReceiptState::Finished(outcome) => {
@@ -211,11 +214,18 @@ impl SessionStore {
             }
             let mut record = current.cloned().unwrap_or_else(|| self.tombstone(None));
             make_room(&mut record.control_receipts, now)?;
-            add_started(&mut record, command_id, created_at, self.instance);
+            observed = Some(add_started(
+                &mut record,
+                command_id,
+                created_at,
+                self.instance,
+            ));
             Ok(record)
         });
         match result {
-            Ok(()) | Err(StoreError::AlreadyRecorded) => Ok(attempt),
+            Ok(()) | Err(StoreError::AlreadyRecorded) => observed
+                .map(|receipt| (attempt, receipt))
+                .ok_or(StoreError::InvalidControl),
             Err(err) => Err(err),
         }
     }
@@ -348,8 +358,13 @@ fn receipt<'a>(record: &'a SessionRecord, command_id: &str) -> Option<&'a Contro
         .find(|r| r.command_id == command_id)
 }
 
-fn add_started(record: &mut SessionRecord, command_id: &str, created_at: u64, instance: Uuid) {
-    record.control_receipts.push(ControlReceipt {
+fn add_started(
+    record: &mut SessionRecord,
+    command_id: &str,
+    created_at: u64,
+    instance: Uuid,
+) -> ControlReceipt {
+    let receipt = ControlReceipt {
         command_id: command_id.to_owned(),
         created_at,
         owner_instance: instance,
@@ -360,7 +375,9 @@ fn add_started(record: &mut SessionRecord, command_id: &str, created_at: u64, in
             .or(record.revision)
             .unwrap_or_else(Uuid::new_v4),
         state: ControlReceiptState::Started,
-    });
+    };
+    record.control_receipts.push(receipt.clone());
+    receipt
 }
 
 fn make_room(receipts: &mut Vec<ControlReceipt>, now: u64) -> Result<(), StoreError> {

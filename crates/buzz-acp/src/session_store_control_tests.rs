@@ -27,17 +27,18 @@ fn admitted_compact_receipt_uses_original_freshness_without_weakening_unadmitted
         Err(StoreError::StaleRequest)
     ));
     assert!(matches!(
-        store.begin_admitted_control_attempt(&scope, &id(1), signed, now),
+        store.begin_admitted_control_with_receipt(&scope, &id(1), signed, now),
         Err(StoreError::StaleRequest)
     ));
     assert!(matches!(
-        store.begin_admitted_control_attempt(&scope, &id(1), now + 60, now + 60),
+        store.begin_admitted_control_with_receipt(&scope, &id(1), now + 60, now + 60),
         Err(StoreError::StaleRequest)
     ));
     assert_eq!(
         store
-            .begin_admitted_control_attempt(&scope, &id(1), signed, now - 20)
-            .unwrap(),
+            .begin_admitted_control_with_receipt(&scope, &id(1), signed, now - 20)
+            .unwrap()
+            .0,
         ControlAttempt::New
     );
     assert_eq!(
@@ -46,8 +47,9 @@ fn admitted_compact_receipt_uses_original_freshness_without_weakening_unadmitted
     );
     assert_eq!(
         store
-            .begin_admitted_control_attempt(&scope, &id(1), signed, now - 20)
-            .unwrap(),
+            .begin_admitted_control_with_receipt(&scope, &id(1), signed, now - 20)
+            .unwrap()
+            .0,
         ControlAttempt::PriorStarted
     );
 }

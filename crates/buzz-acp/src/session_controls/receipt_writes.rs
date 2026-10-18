@@ -23,21 +23,17 @@ impl State {
         &mut self,
         store: &SessionStore,
         scope: &SessionScope,
-        id: &str,
+        receipt: ControlReceipt,
         outcome: ControlOutcome,
         operation_outcome: ControlOutcome,
     ) {
-        let LoadOutcome::Found(record) = store.load(scope) else {
+        if receipt.owner_instance != store.instance()
+            || receipt.state != ControlReceiptState::Started
+        {
             return;
-        };
-        let Some(receipt) = record.control_receipts.into_iter().find(|receipt| {
-            receipt.command_id == id
-                && receipt.owner_instance == store.instance()
-                && receipt.state == ControlReceiptState::Started
-        }) else {
-            return;
-        };
-        if self.receipt_writes.len() >= 128 && !self.receipt_writes.contains_key(id) {
+        }
+        let id = receipt.command_id.clone();
+        if self.receipt_writes.len() >= 128 && !self.receipt_writes.contains_key(&id) {
             // Admission reserves this bounded capacity before any effect.
             tracing::error!(
                 command = id,
@@ -46,7 +42,7 @@ impl State {
             return;
         }
         self.receipt_writes.insert(
-            id.into(),
+            id,
             ReceiptPersistence {
                 scope: scope.clone(),
                 receipt,

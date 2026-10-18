@@ -6,6 +6,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 const MAX_IDS: usize = 128;
+const MAX_CREATION_BYTES: usize = 16 * 1024;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -28,13 +29,19 @@ pub(super) struct CompactionTracker {
     routes: HashMap<String, Route>,
     entries: VecDeque<Entry>,
     sequence: u64,
+    creation: Option<Creation>,
+}
+
+struct Creation {
+    generation: Uuid,
+    advertisements: HashMap<String, bool>,
 }
 
 struct Route {
     generation: Uuid,
     advertised: bool,
     manual: Option<Manual>,
-    adoptable_resume: bool,
+    adoptable_binding: bool,
 }
 struct Manual {
     after: u64,
@@ -76,9 +83,44 @@ impl CompactionTracker {
                 generation,
                 advertised: false,
                 manual: None,
-                adoptable_resume: false,
+                adoptable_binding: false,
             },
         );
+    }
+
+    pub(super) fn prepare_new(&mut self) -> Uuid {
+        let generation = Uuid::new_v4();
+        self.creation = Some(Creation {
+            generation,
+            advertisements: HashMap::new(),
+        });
+        generation
+    }
+
+    pub(super) fn complete_new(&mut self, generation: Uuid, session: Option<&str>) {
+        if self
+            .creation
+            .as_ref()
+            .is_none_or(|pending| pending.generation != generation)
+        {
+            return;
+        }
+        let Some(pending) = self.creation.take() else {
+            return;
+        };
+        let Some(session) = session.filter(|session| !session.is_empty()) else {
+            return;
+        };
+        let advertised = pending
+            .advertisements
+            .get(session)
+            .copied()
+            .unwrap_or(false);
+        self.route(session, generation);
+        if let Some(route) = self.routes.get_mut(session) {
+            route.advertised = advertised;
+            route.adoptable_binding = true;
+        }
     }
 
     pub(super) fn prepare_resume(&mut self, session: &str) -> Uuid {
@@ -97,24 +139,24 @@ impl CompactionTracker {
         }
         if success {
             if let Some(route) = self.routes.get_mut(session) {
-                route.adoptable_resume = true;
+                route.adoptable_binding = true;
             }
         } else {
             self.clear(session);
         }
     }
 
-    /// Attaching display metadata to this successful resume is not a new
-    /// provider generation. Keep its pre-ACK IDs and sequence fence intact.
+    /// Attaching display metadata to this successful attachment is not a new
+    /// provider generation. Keep its pre-ACK IDs and capability intact.
     pub(super) fn bind(&mut self, session: &str, generation: Uuid) {
         if let Some(route) = self
             .routes
             .get_mut(session)
-            .filter(|route| route.adoptable_resume)
+            .filter(|route| route.adoptable_binding)
         {
             let prior = route.generation;
             route.generation = generation;
-            route.adoptable_resume = false;
+            route.adoptable_binding = false;
             for entry in &mut self.entries {
                 if entry.session == session && entry.generation == prior {
                     entry.generation = generation;
@@ -126,23 +168,35 @@ impl CompactionTracker {
     }
 
     pub(super) fn retain_sessions(&mut self, sessions: &std::collections::HashSet<String>) {
+        self.creation = None;
         self.routes.retain(|session, _| sessions.contains(session));
         self.entries
             .retain(|entry| sessions.contains(&entry.session));
     }
 
     pub(super) fn clear(&mut self, session: &str) {
+        self.creation = None;
         self.routes.remove(session);
         self.entries.retain(|entry| entry.session != session);
     }
 
     pub(super) fn advertise(&mut self, session: &str, update: &serde_json::Value) {
+        let advertised = update["availableCommands"]
+            .as_array()
+            .is_some_and(|commands| commands.iter().any(|command| command["name"] == "compact"));
         if let Some(route) = self.routes.get_mut(session) {
-            route.advertised = update["availableCommands"]
-                .as_array()
-                .is_some_and(|commands| {
-                    commands.iter().any(|command| command["name"] == "compact")
-                });
+            route.advertised = advertised;
+        } else if let Some(pending) = &mut self.creation {
+            // Unknown notifications never establish a route. Only this bounded
+            // in-flight creation may later adopt its successfully returned ID.
+            let existing = pending.advertisements.contains_key(session);
+            let bytes: usize = pending.advertisements.keys().map(String::len).sum();
+            if existing
+                || (pending.advertisements.len() < MAX_IDS
+                    && bytes.saturating_add(session.len()) <= MAX_CREATION_BYTES)
+            {
+                pending.advertisements.insert(session.into(), advertised);
+            }
         }
     }
 

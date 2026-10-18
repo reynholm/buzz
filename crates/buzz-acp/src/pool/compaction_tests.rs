@@ -634,3 +634,117 @@ async fn read_http_request(socket: &mut tokio::net::TcpStream) -> Vec<u8> {
         }
     }
 }
+
+#[tokio::test]
+async fn compact_finalized_started_survives_both_locked_finalization_calls() {
+    finalized_started_survives_unavailable_store("locked").await;
+}
+
+#[tokio::test]
+async fn compact_finalized_started_survives_unreadable_finalization_record() {
+    finalized_started_survives_unavailable_store("unreadable").await;
+}
+
+async fn finalized_started_survives_unavailable_store(mode: &str) {
+    use crate::session_store::{ControlReceiptState, STORE_LOCK_WAIT};
+    use buzz_core::session_control::{ControlFailure, ControlResult, SessionResult};
+    let (mut result, fixture, ctx, _) = run_compact("completed", false).await;
+    let record = fixture.record(&scope());
+    let expected = record.control_receipts[0].clone();
+    assert_eq!(expected.state, ControlReceiptState::Started);
+    let path = std::fs::read_dir(fixture.store.channel_dir(scope().channel_id()))
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .unwrap();
+    let saved = std::fs::read(&path).unwrap();
+    let lock_path = std::path::PathBuf::from(format!("{}.lock", path.display()));
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(lock_path)
+        .unwrap();
+    if mode == "locked" {
+        fs2::FileExt::lock_exclusive(&lock).unwrap();
+    } else {
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+    }
+    let started = std::time::Instant::now();
+    ctx.session_controls
+        .finish_compaction_job(&result.job, result.outcome);
+    let elapsed = started.elapsed();
+    if mode == "locked" {
+        fs2::FileExt::unlock(&lock).unwrap();
+        assert!(
+            elapsed >= STORE_LOCK_WAIT * 2,
+            "both real record-lock attempts must fail: {elapsed:?}"
+        );
+    } else {
+        if path.is_dir() {
+            std::fs::remove_dir(&path).unwrap();
+        }
+        std::fs::write(&path, saved).unwrap();
+    }
+    assert_eq!(ctx.session_controls.receipt_write_count(), 1, "exact locally Started intent must survive failed finalization without a fresh successful read");
+    let error = Err(ControlFailure::StoreUnavailable);
+    let publication = ctx
+        .session_controls
+        .take_publications()
+        .pop_front()
+        .unwrap();
+    assert_eq!(publication.result, ControlResult::Terminal(error));
+    let mut reconciliation = crate::session_controls::OrphanReconciliation::default();
+    fixture.store.fail_writes(true);
+    reconciliation.drive(&ctx.session_controls, 128);
+    reconciliation.wake().await;
+    reconciliation.drive(&ctx.session_controls, 128);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), reconciliation.wake())
+            .await
+            .is_err(),
+        "repair must retain shared backoff"
+    );
+    fixture.store.fail_writes(false);
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            reconciliation.drive(&ctx.session_controls, 128);
+            if ctx.session_controls.receipt_write_count() == 0 { break; }
+            tokio::select! { _ = reconciliation.wake() => {}, _ = tokio::time::sleep(Duration::from_millis(10)) => {} }
+        }
+    }).await.expect("known finalized receipt must repair after storage recovers");
+    let repaired = fixture.record(&scope()).control_receipts[0].clone();
+    assert_eq!(repaired.owner_instance, expected.owner_instance);
+    assert_eq!(repaired.owner_generation, expected.owner_generation);
+    assert_eq!(repaired.state, ControlReceiptState::Finished(error));
+    ctx.session_controls
+        .queue_compaction(result.job.job.clone(), Err(ControlFailure::NoSession))
+        .unwrap();
+    assert!(ctx.session_controls.pending_compactions().is_empty());
+    let publication = ctx
+        .session_controls
+        .take_publications()
+        .pop_front()
+        .unwrap();
+    let signed = submit_one_result(&ctx, &publication).await;
+    signed.verify().unwrap();
+    assert_eq!(signed.kind.as_u16(), 7);
+    let tags: Vec<_> = signed
+        .tags
+        .iter()
+        .map(|tag| tag.as_slice().to_vec())
+        .collect();
+    let parsed = SessionResult::from_tags(&signed.content, &tags).unwrap();
+    assert_eq!(parsed.command_id, result.job.job.origin.command_event_id);
+    assert_eq!(parsed.result, ControlResult::Terminal(error));
+    assert_eq!(
+        fixture
+            .methods()
+            .iter()
+            .filter(|method| *method == "session/prompt")
+            .count(),
+        1
+    );
+    result.agent.acp.shutdown().await;
+}

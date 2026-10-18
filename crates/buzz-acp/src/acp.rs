@@ -837,7 +837,14 @@ impl AcpClient {
         let before = self
             .process_id()
             .and_then(|pid| crate::process_tree::snapshot().map(|tree| tree.descendant_pids(pid)));
-        let result = self.send_request("session/new", params).await?;
+        let generation = self.compactions.prepare_new();
+        let response = self.send_request("session/new", params).await;
+        let returned_session = response
+            .as_ref()
+            .ok()
+            .and_then(|result| result["sessionId"].as_str());
+        self.compactions.complete_new(generation, returned_session);
+        let result = response?;
         let session_id = result["sessionId"]
             .as_str()
             .ok_or_else(|| AcpError::Protocol("session/new response missing sessionId".into()))?

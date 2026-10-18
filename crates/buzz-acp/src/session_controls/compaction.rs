@@ -1,6 +1,6 @@
 //! Bounded manual control jobs; provider execution belongs to the exact owner.
 use super::*;
-use crate::session_store::{ControlAttempt, ControlReceiptState};
+use crate::session_store::{ControlAttempt, ControlReceipt, ControlReceiptState};
 use buzz_core::session_control::{ControlOutcome, ControlResult};
 use std::time::Duration;
 
@@ -30,6 +30,7 @@ pub(crate) struct AdmittedSessionControl {
 pub(super) struct PendingCompaction {
     pub(super) admitted: AdmittedSessionControl,
     pub(super) worker: Option<usize>,
+    started: Option<ControlReceipt>,
 }
 
 impl SessionControlRuntime {
@@ -117,6 +118,7 @@ impl SessionControlRuntime {
                     deadline: tokio::time::Instant::now() + COMPACT_WAIT,
                 },
                 worker: None,
+                started: None,
             },
         );
         Ok(())
@@ -145,13 +147,13 @@ impl SessionControlRuntime {
             return Err(ControlFailure::Busy);
         }
         if let Some(store) = &self.store {
-            match store.begin_admitted_control_attempt(
+            match store.begin_admitted_control_with_receipt(
                 &job.scope,
                 &job.origin.command_event_id,
                 job.event.created_at.as_secs(),
                 job.admitted_at,
             ) {
-                Ok(ControlAttempt::New) => {
+                Ok((ControlAttempt::New, receipt)) => {
                     if let Err(error) = store.finish_control_attempt(
                         &job.scope,
                         &job.origin.command_event_id,
@@ -161,20 +163,20 @@ impl SessionControlRuntime {
                         state.retain_receipt_write(
                             store,
                             &job.scope,
-                            &job.origin.command_event_id,
+                            receipt,
                             Err(failure),
                             operation_outcome,
                         );
                     }
                 }
-                Ok(ControlAttempt::PriorFinished(outcome)) => {
+                Ok((ControlAttempt::PriorFinished(outcome), _)) => {
                     state.publish(Publication {
                         command_id: job.origin.command_event_id.clone(),
                         result: ControlResult::Terminal(outcome),
                     });
                     return Ok(());
                 }
-                Ok(ControlAttempt::PriorStarted) => return Ok(()),
+                Ok((ControlAttempt::PriorStarted, _)) => return Ok(()),
                 Err(error) => failure = store_failure(error),
             }
         }
@@ -220,16 +222,32 @@ impl SessionControlRuntime {
         if !job.dispatch.current() {
             return Err(ControlFailure::Superseded);
         }
-        self.store
+        // Keep the owning controller entry locked across durable Started and
+        // capture: timeout/cancel/panic must not depend on this future returning.
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let pending = state
+            .compactions
+            .get_mut(&job.job.scope)
+            .filter(|pending| pending.admitted.job.origin == job.job.origin)
+            .ok_or(ControlFailure::Superseded)?;
+        let store = self
+            .store
             .as_ref()
-            .ok_or(ControlFailure::StoreUnavailable)?
-            .begin_admitted_control_attempt(
+            .ok_or(ControlFailure::StoreUnavailable)?;
+        let (attempt, receipt) = store
+            .begin_admitted_control_with_receipt(
                 &job.job.scope,
                 &job.job.origin.command_event_id,
                 job.job.event.created_at.as_secs(),
                 job.job.admitted_at,
             )
-            .map_err(store_failure)
+            .map_err(store_failure)?;
+        if receipt.owner_instance == store.instance()
+            && receipt.state == ControlReceiptState::Started
+        {
+            pending.started = Some(receipt);
+        }
+        Ok(attempt)
     }
 
     pub(crate) fn finish_compaction_job(
@@ -250,40 +268,54 @@ impl SessionControlRuntime {
             return;
         }
         let operation_outcome = outcome;
+        let mut expected = state
+            .compactions
+            .get(&job.job.scope)
+            .and_then(|pending| pending.started.clone());
         if let Some(store) = &self.store {
             if let Err(error) = store.finish_control_attempt(
                 &job.job.scope,
                 &job.job.origin.command_event_id,
                 &outcome,
             ) {
-                // Pre-execution refusal has no Started marker. Persist a receipt
-                // when possible so a replay returns that same refusal.
-                match store.begin_admitted_control_attempt(
+                let unresolved = match store.begin_admitted_control_with_receipt(
                     &job.job.scope,
                     &job.job.origin.command_event_id,
                     job.job.event.created_at.as_secs(),
                     job.job.admitted_at,
                 ) {
-                    Ok(ControlAttempt::New | ControlAttempt::PriorStarted) => {
-                        if let Err(error) = store.finish_control_attempt(
-                            &job.job.scope,
-                            &job.job.origin.command_event_id,
-                            &outcome,
-                        ) {
-                            tracing::warn!(%error, "compaction terminal receipt could not be persisted");
-                            outcome = Err(ControlFailure::StoreUnavailable);
-                            state.retain_receipt_write(
-                                store,
+                    Ok((ControlAttempt::PriorFinished(prior), _)) => {
+                        outcome = prior;
+                        false
+                    }
+                    Ok((ControlAttempt::New | ControlAttempt::PriorStarted, receipt)) => {
+                        if expected.is_none()
+                            && receipt.owner_instance == store.instance()
+                            && receipt.state == ControlReceiptState::Started
+                        {
+                            expected = Some(receipt);
+                        }
+                        store
+                            .finish_control_attempt(
                                 &job.job.scope,
                                 &job.job.origin.command_event_id,
-                                outcome,
-                                operation_outcome,
-                            );
-                        }
+                                &outcome,
+                            )
+                            .is_err()
                     }
-                    Ok(ControlAttempt::PriorFinished(prior)) => outcome = prior,
-                    Err(_) => {
-                        tracing::warn!(%error, "compaction refusal receipt unavailable");
+                    Err(_) => true,
+                };
+                if unresolved {
+                    tracing::warn!(%error, "compaction terminal receipt unavailable; preserving known local Started");
+                    outcome = Err(ControlFailure::StoreUnavailable);
+                    if let Some(receipt) = expected {
+                        state.retain_receipt_write(
+                            store,
+                            &job.job.scope,
+                            receipt,
+                            outcome,
+                            operation_outcome,
+                        );
                     }
                 }
             }
