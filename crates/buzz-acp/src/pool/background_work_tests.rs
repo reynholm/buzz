@@ -1160,3 +1160,6 @@ async fn background_observer_cancel_after_ordinary_control_never_resumes_collect
             .contains_key(&scope));
     }
 }
+
+#[path = "background_uncertainty_tests.rs"]
+mod uncertainty_tests;

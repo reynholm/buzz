@@ -279,6 +279,14 @@ pub fn append_delivered(ids: &mut Vec<String>, new: impl IntoIterator<Item = Str
     }
 }
 
+/// Registry proof distinguishes a live owner from temporarily unavailable evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InstanceLiveness {
+    Alive,
+    Dead,
+    Unknown,
+}
+
 /// Per-agent directory of session records.
 pub struct SessionStore {
     dir: PathBuf,
@@ -370,28 +378,33 @@ impl SessionStore {
             .join(format!("{instance}.lock"))
     }
 
-    /// Whether the harness process `instance` is still running.
+    /// Whether the harness process `instance` may still be running.
+    /// Uncertain ownership must block resume admission just like a live owner.
     pub fn instance_alive(&self, instance: Uuid) -> bool {
+        self.instance_liveness(instance) != InstanceLiveness::Dead
+    }
+
+    pub(crate) fn instance_liveness(&self, instance: Uuid) -> InstanceLiveness {
         if instance == self.instance {
-            return true;
+            return InstanceLiveness::Alive;
         }
         let Ok(_registry) = self.lock_record(&self.dir.join(INSTANCES_DIR)) else {
-            return true; // Registration in progress or unknown: never resume.
+            return InstanceLiveness::Unknown;
         };
         let path = self.instance_lock_path(instance);
         let file = match OpenOptions::new().read(true).write(true).open(&path) {
             Ok(file) => file,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => return false,
-            // Unknown state must not authorize taking over a live session.
-            Err(_) => return true,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return InstanceLiveness::Dead,
+            Err(_) => return InstanceLiveness::Unknown,
         };
         match file.try_lock_exclusive() {
             Ok(()) => {
                 let _ = FileExt::unlock(&file);
                 let _ = fs::remove_file(&path);
-                false
+                InstanceLiveness::Dead
             }
-            Err(_) => true,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => InstanceLiveness::Alive,
+            Err(_) => InstanceLiveness::Unknown,
         }
     }
 

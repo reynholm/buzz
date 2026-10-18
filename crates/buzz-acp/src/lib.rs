@@ -4376,20 +4376,9 @@ async fn run_harness(
     }
     drop(pool);
 
-    // Abort any in-flight respawn tasks. They may be sleeping in backoff or
-    // running spawn_and_init — either way, we don't want them spawning new
-    // children after the main loop has exited. RespawnGuard::Drop sends a
-    // failure result for aborted tasks, so respawn_in_flight is cleared.
-    respawn_tasks.shutdown().await;
-
-    // Drain any respawn results that completed before the abort. Explicitly
-    // shut down returned agents instead of relying on AcpClient::Drop.
-    while let Ok(rr) = respawn_rx.try_recv() {
-        if let Ok((mut acp, _, _)) = rr.result {
-            acp.shutdown().await;
-            tracing::debug!(agent = rr.index, "reaped respawned agent on shutdown");
-        }
-    }
+    let _uncertain_retirements =
+        worker_retirement::shutdown(&mut parked_retirements, &mut respawn_tasks, &mut respawn_rx)
+            .await;
 
     // Cancel any in-flight presence heartbeat before sending offline.
     if let Some(h) = presence_task.take() {

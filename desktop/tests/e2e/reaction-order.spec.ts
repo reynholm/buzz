@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { installMockBridge } from "../helpers/bridge";
+import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 import { waitForAnimations } from "../helpers/animations";
 
 // Reaction ordering end-to-end guard.
@@ -108,7 +108,21 @@ test("reaction pills render left-to-right in the order reactions were added", as
 
   const pills = await getPillOrder(row);
   expect(pills).toEqual(["👍", "❤️", "😂"]);
-  await expect.poll(() => getBodyToReactionGap(row)).toBe(6);
+  const controls = row.getByTestId("manage-current-session");
+  await expect(controls).toBeVisible();
+  await expect
+    .poll(async () => {
+      const body = await row.locator(".message-markdown").first().boundingBox();
+      const control = await controls.boundingBox();
+      const reactions = await row
+        .getByTestId("message-reactions")
+        .boundingBox();
+      if (!body || !control || !reactions)
+        throw new Error("agent reaction bounds missing");
+      expect(control.y).toBeGreaterThanOrEqual(body.y + body.height);
+      return Math.round(reactions.y - (control.y + control.height));
+    })
+    .toBe(6);
 
   // Screenshot for PR visual proof.
   const screenshotDir = path.resolve("test-results/reaction-order-screenshots");
@@ -180,4 +194,26 @@ test("a later emoji that accrues more reactors stays to the right of an earlier 
     path: path.join(screenshotDir, "reaction-order-count-stable.png"),
     contentType: "image/png",
   });
+});
+
+test("ordinary non-agent reactions stay adjacent to the message body", async ({
+  page,
+}) => {
+  await openGeneral(page);
+  const ordinaryId = await page.evaluate((pubkey) => {
+    const emit = window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__;
+    if (!emit) throw new Error("Mock message emitter is unavailable.");
+    return emit({
+      channelName: "general",
+      content: "Ordinary reaction adjacency regression",
+      id: "6ad1ace0".repeat(8),
+      pubkey,
+    }).id;
+  }, TEST_IDENTITIES.bob.pubkey);
+  const row = page.locator(`[data-message-id="${ordinaryId}"]`);
+  await expect(row).toContainText("Ordinary reaction adjacency regression");
+  await expect(row.getByTestId("manage-current-session")).toHaveCount(0);
+  await addReaction(page, row, "👍", "thumbs up");
+  expect(await getPillOrder(row)).toEqual(["👍"]);
+  await expect.poll(() => getBodyToReactionGap(row)).toBe(6);
 });

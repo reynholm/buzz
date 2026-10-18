@@ -5512,16 +5512,21 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/pool/background_work.rs`
 
-Retain collection authority in the original worker/session, poll child exit independently of pool sleep, and compose stable-key final-report instructions.
+Retain collection authority in the original worker/session, poll child exit independently of pool sleep, and compose stable-key final-report instructions. Release uncertainty-only holds without inventing collection; retain observed exit evidence across Unknown.
 
 New module: `true`.
 
 - Required symbol: `pub(crate) struct RuntimeHold`
 - Required symbol: `pub fn queue_finished_background_work`
 - Required symbol: `pub(super) fn followup_prompt`
+- Required symbol: `if hold.blocking_pids.is_empty() && !hold.collection_pending {`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `followup_prompt`; exact call `background_work::followup_prompt(batch.channel_id, continuation, &ctx.cwd)`; behavior test `background_managed_delivery_key_stays_on_collection_across_error_and_new_message`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_managed_delivery_key_stays_on_collection_across_error_and_new_message -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool/background_work.rs` → `contains`; exact call `!self.retire_on_return.contains(&index)`; behavior test `retirement_targets_include_checked_out_copies_and_block_idle_claims`; verify `cargo test -p buzz-acp --lib retirement_targets_include_checked_out_copies_and_block_idle_claims -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `refresh_runtime_hold`; exact call `self.refresh_runtime_hold(&mut agent);`; behavior test `background_unknown_then_empty_releases_hold_without_inventing_collection`; verify `cargo test -p buzz-acp --lib background_unknown_then_empty_releases_hold_without_inventing_collection -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool/background_work.rs` → `background_child_pids`; exact call `let Some(children) = agent.acp.background_child_pids() else {`; behavior test `background_observed_then_unknown_then_empty_collects_exactly_once`; verify `cargo test -p buzz-acp --lib background_observed_then_unknown_then_empty_collects_exactly_once -- --test-threads=1`
 - Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_work_tests -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp --lib background_unknown_then_empty_releases_hold_without_inventing_collection -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp --lib background_observed_then_unknown_then_empty_collects_exactly_once -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/background_work_tests.rs`
 
@@ -6054,7 +6059,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/session_store.rs`
 
-Community-and-agent isolated, lease-fenced session records with bounded locks, identity validation and channel-wide failure fencing. Preserve restart intent and bounded receipts through claims, commits and tombstones; revision-fence tombstones, enforce byte ceilings, and recover only accepted control metadata from provider quarantine. Lease-fenced automatic attempt cleanup preserves accepted restart policy; explicit scope/channel revocation clears it.
+Community-and-agent isolated, lease-fenced session records with bounded locks, identity validation and channel-wide failure fencing. Preserve restart intent and bounded receipts through claims, commits and tombstones; revision-fence tombstones, enforce byte ceilings, and recover only accepted control metadata from provider quarantine. Lease-fenced automatic attempt cleanup preserves accepted restart policy; explicit scope/channel revocation clears it. Distinguish Alive/Dead/Unknown owner evidence while retaining conservative resume admission.
 
 New module: `true`.
 
@@ -6068,11 +6073,15 @@ New module: `true`.
 - Required symbol: `pub control_receipts: Vec<ControlReceipt>`
 - Required symbol: `if json.len() as u64 > MAX_RECORD_BYTES || !controls::valid_controls(record) {`
 - Required symbol: `record.pending_restart = owned.pending_restart;`
+- Required symbol: `enum InstanceLiveness`
+- Required symbol: `fn instance_liveness(`
 - Invocation: `crates/buzz-acp/src/session_store.rs` → `read_record_file`; exact call `read_record_file(&with_suffix(path, "stale"), namespace)?`; behavior test `quarantine_retains_control_metadata_without_recovering_provider_state`; verify `cargo test -p buzz-acp quarantine_retains_control_metadata_without_recovering_provider_state -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/session_store.rs` → `valid_controls`; exact call `controls::valid_controls(&record)`; behavior test `malformed_or_oversized_receipt_records_are_rejected`; verify `cargo test -p buzz-acp malformed_or_oversized_receipt_records_are_rejected -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/session_store.rs` → `valid_controls`; exact call `controls::valid_controls(record)`; behavior test `malformed_or_oversized_receipt_records_are_rejected`; verify `cargo test -p buzz-acp malformed_or_oversized_receipt_records_are_rejected -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/session_store.rs` → `tombstone`; exact call `self.tombstone(Some(&owned))`; behavior test `failed_attempt_discard_preserves_restart_until_matching_completion`; verify `cargo test -p buzz-acp failed_attempt_discard_preserves_restart_until_matching_completion -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/session_store.rs` → `instance_liveness`; exact call `self.instance_liveness(instance) != InstanceLiveness::Dead`; behavior test `instance_publication_cannot_be_reaped_before_locking`; verify `cargo test -p buzz-acp --lib instance_publication_cannot_be_reaped_before_locking -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp --lib instance_publication_cannot_be_reaped_before_locking -- --test-threads=1`
 
 ## `crates/buzz-acp/src/session_store_tests.rs`
 
@@ -6702,18 +6711,24 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/session_store_orphans.rs`
 
-Dead-owner durable Started receipt reconciliation at startup
+Dead-owner durable Started receipt reconciliation at startup Retain autonomous revisit work for live or uncertain foreign Started owners.
 
 New module: `true`.
 
 - Required symbol: `fn sweep_orphan_controls`
+- Required symbol: `pub revisit: bool`
+- Required symbol: `progress.revisit = true;`
 - Invocation: `crates/buzz-acp/src/session_store_orphans.rs` → `canonical_key`; exact call `let Some(path) = canonical_key(&entry_path) else {`; behavior test `startup_sweep_recovers_stale_only_started_receipt_and_deduplicates_record_key`; verify `cargo test -p buzz-acp --lib startup_sweep_recovers_stale_only_started_receipt_and_deduplicates_record_key -- --test-threads=1`
-- Invocation: `crates/buzz-acp/src/session_store_orphans.rs` → `instance_alive`; exact call `if self.instance_alive(receipt.owner_instance) {`; behavior test `startup_sweep_terminalizes_dead_started_controls_but_preserves_live_owner`; verify `cargo test -p buzz-acp --lib startup_sweep_terminalizes_dead_started_controls_but_preserves_live_owner -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/session_store_orphans.rs` → `instance_liveness`; exact call `if self.instance_liveness(receipt.owner_instance)
+                                != InstanceLiveness::Dead
+                            {`; behavior test `startup_sweep_terminalizes_dead_started_controls_but_preserves_live_owner`; verify `cargo test -p buzz-acp --lib startup_sweep_terminalizes_dead_started_controls_but_preserves_live_owner -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/session_store_orphans.rs` → `instance_liveness`; exact call `match self.instance_liveness(receipt.owner_instance) {`; behavior test `orphan_registry_unknown_revisits_after_lock_release_without_external_wake`; verify `cargo test -p buzz-acp --lib orphan_registry_unknown_revisits_after_lock_release_without_external_wake -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp --lib orphan_registry_unknown_revisits_after_lock_release_without_external_wake -- --test-threads=1`
 
 ## `crates/buzz-acp/src/worker_retirement.rs`
 
-Nonblocking checked worker replacement and retained ownership on uncertainty
+Nonblocking checked worker replacement and retained ownership on uncertainty Explicitly drain parked and cancellation-returned original ownership at orderly shutdown using retained checked evidence.
 
 New module: `true`.
 
@@ -6721,15 +6736,20 @@ New module: `true`.
 - Required symbol: `struct RetirementGuard`
 - Required symbol: `fn drive(`
 - Required symbol: `fn finish(`
+- Required symbol: `pub(crate) async fn shutdown(`
 - Invocation: `crates/buzz-acp/src/worker_retirement.rs` → `terminate`; exact call `Some(agent) => agent.acp.terminate().await,`; behavior test `checked_retirement_executor_waits_for_verified_kill_and_excludes_refill`; verify `cargo test -p buzz-acp --lib checked_retirement_executor_waits_for_verified_kill_and_excludes_refill -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/worker_retirement.rs` → `retirement_report`; exact call `controls.retirement_report(result.index, TerminationReport::Clean);`; behavior test `checked_retirement_executor_waits_for_verified_kill_and_excludes_refill`; verify `cargo test -p buzz-acp --lib checked_retirement_executor_waits_for_verified_kill_and_excludes_refill -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/worker_retirement.rs` → `prepare_retired_neighbors`; exact call `agent.prepare_retired_neighbors(&scopes, &controls)`; behavior test `checked_retirement_cannot_depart_neighbor_owned_by_a_newer_worker`; verify `cargo test -p buzz-acp --lib checked_retirement_cannot_depart_neighbor_owned_by_a_newer_worker -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/worker_retirement.rs` → `lose_retirement_evidence`; exact call `controls.lose_retirement_evidence(result.index);`; behavior test `retirement_foreground_panic_cannot_attest_replacement_or_forget_original_on_retry`; verify `cargo test -p buzz-acp --lib retirement_foreground_panic_cannot_attest_replacement_or_forget_original_on_retry -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `shutdown`; exact call `worker_retirement::shutdown(`; behavior test `retirement_shutdown_retries_original_parked_after_snapshot_failure`; verify `cargo test -p buzz-acp --lib retirement_shutdown_retries_original_parked_after_snapshot_failure -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/worker_retirement.rs` → `terminate`; exact call `let report = agent.acp.terminate().await;`; behavior test `retirement_shutdown_drains_original_returned_by_aborted_guard`; verify `cargo test -p buzz-acp --lib retirement_shutdown_drains_original_returned_by_aborted_guard -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp --lib retirement_shutdown_retries_original_parked_after_snapshot_failure -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp --lib retirement_shutdown_drains_original_returned_by_aborted_guard -- --test-threads=1`
 
 ## `crates/buzz-acp/src/session_controls/orphans.rs`
 
-Idle-waking bounded-backoff orphan reconciliation with partial durable publication
+Idle-waking bounded-backoff orphan reconciliation with partial durable publication Back off live/unknown revisits without declaring startup reconciliation complete.
 
 New module: `true`.
 
@@ -6738,10 +6758,14 @@ New module: `true`.
 - Required symbol: `fn drive(`
 - Required symbol: `fn wake(`
 - Required symbol: `controls.has_receipt_writes()`
+- Required symbol: `revisit: progress.revisit,`
+- Required symbol: `} else if progress.revisit {`
 - Invocation: `crates/buzz-acp/src/session_controls/orphans.rs` → `sweep_orphan_controls`; exact call `store.sweep_orphan_controls(capacity.saturating_sub(local.completed))?`; behavior test `startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records`; verify `cargo test -p buzz-acp --lib startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/session_controls/orphans.rs` → `publish`; exact call `state.publish(Publication {`; behavior test `startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records`; verify `cargo test -p buzz-acp --lib startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/session_controls/orphans.rs` → `retry_receipt_writes`; exact call `self.retry_receipt_writes(capacity)`; behavior test `compact_terminal_write_retries_after_repair_without_reexecuting_effect`; verify `cargo test --locked -p buzz-acp --lib compact_terminal_write_retries_after_repair_without_reexecuting_effect -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/session_controls/orphans.rs` → `sweep_orphans`; exact call `controls.sweep_orphans(capacity.min(128))`; behavior test `orphan_alive_foreign_owner_is_revisited_after_it_dies`; verify `cargo test -p buzz-acp --lib orphan_alive_foreign_owner_is_revisited_after_it_dies -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp --lib orphan_alive_foreign_owner_is_revisited_after_it_dies -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/session_retirement_review_tests.rs`
 
@@ -7460,3 +7484,64 @@ New module: `true`.
 
 - Required symbol: `test_explicit_fork_preserves_remote_history_and_signs_off`
 - Verify: `python3 -m unittest discover -s scripts/fork/tests -p test_post_screenshots.py -v`
+
+## `crates/buzz-acp/src/session_controls/orphan_owner_tests.rs`
+
+Production-driver foreign owner reconciliation with real registry-lock uncertainty, later owner death and capped idle wake backoff.
+
+New module: `true`.
+
+- Required symbol: `orphan_registry_unknown_revisits_after_lock_release_without_external_wake`
+- Required symbol: `orphan_alive_foreign_owner_is_revisited_after_it_dies`
+- Required symbol: `orphan_live_owner_revisit_uses_capped_backoff_and_never_spins_without_capacity`
+- Verify: `cargo test -p buzz-acp --lib orphan_registry_unknown_revisits_after_lock_release_without_external_wake -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp --lib orphan_alive_foreign_owner_is_revisited_after_it_dies -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp --lib orphan_live_owner_revisit_uses_capped_backoff_and_never_spins_without_capacity -- --test-threads=1`
+
+## `crates/buzz-acp/src/worker_retirement_shutdown_tests.rs`
+
+Production orderly-shutdown regressions for parked originals, abort guard returns and reused original retirement evidence.
+
+New module: `true`.
+
+- Required symbol: `retirement_shutdown_retries_original_parked_after_snapshot_failure`
+- Required symbol: `retirement_shutdown_drains_original_returned_by_aborted_guard`
+- Required symbol: `retirement_shutdown_reuses_original_evidence_after_parent_reaped`
+- Required symbol: `retirement_shutdown_retains_uncertain_original_without_fabricating_clean`
+- Verify: `cargo test -p buzz-acp --lib retirement_shutdown_retries_original_parked_after_snapshot_failure -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp --lib retirement_shutdown_drains_original_returned_by_aborted_guard -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp --lib retirement_shutdown_reuses_original_evidence_after_parent_reaped -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp --lib retirement_shutdown_retains_uncertain_original_without_fabricating_clean -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/background_uncertainty_tests.rs`
+
+Actual return/hold/poll regressions distinguish discovery uncertainty from observed completion.
+
+New module: `true`.
+
+- Required symbol: `background_unknown_then_empty_releases_hold_without_inventing_collection`
+- Required symbol: `background_observed_then_unknown_then_empty_collects_exactly_once`
+- Required symbol: `background_observed_exit_during_return_survives_later_unknown`
+- Verify: `cargo test -p buzz-acp --lib background_unknown_then_empty_releases_hold_without_inventing_collection -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp --lib background_observed_then_unknown_then_empty_collects_exactly_once -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp --lib background_observed_exit_during_return_survives_later_unknown -- --test-threads=1`
+
+## `desktop/tests/e2e/message-copy-link.spec.ts`
+
+Unambiguous huddle event identity/kind/content with unchanged pending/huddle copy-link exclusions.
+
+New module: `false`.
+
+- Required symbol: `expect(huddleKind).toBe(KIND_HUDDLE_STARTED);`
+- Required symbol: `getByTestId("huddle-attachment")`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke message-copy-link.spec.ts`
+
+## `desktop/tests/e2e/reaction-order.spec.ts`
+
+Preserve ordinary6px reaction adjacency and separately assert intended agent controls before chronological/interactive reactions.
+
+New module: `false`.
+
+- Required symbol: `ordinary non-agent reactions stay adjacent to the message body`
+- Required symbol: `getByTestId("manage-current-session")`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke reaction-order.spec.ts`

@@ -8,6 +8,7 @@ use tokio::time::Instant;
 pub(crate) struct SweepProgress {
     more: bool,
     failures: usize,
+    revisit: bool,
 }
 
 impl SessionControlRuntime {
@@ -27,6 +28,7 @@ impl SessionControlRuntime {
         Ok(SweepProgress {
             more: progress.more || local.more,
             failures: progress.failures + local.failures,
+            revisit: progress.revisit,
         })
     }
 }
@@ -59,8 +61,16 @@ impl OrphanReconciliation {
         if let Some(result) = self.completed.take() {
             match result {
                 Ok(Ok(progress)) if progress.failures == 0 => {
-                    self.backoff = Duration::from_secs(1);
-                    self.next = progress.more.then(Instant::now);
+                    self.next = if progress.more {
+                        Some(Instant::now())
+                    } else if progress.revisit {
+                        let next = Instant::now() + self.backoff;
+                        self.backoff = (self.backoff * 2).min(Duration::from_secs(60));
+                        Some(next)
+                    } else {
+                        self.backoff = Duration::from_secs(1);
+                        None
+                    };
                 }
                 failure => {
                     tracing::warn!(
@@ -101,6 +111,10 @@ impl OrphanReconciliation {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "orphan_owner_tests.rs"]
+mod owner_tests;
 
 #[cfg(test)]
 mod tests {

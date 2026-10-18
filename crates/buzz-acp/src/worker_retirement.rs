@@ -147,6 +147,55 @@ pub(crate) fn finish(
     false
 }
 
+/// Drain every retirement owner after aborting and awaiting the task guards.
+/// Unverified originals remain owned by the caller until final harness exit.
+pub(crate) async fn shutdown(
+    parked: &mut HashMap<usize, Option<OwnedAgent>>,
+    tasks: &mut tokio::task::JoinSet<()>,
+    rx: &mut mpsc::Receiver<RespawnResult>,
+) -> Vec<(usize, OwnedAgent, TerminationReport)> {
+    // Await cancellation before draining: RetirementGuard returns its original
+    // client synchronously on drop, including cancellation during a snapshot.
+    tasks.shutdown().await;
+    let mut originals: Vec<_> = parked
+        .drain()
+        .filter_map(|(index, agent)| agent.map(|agent| (index, agent)))
+        .collect();
+    while let Ok(result) = rx.try_recv() {
+        if let Some(agent) = result.retirement.and_then(|retirement| retirement.retained) {
+            originals.push((result.index, agent));
+        }
+        if let Ok((mut acp, _, _)) = result.result {
+            acp.shutdown().await;
+        }
+    }
+    // The existing pool bounds the set. Each checked attempt has its existing
+    // snapshot/TERM/KILL/verification bounds; concurrent cleanup avoids adding
+    // those grace periods once per retained worker during orderly shutdown.
+    futures_util::future::join_all(originals.into_iter().map(|(index, mut agent)| async move {
+        let report = agent.acp.terminate().await;
+        if report == TerminationReport::Clean {
+            tracing::debug!(agent = index, "reaped retained original worker on shutdown");
+            None
+        } else {
+            tracing::warn!(
+                agent = index,
+                ?report,
+                "retained original worker shutdown remains unconfirmed"
+            );
+            Some((index, agent, report))
+        }
+    }))
+    .await
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+#[cfg(all(test, unix))]
+#[path = "worker_retirement_shutdown_tests.rs"]
+mod shutdown_tests;
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;

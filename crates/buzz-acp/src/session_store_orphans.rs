@@ -6,6 +6,7 @@ pub(crate) struct OrphanSweep {
     pub finished: Vec<String>,
     pub failures: usize,
     pub more: bool,
+    pub revisit: bool,
 }
 
 impl OrphanSweep {
@@ -92,9 +93,20 @@ impl SessionStore {
                     .control_receipts
                     .iter()
                     .filter(|receipt| {
-                        receipt.state == ControlReceiptState::Started
-                            && receipt.owner_instance != self.instance
-                            && !self.instance_alive(receipt.owner_instance)
+                        if receipt.state != ControlReceiptState::Started
+                            || receipt.owner_instance == self.instance
+                        {
+                            return false;
+                        }
+                        match self.instance_liveness(receipt.owner_instance) {
+                            InstanceLiveness::Dead => true,
+                            InstanceLiveness::Alive | InstanceLiveness::Unknown => {
+                                // A live owner can die later; uncertainty can resolve.
+                                // Neither is proof this reconciliation is complete.
+                                progress.revisit = true;
+                                false
+                            }
+                        }
                     })
                     .take(limit.saturating_sub(progress.finished.len()))
                     .cloned()
@@ -115,7 +127,9 @@ impl SessionStore {
                                 return Err(StoreError::Conflict);
                             };
                             // Recheck the live foreign-owner proof in the locked decision.
-                            if self.instance_alive(receipt.owner_instance) {
+                            if self.instance_liveness(receipt.owner_instance)
+                                != InstanceLiveness::Dead
+                            {
                                 return Err(StoreError::Conflict);
                             }
                             receipt.state = ControlReceiptState::Finished(Err(

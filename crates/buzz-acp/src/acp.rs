@@ -155,6 +155,8 @@ fn build_initialize_params() -> serde_json::Value {
 /// same client via repeated calls to [`session_new`](AcpClient::session_new).
 pub struct AcpClient {
     termination: terminate::TerminationState,
+    #[cfg(test)]
+    pub(crate) background_child_snapshots: std::collections::VecDeque<Option<HashSet<u32>>>,
     compactions: compaction::CompactionTracker,
     /// The agent child process (kept alive to prevent zombie).
     child: Child,
@@ -650,6 +652,8 @@ impl AcpClient {
 
         Ok(Self {
             termination: terminate::TerminationState::default(),
+            #[cfg(test)]
+            background_child_snapshots: std::collections::VecDeque::new(),
             child,
             stdin: Some(stdin),
             reader: FramedRead::new(stdout, LinesCodec::new_with_max_length(MAX_LINE_SIZE)),
@@ -693,6 +697,10 @@ impl AcpClient {
     /// `None` means enumeration is uncertain and the worker must remain awake.
     /// Each poll traverses current residents so newly created work is visible.
     pub fn background_child_pids(&mut self) -> Option<HashSet<u32>> {
+        #[cfg(test)]
+        if let Some(snapshot) = self.background_child_snapshots.pop_front() {
+            return snapshot;
+        }
         let Some(pid) = self.process_id() else {
             return Some(HashSet::new());
         };
