@@ -140,3 +140,26 @@ export function depthGuideActionsEqual(
   }
   return true;
 }
+
+/** Results arrive independently of the request body and ordinary reaction pills. */
+export function sessionControlEqual(
+  a: TimelineMessage["sessionControl"],
+  b: TimelineMessage["sessionControl"],
+): boolean {
+  if (a === b) return true;
+  return Boolean(
+    a &&
+      b &&
+      a.action === b.action &&
+      a.targets.length === b.targets.length &&
+      a.targets.every((target, i) => {
+        const other = b.targets[i];
+        return (
+          target.pubkey === other.pubkey &&
+          target.name === other.name &&
+          target.state === other.state &&
+          target.detail === other.detail
+        );
+      }),
+  );
+}

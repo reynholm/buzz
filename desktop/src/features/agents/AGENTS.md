@@ -454,3 +454,28 @@ matches the code is worse than no rule; a new pattern that isn't written down
 here will be broken by the next agent that never learns it existed. Reviewers:
 treat a config-behavior diff without a matching AGENTS.md diff (or an explicit
 "no rules changed" note) as incomplete.
+
+## Scoped session controls
+
+`Manage current session` is a separate menu beside the quiet message status,
+including for known agents without optional telemetry. It targets the original
+agent signer and canonical thread root. Fresh verified relay ownership, policy,
+channel type and membership authorize publication; local inventory and status
+tags never grant access. Preserve owner/sibling-only DMs and independently
+operated cross-owner relay agents in marked builds. Managed runtime access
+remains governed by rule 11. The action captures relay and signer before reads,
+revalidates at click, and leaves the composer draft untouched on every outcome.
+
+Start over stops current work, including subagents, while keeping file changes.
+Its submenu carries that warning once; no additional confirmation is required.
+The original signed kind-9 request defines a command row even after edits.
+Only raw target-signed kind-7 results with matching request metadata confirm it;
+ordinary reaction pills, publication acknowledgments and delegated authors do
+not. Conflicts are unconfirmed. Manual transition actors use validated matching
+supporting tags and existing batched profile reads; absent metadata stays neutral.
+
+`messages/lib/sessionControl*.test.mjs`,
+`messages/lib/useSessionControlAction.jsdom-test.mjs`, and the registered
+`desktop/tests/e2e/session-controls.spec.ts` cover grammar, permissions, races,
+command presentation, keyboard menus and draft preservation. Keep the existing
+`session-status.spec.ts` quiet-paragraph assertions intact.

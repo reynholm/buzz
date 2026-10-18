@@ -182,6 +182,14 @@ fn action_tags_require_matching_valid_info_and_no_conflicts() {
 fn shared_reason_and_origin_fixture_corpus() {
     let cases: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/session_controls.json")).unwrap();
+    for case in cases["commands"].as_array().unwrap() {
+        let command = SessionCommand::parse(9, case["content"].as_str().unwrap());
+        assert_eq!(
+            command.map(SessionCommand::as_content),
+            case["expected"].as_str()
+        );
+        assert!(SessionCommand::parse(7, case["content"].as_str().unwrap()).is_none());
+    }
     for case in cases["reasons"].as_array().unwrap() {
         assert_eq!(
             StatusReason::from_wire(case["wire"].as_str().unwrap()).is_ok(),

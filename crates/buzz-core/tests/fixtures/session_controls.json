@@ -20,5 +20,22 @@
     {"first":"pending","second":{"terminal":{"Ok":null}},"expected":{"terminal":{"Ok":null}}},
     {"first":{"terminal":{"Ok":null}},"second":"pending","expected":{"terminal":{"Ok":null}}},
     {"first":{"terminal":{"Ok":null}},"second":{"terminal":{"Err":"busy"}},"expected":{"terminal":{"Err":"unconfirmed"}}}
+  ],
+  "commands": [
+    {"content":"!compact","expected":"!compact"},
+    {"content":"!restart","expected":"!restart"},
+    {"content":"!rotate","expected":"!restart"},
+    {"content":"!restart none","expected":"!restart none"},
+    {"content":"!restart all","expected":"!restart all"},
+    {"content":" \t!compact\n","expected":"!compact"},
+    {"content":"\u0085!restart\u0085","expected":"!restart"},
+    {"content":"\ufeff!restart\ufeff","expected":null},
+    {"content":"!restart recent","expected":null},
+    {"content":"!restart  all","expected":null},
+    {"content":"!Compact","expected":null},
+    {"content":"!compact @Agent","expected":null},
+    {"content":"> !compact","expected":null},
+    {"content":"!restart\nnone","expected":null},
+    {"content":"","expected":null}
   ]
 }

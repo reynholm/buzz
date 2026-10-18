@@ -89,12 +89,22 @@ async function expectQuietRows(scope: Locator) {
 
 test.beforeEach(async ({ page }) => {
   await installMockBridge(page, {
-    managedAgents: [
+    managedAgents: [],
+    searchProfiles: [
+      {
+        pubkey: AGENT_PUBKEY,
+        displayName: "StatusBot",
+        ownerPubkey: "b4".repeat(32),
+        isAgent: true,
+      },
+    ],
+    relayAgents: [
       {
         pubkey: AGENT_PUBKEY,
         name: "StatusBot",
-        personaId: "builtin:fizz",
-        status: "running",
+        ownerPubkey: "b4".repeat(32),
+        respondTo: "allowlist",
+        respondToAllowlist: ["deadbeef".repeat(8)],
         channelNames: [CHANNEL],
       },
     ],
@@ -193,6 +203,12 @@ test("session status explains each transition once and shows reported context", 
 
   await waitForAnimations(page);
   await page.screenshot({ path: `${SHOT}/channel-status.png` });
+  const statusGroup = statusOf(page, first).locator("..");
+  await expect(
+    statusGroup.getByRole("button", { name: "Manage current session" }),
+  ).toBeVisible();
+  await waitForAnimations(page);
+  await statusGroup.screenshot({ path: `${SHOT}/status-with-controls.png` });
 
   // Thread scope: a human root, two agent replies in one thread transition.
   const root = await emit(page, {

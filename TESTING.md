@@ -389,3 +389,21 @@ CLI-side, only two matter for testing:
 | ACP logs `discovered 0 channel(s)` / `no channel subscriptions resolved` | Agent identity isn't a member of any channel | `buzz channels add-member --channel "$CHANNEL" --pubkey "$AGENT_PUBKEY" --role member` from another identity |
 | `GOOSE_MODE` warning, agent hangs | Not set | `export GOOSE_MODE=auto` |
 | Tests pass locally but CI fails | Forgot to run `just ci` | `just ci` runs the gate (fmt, clippy, unit tests, desktop/web builds) |
+
+### Desktop scoped session controls
+
+The registered mock-bridge smoke workflow drives the production message menu,
+verified directory refresh, native send boundary, canonical thread routing and
+compact request row. It also checks keyboard submenu/Escape focus return,
+permission revocation and draft preservation. Run it with a fresh E2E build and
+refuse an existing server:
+
+```sh
+CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts
+```
+
+Raw result and actor projection regressions live beside the production formatter
+in `desktop/src/features/messages/lib/sessionControl.test.mjs`. The shared
+`crates/buzz-core/tests/fixtures/session_controls.json` command corpus runs against
+both actual parsers, including the Rust/JavaScript Unicode whitespace boundary.
+Mock-bridge coverage does not attest real-provider or native-platform behavior.

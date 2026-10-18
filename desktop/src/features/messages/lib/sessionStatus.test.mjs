@@ -332,9 +332,9 @@ test("copy: unknown but well-formed reasons get neutral copy without the raw str
   assert.deepEqual(copy("new", "idle_sleep"), { title: "New session" });
 });
 
-test("copy: reserved compacted/restarted states render neutral copy only", () => {
+test("copy: unmatched compacted/restarted reasons keep neutral copy", () => {
   for (const state of ["compacted", "restarted"]) {
-    for (const reason of ["user_compact", "auto_compact", "idle_sleep"]) {
+    for (const reason of ["future_reason", "idle_sleep"]) {
       assert.deepEqual(copy(state, reason), { title: "Session updated" });
     }
   }
@@ -401,4 +401,21 @@ test("percent: plain value without approximation sign, highlighted from 80%", ()
   for (const value of [0, 79, 80, 100]) {
     assert.ok(!formatContextPercent(value).includes("≈"));
   }
+});
+
+test("copy: bounded compact and restart reasons describe the actual transition", () => {
+  assert.deepEqual(copy("compacted", "user_compact"), {
+    title: "Context compacted",
+  });
+  assert.deepEqual(copy("compacted", "auto_compact"), {
+    title: "Context compacted automatically",
+  });
+  assert.deepEqual(copy("resumed", "worker_recycled"), {
+    title: "Resumed after worker restart",
+  });
+  for (const depth of ["none", "recent", "all"])
+    assert.equal(
+      copy("restarted", `user_restart:${depth}`).title,
+      "Session started over",
+    );
 });

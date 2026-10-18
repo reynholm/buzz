@@ -1,3 +1,4 @@
+import type { MessageSessionControl } from "@/features/messages/lib/sessionControl";
 export type TimelineReaction = {
   emoji: string;
   /** Custom (image) emoji URL from the reaction's NIP-30 `emoji` tag, if any. */
@@ -72,4 +73,6 @@ export type TimelineMessage = {
   reactions?: TimelineReaction[];
   /** Derived from the original signed tags; see `lib/sessionStatus.ts`. */
   sessionStatus?: MessageSessionStatus;
+  /** Derived from the original request and raw target-signed results. */
+  sessionControl?: MessageSessionControl;
 };

@@ -2196,11 +2196,13 @@ New module: `true`.
 
 ## `desktop/src/features/agents/AGENTS.md`
 
-Device sharing creation UI, authoritative home presentation and saved-definition recovery
+Device sharing creation UI, authoritative home presentation and saved-definition recovery Document scoped session permission, routing, restart warning, original command/result authority and batched actor behavior.
 
 New module: `false`.
 
+- Required symbol: `## Scoped session controls`
 - Verify: `just desktop-test desktop-typecheck`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 
 ## `desktop/src/features/agents/lib/savedDefinitionRecovery.ts`
 
@@ -3578,13 +3580,15 @@ New module: `false`.
 
 ## `desktop/playwright.config.ts`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow.
 
 New module: `false`.
 
 - Required symbol: `"**/session-status.spec.ts",`
+- Required symbol: `"**/session-controls.spec.ts",`
 - Verify: `just ci`
 - Verify: `cd desktop && pnpm test:e2e:smoke`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 
 ## `desktop/src-tauri/icons/icon.icns`
 
@@ -4396,11 +4400,13 @@ New module: `false`.
 
 ## `desktop/src/testing/e2eBridge.ts`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Align only native-command mock reply p-tags with the native builder while preserving thread routing.
 
 New module: `false`.
 
+- Required symbol: `).filter((tag) => tag[0] !== "p" || tag[1] !== mockPubkey),`
 - Verify: `just ci`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 
 ## `desktop/tests/e2e/community-rail.spec.ts`
 
@@ -5468,11 +5474,13 @@ New module: `true`.
 
 ## `TESTING.md`
 
-Document production-writer recovery, replica-floor premises, authenticated CLI/relay regression commands and evidence boundaries.
+Document production-writer recovery, replica-floor premises, authenticated CLI/relay regression commands and evidence boundaries. Document fresh-build session-control smoke workflow and shared actual-parser fixture coverage.
 
 New module: `false`.
 
+- Required symbol: `### Desktop scoped session controls`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 
 ## `crates/buzz-acp/TESTING.md`
 
@@ -6200,7 +6208,7 @@ New module: `true`.
 
 ## `desktop/src/features/messages/lib/sessionStatus.ts`
 
-Strictly parse an agent's self-reported buzz-session and buzz-session-info tags, map the bounded state/reason vocabulary to fixed English copy with truthful exact, lower-bound and omitted-history wording, and attach one transition explanation per loaded (signer, channel, scope, transition) to its earliest message; other messages keep only their reported percentage. Valid primary-only status keeps a per-message explanation without inferred grouping or history.
+Strictly parse an agent's self-reported buzz-session and buzz-session-info tags, map the bounded state/reason vocabulary to fixed English copy with truthful exact, lower-bound and omitted-history wording, and attach one transition explanation per loaded (signer, channel, scope, transition) to its earliest message; other messages keep only their reported percentage. Valid primary-only status keeps a per-message explanation without inferred grouping or history. Validate matching bounded manual actor tags, include actor/state/reason in grouping and render fixed compaction/restart/worker-recycle copy.
 
 New module: `true`.
 
@@ -6209,17 +6217,22 @@ New module: `true`.
 - Required symbol: `export const CONTEXT_HIGHLIGHT_PERCENT = 80;`
 - Required symbol: `normalizePubkey(message.pubkey) !== message.signerPubkey`
 - Required symbol: `if (key === null || owners.get(key) === message)`
+- Required symbol: `const action = uniqueTag(tags, "buzz-session-action");`
+- Required symbol: `action[2] === info.transitionId`
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionStatus.test.mjs src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs src/features/messages/lib/messageRowEquality.test.mjs src/features/messages/ui/MessageSessionStatus.test.mjs`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionControl.test.mjs src/features/messages/lib/sessionControlPermissions.test.mjs`
 
 ## `desktop/src/features/messages/lib/sessionStatus.test.mjs`
 
-Parser and copy regressions: states, known and unknown reasons, resume failure codes, percent boundaries, malformed numbers, duplicate/conflicting tags, malformed supporting metadata and hostile reason strings.
+Parser and copy regressions: states, known and unknown reasons, resume failure codes, percent boundaries, malformed numbers, duplicate/conflicting tags, malformed supporting metadata and hostile reason strings. Retain neutral fallback for unknown reasons and cover implemented bounded control transition copy.
 
 New module: `true`.
 
 - Required symbol: `conflicting primary tags yield no status`
 - Required symbol: `unknown but well-formed reasons get neutral copy without the raw string`
+- Required symbol: `copy: bounded compact and restart reasons describe the actual transition`
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionStatus.test.mjs src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs src/features/messages/lib/messageRowEquality.test.mjs src/features/messages/ui/MessageSessionStatus.test.mjs`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionControl.test.mjs src/features/messages/lib/sessionControlPermissions.test.mjs`
 
 ## `desktop/src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs`
 
@@ -6255,56 +6268,78 @@ New module: `true`.
 
 ## `desktop/tests/e2e/session-status.spec.ts`
 
-Mock-bridge smoke workflow for session status: new session with exact history, continuation rows at 79% and 80%, unknown context, thread navigation and one explanation per loaded transition.
+Mock-bridge smoke workflow for session status: new session with exact history, continuation rows at 79% and 80%, unknown context, thread navigation and one explanation per loaded transition. Capture the current quiet status paragraph with its separate session-control trigger.
 
 New module: `true`.
 
 - Required symbol: `session status explains each transition once and shows reported context`
+- Required symbol: `status-with-controls.png`
 - Verify: `cd desktop && pnpm test:e2e:smoke`
 
 ## `desktop/src/features/messages/lib/formatTimelineMessages.ts`
 
-Attach the derived agent session status to formatted rows from each event's original signed tags.
+Attach the derived agent session status to formatted rows from each event's original signed tags. Derive compact controls from original events and raw reactions, and collect validated manual actors for batched profile reads.
 
 New module: `false`.
 
-- Invocation: `desktop/src/features/messages/lib/formatTimelineMessages.ts` → `attachSessionStatuses`; exact call `return attachSessionStatuses(messages, visibleEvents, channel?.id ?? null);`; behavior test `first message of a transition explains it; later ones keep only the percentage`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern="first message of a transition" src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs`
+- Required symbol: `export function collectSessionActorPubkeys(`
+- Invocation: `desktop/src/features/messages/lib/formatTimelineMessages.ts` → `attachSessionStatuses`; exact call `return attachSessionStatuses(
+    messages,
+    visibleEvents,
+    channel?.id ?? null,
+    profiles,
+  );`; behavior test `first message of a transition explains it; later ones keep only the percentage`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern="first message of a transition" src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs`
+- Invocation: `desktop/src/features/messages/lib/formatTimelineMessages.ts` → `attachSessionControls`; exact call `attachSessionControls(
+    messages,
+    visibleEvents,`; behavior test `formatter reads original signed kind9 body`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionControl.test.mjs src/features/messages/lib/sessionControlPermissions.test.mjs`
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionStatus.test.mjs src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs src/features/messages/lib/messageRowEquality.test.mjs src/features/messages/ui/MessageSessionStatus.test.mjs`
 - Verify: `just desktop-test desktop-typecheck`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionControl.test.mjs src/features/messages/lib/sessionControlPermissions.test.mjs`
 
 ## `desktop/src/features/messages/ui/MessageRow.tsx`
 
-Render the session status line in the shared message body below content and above reactions, and compare the derived status by value in the row memo.
+Render the session status line in the shared message body below content and above reactions, and compare the derived status by value in the row memo. Render session controls beside the quiet paragraph and compact request rows; compare correlated results by value.
 
 New module: `false`.
 
+- Required symbol: `<MessageSessionControls channelId={channelId} message={message} />`
 - Invocation: `desktop/src/features/messages/ui/MessageRow.tsx` → `MessageSessionStatus`; exact call `<MessageSessionStatus status={message.sessionStatus} />`; behavior test `session status explains each transition once and shows reported context`; verify `cd desktop && pnpm test:e2e:smoke`
 - Invocation: `desktop/src/features/messages/ui/MessageRow.tsx` → `sessionStatusEqual`; exact call `sessionStatusEqual(
       prev.message.sessionStatus,
       next.message.sessionStatus,
     )`; behavior test `MessageRow memo rerenders when only the derived status moves`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test --test-name-pattern="MessageRow memo rerenders" src/features/messages/ui/MessageSessionStatus.test.mjs`
+- Invocation: `desktop/src/features/messages/ui/MessageRow.tsx` → `MessageSessionControlRow`; exact call `<MessageSessionControlRow`; behavior test `compact row renders actor, action, target and independent outcome`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/lib/useSessionControlAction.jsdom-test.mjs src/features/messages/ui/MessageSessionControlRow.jsdom-test.mjs`
+- Invocation: `desktop/src/features/messages/ui/MessageRow.tsx` → `sessionControlEqual`; exact call `sessionControlEqual(
+      prev.message.sessionControl,
+      next.message.sessionControl,
+    )`; behavior test `MessageRow memo invalidates when only a raw correlated result changes`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/lib/useSessionControlAction.jsdom-test.mjs src/features/messages/ui/MessageSessionControlRow.jsdom-test.mjs`
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionStatus.test.mjs src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs src/features/messages/lib/messageRowEquality.test.mjs src/features/messages/ui/MessageSessionStatus.test.mjs`
 - Verify: `cd desktop && pnpm test:e2e:smoke`
 - Verify: `just desktop-test desktop-typecheck`
+- Verify: `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/lib/useSessionControlAction.jsdom-test.mjs src/features/messages/ui/MessageSessionControlRow.jsdom-test.mjs`
 
 ## `desktop/src/features/messages/types.ts`
 
-Declare the optional derived session status field of a timeline message.
+Declare the optional derived session status field of a timeline message. Carry derived compact per-target session-control presentation.
 
 New module: `false`.
 
 - Required symbol: `export type MessageSessionStatus = {`
 - Required symbol: `sessionStatus?: MessageSessionStatus;`
+- Required symbol: `sessionControl?: MessageSessionControl;`
 - Verify: `just desktop-test desktop-typecheck`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionControl.test.mjs src/features/messages/lib/sessionControlPermissions.test.mjs`
 
 ## `desktop/src/features/messages/lib/messageRowEquality.ts`
 
-Value equality for the derived session status used by the MessageRow memo.
+Value equality for the derived session status used by the MessageRow memo. Compare compact per-target control outcomes by value.
 
 New module: `false`.
 
 - Required symbol: `export function sessionStatusEqual(`
+- Required symbol: `export function sessionControlEqual(`
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionStatus.test.mjs src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs src/features/messages/lib/messageRowEquality.test.mjs src/features/messages/ui/MessageSessionStatus.test.mjs`
+- Verify: `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/lib/useSessionControlAction.jsdom-test.mjs src/features/messages/ui/MessageSessionControlRow.jsdom-test.mjs`
 
 ## `desktop/src/features/messages/lib/messageRowEquality.test.mjs`
 
@@ -6409,22 +6444,26 @@ New module: `true`.
 
 ## `crates/buzz-core/tests/session_control.rs`
 
-Behavioral contract regressions for exact grammar, strict result/action parsing, precedence, v1/v2 origin rules and shared fixtures.
+Behavioral contract regressions for exact grammar, strict result/action parsing, precedence, v1/v2 origin rules and shared fixtures. Bind the shared command corpus to the actual Rust parser.
 
 New module: `true`.
 
 - Required symbol: `fn command_grammar_is_exact()`
 - Required symbol: `fn shared_reason_and_origin_fixture_corpus()`
 - Required symbol: `fn snapshot_rejects_invalid_actor_and_automatic_actor()`
+- Required symbol: `for case in cases["commands"].as_array().unwrap() {`
 - Verify: `cargo test -p buzz-core -- --test-threads=1`
+- Verify: `cargo test -p buzz-core --test session_control`
 
 ## `crates/buzz-core/tests/fixtures/session_controls.json`
 
-Shared Rust/TypeScript fixture corpus for bounded reasons, canonical actor origins and pending/terminal precedence.
+Shared Rust/TypeScript fixture corpus for bounded reasons, canonical actor origins and pending/terminal precedence. Cover all exact command spellings, ordinary near-misses and the cross-language whitespace boundary.
 
 New module: `true`.
 
+- Required symbol: `"commands": [`
 - Verify: `cargo test -p buzz-core -- --test-threads=1`
+- Verify: `cargo test -p buzz-core --test session_control`
 
 ## `crates/buzz-acp/src/session_store_controls.rs`
 
@@ -7132,3 +7171,139 @@ New module: `true`.
 - Invocation: `crates/buzz-acp/src/acp/terminate.rs` → `terminate_windows`; exact call `self.terminate_windows().await`; behavior test `checked_termination_windows_detached_grandchild_blocks_clean_after_parent_exit`; verify `cargo test -p buzz-acp --lib checked_termination_windows -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/acp/windows_job.rs` → `terminate_windows_with_query`; exact call `self.terminate_windows_with_query(|job| {`; behavior test `checked_termination_windows_empty_query_requires_parent_reap`; verify `python scripts/check-acp-retirement.py`
 - Verify: `cargo test -p buzz-acp --lib checked_termination_windows -- --test-threads=1`
+
+## `desktop/src/features/messages/lib/sessionControl.ts`
+
+Parse the shared exact grammar with Rust whitespace parity; project original signed command requests and independent raw target-signed bounded outcomes.
+
+New module: `true`.
+
+- Required symbol: `export function parseSessionCommand(`
+- Required symbol: `export function attachSessionControls(`
+- Required symbol: `event.pubkey === target`
+- Required symbol: `parseSessionCommand(event.content)`
+- Required symbol: `const EXTERNAL_WHITESPACE = /^\p{White_Space}+|\p{White_Space}+$/gu;`
+- Required symbol: `content.replace(EXTERNAL_WHITESPACE, "")`
+- Required symbol: `event.tags.some((tag) => tag[0] === "buzz-session-result")`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionControl.test.mjs src/features/messages/lib/sessionControlPermissions.test.mjs`
+
+## `desktop/src/features/messages/lib/sessionControlPermissions.ts`
+
+Authorize exact current scope from verified directory policy, owner/sibling coordinates, channel type and membership; preserve DM restrictions and remote cross-owner admission without local inventory authority.
+
+New module: `true`.
+
+- Required symbol: `export function canManageSession(`
+- Required symbol: `!agent.channelIds.includes(channelId)`
+- Required symbol: `if (channel.channelType === "dm") return false;`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionControl.test.mjs src/features/messages/lib/sessionControlPermissions.test.mjs`
+
+## `desktop/src/features/messages/lib/useSessionControlAction.ts`
+
+Capture exact target, thread, relay and signer, refresh verified permission, fence stale async actions and publish one exact kind-9 control without composer or lifecycle mutations.
+
+New module: `true`.
+
+- Required symbol: `export function useSessionControlAction(`
+- Required symbol: `if (!isCurrent()) return false;`
+- Required symbol: `currentKey.current.generation === capturedGeneration`
+- Verify: `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/lib/useSessionControlAction.jsdom-test.mjs src/features/messages/ui/MessageSessionControlRow.jsdom-test.mjs`
+
+## `desktop/src/features/messages/lib/sessionControl.test.mjs`
+
+Production formatter and shared grammar corpus regressions for original versus edited bodies, raw target results, conflicts, multiple targets, expiry, actor metadata and known bot membership.
+
+New module: `true`.
+
+- Required symbol: `shared exact grammar matches the actual core parser whitespace corpus`
+- Required symbol: `formatter reads original signed kind9 body`
+- Required symbol: `results require exact target raw signer`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionControl.test.mjs src/features/messages/lib/sessionControlPermissions.test.mjs`
+
+## `desktop/src/features/messages/lib/sessionControlPermissions.test.mjs`
+
+Permission matrix covers owner/sibling, allowlist/anyone, DM restrictions, missing and mismatched scope evidence and local inventory denial.
+
+New module: `true`.
+
+- Required symbol: `verified scope and exact policy evidence admit owner`
+- Required symbol: `unknown, stale local inventory`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionControl.test.mjs src/features/messages/lib/sessionControlPermissions.test.mjs`
+
+## `desktop/src/features/messages/lib/useSessionControlAction.jsdom-test.mjs`
+
+Exercise the production hook for revocation, query/publication failures, scope switches, round trips, unmount, duplicate clicks and actual channel profile batching.
+
+New module: `true`.
+
+- Required symbol: `switching away and back cannot revive an old action`
+- Required symbol: `manual actor joins the actual channel surface batch`
+- Verify: `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/lib/useSessionControlAction.jsdom-test.mjs src/features/messages/ui/MessageSessionControlRow.jsdom-test.mjs`
+
+## `desktop/src/features/messages/ui/MessageSessionControls.tsx`
+
+Separate accessible Radix current-session menu with exact actions, restart warning, helper copy and fresh permission checks; retain recovery without telemetry.
+
+New module: `true`.
+
+- Required symbol: `export function MessageSessionControls(`
+- Required symbol: `Manage current session`
+- Required symbol: `Stops current work, including subagents. File changes are`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
+
+## `desktop/src/features/messages/ui/MessageSessionControlRow.tsx`
+
+Compact actor/action/target/outcome request presentation with expiry and fixed safe copy.
+
+New module: `true`.
+
+- Required symbol: `export function MessageSessionControlRow(`
+- Verify: `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/lib/useSessionControlAction.jsdom-test.mjs src/features/messages/ui/MessageSessionControlRow.jsdom-test.mjs`
+
+## `desktop/src/features/messages/ui/MessageSessionControlRow.jsdom-test.mjs`
+
+Rendered command presentation, pending/expiry semantics and MessageRow memo invalidation by correlated result.
+
+New module: `true`.
+
+- Required symbol: `MessageRow memo invalidates when only a raw correlated result changes`
+- Verify: `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/lib/useSessionControlAction.jsdom-test.mjs src/features/messages/ui/MessageSessionControlRow.jsdom-test.mjs`
+
+## `desktop/tests/e2e/session-controls.spec.ts`
+
+Registered production-menu workflow with remote cross-owner evidence, keyboard/submenu/Escape, untouched draft, native command routing, signed raw result projection and revoked send-time admission.
+
+New module: `true`.
+
+- Required symbol: `known_agent_without_telemetry_still_has_current_scope_controls`
+- Required symbol: `revoked send-time permission preserves draft and publishes nothing`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
+
+## `desktop/src/features/channels/useMessageEventProfilePubkeys.ts`
+
+Include validated manual session actors in the existing channel/thread batch.
+
+New module: `false`.
+
+- Required symbol: `...collectSessionActorPubkeys(events),`
+- Invocation: `desktop/src/features/channels/useMessageEventProfilePubkeys.ts` → `collectSessionActorPubkeys`; exact call `...collectSessionActorPubkeys(events),`; behavior test `manual actor joins the actual channel surface batch`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/lib/useSessionControlAction.jsdom-test.mjs src/features/messages/ui/MessageSessionControlRow.jsdom-test.mjs`
+- Verify: `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/lib/useSessionControlAction.jsdom-test.mjs src/features/messages/ui/MessageSessionControlRow.jsdom-test.mjs`
+
+## `desktop/src/features/home/ui/HomeView.tsx`
+
+Include validated manual session actors in the existing inbox/thread profile batch.
+
+New module: `false`.
+
+- Required symbol: `...collectSessionActorPubkeys(feedItems),`
+- Required symbol: `...collectSessionActorPubkeys(threadContext.events),`
+- Verify: `pnpm --dir desktop typecheck`
+
+## `desktop/src/features/messages/lib/messageGrouping.ts`
+
+Prevent session controls joining ordinary same-author groups.
+
+New module: `false`.
+
+- Required symbol: `if (previous?.sessionControl || current?.sessionControl) return false;`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionControl.test.mjs src/features/messages/lib/sessionControlPermissions.test.mjs`

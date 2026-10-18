@@ -51,7 +51,10 @@ import {
   useChannelMessagesQuery,
   useToggleReactionMutation,
 } from "@/features/messages/hooks";
-import { collectMessageMentionPubkeys } from "@/features/messages/lib/formatTimelineMessages";
+import {
+  collectMessageMentionPubkeys,
+  collectSessionActorPubkeys,
+} from "@/features/messages/lib/formatTimelineMessages";
 import { formatTime } from "@/features/messages/lib/dateFormatters";
 import { DeleteMessageConfirmDialog } from "@/features/messages/ui/DeleteMessageConfirmDialog";
 import { splitOutgoingTags } from "@/features/messages/lib/imetaMediaMarkdown";
@@ -324,8 +327,10 @@ export function HomeView({
       ...new Set([
         ...feedItems.map((item) => item.pubkey),
         ...collectMessageMentionPubkeys(feedItems),
+        ...collectSessionActorPubkeys(feedItems),
         ...threadContext.events.map((event) => event.pubkey),
         ...collectMessageMentionPubkeys(threadContext.events),
+        ...collectSessionActorPubkeys(threadContext.events),
         ...(channelMessages ?? [])
           .filter((event) => event.kind === KIND_REACTION)
           .map((event) => event.pubkey),

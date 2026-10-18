@@ -1,3 +1,5 @@
+import type { UserProfileLookup } from "@/features/profile/lib/identity";
+import { CANONICAL_CONTROL_ID } from "./sessionControl";
 /**
  * Agent session status: strict parsing of the signed `buzz-session` tags,
  * English copy, and the per-transition projection used by the timeline.
@@ -59,6 +61,7 @@ export type ParsedSessionTags = {
   primary: SessionPrimary;
   /** `null` when missing, malformed, of another version or conflicting. */
   info: SessionInfo | null;
+  actorPubkey?: string;
 };
 
 const STATES: ReadonlySet<string> = new Set([
@@ -161,7 +164,23 @@ export function parseSessionStatusTags(
   const primary = primaryTag ? parseSessionPrimaryTag(primaryTag) : null;
   if (!primary) return null;
   const infoTag = uniqueTag(tags, SESSION_INFO_TAG);
-  return { primary, info: infoTag ? parseSessionInfoTag(infoTag) : null };
+  const info = infoTag ? parseSessionInfoTag(infoTag) : null;
+  const action = uniqueTag(tags, "buzz-session-action");
+  const manual =
+    primary.reason === "user_compact" ||
+    /^user_restart:(none|recent|all)$/.test(primary.reason);
+  const actorPubkey =
+    manual &&
+    info &&
+    action &&
+    action.length === 5 &&
+    action[1] === "1" &&
+    action[2] === info.transitionId &&
+    CANONICAL_CONTROL_ID.test(action[3]) &&
+    CANONICAL_CONTROL_ID.test(action[4])
+      ? action[4]
+      : null;
+  return { primary, info, ...(actorPubkey ? { actorPubkey } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -172,6 +191,7 @@ const RESUMED_TITLES: Readonly<Record<string, string>> = {
   idle_sleep: "Resumed after sleep",
   harness_restart: "Resumed after restart",
   worker_crash: "Resumed after worker failure",
+  worker_recycled: "Resumed after worker restart",
 };
 
 const NEW_DETAILS: Readonly<Record<string, string>> = {
@@ -208,13 +228,32 @@ function resumeFailureDetail(code: string): string {
 
 /**
  * Title and optional detail for a transition. Unknown but well-formed
- * reasons get neutral copy; `compacted`/`restarted` are reserved and always
- * neutral until their semantics are implemented.
+ * reasons get neutral copy. Manual transitions may receive separately validated actor metadata.
  */
 export function describeSessionTransition(
   primary: SessionPrimary,
 ): Omit<SessionStatusExplanation, "history"> {
   const { state, reason } = primary;
+  if (
+    state === "compacted" &&
+    (reason === "user_compact" || reason === "auto_compact")
+  )
+    return {
+      title:
+        reason === "auto_compact"
+          ? "Context compacted automatically"
+          : "Context compacted",
+    };
+  if (state === "restarted" && /^user_restart:(none|recent|all)$/.test(reason))
+    return {
+      title: "Session started over",
+      detail:
+        reason === "user_restart:none"
+          ? "from scratch"
+          : reason === "user_restart:all"
+            ? "with the entire thread"
+            : "with recent history",
+    };
   if (state === "resumed") {
     return {
       title: hasOwn(RESUMED_TITLES, reason)
@@ -311,6 +350,7 @@ export function attachSessionStatuses(
     tags: string[][];
   }>,
   fallbackChannelId: string | null,
+  profiles?: UserProfileLookup,
 ): TimelineMessage[] {
   const candidates: Candidate[] = [];
   const owners = new Map<string, TimelineMessage>();
@@ -340,6 +380,9 @@ export function attachSessionStatuses(
         info.scope,
         info.scope === "thread" ? rootId : "",
         info.transitionId,
+        parsed.primary.state,
+        parsed.primary.reason,
+        parsed.actorPubkey ?? "",
       ].join("\u0000");
       const owner = owners.get(key);
       if (!owner || isEarlier(message, owner)) owners.set(key, message);
@@ -353,6 +396,15 @@ export function attachSessionStatuses(
       const explanation: SessionStatusExplanation = describeSessionTransition(
         parsed.primary,
       );
+      const actorName = parsed.actorPubkey
+        ? profiles?.[parsed.actorPubkey]?.displayName
+        : null;
+      if (
+        actorName &&
+        (parsed.primary.state === "restarted" ||
+          parsed.primary.state === "compacted")
+      )
+        explanation.title += ` by ${actorName}`;
       const history =
         key !== null && parsed.info ? describeHistory(parsed.info) : [];
       if (history.length > 0) explanation.history = history;
