@@ -9920,7 +9920,7 @@
     },
     {
       "path": "crates/buzz-acp/src/acp/terminate.rs",
-      "responsibility": "Checked Unix process-group retirement with conservative nonUnix outcome",
+      "responsibility": "Checked bounded Unix process-group and Windows contained-job retirement",
       "is_new": true,
       "required_symbols": [
         "pub enum TerminationReport",
@@ -10807,6 +10807,40 @@
       ],
       "verification_commands": [
         "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/acp/windows_job.rs",
+      "responsibility": "Suspended Windows worker containment with independent zero-job and direct-child retirement proof",
+      "is_new": true,
+      "required_symbols": [
+        "struct AssignQueryJob",
+        "pub(super) fn spawn",
+        "async fn terminate_windows",
+        "query_process_id_list",
+        "graceful_deadline",
+        "verify_deadline"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/acp.rs",
+          "callee_symbol": "spawn",
+          "invocation": "let spawned = windows_job::spawn(cmd);",
+          "behavior_test": "checked_termination_windows_harness_drop_kills_detached_tree",
+          "verification_command": "cargo test -p buzz-acp --lib checked_termination_windows -- --test-threads=1",
+          "coverage": "Native Windows tests exercise actual suspended ACP spawn, owned job drop and independently observed descendant death."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/acp/terminate.rs",
+          "callee_symbol": "terminate_windows",
+          "invocation": "self.terminate_windows().await",
+          "behavior_test": "checked_termination_windows_detached_grandchild_blocks_clean_after_parent_exit",
+          "verification_command": "cargo test -p buzz-acp --lib checked_termination_windows -- --test-threads=1",
+          "coverage": "Cancellation/reentry cannot confuse a cached parent exit with an empty contained tree."
+        }
+      ],
+      "verification_commands": [
+        "cargo test -p buzz-acp --lib checked_termination_windows -- --test-threads=1"
       ]
     }
   ]

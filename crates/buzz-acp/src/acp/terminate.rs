@@ -26,6 +26,8 @@ pub enum TerminationReport {
 #[derive(Default)]
 pub(super) struct TerminationState {
     pub(super) checked: bool,
+    #[cfg(windows)]
+    pub(super) windows: super::windows_job::Retirement,
     #[cfg(unix)]
     gone_groups: std::collections::HashSet<u32>,
     #[cfg(unix)]
@@ -46,9 +48,12 @@ impl AcpClient {
             })
             .await
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         {
-            // Windows containment is supplied by the separate Job Object task.
+            self.terminate_windows().await
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
             self.termination.checked = true;
             TerminationReport::Unverified
         }

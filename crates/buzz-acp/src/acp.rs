@@ -11,8 +11,12 @@ mod launch;
 use std::collections::{HashMap, HashSet};
 
 use futures_util::StreamExt;
-use tokio::process::{Child, ChildStdin, ChildStdout};
+#[cfg(not(windows))]
+use tokio::process::Child;
+use tokio::process::{ChildStdin, ChildStdout};
 use tokio_util::codec::{FramedRead, LinesCodec, LinesCodecError};
+#[cfg(windows)]
+use windows_job::ContainedChild as Child;
 
 use crate::observer::{ObserverContext, ObserverHandle};
 use crate::usage::{
@@ -603,14 +607,11 @@ impl AcpClient {
             }
         }
 
-        // Spawn the agent in its own process group so SIGKILL doesn't propagate
-        // to the harness's own process group on Unix.
-        // tokio::process::Command::process_group is a stable tokio API (no extra imports needed).
+        // Unix isolates signals; Windows assigns containment before resuming.
         #[cfg(unix)]
         cmd.process_group(0);
 
-        // Suppress the console window that Windows otherwise allocates for every
-        // console-subsystem child process spawned from a GUI/non-console parent.
+        // Preserve the hidden-window policy on Windows.
         configure_no_window(&mut cmd);
 
         let standard_adapter =
@@ -626,10 +627,15 @@ impl AcpClient {
         let claude_thinking_summaries = standard_adapter == Some(StandardAdapterKind::Claude)
             && !launch_prefixed
             && claude_cli_accepts_thinking_display(&cmd).await;
-        let mut child = cmd.spawn().map_err(|error| {
+        let program = cmd.as_std().get_program().to_owned();
+        #[cfg(windows)]
+        let spawned = windows_job::spawn(cmd);
+        #[cfg(not(windows))]
+        let spawned = cmd.spawn();
+        let mut child = spawned.map_err(|error| {
             std::io::Error::new(
                 error.kind(),
-                format!("failed to spawn {:?}: {error}", cmd.as_std().get_program()),
+                format!("failed to spawn {program:?}: {error}"),
             )
         })?;
 
@@ -5497,3 +5503,6 @@ mod windows_retirement_tests;
 
 mod terminate;
 pub use terminate::TerminationReport;
+
+#[cfg(windows)]
+mod windows_job;

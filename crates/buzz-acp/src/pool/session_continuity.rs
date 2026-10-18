@@ -281,7 +281,7 @@ impl AgentPool {
     /// Owner rotate: tombstone the scope's record whoever owns it, including
     /// a session that lives only on disk after a sleep or respawn. Leases in
     /// memory stay, so a late write of the previous owner is a conflict.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn discard_durable_scope(&mut self, scope: &SessionScope) {
         if let Some(store) = &self.store {
             let _ = store.discard_scope(scope);

@@ -266,7 +266,7 @@ impl SessionStatusRuntime {
 
     /// Run `hook` inside the next snapshot write, before it is renamed into
     /// place, so a test can hold a writer mid-flight.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn delay_next_write(&self, hook: Box<dyn FnOnce() + Send>) {
         *lock(&self.shared.before_write) = Some(hook);
     }
@@ -366,7 +366,7 @@ impl StatusBinding {
     }
 
     /// Provider session this generation describes.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn session_id(&self) -> &str {
         &self.generation.session_id
     }

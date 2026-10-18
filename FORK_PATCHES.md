@@ -6564,7 +6564,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/acp/terminate.rs`
 
-Checked Unix process-group retirement with conservative nonUnix outcome
+Checked bounded Unix process-group and Windows contained-job retirement
 
 New module: `true`.
 
@@ -7114,3 +7114,19 @@ New module: `true`.
 - Required symbol: `receipt.owner_instance != store.instance()`
 - Invocation: `crates/buzz-acp/src/session_controls/receipt_writes.rs` → `retry_control_outcome`; exact call `store.retry_control_outcome(&entry.scope, &entry.receipt, &entry.outcome)`; behavior test `compact_terminal_write_retries_after_repair_without_reexecuting_effect`; verify `cargo test --locked -p buzz-acp --lib compact_terminal_write_retries_after_repair_without_reexecuting_effect -- --test-threads=1`
 - Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/acp/windows_job.rs`
+
+Suspended Windows worker containment with independent zero-job and direct-child retirement proof
+
+New module: `true`.
+
+- Required symbol: `struct AssignQueryJob`
+- Required symbol: `pub(super) fn spawn`
+- Required symbol: `async fn terminate_windows`
+- Required symbol: `query_process_id_list`
+- Required symbol: `graceful_deadline`
+- Required symbol: `verify_deadline`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `spawn`; exact call `let spawned = windows_job::spawn(cmd);`; behavior test `checked_termination_windows_harness_drop_kills_detached_tree`; verify `cargo test -p buzz-acp --lib checked_termination_windows -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp/terminate.rs` → `terminate_windows`; exact call `self.terminate_windows().await`; behavior test `checked_termination_windows_detached_grandchild_blocks_clean_after_parent_exit`; verify `cargo test -p buzz-acp --lib checked_termination_windows -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp --lib checked_termination_windows -- --test-threads=1`
