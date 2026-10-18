@@ -392,6 +392,13 @@ CLI-side, only two matter for testing:
 
 ### Desktop scoped session controls
 
+Native Desktop QA must run in a verified private PID namespace, or behind an
+explicit process-reaper fence reviewed before launch. A demo app identifier,
+separate XDG directories and a private DBus session do not isolate process
+reaping: startup and periodic cleanup can inspect and stop agents from other
+Desktop instances. Do not mount the host `/proc` into a native QA container;
+verify its visible process set and mount list before exercising the app.
+
 The registered mock-bridge smoke workflow drives the production message menu,
 verified directory refresh, native send boundary, canonical thread routing and
 compact request row. It also checks keyboard submenu/Escape focus return,
