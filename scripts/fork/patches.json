@@ -11473,6 +11473,43 @@
       "verification_commands": [
         "CI=1 pnpm --dir desktop test:e2e:smoke reaction-order.spec.ts"
       ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/MessageActionBar.tsx",
+      "responsibility": "Bound the reaction picker host to Radix available viewport height while preserving session controls and picker navigation.",
+      "is_new": false,
+      "required_symbols": [
+        "[&_em-emoji-picker]:max-h-[var(--radix-popover-content-available-height)]",
+        "[&_em-emoji-picker]:min-h-0",
+        "collisionPadding={8}"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/messages/ui/MessageActionBar.tsx",
+          "callee_symbol": "EmojiPicker",
+          "invocation": "<EmojiPicker\n                  autoFocus",
+          "behavior_test": "emoji picker keeps Frequently used live within the app session",
+          "verification_command": "CI=1 pnpm --dir desktop test:e2e:smoke custom-emoji.spec.ts --workers=1 --retries=0",
+          "coverage": "Production reaction popover drives search/select/reopen/Frequently-used with complete host/category visibility; removing only the host height bound fails actual viewport behavior."
+        }
+      ],
+      "verification_commands": [
+        "CI=1 pnpm --dir desktop test:e2e:smoke custom-emoji.spec.ts --workers=1 --retries=0"
+      ]
+    },
+    {
+      "path": "desktop/tests/e2e/custom-emoji.spec.ts",
+      "responsibility": "Preserve real emoji selection and Frequently-used interaction; assert and attach first-open/reopen full viewport bounds.",
+      "is_new": false,
+      "required_symbols": [
+        "await expect(picker).toBeInViewport({ ratio: 1 });",
+        "await expect(category).toBeInViewport({ ratio: 1 });",
+        "await expectPickerInViewport(\"reopen\");"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "CI=1 pnpm --dir desktop test:e2e:smoke custom-emoji.spec.ts --workers=1 --retries=0"
+      ]
     }
   ]
 }

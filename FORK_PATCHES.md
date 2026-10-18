@@ -7545,3 +7545,27 @@ New module: `false`.
 - Required symbol: `ordinary non-agent reactions stay adjacent to the message body`
 - Required symbol: `getByTestId("manage-current-session")`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke reaction-order.spec.ts`
+
+## `desktop/src/features/messages/ui/MessageActionBar.tsx`
+
+Bound the reaction picker host to Radix available viewport height while preserving session controls and picker navigation.
+
+New module: `false`.
+
+- Required symbol: `[&_em-emoji-picker]:max-h-[var(--radix-popover-content-available-height)]`
+- Required symbol: `[&_em-emoji-picker]:min-h-0`
+- Required symbol: `collisionPadding={8}`
+- Invocation: `desktop/src/features/messages/ui/MessageActionBar.tsx` → `EmojiPicker`; exact call `<EmojiPicker
+                  autoFocus`; behavior test `emoji picker keeps Frequently used live within the app session`; verify `CI=1 pnpm --dir desktop test:e2e:smoke custom-emoji.spec.ts --workers=1 --retries=0`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke custom-emoji.spec.ts --workers=1 --retries=0`
+
+## `desktop/tests/e2e/custom-emoji.spec.ts`
+
+Preserve real emoji selection and Frequently-used interaction; assert and attach first-open/reopen full viewport bounds.
+
+New module: `false`.
+
+- Required symbol: `await expect(picker).toBeInViewport({ ratio: 1 });`
+- Required symbol: `await expect(category).toBeInViewport({ ratio: 1 });`
+- Required symbol: `await expectPickerInViewport("reopen");`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke custom-emoji.spec.ts --workers=1 --retries=0`

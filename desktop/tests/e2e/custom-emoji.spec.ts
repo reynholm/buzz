@@ -334,7 +334,7 @@ test("message reaction action stays neutral after selecting from the picker", as
 
 test("emoji picker keeps Frequently used live within the app session", async ({
   page,
-}) => {
+}, testInfo) => {
   await page.addInitScript(() => {
     window.localStorage.setItem("emoji-mart.frequently", "{}");
     window.localStorage.removeItem("emoji-mart.last");
@@ -350,9 +350,24 @@ test("emoji picker keeps Frequently used live within the app session", async ({
   await row.getByLabel("Open reactions").click();
 
   let picker = page.locator("em-emoji-picker");
+  const expectPickerInViewport = async (stage: string) => {
+    await waitForAnimations(page);
+    const category = picker.getByRole("button", { name: "Frequently used" });
+    await expect(picker).toBeInViewport({ ratio: 1 });
+    await expect(category).toBeInViewport({ ratio: 1 });
+    await testInfo.attach(`reaction-picker-${stage}-bounds`, {
+      body: JSON.stringify({
+        picker: await picker.boundingBox(),
+        category: await category.boundingBox(),
+        viewport: page.viewportSize(),
+      }),
+      contentType: "application/json",
+    });
+  };
   await expect(
     picker.getByRole("button", { name: "Frequently used" }),
   ).toBeVisible();
+  await expectPickerInViewport("first-open");
 
   await picker.locator("input[type='search']").fill("unicorn");
   await picker.getByRole("button", { name: "🦄" }).first().click();
@@ -361,6 +376,7 @@ test("emoji picker keeps Frequently used live within the app session", async ({
   await row.hover();
   await row.getByLabel("Open reactions").click();
   picker = page.locator("em-emoji-picker");
+  await expectPickerInViewport("reopen");
   await picker.getByRole("button", { name: "Frequently used" }).click();
   await expect(
     picker.getByRole("button", { name: "🦄" }).first(),
