@@ -369,7 +369,7 @@ New module: `true`.
 
 ## `desktop/src-tauri/src/managed_agents/discovery/tests.rs`
 
-Keep existing discovery tests and module topology; move explicit device-compatible resolution fixtures to tests/fixtures.rs to restore the inherited size ratchet
+Keep discovery test topology and device-compatible fixtures; use immutable executable version-probe fixtures with bounded timeout and descendant cleanup.
 
 New module: `false`.
 
@@ -580,7 +580,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/Cargo.toml`
 
-Safe hostname default using the already locked gethostname dependency
+Safe hostname default; patched ZIP 9 extraction, maintained Opus backend, and immutable compatible MeshLLM and NetEq sources shared across consumers.
 
 New module: `false`.
 
@@ -588,7 +588,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/Cargo.lock`
 
-Direct Desktop gethostname dependency without version changes Pin rustls 0.23.46 for the release, resolving RUSTSEC-2026-0346 through RUSTSEC-2026-0349 without unrelated dependency changes.
+Lock patched native dependencies, the immutable MeshLLM and NetEq compatibility pins, maintained Opus bindings and updated Tauri utilities; retain target-specific Windows updater constraints explicitly.
 
 New module: `false`.
 
@@ -2662,7 +2662,7 @@ New module: `false`.
 
 ## `Cargo.lock`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Pin rustls 0.23.46 for the release, resolving RUSTSEC-2026-0346 through RUSTSEC-2026-0349 without unrelated dependency changes.
+Preserve the fork dependency graph with patched rustls, Negentropy and ZIP versions and one immutable MeshLLM compatibility source.
 
 New module: `false`.
 
@@ -5787,7 +5787,7 @@ New module: `false`.
 
 ## `deny.toml`
 
-Enforce RUSTSEC-2024-0449 after removing the retired YAML graph; preserve all unrelated advisory policies.
+Enforce vulnerability advisories including the removed unsafe-libyaml graph; record individual transitive maintenance-only exceptions with removal criteria in DEPENDENCY_SECURITY.md.
 
 New module: `false`.
 
@@ -6192,3 +6192,78 @@ New module: `false`.
 
 - Required symbol: `unicode_labels_fit_relay_utf8_byte_limit_without_losing_extensions`
 - Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
+
+## `crates/buzz-mesh-smoke/Cargo.toml`
+
+Use the same immutable patched MeshLLM source as the desktop consumer to avoid duplicate runtime types.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-mesh-smoke`
+
+## `desktop/src-tauri/src/commands/agent_discovery/managed_node.rs`
+
+Preserve confined Node.js extraction while propagating ZIP 9 entry-name decoding errors.
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/discovery/tests/codex_version.rs`
+
+Exercise the production version probe with immutable scripts and explicit interpreter PATH inputs.
+
+New module: `false`.
+
+- Required symbol: `probe_codex_acp_version_uses_augmented_path_for_env_shebang_interpreter`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/discovery/tests/codex_version_fixture.rs`
+
+Provide immutable executable symlinks, mutable version data and cleanup for the deliberately surviving descendant.
+
+New module: `true`.
+
+- Required symbol: `struct VersionFixture`
+- Required symbol: `impl Drop for VersionFixture`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `docs/fork/DEPENDENCY_SECURITY.md`
+
+Document patched release dependencies, immutable compatibility pins, target scope and temporary transitive maintenance exceptions.
+
+New module: `true`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `desktop/src-tauri/src/managed_agents/discovery/tests/fixtures/codex-version.sh`
+
+Immutable executable fixture for production version-probe regression tests.
+
+New module: `true`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/discovery/tests/fixtures/codex-hung.sh`
+
+Immutable executable fixture for production version-probe regression tests.
+
+New module: `true`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/discovery/tests/fixtures/codex-descendant.sh`
+
+Immutable executable fixture for production version-probe regression tests.
+
+New module: `true`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/discovery/tests/fixtures/env-node.sh`
+
+Immutable executable fixture for production version-probe regression tests.
+
+New module: `true`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`

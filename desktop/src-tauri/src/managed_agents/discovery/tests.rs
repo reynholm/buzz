@@ -523,21 +523,8 @@ mod managed_path_resolution;
 #[cfg(unix)]
 #[test]
 fn probe_codex_acp_version_parses_full_semver_output() {
-    use std::os::unix::fs::PermissionsExt;
-
-    // Simulate a current `@agentclientprotocol/codex-acp` output.
-    let dir = std::env::temp_dir().join(format!("buzz-probe-1x-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let bin = dir.join("codex-acp");
-    std::fs::write(
-        &bin,
-        "#!/bin/sh\necho '@agentclientprotocol/codex-acp 1.1.7'\nexit 0\n",
-    )
-    .expect("write script");
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod script");
-
-    let version = probe_codex_acp_version(&bin);
-    let _ = std::fs::remove_dir_all(dir);
+    let fixture = codex_version_fixture::VersionFixture::new("1.1.7");
+    let version = probe_codex_acp_version(&fixture.binary());
 
     assert_eq!(
         version,
@@ -547,21 +534,15 @@ fn probe_codex_acp_version_parses_full_semver_output() {
 }
 
 mod codex_version;
+#[cfg(unix)]
+mod codex_version_fixture;
 
 #[cfg(unix)]
 #[test]
 fn probe_codex_acp_version_returns_none_for_nonzero_exit() {
-    use std::os::unix::fs::PermissionsExt;
-
-    // Simulate old 0.16.x adapter: `--version` is unrecognised, exits non-zero
-    let dir = std::env::temp_dir().join(format!("buzz-probe-0x-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let bin = dir.join("codex-acp");
-    std::fs::write(&bin, "#!/bin/sh\nexit 1\n").expect("write script");
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod script");
-
-    let version = probe_codex_acp_version(&bin);
-    let _ = std::fs::remove_dir_all(dir);
+    // The immutable script exits nonzero when its version data is missing.
+    let fixture = codex_version_fixture::VersionFixture::script("codex-version.sh");
+    let version = probe_codex_acp_version(&fixture.binary());
 
     assert_eq!(
         version, None,
@@ -585,20 +566,8 @@ fn probe_codex_acp_version_returns_none_for_missing_binary() {
 #[cfg(unix)]
 #[test]
 fn codex_adapter_availability_available_for_minimum_supported_binary() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let dir = std::env::temp_dir().join(format!("buzz-avail-1x-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let bin = dir.join("codex-acp");
-    std::fs::write(
-        &bin,
-        "#!/bin/sh\necho '@agentclientprotocol/codex-acp 1.10.0'\nexit 0\n",
-    )
-    .expect("write script");
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod script");
-
-    let status = codex_adapter_availability(&bin);
-    let _ = std::fs::remove_dir_all(dir);
+    let fixture = codex_version_fixture::VersionFixture::new("1.10.0");
+    let status = codex_adapter_availability(&fixture.binary());
 
     assert_eq!(
         status,
@@ -610,17 +579,8 @@ fn codex_adapter_availability_available_for_minimum_supported_binary() {
 #[cfg(unix)]
 #[test]
 fn codex_adapter_availability_outdated_for_0x_binary() {
-    use std::os::unix::fs::PermissionsExt;
-
-    // Simulate old 0.16.x: `--version` exits non-zero (unrecognised flag)
-    let dir = std::env::temp_dir().join(format!("buzz-avail-0x-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let bin = dir.join("codex-acp");
-    std::fs::write(&bin, "#!/bin/sh\nexit 1\n").expect("write script");
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod script");
-
-    let status = codex_adapter_availability(&bin);
-    let _ = std::fs::remove_dir_all(dir);
+    let fixture = codex_version_fixture::VersionFixture::script("codex-version.sh");
+    let status = codex_adapter_availability(&fixture.binary());
 
     assert_eq!(
         status,
@@ -634,21 +594,10 @@ fn codex_adapter_availability_outdated_for_0x_binary() {
 #[cfg(unix)]
 #[test]
 fn codex_adapter_availability_outdated_for_uncomparable_version() {
-    use std::os::unix::fs::PermissionsExt;
-
     for version in ["1.2", "1.2.0-rc1"] {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let bin = dir.path().join("codex-acp");
-        std::fs::write(
-            &bin,
-            format!("#!/bin/sh\necho '@agentclientprotocol/codex-acp {version}'\nexit 0\n"),
-        )
-        .expect("write script");
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755))
-            .expect("chmod script");
-
+        let fixture = codex_version_fixture::VersionFixture::new(version);
         assert_eq!(
-            codex_adapter_availability(&bin),
+            codex_adapter_availability(&fixture.binary()),
             AcpAvailabilityStatus::AdapterOutdated,
             "version {version} is not comparable to the floor and must fail closed"
         );
@@ -674,34 +623,21 @@ fn codex_adapter_availability_outdated_for_missing_binary() {
 #[cfg(unix)]
 #[test]
 fn probe_codex_acp_version_returns_none_for_hung_direct_child() {
-    use std::os::unix::fs::PermissionsExt;
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
-    // Simulate a process that writes version to stdout then blocks forever.
-    // The probe reads stdout only after the child exits, so it will time out.
-    // `exec sleep 300` replaces the shell so killing the child reaps `sleep` too.
-    let dir = std::env::temp_dir().join(format!("buzz-probe-hung-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let bin = dir.join("codex-acp");
-    std::fs::write(
-        &bin,
-        "#!/bin/sh\nprintf '@agentclientprotocol/codex-acp 1.1.2\\n'\nexec sleep 300\n",
-    )
-    .expect("write script");
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod script");
-
+    let fixture = codex_version_fixture::VersionFixture::script("codex-hung.sh");
     let start = Instant::now();
-    let version = probe_codex_acp_version(&bin);
+    // No PATH lookup can turn a failed sleep into an apparent timeout success.
+    let version = super::probe_codex_acp_version_with_path(&fixture.binary(), Some("/nonexistent"));
     let elapsed = start.elapsed();
-    let _ = std::fs::remove_dir_all(dir);
 
-    assert_eq!(
-        version, None,
-        "hung binary must return None (timeout kills child)"
-    );
-    // The timeout is 5 s; give a 10 s margin for parallel pre-push suites.
+    assert_eq!(version, None, "hung binary must return None");
     assert!(
-        elapsed.as_secs() < 15,
+        elapsed >= Duration::from_secs(5),
+        "fixture must remain alive until the probe deadline; elapsed: {elapsed:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(15),
         "probe must complete within timeout bound; elapsed: {elapsed:?}"
     );
 }
@@ -709,44 +645,33 @@ fn probe_codex_acp_version_returns_none_for_hung_direct_child() {
 #[cfg(unix)]
 #[test]
 fn probe_codex_acp_version_returns_version_when_descendant_holds_pipe_open() {
-    use std::os::unix::fs::PermissionsExt;
+    use std::process::{Command, Stdio};
     use std::time::Instant;
 
-    // Simulate a process that forks a background child which inherits stdout
-    // and stays alive, while the parent writes version and exits 0.
-    //
-    // The probe writes the child's stdout to a temp file, then reads from the
-    // file after the parent process exits.  Because the file has reached EOF
-    // (the parent closed its write end), read_to_end() returns immediately
-    // without waiting for the descendant to close its inherited fd.
-    //
-    // `sleep 60 &` starts a descendant that inherits the parent's stdout fd
-    // without making the direct child wait for a nested subshell to exit.
-    let dir = std::env::temp_dir().join(format!("buzz-probe-descendant-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let bin = dir.join("codex-acp");
-    std::fs::write(
-        &bin,
-        "#!/bin/sh\necho '@agentclientprotocol/codex-acp 1.1.2'\nsleep 60 &\nexit 0\n",
-    )
-    .expect("write script");
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod script");
-
+    let fixture = codex_version_fixture::VersionFixture::script("codex-descendant.sh");
     let start = Instant::now();
-    let version = probe_codex_acp_version(&bin);
+    let version = super::probe_codex_acp_version_with_path(&fixture.binary(), Some("/nonexistent"));
     let elapsed = start.elapsed();
-    let _ = std::fs::remove_dir_all(dir);
+    let descendant_pid = fixture.descendant_pid();
+    assert!(
+        Command::new("/bin/kill")
+            .args(["-0", &descendant_pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("check live descendant")
+            .success(),
+        "the fixture must actually leave its stdout-owning descendant alive"
+    );
 
-    // Must return within ~1 s: non-blocking read, no waiting for descendant.
-    // Give a 9 s margin for parallel pre-push suites.
     assert!(
         elapsed.as_secs() < 10,
-        "probe must not block on descendant pipe; elapsed: {elapsed:?}"
+        "probe must not wait for the descendant's stdout descriptor; elapsed: {elapsed:?}"
     );
     assert_eq!(
         version,
         Some((1, 1, 2)),
-        "version must be parsed even when descendant holds pipe open"
+        "version must be parsed even when descendant holds stdout open"
     );
 }
 

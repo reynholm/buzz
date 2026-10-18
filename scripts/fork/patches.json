@@ -555,7 +555,7 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/discovery/tests.rs",
-      "responsibility": "Keep existing discovery tests and module topology; move explicit device-compatible resolution fixtures to tests/fixtures.rs to restore the inherited size ratchet",
+      "responsibility": "Keep discovery test topology and device-compatible fixtures; use immutable executable version-probe fixtures with bounded timeout and descendant cleanup.",
       "is_new": false,
       "required_symbols": [
         "mod fixtures;",
@@ -820,7 +820,7 @@
     },
     {
       "path": "desktop/src-tauri/Cargo.toml",
-      "responsibility": "Safe hostname default using the already locked gethostname dependency",
+      "responsibility": "Safe hostname default; patched ZIP 9 extraction, maintained Opus backend, and immutable compatible MeshLLM and NetEq sources shared across consumers.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -830,7 +830,7 @@
     },
     {
       "path": "desktop/src-tauri/Cargo.lock",
-      "responsibility": "Direct Desktop gethostname dependency without version changes Pin rustls 0.23.46 for the release, resolving RUSTSEC-2026-0346 through RUSTSEC-2026-0349 without unrelated dependency changes.",
+      "responsibility": "Lock patched native dependencies, the immutable MeshLLM and NetEq compatibility pins, maintained Opus bindings and updated Tauri utilities; retain target-specific Windows updater constraints explicitly.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -4453,7 +4453,7 @@
     },
     {
       "path": "Cargo.lock",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Pin rustls 0.23.46 for the release, resolving RUSTSEC-2026-0346 through RUSTSEC-2026-0349 without unrelated dependency changes.",
+      "responsibility": "Preserve the fork dependency graph with patched rustls, Negentropy and ZIP versions and one immutable MeshLLM compatibility source.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -8461,7 +8461,7 @@
     },
     {
       "path": "deny.toml",
-      "responsibility": "Enforce RUSTSEC-2024-0449 after removing the retired YAML graph; preserve all unrelated advisory policies.",
+      "responsibility": "Enforce vulnerability advisories including the removed unsafe-libyaml graph; record individual transitive maintenance-only exceptions with removal criteria in DEPENDENCY_SECURITY.md.",
       "is_new": false,
       "required_symbols": [
         "[advisories]"
@@ -9051,6 +9051,101 @@
       "invocation_seams": [],
       "verification_commands": [
         "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace"
+      ]
+    },
+    {
+      "path": "crates/buzz-mesh-smoke/Cargo.toml",
+      "responsibility": "Use the same immutable patched MeshLLM source as the desktop consumer to avoid duplicate runtime types.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-mesh-smoke"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/agent_discovery/managed_node.rs",
+      "responsibility": "Preserve confined Node.js extraction while propagating ZIP 9 entry-name decoding errors.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/discovery/tests/codex_version.rs",
+      "responsibility": "Exercise the production version probe with immutable scripts and explicit interpreter PATH inputs.",
+      "is_new": false,
+      "required_symbols": [
+        "probe_codex_acp_version_uses_augmented_path_for_env_shebang_interpreter"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/discovery/tests/codex_version_fixture.rs",
+      "responsibility": "Provide immutable executable symlinks, mutable version data and cleanup for the deliberately surviving descendant.",
+      "is_new": true,
+      "required_symbols": [
+        "struct VersionFixture",
+        "impl Drop for VersionFixture"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "docs/fork/DEPENDENCY_SECURITY.md",
+      "responsibility": "Document patched release dependencies, immutable compatibility pins, target scope and temporary transitive maintenance exceptions.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/discovery/tests/fixtures/codex-version.sh",
+      "responsibility": "Immutable executable fixture for production version-probe regression tests.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/discovery/tests/fixtures/codex-hung.sh",
+      "responsibility": "Immutable executable fixture for production version-probe regression tests.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/discovery/tests/fixtures/codex-descendant.sh",
+      "responsibility": "Immutable executable fixture for production version-probe regression tests.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/discovery/tests/fixtures/env-node.sh",
+      "responsibility": "Immutable executable fixture for production version-probe regression tests.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
       ]
     }
   ]
