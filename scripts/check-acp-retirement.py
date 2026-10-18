@@ -23,8 +23,13 @@ gates = [("checked_termination", 6 if WINDOWS else 8), ("portable_retirement", 4
 if MACOS:
     gates.append(("checked_retirement", None))
 for name, expected in gates:
-    discovered = subprocess.run(base + [name, "--", "--list"], check=True,
-                                capture_output=True, text=True).stdout
+    discovery = subprocess.run(base + [name, "--", "--list"], check=False,
+                               capture_output=True, encoding="utf-8", errors="replace")
+    print(discovery.stderr, end="", file=sys.stderr, flush=True)
+    if discovery.returncode:
+        print(discovery.stdout, end="", flush=True)
+    discovery.check_returncode()
+    discovered = discovery.stdout
     tests = [line.removesuffix(": test") for line in discovered.splitlines()
              if line.endswith(": test")]
     if not tests or (expected is not None and len(tests) != expected):
@@ -36,7 +41,7 @@ for name, expected in gates:
         raise SystemExit("Missing actual worker-retirement executor regression")
     print(f"Native {sys.platform}: {name}: {len(tests)} tests\n" + "\n".join(tests), flush=True)
     result = subprocess.run(base + [name, "--", "--test-threads=1"],
-                            capture_output=True, text=True)
+                            capture_output=True, encoding="utf-8", errors="replace")
     print(result.stdout, end="", flush=True)
     print(result.stderr, end="", file=sys.stderr, flush=True)
     result.check_returncode()
