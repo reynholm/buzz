@@ -1,4 +1,5 @@
 use super::*;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 
@@ -199,6 +200,7 @@ fn quarantine_requires_matching_lease() {
 }
 
 #[test]
+#[cfg(unix)]
 fn failed_update_of_existing_record_poisons_scope() {
     let dir = tempfile::tempdir().unwrap();
     let store = open_store(dir.path().to_path_buf()).unwrap();
@@ -396,6 +398,7 @@ fn instance_publication_cannot_be_reaped_before_locking() {
 }
 
 #[test]
+#[cfg(unix)]
 fn channel_enumeration_failure_poisons_unknown_scopes_until_restart() {
     let dir = tempfile::tempdir().unwrap();
     let store = open_store(dir.path().to_path_buf()).unwrap();
