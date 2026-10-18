@@ -22,6 +22,7 @@ impl AgentPool {
         &self,
         scope: &SessionScope,
         controls: &crate::session_controls::SessionControlRuntime,
+        allow_disk_resume: bool,
     ) -> Result<CompactionTarget, ControlFailure> {
         if let Some(owner) = self.session_owners.get(scope) {
             if let Some(agent) = self.agents.get(owner.agent_index).and_then(Option::as_ref) {
@@ -41,6 +42,11 @@ impl AgentPool {
                     session_id: String::new(),
                 });
             }
+        }
+        // Controller-only storage preserves receipts even when provider resume
+        // is disabled; its live record must not wake a worker for disk resume.
+        if !allow_disk_resume {
+            return Err(ControlFailure::NoSession);
         }
         let store = controls
             .control_store()

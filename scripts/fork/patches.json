@@ -4892,6 +4892,14 @@
           "invocation": "controls.compaction_panicked(i);",
           "behavior_test": "compact_actual_panic_terminalizes_started_without_ordinary_retry",
           "verification_command": "cargo test --locked -p buzz-acp --lib compact_actual_panic_terminalizes_started_without_ordinary_retry -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "compaction_target",
+          "invocation": "pool.compaction_target(&job.scope, &ctx.session_controls, config.session_resume)",
+          "behavior_test": "compact_resume_disabled_disk_refusal_and_replay_never_wake",
+          "verification_command": "cargo test --locked -p buzz-acp --lib compact_resume_ -- --test-threads=1",
+          "coverage": "Explicit startup resume policy fences disk-only compact targets before lazy wake, while existing in-memory targets remain eligible."
         }
       ],
       "verification_commands": [
@@ -10805,7 +10813,7 @@
     },
     {
       "path": "crates/buzz-acp/src/pool/compaction.rs",
-      "responsibility": "Acquire only the exact existing provider session, persist Started before a single compact prompt, and return separately typed control health/results. Reset stale worker observer context to the admitted channel, existing provider session and command identity before resume or compact I/O.",
+      "responsibility": "Acquire only the exact existing provider session, persist Started before a single compact prompt, and return separately typed control health/results. Reset stale worker observer context to the admitted channel, existing provider session and command identity before resume or compact I/O. Reject disk-only targets before lazy wake when provider resume is disabled, while preserving existing in-memory compaction.",
       "is_new": true,
       "required_symbols": [
         "pub(crate) struct ExistingSession",
@@ -10814,7 +10822,9 @@
         "if live.lease != *lease || live.session_id != *session_id",
         "Ok(_) => terminal,",
         "let execution = tokio::time::timeout_at(job.deadline, async {",
-        "job.job.origin.command_event_id.clone(),"
+        "job.job.origin.command_event_id.clone(),",
+        "allow_disk_resume: bool,",
+        "if !allow_disk_resume {"
       ],
       "invocation_seams": [
         {
@@ -10867,11 +10877,26 @@
       "responsibility": "Exercise authorized controller admission, exact-owner scheduling, lazy wake, collection protection, bounded pending work and lifecycle termination. Regress actual cached-worker control-dispatch observer envelope routing.",
       "is_new": true,
       "required_symbols": [
-        "compact_cached_worker_replaces_previous_observer_scope"
+        "compact_cached_worker_replaces_previous_observer_scope",
+        "mod resume_policy_tests;"
       ],
       "invocation_seams": [],
       "verification_commands": [
         "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/compaction_resume_policy_tests.rs",
+      "responsibility": "Bind authorized target selection and scheduler wake to disabled disk resume, durable refusal replay, enabled disk resume and successful no-store in-memory compaction.",
+      "is_new": true,
+      "required_symbols": [
+        "compact_resume_disabled_disk_refusal_and_replay_never_wake",
+        "compact_resume_enabled_disk_wakes_and_resumes_without_new_session",
+        "compact_resume_disabled_memory_owner_still_compacts_without_resume"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp --lib compact_resume_ -- --test-threads=1"
       ]
     },
     {

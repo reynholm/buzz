@@ -34,7 +34,7 @@ async fn enqueue(
     scope: &SessionScope,
 ) -> crate::session_controls::ControlJob {
     let job = authorized_control(ctx, human, scope, "!compact").await;
-    let target = pool.compaction_target(scope, &ctx.session_controls);
+    let target = pool.compaction_target(scope, &ctx.session_controls, true);
     ctx.session_controls
         .queue_compaction(job.clone(), target)
         .unwrap();
@@ -117,7 +117,7 @@ async fn compact_valid_admission_crosses_wire_expiry_while_waiting_for_owner() {
     ctx.session_controls
         .queue_compaction(
             request.clone(),
-            pool.compaction_target(&scope(), &ctx.session_controls),
+            pool.compaction_target(&scope(), &ctx.session_controls, true),
         )
         .unwrap();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -264,7 +264,7 @@ async fn compact_duplicate_busy_deadline_restart_removal_and_shutdown_are_termin
     for ending in ["deadline", "restart", "removal", "shutdown", "panic"] {
         let (_fixture, ctx, mut pool, human, server) = setup().await;
         let request = enqueue(&ctx, &pool, &human, &scope()).await;
-        let target = pool.compaction_target(&scope(), &ctx.session_controls);
+        let target = pool.compaction_target(&scope(), &ctx.session_controls, true);
         ctx.session_controls
             .queue_compaction(request.clone(), target)
             .unwrap();
@@ -273,7 +273,7 @@ async fn compact_duplicate_busy_deadline_restart_removal_and_shutdown_are_termin
         assert_eq!(
             ctx.session_controls.queue_compaction(
                 other,
-                pool.compaction_target(&scope(), &ctx.session_controls)
+                pool.compaction_target(&scope(), &ctx.session_controls, true)
             ),
             Err(ControlFailure::Busy)
         );
@@ -340,8 +340,10 @@ async fn compact_only_lazy_work_requires_existing_session() {
     };
     let job = authorized_control(&ctx, &human, &absent, "!compact").await;
     assert_eq!(
-        ctx.session_controls
-            .queue_compaction(job, pool.compaction_target(&absent, &ctx.session_controls)),
+        ctx.session_controls.queue_compaction(
+            job,
+            pool.compaction_target(&absent, &ctx.session_controls, true)
+        ),
         Err(ControlFailure::NoSession)
     );
     assert!(ctx.session_controls.pending_compactions().is_empty());
@@ -465,7 +467,7 @@ async fn compact_scope_cap_never_evicts_pending_and_restart_can_supersede_at_cap
     assert_eq!(
         ctx.session_controls.queue_compaction(
             base.clone(),
-            pool.compaction_target(&scope(), &ctx.session_controls)
+            pool.compaction_target(&scope(), &ctx.session_controls, true)
         ),
         Err(ControlFailure::Busy)
     );
@@ -530,7 +532,7 @@ async fn compact_pending_receipt_writes_reserve_capacity_and_preserve_newer_supe
     assert_eq!(
         ctx.session_controls.queue_compaction(
             base.clone(),
-            pool.compaction_target(&scope(), &ctx.session_controls)
+            pool.compaction_target(&scope(), &ctx.session_controls, true)
         ),
         Err(ControlFailure::Busy)
     );
@@ -818,3 +820,6 @@ async fn compact_cached_worker_replaces_previous_observer_scope() {
     pool.join_set.shutdown().await;
     server.abort();
 }
+
+#[path = "compaction_resume_policy_tests.rs"]
+mod resume_policy_tests;

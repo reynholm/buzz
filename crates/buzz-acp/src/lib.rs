@@ -3665,7 +3665,7 @@ async fn run_harness(
                                     }
                                     else if matches!(job.command, buzz_core::session_control::SessionCommand::Compact) {
                                         let command_id = job.origin.command_event_id.clone();
-                                        let target = pool.compaction_target(&job.scope, &ctx.session_controls);
+                                        let target = pool.compaction_target(&job.scope, &ctx.session_controls, config.session_resume);
                                         if let Err(failure) = ctx.session_controls.queue_compaction(job, target) {
                                             ctx.session_controls.queue_result(command_id, buzz_core::session_control::ControlResult::Terminal(Err(failure)));
                                         }

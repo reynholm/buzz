@@ -2839,6 +2839,7 @@ New module: `false`.
 - Invocation: `crates/buzz-acp/src/lib.rs` → `dispatch`; exact call `control_tasks::dispatch(&mut pool, &ctx, &control_tx);`; behavior test `compact_waits_for_exact_busy_owner_without_cancel_or_fork`; verify `cargo test --locked -p buzz-acp --lib compact_waits_for_exact_busy_owner_without_cancel_or_fork -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `wake_pending`; exact call `control_tasks::wake_pending(&mut queue, &ctx.session_controls);`; behavior test `compact_only_lazy_work_requires_existing_session`; verify `cargo test --locked -p buzz-acp --lib compact_only_lazy_work_requires_existing_session -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `compaction_panicked`; exact call `controls.compaction_panicked(i);`; behavior test `compact_actual_panic_terminalizes_started_without_ordinary_retry`; verify `cargo test --locked -p buzz-acp --lib compact_actual_panic_terminalizes_started_without_ordinary_retry -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `compaction_target`; exact call `pool.compaction_target(&job.scope, &ctx.session_controls, config.session_resume)`; behavior test `compact_resume_disabled_disk_refusal_and_replay_never_wake`; verify `cargo test --locked -p buzz-acp --lib compact_resume_ -- --test-threads=1`
 - Verify: `just ci`
 
 ## `crates/buzz-acp/src/pool.rs`
@@ -7101,7 +7102,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/pool/compaction.rs`
 
-Acquire only the exact existing provider session, persist Started before a single compact prompt, and return separately typed control health/results. Reset stale worker observer context to the admitted channel, existing provider session and command identity before resume or compact I/O.
+Acquire only the exact existing provider session, persist Started before a single compact prompt, and return separately typed control health/results. Reset stale worker observer context to the admitted channel, existing provider session and command identity before resume or compact I/O. Reject disk-only targets before lazy wake when provider resume is disabled, while preserving existing in-memory compaction.
 
 New module: `true`.
 
@@ -7112,6 +7113,8 @@ New module: `true`.
 - Required symbol: `Ok(_) => terminal,`
 - Required symbol: `let execution = tokio::time::timeout_at(job.deadline, async {`
 - Required symbol: `job.job.origin.command_event_id.clone(),`
+- Required symbol: `allow_disk_resume: bool,`
+- Required symbol: `if !allow_disk_resume {`
 - Invocation: `crates/buzz-acp/src/pool/compaction.rs` → `begin_compaction_effect`; exact call `ctx.session_controls.begin_compaction_effect(&job)`; behavior test `compact_exact_prompt_and_durable_started_preserve_delivery_and_turns`; verify `cargo test --locked -p buzz-acp --lib compact_exact_prompt_and_durable_started_preserve_delivery_and_turns -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool/compaction.rs` → `session_resume`; exact call `.session_resume(session_id, &ctx.cwd, ctx.mcp_servers.clone(), None, None)`; behavior test `compact_never_calls_session_new_memory_or_disk_success`; verify `cargo test --locked -p buzz-acp --lib compact_never_calls_session_new_memory_or_disk_success -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool/compaction.rs` → `session_prompt_blocks_with_idle_timeout`; exact call `agent.acp.session_prompt_blocks_with_idle_timeout(&session.session_id, &["/compact"], ctx.idle_timeout, ctx.max_turn_duration)`; behavior test `compact_exact_prompt_and_durable_started_preserve_delivery_and_turns`; verify `cargo test --locked -p buzz-acp --lib compact_exact_prompt_and_durable_started_preserve_delivery_and_turns -- --test-threads=1`
@@ -7134,7 +7137,19 @@ Exercise authorized controller admission, exact-owner scheduling, lazy wake, col
 New module: `true`.
 
 - Required symbol: `compact_cached_worker_replaces_previous_observer_scope`
+- Required symbol: `mod resume_policy_tests;`
 - Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/compaction_resume_policy_tests.rs`
+
+Bind authorized target selection and scheduler wake to disabled disk resume, durable refusal replay, enabled disk resume and successful no-store in-memory compaction.
+
+New module: `true`.
+
+- Required symbol: `compact_resume_disabled_disk_refusal_and_replay_never_wake`
+- Required symbol: `compact_resume_enabled_disk_wakes_and_resumes_without_new_session`
+- Required symbol: `compact_resume_disabled_memory_owner_still_compacts_without_resume`
+- Verify: `cargo test --locked -p buzz-acp --lib compact_resume_ -- --test-threads=1`
 
 ## `crates/buzz-acp/src/session_controls/compaction.rs`
 
