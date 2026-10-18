@@ -4,9 +4,10 @@ import { waitForAnimations } from "../helpers/animations";
 const AGENT = "a4".repeat(32);
 const VIEWER = "deadbeef".repeat(8);
 const OWNER = "b4".repeat(32);
+const SECOND_AGENT = "c4".repeat(32);
 const CHANNEL = "agents";
 const SHOT = "test-results/session-controls";
-async function setup(page: Page, revoked = false) {
+async function setup(page: Page, revoked = false, denied = false) {
   await installMockBridge(page, {
     ownerOnlyAccessBuild: true,
     managedAgents: [],
@@ -18,11 +19,25 @@ async function setup(page: Page, revoked = false) {
         ownerPubkey: OWNER,
         isAgent: true,
       },
+      {
+        pubkey: SECOND_AGENT,
+        displayName: "SecondBot",
+        ownerPubkey: OWNER,
+        isAgent: true,
+      },
     ],
     relayAgents: [
       {
         pubkey: AGENT,
         name: "ControlBot",
+        ownerPubkey: OWNER,
+        respondTo: "allowlist",
+        respondToAllowlist: denied ? [] : [VIEWER],
+        channelNames: [CHANNEL],
+      },
+      {
+        pubkey: SECOND_AGENT,
+        name: "SecondBot",
         ownerPubkey: OWNER,
         respondTo: "allowlist",
         respondToAllowlist: [VIEWER],
@@ -117,6 +132,8 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
     name: "Manage current session",
   });
   await expect(trigger).toBeVisible();
+  await waitForAnimations(page);
+  await row(page, root).screenshot({ path: `${SHOT}/before-controls.png` });
   await expect(
     row(page, root).getByTestId("message-session-status"),
   ).toHaveCount(0);
@@ -303,6 +320,151 @@ for (const [label, body] of [
     expect(payload.mentionPubkeys).toEqual([AGENT]);
   });
 }
+
+test("two agent menus retain the selected signer and sibling scope", async ({
+  page,
+}) => {
+  const firstRoot = await setup(page);
+  const second = await page.evaluate(
+    ({ pubkey, channelName }) =>
+      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+        channelName,
+        pubkey,
+        content: "Second agent in an independent thread.",
+      }),
+    { pubkey: SECOND_AGENT, channelName: CHANNEL },
+  );
+  if (!second?.id) throw new Error("Second agent event not emitted");
+  await row(page, second.id)
+    .getByRole("button", { name: "Manage current session" })
+    .click();
+  await page.getByRole("menuitem", { name: "Start over", exact: true }).hover();
+  await page
+    .getByRole("menuitem", { name: "Recent history", exact: true })
+    .click();
+  await expect.poll(async () => (await sends(page)).length).toBe(1);
+  const payload = (await sends(page))[0].payload as Record<string, unknown>;
+  expect(payload.content).toBe("!restart");
+  expect(payload.mentionPubkeys).toEqual([SECOND_AGENT]);
+  expect(payload.rootEventId).toBe(second.id);
+  expect(payload.parentEventId).toBe(second.id);
+  await expect(row(page, firstRoot)).toContainText(
+    "A known agent can recover without optional telemetry.",
+  );
+  await expect(
+    row(page, firstRoot).getByTestId("message-session-control"),
+  ).toHaveCount(0);
+});
+
+test("denied viewer has no menu while another accessible agent retains recovery", async ({
+  page,
+}) => {
+  const root = await setup(page, false, true);
+  await expect(row(page, root)).toBeVisible();
+  await expect(
+    row(page, root).getByRole("button", { name: "Manage current session" }),
+  ).toHaveCount(0);
+  expect(await sends(page)).toHaveLength(0);
+});
+
+test("correct-clock viewer sees expired old request and validated manual actor", async ({
+  page,
+}) => {
+  const root = await setup(page);
+  await openThread(page, root);
+  // Generic seeded replies intentionally include their author p. Confirm that
+  // such a human target remains ordinary; it is not native send output.
+  const generic = await page.evaluate(
+    ({ root, actor, target, channelName }) =>
+      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+        channelName,
+        pubkey: actor,
+        content: "!compact",
+        parentEventId: root,
+        mentionPubkeys: [target],
+        createdAt: Math.floor(Date.now() / 1000) - 1201,
+      }),
+    { root, actor: VIEWER, target: AGENT, channelName: CHANNEL },
+  );
+  if (!generic?.id) throw new Error("Generic reply not emitted");
+  const old = await page.evaluate(
+    ({ root, pubkey, channelName }) =>
+      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+        channelName,
+        pubkey,
+        kind: 9,
+        content: "!compact",
+        mentionPubkeys: ["a4".repeat(32)],
+        extraTags: [["e", root, "", "reply"]],
+        createdAt: Math.floor(Date.now() / 1000) - 1200,
+      }),
+    { root, pubkey: VIEWER, channelName: CHANNEL },
+  );
+  if (!old?.id) throw new Error("Old request not emitted");
+  const stored = await page.evaluate(
+    async (ids) =>
+      Promise.all(
+        ids.map(async (eventId) =>
+          JSON.parse(
+            String(
+              await window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__?.("get_event", {
+                eventId,
+              }),
+            ),
+          ),
+        ),
+      ),
+    [generic.id, old.id],
+  );
+  expect(stored[0].tags.filter((tag: string[]) => tag[0] === "p")).toEqual([
+    ["p", VIEWER],
+    ["p", AGENT],
+  ]);
+  expect(stored[1].tags.filter((tag: string[]) => tag[0] === "p")).toEqual([
+    ["p", AGENT],
+  ]);
+  expect(stored[1].tags.filter((tag: string[]) => tag[0] === "e")).toEqual([
+    ["e", root, "", "reply"],
+  ]);
+  await expect(row(page, generic.id)).toContainText("!compact");
+  await expect(
+    row(page, generic.id).getByTestId("message-session-control"),
+  ).toHaveCount(0);
+  await expect(
+    row(page, old.id).getByTestId("message-session-control"),
+  ).toContainText("Request expired · Result not confirmed");
+  const transition = "7f1c2b3a-4d5e-4f60-8a7b-9c0d1e2f3a4b";
+  const response = await page.evaluate(
+    ({ root, command, transition, pubkey, actor, channelName }) =>
+      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+        channelName,
+        pubkey,
+        content: "A manually restarted session.",
+        parentEventId: root,
+        extraTags: [
+          ["buzz-session", "restarted", "user_restart:recent", ""],
+          ["buzz-session-info", "1", transition, "thread", "2", "2", "exact"],
+          ["buzz-session-action", "1", transition, command, actor],
+        ],
+      }),
+    {
+      root,
+      command: old.id,
+      transition,
+      pubkey: AGENT,
+      actor: VIEWER,
+      channelName: CHANNEL,
+    },
+  );
+  if (!response?.id) throw new Error("Manual transition not emitted");
+  await expect(
+    row(page, response.id).getByTestId("message-session-status"),
+  ).toContainText("by npub1mock...");
+  await waitForAnimations(page);
+  await page
+    .getByTestId("message-thread-panel")
+    .screenshot({ path: `${SHOT}/expired-and-actor.png` });
+});
 
 test("owned observer activity projects typed compaction lifecycle through the real store and panel", async ({
   page,

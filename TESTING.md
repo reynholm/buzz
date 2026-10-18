@@ -407,6 +407,9 @@ in `desktop/src/features/messages/lib/sessionControl.test.mjs`. The shared
 `crates/buzz-core/tests/fixtures/session_controls.json` command corpus runs against
 both actual parsers, including the Rust/JavaScript Unicode whitespace boundary.
 Mock-bridge coverage does not attest real-provider or native-platform behavior.
+The final browser matrix also checks independent target agents, denied access,
+twenty-minute-old request expiry and validated manual actor copy. Stored raw
+tags distinguish canonical native requests from generic seeded reply helpers.
 
 The same registered workflow also opens an owned agent's production activity
 panel and ingests raw observer frames through `syncAgentObserverEvents`. It

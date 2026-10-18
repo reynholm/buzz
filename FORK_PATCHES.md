@@ -7026,7 +7026,7 @@ New module: `true`.
 
 ## `AGENTS.md`
 
-Fork rule: public text is in English and carries no internal workspace details
+Fork rule: public text is in English and carries no internal workspace details Fork screenshot publication requires explicit paired repository/remote selection and normal pushes with DCO.
 
 New module: `false`.
 
@@ -7276,13 +7276,16 @@ New module: `true`.
 
 ## `desktop/tests/e2e/session-controls.spec.ts`
 
-Registered production-menu workflow with remote cross-owner evidence, keyboard/submenu/Escape, untouched draft, native command routing, signed raw result projection and revoked send-time admission. Owned-agent activity workflow ingests actual observer events through the production store and panel, covers running/failure/completion, two operations, replay, legacy dedup and raw rail.
+Registered production-menu workflow with remote cross-owner evidence, keyboard/submenu/Escape, untouched draft, native command routing, signed raw result projection and revoked send-time admission. Owned-agent activity workflow ingests actual observer events through the production store and panel, covers running/failure/completion, two operations, replay, legacy dedup and raw rail. Final matrix also verifies exact second-agent selection, denied viewer, old-clock expiry and validated actor copy with distinct before/control captures.
 
 New module: `true`.
 
 - Required symbol: `known_agent_without_telemetry_still_has_current_scope_controls`
 - Required symbol: `revoked send-time permission preserves draft and publishes nothing`
 - Required symbol: `owned observer activity projects typed compaction lifecycle through the real store and panel`
+- Required symbol: `two agent menus retain the selected signer and sibling scope`
+- Required symbol: `denied viewer has no menu while another accessible agent retains recovery`
+- Required symbol: `correct-clock viewer sees expired old request and validated manual actor`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 
 ## `desktop/src/features/channels/useMessageEventProfilePubkeys.ts`
@@ -7436,3 +7439,24 @@ New module: `false`.
 - Required symbol: `item.descriptor?.reason !== "typed-compaction-duplicate"`
 - Invocation: `desktop/src/features/agents/ui/agentSessionTranscriptGrouping.ts` → `splitIntoSessionRuns`; exact call `splitIntoSessionRuns(`; behavior test `grouped production transcript removes correlated legacy hook instead of rendering a quiet duplicate`; verify `node --import ./desktop/test-loader.mjs --experimental-strip-types --test desktop/src/features/agents/ui/agentSessionCompaction.test.mjs desktop/src/features/agents/ui/agentSessionPanelLayout.test.mjs desktop/src/features/agents/observerCompaction.test.mjs`
 - Verify: `node --import ./desktop/test-loader.mjs --experimental-strip-types --test desktop/src/features/agents/ui/agentSessionCompaction.test.mjs desktop/src/features/agents/ui/agentSessionPanelLayout.test.mjs desktop/src/features/agents/observerCompaction.test.mjs`
+
+## `scripts/post-screenshots.sh`
+
+Publish immutable screenshot URLs to an explicit fork and remote with normal nonforce Git push, trusted DCO/signing, and no comment after a rejected push; preserve upstream defaults.
+
+New module: `false`.
+
+- Required symbol: `EXPLICIT_REPO=false`
+- Required symbol: `TRACKING_REF=`
+- Required symbol: `Signed-off-by: %s`
+- Required symbol: `git push "$REMOTE"`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -p test_post_screenshots.py -v`
+
+## `scripts/fork/tests/test_post_screenshots.py`
+
+Exercise actual screenshot workflow with a local bare fork, real Git history/DCO/immutable URLs and rejected-push publication ordering, without network publication.
+
+New module: `true`.
+
+- Required symbol: `test_explicit_fork_preserves_remote_history_and_signs_off`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -p test_post_screenshots.py -v`
