@@ -7,6 +7,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[path = "resident_helper_tests.rs"]
 mod resident_helper_tests;
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[path = "snapshot_helper_tests.rs"]
+mod snapshot_helper_tests;
+
 async fn worker(index: usize) -> OwnedAgent {
     OwnedAgent {
         index,

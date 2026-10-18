@@ -5560,7 +5560,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/process_tree.rs`
 
-Bounded process snapshots and resident-helper classification; macOS/Linux executable confirmation releases completed Codex turns while preserving actual child work.
+Bounded process snapshots and resident-helper classification; macOS/Linux executable confirmation releases completed Codex turns while preserving actual child work. Exact Codex default Bash snapshots remain transient bookkeeping; their ordinary descendants and launchers remain work. Scoped missing executable evidence remains uncertainty while definite descendants remain observable.
 
 New module: `true`.
 
@@ -5569,9 +5569,14 @@ New module: `true`.
 - Required symbol: `pub fn is_resident_helper(`
 - Required symbol: `npm_exec_mcp_chain_is_resident`
 - Required symbol: `launcher_into_scoped_mcp_package_is_resident`
-- Invocation: `crates/buzz-acp/src/acp.rs` → `snapshot`; exact call `let tree = crate::process_tree::snapshot()?;`; behavior test `prompt_work_is_tracked_under_worker_and_resident_provider`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp prompt_work_is_tracked_under_worker_and_resident_provider -- --test-threads=1`
+- Required symbol: `pub(crate) fn is_snapshot_helper(`
+- Required symbol: `pub(crate) fn startup_resident_pids(`
+- Required symbol: `pub(crate) fn is_snapshot_candidate(`
+- Required symbol: `pub(crate) fn is_uncertain_snapshot(`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `snapshot`; exact call `crate::process_tree::snapshot()`; behavior test `prompt_work_is_tracked_under_worker_and_resident_provider`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp prompt_work_is_tracked_under_worker_and_resident_provider -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `blocking_pids`; exact call `blocking.extend(tree.blocking_pids(parent, &self.resident_pids));`; behavior test `work_under_late_codex_host_holds_slot_until_child_exits`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `is_resident_helper`; exact call `self.resident_pids.contains(&child.pid) || tree.is_resident_helper(child)`; behavior test `work_under_late_codex_host_holds_slot_until_child_exits`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `startup_resident_pids`; exact call `self.resident_pids.extend(tree.startup_resident_pids(pid));`; behavior test `codex_snapshot_child_work_survives_late_and_session_capture`; verify `cargo test -p buzz-acp --lib snapshot_helper_tests -- --test-threads=1`
 - Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp process_tree -- --test-threads=1`
 
 ## `crates/buzz-acp/src/process_tree/snapshot_tests.rs`
@@ -6000,12 +6005,13 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/process_tree/codex_helpers.rs`
 
-Confirm late Codex code-mode host identity with one bounded ps call: macOS comm and Linux exe; missing identity and work arguments cannot free slots.
+Confirm Codex code-mode host and exact Bash snapshot shell/parent identities with one bounded ps call; uncertain identities remain work.
 
 New module: `true`.
 
 - Required symbol: `pub(super) fn classify(`
 - Required symbol: `fn confirmed_hosts(`
+- Required symbol: `pub(super) fn apply_snapshot_identities(`
 - Invocation: `crates/buzz-acp/src/process_tree.rs` → `classify`; exact call `let tree = codex_helpers::classify(tree);`; behavior test `six_finished_threads_reuse_five_slots_with_late_codex_hosts`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1`
 - Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1`
 
@@ -7569,3 +7575,51 @@ New module: `false`.
 - Required symbol: `await expect(category).toBeInViewport({ ratio: 1 });`
 - Required symbol: `await expectPickerInViewport("reopen");`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke custom-emoji.spec.ts --workers=1 --retries=0`
+
+## `crates/buzz-acp/src/process_tree/codex_snapshots.rs`
+
+Recognize the complete normalized default Bash capture only under a direct executable-confirmed Codex app-server; transient identity never promotes ordinary ancestors. Missing shell/parent identity is uncertainty; any positive executable mismatch remains work.
+
+New module: `true`.
+
+- Required symbol: `pub(super) fn candidates(`
+- Required symbol: `pub(super) fn classify_identities(`
+- Required symbol: `snapshot_identity_does_not_promote_ordinary_ancestors`
+- Required symbol: `missing_identity_is_uncertain_but_positive_mismatch_is_work`
+- Invocation: `crates/buzz-acp/src/process_tree/codex_helpers.rs` → `classify_identities`; exact call `super::codex_snapshots::classify_identities(snapshots, output);`; behavior test `partial_snapshot_identity_does_not_invent_collection_but_preserves_observed_work`; verify `cargo test -p buzz-acp --lib snapshot_helper_tests -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp --lib snapshot -- --test-threads=1`
+
+## `crates/buzz-acp/src/process_tree/codex_bash_snapshot.txt`
+
+Exact source-derived default Codex Bash capture template; runtime only compares the complete normalized payload.
+
+New module: `true`.
+
+- Required symbol: `echo '# Snapshot file'`
+- Required symbol: `__codex_snapshot_command()`
+- Required symbol: `declare -xp`
+- Verify: `cargo test -p buzz-acp --lib snapshot -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/snapshot_helper_tests.rs`
+
+Real ACP late snapshot/exit/return/poll regressions, ordinary shell lookalikes, wrong executable parent, transient exec and actual descendant work across setup capture.
+
+New module: `true`.
+
+- Required symbol: `late_codex_snapshot_exit_does_not_enqueue_background_collection`
+- Required symbol: `codex_snapshot_child_work_survives_late_and_session_capture`
+- Required symbol: `ordinary_snapshot_lookalikes_still_collect_actual_work`
+- Required symbol: `snapshot_pid_exec_into_ordinary_work_is_not_a_cached_resident`
+- Verify: `cargo test -p buzz-acp --lib snapshot -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/snapshot_uncertainty_tests.rs`
+
+Production ACP discovery/adoption and original hold/poll regressions with injected raw census and partial executable outputs; preserve new definite work, isolate foreign uncertainty, prevent uncertain snapshot branch residency.
+
+New module: `true`.
+
+- Required symbol: `partial_snapshot_identity_does_not_invent_collection_but_preserves_observed_work`
+- Required symbol: `uncertain_snapshot_capture_never_adopts_shell_or_real_descendants`
+- Required symbol: `snapshot_uncertainty_is_owned_and_known_wrong_identity_stays_work`
+- Required symbol: `new_real_work_alongside_uncertain_snapshot_collects_after_its_exit`
+- Verify: `cargo test -p buzz-acp --lib snapshot_helper_tests -- --test-threads=1`

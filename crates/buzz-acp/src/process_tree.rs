@@ -92,14 +92,58 @@ pub fn parse_ps_line(line: &str) -> Option<(u32, u32, String)> {
 pub struct ProcessTree {
     children: HashMap<u32, Vec<ChildProcess>>,
     resident_helpers: HashSet<u32>,
+    snapshot_helpers: HashSet<u32>,
+    snapshot_candidates: HashSet<u32>,
+    uncertain_snapshots: HashSet<u32>,
 }
 
 impl ProcessTree {
-    /// Direct children that are work, excluding startup residents and helpers.
+    #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+    pub(crate) fn from_snapshot_with_identities(output: &str, identities: Option<&str>) -> Self {
+        let mut tree = parse_snapshot(output).unwrap();
+        let snapshots = codex_snapshots::candidates(&tree);
+        codex_helpers::apply_snapshot_identities(&mut tree, &snapshots, identities);
+        tree
+    }
+
+    /// Snapshot shells are bookkeeping only while their current identity matches.
+    pub(crate) fn is_snapshot_helper(&self, pid: u32) -> bool {
+        self.snapshot_helpers.contains(&pid)
+    }
+
+    /// A structural snapshot branch must never authorize permanent residency.
+    pub(crate) fn is_snapshot_candidate(&self, pid: u32) -> bool {
+        self.snapshot_candidates.contains(&pid)
+    }
+
+    /// Missing executable proof is uncertainty rather than observed task work.
+    pub(crate) fn is_uncertain_snapshot(&self, pid: u32) -> bool {
+        self.uncertain_snapshots.contains(&pid)
+    }
+
+    /// Startup residents exclude snapshot branches, whose children may be real work.
+    pub(crate) fn startup_resident_pids(&self, parent: u32) -> HashSet<u32> {
+        let mut residents = HashSet::new();
+        let mut pending = vec![parent];
+        while let Some(parent) = pending.pop() {
+            for child in self.children(parent) {
+                if !self.is_snapshot_candidate(child.pid) && residents.insert(child.pid) {
+                    pending.push(child.pid);
+                }
+            }
+        }
+        residents
+    }
+
+    /// Definite work children, excluding residents, helpers and uncertain snapshots.
     pub fn blocking_pids(&self, parent: u32, resident: &HashSet<u32>) -> HashSet<u32> {
         self.children(parent)
             .iter()
-            .filter(|child| !resident.contains(&child.pid) && !self.is_resident_helper(child))
+            .filter(|child| {
+                !resident.contains(&child.pid)
+                    && !self.is_resident_helper(child)
+                    && !self.is_uncertain_snapshot(child.pid)
+            })
             .map(|child| child.pid)
             .collect()
     }
@@ -107,7 +151,7 @@ impl ProcessTree {
     /// Helpers confirmed by executable identity, the MCP classifier, or a
     /// launcher whose children are all helpers. A childless non-helper is work.
     pub fn is_resident_helper(&self, child: &ChildProcess) -> bool {
-        self.is_helper_within(child, MAX_LAUNCHER_DEPTH)
+        self.is_snapshot_helper(child.pid) || self.is_helper_within(child, MAX_LAUNCHER_DEPTH)
     }
 
     fn is_helper_within(&self, child: &ChildProcess, depth: usize) -> bool {
@@ -163,6 +207,9 @@ pub fn snapshot() -> Option<ProcessTree> {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod codex_helpers;
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod codex_snapshots;
 
 #[cfg(unix)]
 fn parse_snapshot(output: &str) -> Option<ProcessTree> {

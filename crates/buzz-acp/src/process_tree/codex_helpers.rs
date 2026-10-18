@@ -19,11 +19,17 @@ pub(super) fn classify(mut tree: ProcessTree) -> ProcessTree {
         })
         .map(|child| child.pid)
         .collect();
+    let snapshots = super::codex_snapshots::candidates(&tree);
+    let mut probe_pids = candidates.clone();
+    for (child, parent) in &snapshots {
+        probe_pids.extend([child, parent]);
+    }
+    apply_snapshot_identities(&mut tree, &snapshots, None);
     // Bound argv as well as time/output. Uncertain enumeration keeps work held.
-    if candidates.is_empty() || candidates.len() > 128 {
+    if probe_pids.is_empty() || probe_pids.len() > 128 {
         return tree;
     }
-    let pids = candidates
+    let pids = probe_pids
         .iter()
         .map(u32::to_string)
         .collect::<Vec<_>>()
@@ -35,7 +41,18 @@ pub(super) fn classify(mut tree: ProcessTree) -> ProcessTree {
     command.args(["-ww", "-p", &pids, "-o", "pid=,exe="]);
     let output = bounded_output(command, std::time::Duration::from_millis(250), 256 * 1024);
     tree.resident_helpers = confirmed_hosts(output.as_deref(), &candidates);
+    apply_snapshot_identities(&mut tree, &snapshots, output.as_deref());
     tree
+}
+
+pub(super) fn apply_snapshot_identities(
+    tree: &mut ProcessTree,
+    snapshots: &HashMap<u32, u32>,
+    output: Option<&str>,
+) {
+    tree.snapshot_candidates = snapshots.keys().copied().collect();
+    (tree.snapshot_helpers, tree.uncertain_snapshots) =
+        super::codex_snapshots::classify_identities(snapshots, output);
 }
 
 fn confirmed_hosts(output: Option<&str>, candidates: &HashSet<u32>) -> HashSet<u32> {

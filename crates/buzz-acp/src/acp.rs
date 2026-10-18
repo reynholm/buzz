@@ -157,6 +157,9 @@ pub struct AcpClient {
     termination: terminate::TerminationState,
     #[cfg(test)]
     pub(crate) background_child_snapshots: std::collections::VecDeque<Option<HashSet<u32>>>,
+    #[cfg(test)]
+    pub(crate) process_tree_snapshots:
+        std::collections::VecDeque<Option<crate::process_tree::ProcessTree>>,
     compactions: compaction::CompactionTracker,
     /// The agent child process (kept alive to prevent zombie).
     child: Child,
@@ -654,6 +657,8 @@ impl AcpClient {
             termination: terminate::TerminationState::default(),
             #[cfg(test)]
             background_child_snapshots: std::collections::VecDeque::new(),
+            #[cfg(test)]
+            process_tree_snapshots: std::collections::VecDeque::new(),
             child,
             stdin: Some(stdin),
             reader: FramedRead::new(stdout, LinesCodec::new_with_max_length(MAX_LINE_SIZE)),
@@ -684,17 +689,27 @@ impl AcpClient {
         self.child.id()
     }
 
+    fn process_tree_snapshot(&mut self) -> Option<crate::process_tree::ProcessTree> {
+        #[cfg(test)]
+        if let Some(snapshot) = self.process_tree_snapshots.pop_front() {
+            return snapshot;
+        }
+        crate::process_tree::snapshot()
+    }
+
     /// Remember processes created before the first turn, including providers'
     /// own startup children. Call only during the initial protocol handshake.
     pub fn capture_startup_children(&mut self) {
-        if let (Some(pid), Some(tree)) = (self.process_id(), crate::process_tree::snapshot()) {
-            self.resident_pids.extend(tree.descendant_pids(pid));
+        if let (Some(pid), Some(tree)) = (self.process_id(), self.process_tree_snapshot()) {
+            self.resident_pids.extend(tree.startup_resident_pids(pid));
         }
     }
 
     /// Background work under the worker or any resident provider/helper.
     ///
-    /// `None` means enumeration is uncertain and the worker must remain awake.
+    /// Nonempty results retain definite work even when another candidate is uncertain.
+    /// `None` means no definite work was found but discovery remains uncertain;
+    /// only a known empty result permits releasing an uncertainty-only hold.
     /// Each poll traverses current residents so newly created work is visible.
     pub fn background_child_pids(&mut self) -> Option<HashSet<u32>> {
         #[cfg(test)]
@@ -704,12 +719,13 @@ impl AcpClient {
         let Some(pid) = self.process_id() else {
             return Some(HashSet::new());
         };
-        let tree = crate::process_tree::snapshot()?;
+        let tree = self.process_tree_snapshot()?;
         let live = tree.descendant_pids(pid);
         self.resident_pids.retain(|pid| live.contains(pid));
         let mut pending = vec![pid];
         let mut visited = HashSet::new();
         let mut blocking = HashSet::new();
+        let mut uncertain = false;
         while let Some(parent) = pending.pop() {
             if !visited.insert(parent) {
                 continue;
@@ -717,13 +733,24 @@ impl AcpClient {
             let children = tree.children(parent);
             blocking.extend(tree.blocking_pids(parent, &self.resident_pids));
             for child in children {
+                if tree.is_uncertain_snapshot(child.pid) {
+                    uncertain = true;
+                    pending.push(child.pid);
+                    continue;
+                }
                 if self.resident_pids.contains(&child.pid) || tree.is_resident_helper(child) {
-                    self.resident_pids.insert(child.pid);
+                    if !tree.is_snapshot_helper(child.pid) {
+                        self.resident_pids.insert(child.pid);
+                    }
                     pending.push(child.pid);
                 }
             }
         }
-        Some(blocking)
+        if blocking.is_empty() && uncertain {
+            None
+        } else {
+            Some(blocking)
+        }
     }
 
     /// Adopt processes born during successful session setup, traversing only
@@ -733,7 +760,7 @@ impl AcpClient {
         let Some(before) = before else {
             return; // Unknown baseline must never authorize adopting turn work.
         };
-        let (Some(pid), Some(tree)) = (self.process_id(), crate::process_tree::snapshot()) else {
+        let (Some(pid), Some(tree)) = (self.process_id(), self.process_tree_snapshot()) else {
             return;
         };
         let mut pending = vec![pid];
@@ -743,6 +770,9 @@ impl AcpClient {
                 continue;
             }
             for child in tree.children(parent) {
+                if tree.is_snapshot_candidate(child.pid) {
+                    continue;
+                }
                 if self.resident_pids.contains(&child.pid) || !before.contains(&child.pid) {
                     self.resident_pids.insert(child.pid);
                     pending.push(child.pid);
@@ -848,9 +878,10 @@ impl AcpClient {
         session_title: Option<&str>,
     ) -> Result<SessionNewResponse, AcpError> {
         let params = self.build_session_params(cwd, mcp_servers, system_prompt, session_title);
-        let before = self
-            .process_id()
-            .and_then(|pid| crate::process_tree::snapshot().map(|tree| tree.descendant_pids(pid)));
+        let before = self.process_id().and_then(|pid| {
+            self.process_tree_snapshot()
+                .map(|tree| tree.descendant_pids(pid))
+        });
         let generation = self.compactions.prepare_new();
         let response = self.send_request("session/new", params).await;
         let returned_session = response

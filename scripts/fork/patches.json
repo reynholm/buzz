@@ -8453,20 +8453,24 @@
     },
     {
       "path": "crates/buzz-acp/src/process_tree.rs",
-      "responsibility": "Bounded process snapshots and resident-helper classification; macOS/Linux executable confirmation releases completed Codex turns while preserving actual child work.",
+      "responsibility": "Bounded process snapshots and resident-helper classification; macOS/Linux executable confirmation releases completed Codex turns while preserving actual child work. Exact Codex default Bash snapshots remain transient bookkeeping; their ordinary descendants and launchers remain work. Scoped missing executable evidence remains uncertainty while definite descendants remain observable.",
       "is_new": true,
       "required_symbols": [
         "pub fn snapshot()",
         "pub fn blocking_pids(",
         "pub fn is_resident_helper(",
         "npm_exec_mcp_chain_is_resident",
-        "launcher_into_scoped_mcp_package_is_resident"
+        "launcher_into_scoped_mcp_package_is_resident",
+        "pub(crate) fn is_snapshot_helper(",
+        "pub(crate) fn startup_resident_pids(",
+        "pub(crate) fn is_snapshot_candidate(",
+        "pub(crate) fn is_uncertain_snapshot("
       ],
       "invocation_seams": [
         {
           "caller_path": "crates/buzz-acp/src/acp.rs",
           "callee_symbol": "snapshot",
-          "invocation": "let tree = crate::process_tree::snapshot()?;",
+          "invocation": "crate::process_tree::snapshot()",
           "behavior_test": "prompt_work_is_tracked_under_worker_and_resident_provider",
           "verification_command": "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp prompt_work_is_tracked_under_worker_and_resident_provider -- --test-threads=1",
           "coverage": "Inherited production process classification exercised with real local ACP children; no new runtime mutation claim."
@@ -8484,6 +8488,14 @@
           "invocation": "self.resident_pids.contains(&child.pid) || tree.is_resident_helper(child)",
           "behavior_test": "work_under_late_codex_host_holds_slot_until_child_exits",
           "verification_command": "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/acp.rs",
+          "callee_symbol": "startup_resident_pids",
+          "invocation": "self.resident_pids.extend(tree.startup_resident_pids(pid));",
+          "behavior_test": "codex_snapshot_child_work_survives_late_and_session_capture",
+          "verification_command": "cargo test -p buzz-acp --lib snapshot_helper_tests -- --test-threads=1",
+          "coverage": "Actual ACP session/startup capture cannot permanently adopt ordinary work beneath a recognized snapshot shell."
         }
       ],
       "verification_commands": [
@@ -9076,11 +9088,12 @@
     },
     {
       "path": "crates/buzz-acp/src/process_tree/codex_helpers.rs",
-      "responsibility": "Confirm late Codex code-mode host identity with one bounded ps call: macOS comm and Linux exe; missing identity and work arguments cannot free slots.",
+      "responsibility": "Confirm Codex code-mode host and exact Bash snapshot shell/parent identities with one bounded ps call; uncertain identities remain work.",
       "is_new": true,
       "required_symbols": [
         "pub(super) fn classify(",
-        "fn confirmed_hosts("
+        "fn confirmed_hosts(",
+        "pub(super) fn apply_snapshot_identities("
       ],
       "invocation_seams": [
         {
@@ -11509,6 +11522,73 @@
       "invocation_seams": [],
       "verification_commands": [
         "CI=1 pnpm --dir desktop test:e2e:smoke custom-emoji.spec.ts --workers=1 --retries=0"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/process_tree/codex_snapshots.rs",
+      "responsibility": "Recognize the complete normalized default Bash capture only under a direct executable-confirmed Codex app-server; transient identity never promotes ordinary ancestors. Missing shell/parent identity is uncertainty; any positive executable mismatch remains work.",
+      "is_new": true,
+      "required_symbols": [
+        "pub(super) fn candidates(",
+        "pub(super) fn classify_identities(",
+        "snapshot_identity_does_not_promote_ordinary_ancestors",
+        "missing_identity_is_uncertain_but_positive_mismatch_is_work"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/process_tree/codex_helpers.rs",
+          "callee_symbol": "classify_identities",
+          "invocation": "super::codex_snapshots::classify_identities(snapshots, output);",
+          "behavior_test": "partial_snapshot_identity_does_not_invent_collection_but_preserves_observed_work",
+          "verification_command": "cargo test -p buzz-acp --lib snapshot_helper_tests -- --test-threads=1"
+        }
+      ],
+      "verification_commands": [
+        "cargo test -p buzz-acp --lib snapshot -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/process_tree/codex_bash_snapshot.txt",
+      "responsibility": "Exact source-derived default Codex Bash capture template; runtime only compares the complete normalized payload.",
+      "is_new": true,
+      "required_symbols": [
+        "echo '# Snapshot file'",
+        "__codex_snapshot_command()",
+        "declare -xp"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp --lib snapshot -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/snapshot_helper_tests.rs",
+      "responsibility": "Real ACP late snapshot/exit/return/poll regressions, ordinary shell lookalikes, wrong executable parent, transient exec and actual descendant work across setup capture.",
+      "is_new": true,
+      "required_symbols": [
+        "late_codex_snapshot_exit_does_not_enqueue_background_collection",
+        "codex_snapshot_child_work_survives_late_and_session_capture",
+        "ordinary_snapshot_lookalikes_still_collect_actual_work",
+        "snapshot_pid_exec_into_ordinary_work_is_not_a_cached_resident"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp --lib snapshot -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/snapshot_uncertainty_tests.rs",
+      "responsibility": "Production ACP discovery/adoption and original hold/poll regressions with injected raw census and partial executable outputs; preserve new definite work, isolate foreign uncertainty, prevent uncertain snapshot branch residency.",
+      "is_new": true,
+      "required_symbols": [
+        "partial_snapshot_identity_does_not_invent_collection_but_preserves_observed_work",
+        "uncertain_snapshot_capture_never_adopts_shell_or_real_descendants",
+        "snapshot_uncertainty_is_owned_and_known_wrong_identity_stays_work",
+        "new_real_work_alongside_uncertain_snapshot_collects_after_its_exit"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp --lib snapshot_helper_tests -- --test-threads=1"
       ]
     }
   ]
