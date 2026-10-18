@@ -151,6 +151,7 @@ fn build_initialize_params() -> serde_json::Value {
 /// same client via repeated calls to [`session_new`](AcpClient::session_new).
 pub struct AcpClient {
     termination: terminate::TerminationState,
+    compactions: compaction::CompactionTracker,
     /// The agent child process (kept alive to prevent zombie).
     child: Child,
     /// Sole stdin writer; None after an interrupted/failed frame closes it.
@@ -426,6 +427,7 @@ fn build_client_capabilities() -> serde_json::Value {
         "auth": {
             "terminal": true
         },
+        "session": {"compaction": {}},
         // Signal to goose that we handle `_goose/unstable/session/update`
         // notifications. Without this the custom notification is suppressed
         // on goose's side and usage data is never emitted.
@@ -440,6 +442,13 @@ fn build_client_capabilities() -> serde_json::Value {
         }
     })
 }
+
+#[path = "acp/compaction.rs"]
+mod compaction;
+
+#[cfg(all(test, unix))]
+#[path = "acp/compaction_tests.rs"]
+mod compaction_tests;
 
 impl AcpClient {
     /// Kill the agent subprocess and wait for it to exit (no zombies).
@@ -656,6 +665,7 @@ impl AcpClient {
             claude_thinking_summaries,
             resident_pids: HashSet::new(),
             session_status: HashMap::new(),
+            compactions: compaction::CompactionTracker::default(),
         })
     }
 
@@ -896,7 +906,11 @@ impl AcpClient {
         let before = self
             .process_id()
             .and_then(|pid| crate::process_tree::snapshot().map(|tree| tree.descendant_pids(pid)));
-        let result = self.send_request("session/resume", params).await?;
+        let generation = self.compactions.prepare_resume(session_id);
+        let response = self.send_request("session/resume", params).await;
+        self.compactions
+            .complete_resume(session_id, generation, response.is_ok());
+        let result = response?;
         self.capture_session_children(before);
         tracing::info!(target: "acp::session", "session resumed: {session_id}");
         Ok(SessionNewResponse {
@@ -1133,12 +1147,14 @@ impl AcpClient {
         binding: crate::session_status::StatusBinding,
     ) {
         self.session_status.retain(|_, bound| bound.is_live());
+        self.compactions.bind(session_id, binding.generation_id());
         self.session_status.insert(session_id.to_owned(), binding);
     }
 
     /// Stop routing context-occupancy notifications of `session_id`.
     pub(crate) fn clear_session_status(&mut self, session_id: &str) {
         self.session_status.remove(session_id);
+        self.compactions.clear(session_id);
     }
 
     /// Whether `session_id` still routes to a live status generation.
@@ -1146,6 +1162,50 @@ impl AcpClient {
         self.session_status
             .get(session_id)
             .is_some_and(crate::session_status::StatusBinding::is_live)
+    }
+
+    pub(crate) fn retain_compaction_sessions(
+        &mut self,
+        sessions: &std::collections::HashSet<String>,
+    ) {
+        self.compactions.retain_sessions(sessions);
+        self.session_status
+            .retain(|session, binding| sessions.contains(session) && binding.is_live());
+    }
+
+    pub(crate) fn ensure_compaction_route(&mut self, session: &str) {
+        self.compactions.ensure_route(session);
+    }
+    #[cfg(all(test, unix))]
+    pub(crate) fn advertise_compaction(&mut self, session: &str) {
+        self.compactions.set_advertised(session);
+    }
+
+    #[cfg(all(test, unix))]
+    pub(crate) fn route_compaction(&mut self, session: &str, generation: uuid::Uuid) {
+        self.compactions.route(session, generation);
+    }
+
+    pub(crate) fn compact_supported(&self, session: &str) -> bool {
+        matches!(
+            self.standard_adapter,
+            Some(StandardAdapterKind::Claude | StandardAdapterKind::Codex)
+        ) || self.compactions.supported(session)
+    }
+
+    pub(crate) fn begin_compaction(
+        &mut self,
+        session: &str,
+        origin: buzz_core::session_control::ControlOrigin,
+    ) -> Result<(), buzz_core::session_control::ControlFailure> {
+        self.compactions.begin(session, origin)
+    }
+
+    pub(crate) fn finish_compaction(
+        &mut self,
+        session: &str,
+    ) -> buzz_core::session_control::ControlOutcome {
+        self.compactions.finish(session)
     }
 
     /// Install a per-turn steer request channel for goose-native
@@ -1997,6 +2057,22 @@ impl AcpClient {
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
 
+        let session_id = msg["params"]["sessionId"].as_str();
+        if update_type == "compaction_update" {
+            if let Some(session) = session_id {
+                if let Some(origin) = self.compactions.update(session, update) {
+                    if let Some(binding) = self.session_status.get(session) {
+                        binding.compacted(origin);
+                    }
+                }
+            }
+            return false;
+        }
+        if update_type == "available_commands_update" {
+            if let Some(session) = session_id {
+                self.compactions.advertise(session, update);
+            }
+        }
         match update_type {
             "agent_message_chunk" => {
                 if let Some(text) = update["content"]["text"].as_str() {

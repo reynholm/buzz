@@ -33,6 +33,7 @@ pub(crate) struct ControlJob {
     pub scope: SessionScope,
     pub dispatch_epoch: Uuid,
     pub event: nostr::Event,
+    pub admitted_at: u64,
 }
 
 pub(crate) enum Admission {
@@ -111,6 +112,7 @@ pub(crate) async fn admit_authorized(
         dispatch_epoch: ctx.session_controls.epoch(&scope),
         scope,
         event: raw.event,
+        admitted_at: now,
     })
 }
 
@@ -127,6 +129,15 @@ struct State {
     scopes: HashMap<SessionScope, ScopeControl>,
     workers: HashMap<usize, retirement::Worker>,
     publications: std::collections::VecDeque<retirement::Publication>,
+    compactions: HashMap<SessionScope, compaction::PendingCompaction>,
+    receipt_writes: HashMap<String, receipt_writes::ReceiptPersistence>,
+    outcomes: HashMap<
+        String,
+        (
+            tokio::time::Instant,
+            buzz_core::session_control::ControlOutcome,
+        ),
+    >,
 }
 
 impl State {
@@ -227,12 +238,20 @@ impl SessionControlRuntime {
                 return Ok(false);
             }
         }
-        if state
+        let pending_scope_count = state
             .scopes
-            .values()
-            .filter(|entry| entry.retiring.is_some())
-            .count()
-            >= 128
+            .iter()
+            .filter(|(_, entry)| entry.retiring.is_some())
+            .map(|(scope, _)| scope)
+            .chain(state.compactions.keys())
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        if pending_scope_count + state.receipt_writes.len() >= 128
+            && !state.compactions.contains_key(&job.scope)
+            && !state
+                .receipt_writes
+                .values()
+                .any(|pending| pending.scope == job.scope)
             && state
                 .scopes
                 .get(&job.scope)
@@ -253,6 +272,15 @@ impl SessionControlRuntime {
         for command_id in superseded {
             state.publish(retirement::Publication {
                 command_id,
+                result: buzz_core::session_control::ControlResult::Terminal(Err(
+                    ControlFailure::Superseded,
+                )),
+            });
+        }
+        if let Some(pending) = state.compactions.remove(&job.scope) {
+            let id = pending.admitted.job.origin.command_event_id;
+            state.publish(retirement::Publication {
+                command_id: id,
                 result: buzz_core::session_control::ControlResult::Terminal(Err(
                     ControlFailure::Superseded,
                 )),
@@ -306,16 +334,29 @@ impl SessionControlRuntime {
     pub(crate) fn pending_scopes(&self) -> Vec<SessionScope> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.prune_quiescent();
-        state
+        let mut scopes: Vec<_> = state
             .scopes
             .iter()
             .filter(|(_, entry)| entry.retiring.is_some())
             .map(|(scope, _)| scope.clone())
-            .collect()
+            .collect();
+        scopes.extend(state.compactions.keys().cloned());
+        scopes
     }
 
     /// Explicit channel revocation clears control-only records even without resume.
     pub(crate) fn revoke_channel(&self, channel: Uuid) -> Result<(), StoreError> {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let removed: Vec<_> = state
+            .compactions
+            .iter()
+            .filter(|(scope, _)| scope.channel_id() == channel)
+            .map(|(_, pending)| pending.admitted.clone())
+            .collect();
+        drop(state);
+        for job in removed {
+            self.finish_compaction_job(&job, Err(ControlFailure::Cancelled));
+        }
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.scopes.retain(|scope, entry| {
             if scope.channel_id() != channel {
@@ -371,7 +412,10 @@ impl ControlDispatch {
     }
 }
 
+pub(crate) mod compaction;
+mod receipt_writes;
 mod retirement;
+pub(crate) use compaction::{AdmittedSessionControl, CompactionTarget};
 pub(crate) use retirement::Publication;
 
 pub(crate) mod publish;

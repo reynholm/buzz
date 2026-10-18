@@ -16,6 +16,77 @@ fn fixture() -> (tempfile::TempDir, SessionStore, SessionScope) {
 fn id(n: usize) -> String {
     format!("{n:064x}")
 }
+
+#[test]
+fn admitted_compact_receipt_uses_original_freshness_without_weakening_unadmitted_api() {
+    let (_dir, store, scope) = fixture();
+    let now = nostr::Timestamp::now().as_secs();
+    let signed = now - 901;
+    assert!(matches!(
+        store.begin_control_attempt(&scope, &id(1), signed),
+        Err(StoreError::StaleRequest)
+    ));
+    assert!(matches!(
+        store.begin_admitted_control_attempt(&scope, &id(1), signed, now),
+        Err(StoreError::StaleRequest)
+    ));
+    assert!(matches!(
+        store.begin_admitted_control_attempt(&scope, &id(1), now + 60, now + 60),
+        Err(StoreError::StaleRequest)
+    ));
+    assert_eq!(
+        store
+            .begin_admitted_control_attempt(&scope, &id(1), signed, now - 20)
+            .unwrap(),
+        ControlAttempt::New
+    );
+    assert_eq!(
+        record(&store, &scope).control_receipts[0].created_at,
+        signed
+    );
+    assert_eq!(
+        store
+            .begin_admitted_control_attempt(&scope, &id(1), signed, now - 20)
+            .unwrap(),
+        ControlAttempt::PriorStarted
+    );
+}
+
+#[test]
+fn compact_terminal_receipt_retry_checks_exact_owner_generation_and_preserves_supersession() {
+    let (dir, store, scope) = fixture();
+    let now = nostr::Timestamp::now().as_secs();
+    store.begin_control_attempt(&scope, &id(1), now).unwrap();
+    let expected = record(&store, &scope).control_receipts[0].clone();
+    let mut wrong = expected.clone();
+    wrong.owner_generation = Uuid::new_v4();
+    assert!(matches!(
+        store.retry_control_outcome(&scope, &wrong, &Ok(())),
+        Err(StoreError::Conflict)
+    ));
+    assert_eq!(
+        record(&store, &scope).control_receipts[0].state,
+        ControlReceiptState::Started
+    );
+    let foreign = SessionStore::open(dir.path().into(), "wss://relay.example", AGENT).unwrap();
+    assert!(matches!(
+        foreign.retry_control_outcome(&scope, &expected, &Ok(())),
+        Err(StoreError::Conflict)
+    ));
+    store
+        .request_restart_superseding(&scope, &intent(2))
+        .unwrap();
+    assert_eq!(
+        store
+            .retry_control_outcome(&scope, &expected, &Ok(()))
+            .unwrap(),
+        Some(Err(ControlFailure::Superseded))
+    );
+    assert_eq!(
+        record(&store, &scope).control_receipts[0].state,
+        ControlReceiptState::Finished(Err(ControlFailure::Superseded))
+    );
+}
 fn intent(n: usize) -> RestartIntent {
     RestartIntent {
         token: Uuid::new_v4(),

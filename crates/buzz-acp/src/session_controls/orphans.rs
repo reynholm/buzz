@@ -15,7 +15,8 @@ impl SessionControlRuntime {
         let Some(store) = &self.store else {
             return Ok(SweepProgress::default());
         };
-        let progress = store.sweep_orphan_controls(capacity)?;
+        let local = self.retry_receipt_writes(capacity);
+        let progress = store.sweep_orphan_controls(capacity.saturating_sub(local.completed))?;
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         for command_id in progress.finished {
             state.publish(Publication {
@@ -24,8 +25,8 @@ impl SessionControlRuntime {
             });
         }
         Ok(SweepProgress {
-            more: progress.more,
-            failures: progress.failures,
+            more: progress.more || local.more,
+            failures: progress.failures + local.failures,
         })
     }
 }
@@ -71,6 +72,9 @@ impl OrphanReconciliation {
                     self.backoff = (self.backoff * 2).min(Duration::from_secs(60));
                 }
             }
+        }
+        if self.next.is_none() && self.task.is_none() && controls.has_receipt_writes() {
+            self.next = Some(Instant::now());
         }
         self.waiting_capacity = capacity == 0;
         if self.task.is_none()

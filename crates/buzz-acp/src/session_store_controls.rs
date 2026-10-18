@@ -165,10 +165,36 @@ impl SessionStore {
         command_id: &str,
         created_at: u64,
     ) -> Result<ControlAttempt, StoreError> {
+        self.begin_control_attempt_at(scope, command_id, created_at, unix_now()?)
+    }
+
+    /// Persist an already admitted control using its original freshness check.
+    /// Execution still enforces the captured logical deadline; receipt completion
+    /// may follow bounded cleanup after that deadline.
+    pub(crate) fn begin_admitted_control_attempt(
+        &self,
+        scope: &SessionScope,
+        command_id: &str,
+        created_at: u64,
+        admitted_at: u64,
+    ) -> Result<ControlAttempt, StoreError> {
+        self.begin_control_attempt_at(scope, command_id, created_at, admitted_at)
+    }
+
+    fn begin_control_attempt_at(
+        &self,
+        scope: &SessionScope,
+        command_id: &str,
+        created_at: u64,
+        admitted_at: u64,
+    ) -> Result<ControlAttempt, StoreError> {
         if !is_canonical_id(command_id) {
             return Err(StoreError::InvalidControl);
         }
         let now = unix_now()?;
+        if admitted_at > now.saturating_add(CONTROL_FUTURE_SKEW_SECS) {
+            return Err(StoreError::StaleRequest);
+        }
         let mut attempt = ControlAttempt::New;
         let result = self.update_control(&self.record_path(scope), |current| {
             if let Some(prior) = current.and_then(|r| receipt(r, command_id)) {
@@ -180,7 +206,7 @@ impl SessionStore {
                 };
                 return Err(StoreError::AlreadyRecorded);
             }
-            if !control_is_fresh(created_at, now) {
+            if !control_is_fresh(created_at, admitted_at) {
                 return Err(StoreError::StaleRequest);
             }
             let mut record = current.cloned().unwrap_or_else(|| self.tombstone(None));
@@ -227,6 +253,49 @@ impl SessionStore {
             StoreError::AlreadyRecorded => Ok(()),
             other => Err(other),
         })
+    }
+
+    /// Retry only a known-finalized local receipt's terminal write. The exact
+    /// owner and generation fence the write; a newer terminal result wins.
+    /// `None` means absence was proven under the record lock.
+    pub(crate) fn retry_control_outcome(
+        &self,
+        scope: &SessionScope,
+        expected: &ControlReceipt,
+        outcome: &ControlOutcome,
+    ) -> Result<Option<ControlOutcome>, StoreError> {
+        if expected.owner_instance != self.instance {
+            return Err(StoreError::Conflict);
+        }
+        let mut resolved = None;
+        let result = self.update_control(&self.record_path(scope), |current| {
+            let Some(mut record) = current.cloned() else {
+                return Err(StoreError::AlreadyRecorded);
+            };
+            let Some(receipt) = record
+                .control_receipts
+                .iter_mut()
+                .find(|receipt| receipt.command_id == expected.command_id)
+            else {
+                return Err(StoreError::AlreadyRecorded);
+            };
+            if receipt.owner_instance != expected.owner_instance
+                || receipt.owner_generation != expected.owner_generation
+            {
+                return Err(StoreError::Conflict);
+            }
+            if let ControlReceiptState::Finished(prior) = receipt.state {
+                resolved = Some(prior);
+                return Err(StoreError::AlreadyRecorded);
+            }
+            receipt.state = ControlReceiptState::Finished(*outcome);
+            resolved = Some(*outcome);
+            Ok(record)
+        });
+        match result {
+            Ok(()) | Err(StoreError::AlreadyRecorded) => Ok(resolved),
+            Err(error) => Err(error),
+        }
     }
 
     /// Terminalize an orphan without reexecuting it. For this instance the caller

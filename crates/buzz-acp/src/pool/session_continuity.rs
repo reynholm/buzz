@@ -246,7 +246,7 @@ impl SessionState {
         }
     }
 
-    fn restore_delivery(&mut self, scope: &SessionScope, live: LiveSession) {
+    pub(super) fn restore_delivery(&mut self, scope: &SessionScope, live: LiveSession) {
         self.deliveries.insert(
             scope.clone(),
             ChannelDeliveryState {

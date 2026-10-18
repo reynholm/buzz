@@ -4526,7 +4526,9 @@
         "self.resume_supported = result",
         "pub(crate) fn bind_session_status(",
         "pub(crate) fn clear_session_status(",
-        "DispatchRetired,"
+        "DispatchRetired,",
+        "\"session\": {\"compaction\": {}}",
+        "if update_type == \"compaction_update\""
       ],
       "invocation_seams": [
         {
@@ -4543,6 +4545,41 @@
           "behavior_test": "status_dir_env_is_owned_by_the_harness",
           "verification_command": "cargo test -p buzz-acp -- --test-threads=1",
           "coverage": "The helper is unit-tested; the spawn call is a textual guard (no test mutates the process environment)."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/acp.rs",
+          "callee_symbol": "update",
+          "invocation": "self.compactions.update(session, update)",
+          "behavior_test": "compaction_standard_dispatch_terminal_only_duplicate_and_next_request",
+          "verification_command": "cargo test --locked -p buzz-acp --lib compaction_standard_dispatch_terminal_only_duplicate_and_next_request -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/acp.rs",
+          "callee_symbol": "compacted",
+          "invocation": "binding.compacted(origin);",
+          "behavior_test": "typed_compaction_changes_only_transition_and_manual_actor",
+          "verification_command": "cargo test --locked -p buzz-acp --lib typed_compaction_changes_only_transition_and_manual_actor -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/acp.rs",
+          "callee_symbol": "prepare_resume",
+          "invocation": "self.compactions.prepare_resume(session_id)",
+          "behavior_test": "resumed_pre_ack_compaction_cannot_become_a_manual_completion_or_actor",
+          "verification_command": "cargo test --locked -p buzz-acp --lib resumed_pre_ack_compaction_cannot_become_a_manual_completion_or_actor -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/acp.rs",
+          "callee_symbol": "complete_resume",
+          "invocation": ".complete_resume(session_id, generation, response.is_ok());",
+          "behavior_test": "resumed_pre_ack_compaction_cannot_become_a_manual_completion_or_actor",
+          "verification_command": "cargo test --locked -p buzz-acp --lib resumed_pre_ack_compaction_cannot_become_a_manual_completion_or_actor -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/acp.rs",
+          "callee_symbol": "bind",
+          "invocation": "self.compactions.bind(session_id, binding.generation_id());",
+          "behavior_test": "resumed_pre_ack_compaction_cannot_become_a_manual_completion_or_actor",
+          "verification_command": "cargo test --locked -p buzz-acp --lib resumed_pre_ack_compaction_cannot_become_a_manual_completion_or_actor -- --test-threads=1"
         }
       ],
       "verification_commands": [
@@ -4630,7 +4667,8 @@
         "pool.queue_finished_background_work(&mut queue);",
         "fn result_refreshes_idle_clock(source: &PromptSource) -> bool",
         "mod session_status;",
-        "name == session_status::SESSION_STATUS_DIR_ENV"
+        "name == session_status::SESSION_STATUS_DIR_ENV",
+        "ctx.session_controls.compact_pending(&scope) && batch.continuation.is_none()"
       ],
       "invocation_seams": [
         {
@@ -4724,10 +4762,10 @@
         {
           "caller_path": "crates/buzz-acp/src/lib.rs",
           "callee_symbol": "retirement_pending",
-          "invocation": "if ctx.session_controls.retirement_pending(&scope) {",
+          "invocation": "if ctx.session_controls.retirement_pending(&scope)\n            || (ctx.session_controls.compact_pending(&scope) && batch.continuation.is_none())",
           "behavior_test": "busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue",
           "verification_command": "cargo test -p buzz-acp --lib busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue -- --test-threads=1",
-          "coverage": "Task2 production seam; interim invalidation is not verified worker retirement or public outcome delivery."
+          "coverage": "The shared dispatch gate retains restart fencing and permits protected collection before pending compaction."
         },
         {
           "caller_path": "crates/buzz-acp/src/lib.rs",
@@ -4816,6 +4854,27 @@
           "behavior_test": "retirement_foreground_panic_cannot_attest_replacement_or_forget_original_on_retry",
           "verification_command": "cargo test -p buzz-acp --lib retirement_foreground_panic_cannot_attest_replacement_or_forget_original_on_retry -- --test-threads=1",
           "coverage": "Actual foreground Tokio panic and escaped-group lifetime; ordinary crash recovery remains separately tested."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "dispatch",
+          "invocation": "control_tasks::dispatch(&mut pool, &ctx, &control_tx);",
+          "behavior_test": "compact_waits_for_exact_busy_owner_without_cancel_or_fork",
+          "verification_command": "cargo test --locked -p buzz-acp --lib compact_waits_for_exact_busy_owner_without_cancel_or_fork -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "wake_pending",
+          "invocation": "control_tasks::wake_pending(&mut queue, &ctx.session_controls);",
+          "behavior_test": "compact_only_lazy_work_requires_existing_session",
+          "verification_command": "cargo test --locked -p buzz-acp --lib compact_only_lazy_work_requires_existing_session -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "compaction_panicked",
+          "invocation": "controls.compaction_panicked(i);",
+          "behavior_test": "compact_actual_panic_terminalizes_started_without_ordinary_retry",
+          "verification_command": "cargo test --locked -p buzz-acp --lib compact_actual_panic_terminalizes_started_without_ordinary_retry -- --test-threads=1"
         }
       ],
       "verification_commands": [
@@ -9281,7 +9340,9 @@
         "fn revoke_locked(",
         "pub(crate) fn record_usage_update(",
         "pub(crate) fn apply_status_dir_env(",
-        "pub(crate) fn open_for_config("
+        "pub(crate) fn open_for_config(",
+        "pub(crate) fn compacted(",
+        "let mut next = state.status.clone();"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -9639,7 +9700,13 @@
         "pub fn complete_restart(",
         "pub fn begin_control_attempt(",
         "pub fn finish_control_attempt(",
-        "pub(crate) fn reconcile_control_attempt("
+        "pub(crate) fn reconcile_control_attempt(",
+        "pub(crate) fn retry_control_outcome(",
+        "if expected.owner_instance != self.instance",
+        "receipt.owner_generation != expected.owner_generation",
+        "if let ControlReceiptState::Finished(prior) = receipt.state",
+        "pub(crate) fn begin_admitted_control_attempt(",
+        "if !control_is_fresh(created_at, admitted_at)"
       ],
       "invocation_seams": [
         {
@@ -10096,13 +10163,14 @@
         "struct OrphanReconciliation",
         "fn sweep_orphans",
         "fn drive(",
-        "fn wake("
+        "fn wake(",
+        "controls.has_receipt_writes()"
       ],
       "invocation_seams": [
         {
           "caller_path": "crates/buzz-acp/src/session_controls/orphans.rs",
           "callee_symbol": "sweep_orphan_controls",
-          "invocation": "store.sweep_orphan_controls(capacity)?",
+          "invocation": "store.sweep_orphan_controls(capacity.saturating_sub(local.completed))?",
           "behavior_test": "startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records",
           "verification_command": "cargo test -p buzz-acp --lib startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records -- --test-threads=1",
           "coverage": "Actual corrupt and busy records preserve committed healthy prefix publication."
@@ -10114,6 +10182,13 @@
           "behavior_test": "startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records",
           "verification_command": "cargo test -p buzz-acp --lib startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records -- --test-threads=1",
           "coverage": "Successful prefix IDs publish despite unrelated per-record failures."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/session_controls/orphans.rs",
+          "callee_symbol": "retry_receipt_writes",
+          "invocation": "self.retry_receipt_writes(capacity)",
+          "behavior_test": "compact_terminal_write_retries_after_repair_without_reexecuting_effect",
+          "verification_command": "cargo test --locked -p buzz-acp --lib compact_terminal_write_retries_after_repair_without_reexecuting_effect -- --test-threads=1"
         }
       ],
       "verification_commands": [
@@ -10533,6 +10608,173 @@
       "invocation_seams": [],
       "verification_commands": [
         "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/acp/compaction.rs",
+      "responsibility": "Bound compaction IDs and typed lifecycles by provider session and local generation; terminal enrichment cannot satisfy a later manual operation.",
+      "is_new": true,
+      "required_symbols": [
+        "if self.entries.len() >= MAX_IDS",
+        "after: self.sequence,",
+        ".is_some_and(|route| route.generation == generation)",
+        ".filter(|route| route.adoptable_resume)",
+        "route.adoptable_resume = false;",
+        "        if self\n            .routes\n            .get(session)\n            .is_none_or(|route| route.generation != generation)\n        {\n            return;\n        }"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/acp/compaction.rs",
+          "callee_symbol": "retain",
+          "invocation": "self.entries\n            .retain(|entry| sessions.contains(&entry.session));",
+          "behavior_test": "compaction_standard_dispatch_never_guesses_success",
+          "verification_command": "cargo test --locked -p buzz-acp --lib compaction_standard_dispatch_never_guesses_success -- --test-threads=1"
+        }
+      ],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/acp/compaction_tests.rs",
+      "responsibility": "Exercise actual initialize frames, standard compaction dispatch, tracker bounds, and status transition ownership.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/compaction.rs",
+      "responsibility": "Acquire only the exact existing provider session, persist Started before a single compact prompt, and return separately typed control health/results.",
+      "is_new": true,
+      "required_symbols": [
+        "pub(crate) struct ExistingSession",
+        "pub(crate) async fn acquire_existing_session_for_compaction(",
+        "pub(crate) async fn run_compaction_task(",
+        "if live.lease != *lease || live.session_id != *session_id",
+        "Ok(_) => terminal,",
+        "let execution = tokio::time::timeout_at(job.deadline, async {"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/pool/compaction.rs",
+          "callee_symbol": "begin_compaction_effect",
+          "invocation": "ctx.session_controls.begin_compaction_effect(&job)",
+          "behavior_test": "compact_exact_prompt_and_durable_started_preserve_delivery_and_turns",
+          "verification_command": "cargo test --locked -p buzz-acp --lib compact_exact_prompt_and_durable_started_preserve_delivery_and_turns -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool/compaction.rs",
+          "callee_symbol": "session_resume",
+          "invocation": ".session_resume(session_id, &ctx.cwd, ctx.mcp_servers.clone(), None, None)",
+          "behavior_test": "compact_never_calls_session_new_memory_or_disk_success",
+          "verification_command": "cargo test --locked -p buzz-acp --lib compact_never_calls_session_new_memory_or_disk_success -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool/compaction.rs",
+          "callee_symbol": "session_prompt_blocks_with_idle_timeout",
+          "invocation": "agent.acp.session_prompt_blocks_with_idle_timeout(&session.session_id, &[\"/compact\"], ctx.idle_timeout, ctx.max_turn_duration)",
+          "behavior_test": "compact_exact_prompt_and_durable_started_preserve_delivery_and_turns",
+          "verification_command": "cargo test --locked -p buzz-acp --lib compact_exact_prompt_and_durable_started_preserve_delivery_and_turns -- --test-threads=1"
+        }
+      ],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/compaction_tests.rs",
+      "responsibility": "Exercise existing-only acquisition and actual compact RPC, durable markers, signed result submission and failure/redelivery behavior.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/compaction_runtime_tests.rs",
+      "responsibility": "Exercise authorized controller admission, exact-owner scheduling, lazy wake, collection protection, bounded pending work and lifecycle termination.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/session_controls/compaction.rs",
+      "responsibility": "Keep pending manual compactions, bounded terminal outcomes and durable redelivery independent of disposable pools.",
+      "is_new": true,
+      "required_symbols": [
+        "pub(crate) struct AdmittedSessionControl",
+        "if scopes.len() + state.receipt_writes.len() >= 128",
+        "if self.outcomes.len() >= 128",
+        "if pending_scopes + state.receipt_writes.len() >= 128"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/session_controls/compaction.rs",
+          "callee_symbol": "begin_admitted_control_attempt",
+          "invocation": ".begin_admitted_control_attempt(\n                &job.job.scope,\n                &job.job.origin.command_event_id,\n                job.job.event.created_at.as_secs(),\n                job.job.admitted_at,\n            )",
+          "behavior_test": "compact_exact_prompt_and_durable_started_preserve_delivery_and_turns",
+          "verification_command": "cargo test --locked -p buzz-acp --lib compact_exact_prompt_and_durable_started_preserve_delivery_and_turns -- --test-threads=1"
+        }
+      ],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/control_tasks.rs",
+      "responsibility": "Dispatch typed control tasks through shared worker ownership and retirement, with separate result accounting and completion activity.",
+      "is_new": true,
+      "required_symbols": [
+        "queue.has_flushable_work() || !controls.pending_compactions().is_empty()",
+        "} else if tokio::time::Instant::now() >= job.deadline {",
+        "*last_activity = tokio::time::Instant::now();"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/control_tasks.rs",
+          "callee_symbol": "run_compaction_task",
+          "invocation": "run_compaction_task(agent, job, ctx_clone, control_rx).await",
+          "behavior_test": "compact_waits_for_exact_busy_owner_without_cancel_or_fork",
+          "verification_command": "cargo test --locked -p buzz-acp --lib compact_waits_for_exact_busy_owner_without_cancel_or_fork -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/control_tasks.rs",
+          "callee_symbol": "run_compaction_task",
+          "invocation": "run_compaction_task(agent, job, ctx_clone, control_rx).await",
+          "behavior_test": "compact_valid_admission_crosses_wire_expiry_while_waiting_for_owner",
+          "verification_command": "cargo test --locked -p buzz-acp --lib compact_valid_admission_crosses_wire_expiry_while_waiting_for_owner -- --test-threads=1"
+        }
+      ],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/session_controls/receipt_writes.rs",
+      "responsibility": "Bound known-finalized local terminal receipt writes, fence persistence by exact owner/generation, and reuse reconciliation backoff without repeating provider effects.",
+      "is_new": true,
+      "required_symbols": [
+        "pub(super) fn retain_receipt_write(",
+        "pub(super) fn retry_receipt_writes("
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/session_controls/receipt_writes.rs",
+          "callee_symbol": "retry_control_outcome",
+          "invocation": "store.retry_control_outcome(&entry.scope, &entry.receipt, &entry.outcome)",
+          "behavior_test": "compact_terminal_write_retries_after_repair_without_reexecuting_effect",
+          "verification_command": "cargo test --locked -p buzz-acp --lib compact_terminal_write_retries_after_repair_without_reexecuting_effect -- --test-threads=1"
+        }
+      ],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
       ]
     }
   ]

@@ -337,6 +337,7 @@ pub struct OwnedAgent {
 
 mod background_work;
 pub(crate) use background_work::{ContinuationState, RuntimeHold};
+pub(crate) mod compaction;
 mod first_mention;
 mod session_continuity;
 mod session_history;
@@ -1210,6 +1211,9 @@ impl AgentPool {
                 "BUG: return_agent called for slot {idx} which is already occupied — overwriting"
             );
         }
+        agent
+            .acp
+            .retain_compaction_sessions(&agent.state.sessions.values().cloned().collect());
         self.refresh_runtime_hold(&mut agent);
         self.agents[idx] = Some(agent);
     }
@@ -1443,6 +1447,9 @@ impl AgentPool {
             if let Some(agent) = slot.as_mut() {
                 // Channel-wide: clears every child thread scope for the channel.
                 count += agent.state.invalidate_channel(&channel_id);
+                agent
+                    .acp
+                    .retain_compaction_sessions(&agent.state.sessions.values().cloned().collect());
             }
         }
         // Drop every scope-owner entry for this channel so the directory does
@@ -1474,6 +1481,9 @@ impl AgentPool {
                 if agent.state.invalidate_scope(scope) {
                     count += 1;
                 }
+                agent
+                    .acp
+                    .retain_compaction_sessions(&agent.state.sessions.values().cloned().collect());
             }
         }
         self.session_owners.remove(scope);

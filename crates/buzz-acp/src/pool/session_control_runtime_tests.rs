@@ -8,7 +8,18 @@ async fn authorized_control(
     scope: &SessionScope,
     content: &str,
 ) -> crate::session_controls::ControlJob {
+    authorized_control_at(ctx, human, scope, content, nostr::Timestamp::now()).await
+}
+
+async fn authorized_control_at(
+    ctx: &PromptContext,
+    human: &Keys,
+    scope: &SessionScope,
+    content: &str,
+    created_at: nostr::Timestamp,
+) -> crate::session_controls::ControlJob {
     let event = EventBuilder::new(Kind::Custom(9), content)
+        .custom_created_at(created_at)
         .tags([
             Tag::parse(["h", scope.channel_id().to_string().as_str()]).unwrap(),
             Tag::parse([
@@ -1362,3 +1373,6 @@ mod retirement_runtime_tests;
 
 #[path = "session_retirement_review_tests.rs"]
 mod retirement_review_tests;
+
+#[path = "compaction_runtime_tests.rs"]
+mod compaction_runtime_tests;

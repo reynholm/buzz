@@ -22,6 +22,7 @@ mod relay;
 mod run_task;
 mod runtime;
 use runtime::{AgentRuntime, PoolStartup, SessionMode};
+mod control_tasks;
 mod scope;
 mod session_controls;
 mod session_status;
@@ -667,6 +668,7 @@ impl QueuedNormalListenerEvent {
         steer_ack_tx: &mpsc::UnboundedSender<SteerAckEvent>,
     ) {
         if controls.retirement_pending(&self.scope)
+            || controls.compact_pending(&self.scope)
             || !self.accepted
             || !queue.is_scope_in_flight(&self.scope)
         {
@@ -3050,6 +3052,8 @@ async fn run_harness(
     // JoinSet for respawn tasks so shutdown can abort them.
     let mut respawn_tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
     let mut parked_retirements = HashMap::new();
+    let (control_tx, mut control_rx) =
+        mpsc::unbounded_channel::<pool::compaction::ControlTaskResult>();
     let mut result_publications = tokio::task::JoinSet::new();
     let mut orphan_reconciliation = session_controls::OrphanReconciliation::default();
     let (wake_tx, mut wake_rx) = mpsc::channel::<(u32, Result<AgentPool, String>)>(1);
@@ -3114,6 +3118,7 @@ async fn run_harness(
     // borrow, yielding a typed enum so the outer code can dispatch cleanly.
     enum PoolEvent {
         Result(Box<PromptResult>),
+        Control(Box<pool::compaction::ControlTaskResult>),
         Panic(tokio::task::JoinError),
         SteerAck(SteerAckEvent),
         Wake(u32, Result<AgentPool, String>),
@@ -3122,6 +3127,7 @@ async fn run_harness(
     }
 
     loop {
+        control_tasks::dispatch(&mut pool, &ctx, &control_tx);
         while let Some(Some(result)) = result_publications.join_next().now_or_never() {
             if let Err(error) = result {
                 tracing::warn!(%error, "control result publication task failed; durable outcome retained");
@@ -3157,7 +3163,7 @@ async fn run_harness(
         // busy spin — whenever the queued work drained after a failed wake.
         let mut lazy_wake_work_pending = false;
         if config.lazy_pool && !pool_ready {
-            lazy_wake_work_pending = queue.has_flushable_work();
+            lazy_wake_work_pending = control_tasks::wake_pending(&mut queue, &ctx.session_controls);
             if let Some(attempt) = pool_lifecycle
                 .start_wake_if_due(lazy_wake_work_pending, tokio::time::Instant::now())
             {
@@ -3264,6 +3270,13 @@ async fn run_harness(
                     tracing::info!("shutting down");
                     break;
                 }
+                Some(result) = control_rx.recv() => Some(PoolEvent::Control(Box::new(result))),
+                _ = async {
+                    match ctx.session_controls.compaction_deadline() {
+                        Some(deadline) => tokio::time::sleep_until(deadline).await,
+                        None => std::future::pending().await,
+                    }
+                } => None,
                 Some(result) = result_publications.join_next(), if !result_publications.is_empty() => {
                     let _ = result_rx;
                     if let Err(error) = result { tracing::warn!(%error, "control result publication task failed; durable outcome retained"); }
@@ -3650,7 +3663,13 @@ async fn run_harness(
                                             }
                                         }
                                     }
-                                    // Compact execution/result publication is supplied by Task 3.
+                                    else if matches!(job.command, buzz_core::session_control::SessionCommand::Compact) {
+                                        let command_id = job.origin.command_event_id.clone();
+                                        let target = pool.compaction_target(&job.scope, &ctx.session_controls);
+                                        if let Err(failure) = ctx.session_controls.queue_compaction(job, target) {
+                                            ctx.session_controls.queue_result(command_id, buzz_core::session_control::ControlResult::Terminal(Err(failure)));
+                                        }
+                                    }
                                     continue;
                                 }
                             };
@@ -3927,6 +3946,29 @@ async fn run_harness(
                     typing_channels.insert(scope, thread_tags);
                 }
             }
+            Some(PoolEvent::Control(result)) => {
+                control_tasks::finish(
+                    &mut pool,
+                    &ctx,
+                    *result,
+                    &removed_channels,
+                    config,
+                    &mut crash_history,
+                    &respawn_tx,
+                    &mut respawn_tasks,
+                    observer.clone(),
+                    &mut last_activity,
+                );
+                for (scope, tags) in dispatch_pending(
+                    &mut pool,
+                    &mut queue,
+                    &ctx,
+                    &mut last_activity,
+                    observer.as_ref(),
+                ) {
+                    typing_channels.insert(scope, tags);
+                }
+            }
             Some(PoolEvent::Result(result)) => {
                 // Stop the typing indicator for the completed turn's exact scope,
                 // not the whole channel — a sibling thread still running in the
@@ -4093,6 +4135,7 @@ async fn run_harness(
                     .as_ref()
                     .is_some_and(|dispatch| !dispatch.current())
                     || ctx.session_controls.retirement_pending(&scope)
+                    || ctx.session_controls.compact_pending(&scope)
                 {
                     queue.release_native_steer(&scope, &event_id);
                     continue;
@@ -4239,6 +4282,15 @@ async fn run_harness(
         }
     }
 
+    let compact_workers = ctx.session_controls.shutdown_compactions();
+    for meta in pool.task_map_mut().values_mut() {
+        if compact_workers.contains(&meta.agent_index) {
+            if let Some(tx) = meta.control_tx.take() {
+                let _ = tx.send(ControlSignal::Cancel);
+            }
+        }
+    }
+
     // Drain wake tasks gracefully rather than aborting: an in-flight
     // initialize_agent_pool observes the shutdown watch at its biased per-slot
     // select and reaps its partially-spawned agents itself. `shutdown()` here
@@ -4283,6 +4335,10 @@ async fn run_harness(
                         None => break, // join_set empty
                     }
                 }
+                Some(mut result) = control_rx.recv() => {
+                    ctx.session_controls.finish_compaction_job(&result.job, Err(buzz_core::session_control::ControlFailure::Unconfirmed));
+                    result.agent.acp.shutdown().await;
+                }
                 maybe_result = rx_ref.recv() => {
                     if let Some(mut pr) = maybe_result {
                         let idx = pr.agent.index;
@@ -4305,6 +4361,9 @@ async fn run_harness(
         let idx = pr.agent.index;
         pr.agent.acp.shutdown().await;
         tracing::debug!(agent = idx, "reaped late-arriving agent on shutdown");
+    }
+    while let Ok(mut result) = control_rx.try_recv() {
+        result.agent.acp.shutdown().await;
     }
     // Explicitly shut down idle agents still sitting in their slots.
     for slot in pool.agents_mut().iter_mut() {
@@ -5007,7 +5066,9 @@ fn dispatch_pending(
         };
         let channel_id = batch.channel_id;
         let scope = batch.scope.clone();
-        if ctx.session_controls.retirement_pending(&scope) {
+        if ctx.session_controls.retirement_pending(&scope)
+            || (ctx.session_controls.compact_pending(&scope) && batch.continuation.is_none())
+        {
             held.push(batch);
             continue;
         }
@@ -5811,6 +5872,7 @@ fn recover_panicked_agent(
         dispatch.finish();
     }
     let i = meta.agent_index;
+    controls.compaction_panicked(i);
     pool.clear_runtime_hold(i);
 
     // Requeue BEFORE mark_complete (same rationale as handle_prompt_result).

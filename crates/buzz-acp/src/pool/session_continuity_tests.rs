@@ -30,6 +30,8 @@ for line in sys.stdin:
         created += 1
         reply['result'] = {'sessionId': f'new-{created}'}
     elif method == 'session/resume':
+        if os.environ.get('COMPACT_STATUS'):
+            print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':req['params']['sessionId'],'update':{'sessionUpdate':'available_commands_update','availableCommands':[{'name':'compact','description':'Compact'}]}}}),flush=True)
         time.sleep(delay)
         if os.environ.get('RESUME_PROTOCOL') == '1':
             print('x' * 10000001, flush=True)
@@ -39,6 +41,13 @@ for line in sys.stdin:
         else:
             reply['result'] = {}
     elif method == 'session/prompt':
+        time.sleep(float(os.environ.get('PROMPT_DELAY', '0')))
+        if os.environ.get('CHECK_STARTED_ROOT'):
+            import pathlib
+            records=[json.loads(p.read_text()) for p in pathlib.Path(os.environ['CHECK_STARTED_ROOT']).rglob('*.json')]
+            assert any(any(r['command_id']==os.environ['COMMAND_ID'] and r['state']=='started' for r in record.get('control_receipts',[])) for record in records)
+        if os.environ.get('COMPACT_STATUS') not in (None,'missing'):
+            print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':req['params']['sessionId'],'update':{'sessionUpdate':'compaction_update','compactionId':'compact-one','status':os.environ['COMPACT_STATUS']}}}),flush=True)
         if os.environ.get('HANG_PROMPT') == '1':
             continue
         if os.environ.get('DIE_PROMPT'):
@@ -1348,3 +1357,6 @@ mod control_tests;
 
 #[path = "session_retirement_tests.rs"]
 mod retirement_tests;
+
+#[path = "compaction_tests.rs"]
+mod compaction_tests;

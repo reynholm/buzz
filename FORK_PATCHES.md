@@ -2723,8 +2723,15 @@ New module: `false`.
 - Required symbol: `pub(crate) fn bind_session_status(`
 - Required symbol: `pub(crate) fn clear_session_status(`
 - Required symbol: `DispatchRetired,`
+- Required symbol: `"session": {"compaction": {}}`
+- Required symbol: `if update_type == "compaction_update"`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `record_usage_update`; exact call `crate::session_status::record_usage_update(&self.session_status, msg);`; behavior test `claude_usage_updates_route_by_their_own_session_id`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `apply_status_dir_env`; exact call `crate::session_status::apply_status_dir_env(&mut cmd, extra_env);`; behavior test `status_dir_env_is_owned_by_the_harness`; verify `cargo test -p buzz-acp -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `update`; exact call `self.compactions.update(session, update)`; behavior test `compaction_standard_dispatch_terminal_only_duplicate_and_next_request`; verify `cargo test --locked -p buzz-acp --lib compaction_standard_dispatch_terminal_only_duplicate_and_next_request -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `compacted`; exact call `binding.compacted(origin);`; behavior test `typed_compaction_changes_only_transition_and_manual_actor`; verify `cargo test --locked -p buzz-acp --lib typed_compaction_changes_only_transition_and_manual_actor -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `prepare_resume`; exact call `self.compactions.prepare_resume(session_id)`; behavior test `resumed_pre_ack_compaction_cannot_become_a_manual_completion_or_actor`; verify `cargo test --locked -p buzz-acp --lib resumed_pre_ack_compaction_cannot_become_a_manual_completion_or_actor -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `complete_resume`; exact call `.complete_resume(session_id, generation, response.is_ok());`; behavior test `resumed_pre_ack_compaction_cannot_become_a_manual_completion_or_actor`; verify `cargo test --locked -p buzz-acp --lib resumed_pre_ack_compaction_cannot_become_a_manual_completion_or_actor -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `bind`; exact call `self.compactions.bind(session_id, binding.generation_id());`; behavior test `resumed_pre_ack_compaction_cannot_become_a_manual_completion_or_actor`; verify `cargo test --locked -p buzz-acp --lib resumed_pre_ack_compaction_cannot_become_a_manual_completion_or_actor -- --test-threads=1`
 - Verify: `just ci`
 
 ## `crates/buzz-acp/src/acp/launch.rs`
@@ -2795,6 +2802,7 @@ New module: `false`.
 - Required symbol: `fn result_refreshes_idle_clock(source: &PromptSource) -> bool`
 - Required symbol: `mod session_status;`
 - Required symbol: `name == session_status::SESSION_STATUS_DIR_ENV`
+- Required symbol: `ctx.session_controls.compact_pending(&scope) && batch.continuation.is_none()`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `result_refreshes_idle_clock`; exact call `if result_refreshes_idle_clock(&result.source) {`; behavior test `error_outcome_emission_tests::channel_result_refreshes_idle_clock_wiring`; verify `cargo test -p buzz-acp --lib error_outcome_emission_tests::channel_result_refreshes_idle_clock_wiring -- --exact`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `depart_idle_sessions`; exact call `pool.depart_idle_sessions(session_store::Departure::IdleSleep);`; behavior test `pool_sleep_marks_every_idle_session`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `restart`; exact call `match ctx.session_controls.restart(job) {`; behavior test `restart_during_delayed_acquisition_fences_old_dispatch`; verify `cargo test -p buzz-acp -- --test-threads=1`
@@ -2806,7 +2814,8 @@ New module: `false`.
 - Invocation: `crates/buzz-acp/src/lib.rs` → `retire_channel`; exact call `pool::session_visibility::retire_channel(`; behavior test `channel_removal_retires_every_scope_of_that_channel`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `admit_authorized`; exact call `session_controls::admit_authorized(`; behavior test `controls_use_author_capability_before_subscription_and_reserve_wrong_targets`; verify `cargo test -p buzz-acp --lib controls_use_author_capability_before_subscription_and_reserve_wrong_targets -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `capture`; exact call `agent.state.control_dispatch = Some(ctx.session_controls.capture(&scope));`; behavior test `busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue`; verify `cargo test -p buzz-acp --lib busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue -- --test-threads=1`
-- Invocation: `crates/buzz-acp/src/lib.rs` → `retirement_pending`; exact call `if ctx.session_controls.retirement_pending(&scope) {`; behavior test `busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue`; verify `cargo test -p buzz-acp --lib busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `retirement_pending`; exact call `if ctx.session_controls.retirement_pending(&scope)
+            || (ctx.session_controls.compact_pending(&scope) && batch.continuation.is_none())`; behavior test `busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue`; verify `cargo test -p buzz-acp --lib busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `current`; exact call `    if result
         .agent
         .state
@@ -2823,6 +2832,9 @@ New module: `false`.
 - Invocation: `crates/buzz-acp/src/lib.rs` → `wake`; exact call `_ = orphan_reconciliation.wake() => {`; behavior test `orphan_reconciliation_retries_failed_writes_with_capped_backoff_without_capacity_spin`; verify `cargo test -p buzz-acp --lib orphan_reconciliation_retries_failed_writes_with_capped_backoff_without_capacity_spin -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `join_next`; exact call `Some(result) = result_publications.join_next(), if !result_publications.is_empty() => {`; behavior test `orphan_reconciliation_retries_failed_writes_with_capped_backoff_without_capacity_spin`; verify `cargo test -p buzz-acp --lib orphan_reconciliation_retries_failed_writes_with_capped_backoff_without_capacity_spin -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `lose_retirement_evidence`; exact call `controls.lose_retirement_evidence(i);`; behavior test `retirement_foreground_panic_cannot_attest_replacement_or_forget_original_on_retry`; verify `cargo test -p buzz-acp --lib retirement_foreground_panic_cannot_attest_replacement_or_forget_original_on_retry -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `dispatch`; exact call `control_tasks::dispatch(&mut pool, &ctx, &control_tx);`; behavior test `compact_waits_for_exact_busy_owner_without_cancel_or_fork`; verify `cargo test --locked -p buzz-acp --lib compact_waits_for_exact_busy_owner_without_cancel_or_fork -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `wake_pending`; exact call `control_tasks::wake_pending(&mut queue, &ctx.session_controls);`; behavior test `compact_only_lazy_work_requires_existing_session`; verify `cargo test --locked -p buzz-acp --lib compact_only_lazy_work_requires_existing_session -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `compaction_panicked`; exact call `controls.compaction_panicked(i);`; behavior test `compact_actual_panic_terminalizes_started_without_ordinary_retry`; verify `cargo test --locked -p buzz-acp --lib compact_actual_panic_terminalizes_started_without_ordinary_retry -- --test-threads=1`
 - Verify: `just ci`
 
 ## `crates/buzz-acp/src/pool.rs`
@@ -6163,6 +6175,8 @@ New module: `true`.
 - Required symbol: `pub(crate) fn record_usage_update(`
 - Required symbol: `pub(crate) fn apply_status_dir_env(`
 - Required symbol: `pub(crate) fn open_for_config(`
+- Required symbol: `pub(crate) fn compacted(`
+- Required symbol: `let mut next = state.status.clone();`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/session_status_tests.rs`
@@ -6423,6 +6437,12 @@ New module: `true`.
 - Required symbol: `pub fn begin_control_attempt(`
 - Required symbol: `pub fn finish_control_attempt(`
 - Required symbol: `pub(crate) fn reconcile_control_attempt(`
+- Required symbol: `pub(crate) fn retry_control_outcome(`
+- Required symbol: `if expected.owner_instance != self.instance`
+- Required symbol: `receipt.owner_generation != expected.owner_generation`
+- Required symbol: `if let ControlReceiptState::Finished(prior) = receipt.state`
+- Required symbol: `pub(crate) fn begin_admitted_control_attempt(`
+- Required symbol: `if !control_is_fresh(created_at, admitted_at)`
 - Invocation: `crates/buzz-acp/src/session_store_controls.rs` → `add_started`; exact call `add_started(
                 &mut record,
                 &intent.origin.command_event_id,
@@ -6670,8 +6690,10 @@ New module: `true`.
 - Required symbol: `fn sweep_orphans`
 - Required symbol: `fn drive(`
 - Required symbol: `fn wake(`
-- Invocation: `crates/buzz-acp/src/session_controls/orphans.rs` → `sweep_orphan_controls`; exact call `store.sweep_orphan_controls(capacity)?`; behavior test `startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records`; verify `cargo test -p buzz-acp --lib startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records -- --test-threads=1`
+- Required symbol: `controls.has_receipt_writes()`
+- Invocation: `crates/buzz-acp/src/session_controls/orphans.rs` → `sweep_orphan_controls`; exact call `store.sweep_orphan_controls(capacity.saturating_sub(local.completed))?`; behavior test `startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records`; verify `cargo test -p buzz-acp --lib startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/session_controls/orphans.rs` → `publish`; exact call `state.publish(Publication {`; behavior test `startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records`; verify `cargo test -p buzz-acp --lib startup_sweep_keeps_healthy_and_committed_prefix_outcomes_across_bad_records -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/session_controls/orphans.rs` → `retry_receipt_writes`; exact call `self.retry_receipt_writes(capacity)`; behavior test `compact_terminal_write_retries_after_repair_without_reexecuting_effect`; verify `cargo test --locked -p buzz-acp --lib compact_terminal_write_retries_after_repair_without_reexecuting_effect -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/session_retirement_review_tests.rs`
@@ -6963,3 +6985,108 @@ New module: `false`.
 
 - Required symbol: `## Fork: public text is in English`
 - Verify: `python3 scripts/fork/sync.py validate`
+
+## `crates/buzz-acp/src/acp/compaction.rs`
+
+Bound compaction IDs and typed lifecycles by provider session and local generation; terminal enrichment cannot satisfy a later manual operation.
+
+New module: `true`.
+
+- Required symbol: `if self.entries.len() >= MAX_IDS`
+- Required symbol: `after: self.sequence,`
+- Required symbol: `.is_some_and(|route| route.generation == generation)`
+- Required symbol: `.filter(|route| route.adoptable_resume)`
+- Required symbol: `route.adoptable_resume = false;`
+- Required symbol: `        if self
+            .routes
+            .get(session)
+            .is_none_or(|route| route.generation != generation)
+        {
+            return;
+        }`
+- Invocation: `crates/buzz-acp/src/acp/compaction.rs` → `retain`; exact call `self.entries
+            .retain(|entry| sessions.contains(&entry.session));`; behavior test `compaction_standard_dispatch_never_guesses_success`; verify `cargo test --locked -p buzz-acp --lib compaction_standard_dispatch_never_guesses_success -- --test-threads=1`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/acp/compaction_tests.rs`
+
+Exercise actual initialize frames, standard compaction dispatch, tracker bounds, and status transition ownership.
+
+New module: `true`.
+
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/compaction.rs`
+
+Acquire only the exact existing provider session, persist Started before a single compact prompt, and return separately typed control health/results.
+
+New module: `true`.
+
+- Required symbol: `pub(crate) struct ExistingSession`
+- Required symbol: `pub(crate) async fn acquire_existing_session_for_compaction(`
+- Required symbol: `pub(crate) async fn run_compaction_task(`
+- Required symbol: `if live.lease != *lease || live.session_id != *session_id`
+- Required symbol: `Ok(_) => terminal,`
+- Required symbol: `let execution = tokio::time::timeout_at(job.deadline, async {`
+- Invocation: `crates/buzz-acp/src/pool/compaction.rs` → `begin_compaction_effect`; exact call `ctx.session_controls.begin_compaction_effect(&job)`; behavior test `compact_exact_prompt_and_durable_started_preserve_delivery_and_turns`; verify `cargo test --locked -p buzz-acp --lib compact_exact_prompt_and_durable_started_preserve_delivery_and_turns -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool/compaction.rs` → `session_resume`; exact call `.session_resume(session_id, &ctx.cwd, ctx.mcp_servers.clone(), None, None)`; behavior test `compact_never_calls_session_new_memory_or_disk_success`; verify `cargo test --locked -p buzz-acp --lib compact_never_calls_session_new_memory_or_disk_success -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool/compaction.rs` → `session_prompt_blocks_with_idle_timeout`; exact call `agent.acp.session_prompt_blocks_with_idle_timeout(&session.session_id, &["/compact"], ctx.idle_timeout, ctx.max_turn_duration)`; behavior test `compact_exact_prompt_and_durable_started_preserve_delivery_and_turns`; verify `cargo test --locked -p buzz-acp --lib compact_exact_prompt_and_durable_started_preserve_delivery_and_turns -- --test-threads=1`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/compaction_tests.rs`
+
+Exercise existing-only acquisition and actual compact RPC, durable markers, signed result submission and failure/redelivery behavior.
+
+New module: `true`.
+
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/compaction_runtime_tests.rs`
+
+Exercise authorized controller admission, exact-owner scheduling, lazy wake, collection protection, bounded pending work and lifecycle termination.
+
+New module: `true`.
+
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/session_controls/compaction.rs`
+
+Keep pending manual compactions, bounded terminal outcomes and durable redelivery independent of disposable pools.
+
+New module: `true`.
+
+- Required symbol: `pub(crate) struct AdmittedSessionControl`
+- Required symbol: `if scopes.len() + state.receipt_writes.len() >= 128`
+- Required symbol: `if self.outcomes.len() >= 128`
+- Required symbol: `if pending_scopes + state.receipt_writes.len() >= 128`
+- Invocation: `crates/buzz-acp/src/session_controls/compaction.rs` → `begin_admitted_control_attempt`; exact call `.begin_admitted_control_attempt(
+                &job.job.scope,
+                &job.job.origin.command_event_id,
+                job.job.event.created_at.as_secs(),
+                job.job.admitted_at,
+            )`; behavior test `compact_exact_prompt_and_durable_started_preserve_delivery_and_turns`; verify `cargo test --locked -p buzz-acp --lib compact_exact_prompt_and_durable_started_preserve_delivery_and_turns -- --test-threads=1`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/control_tasks.rs`
+
+Dispatch typed control tasks through shared worker ownership and retirement, with separate result accounting and completion activity.
+
+New module: `true`.
+
+- Required symbol: `queue.has_flushable_work() || !controls.pending_compactions().is_empty()`
+- Required symbol: `} else if tokio::time::Instant::now() >= job.deadline {`
+- Required symbol: `*last_activity = tokio::time::Instant::now();`
+- Invocation: `crates/buzz-acp/src/control_tasks.rs` → `run_compaction_task`; exact call `run_compaction_task(agent, job, ctx_clone, control_rx).await`; behavior test `compact_waits_for_exact_busy_owner_without_cancel_or_fork`; verify `cargo test --locked -p buzz-acp --lib compact_waits_for_exact_busy_owner_without_cancel_or_fork -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/control_tasks.rs` → `run_compaction_task`; exact call `run_compaction_task(agent, job, ctx_clone, control_rx).await`; behavior test `compact_valid_admission_crosses_wire_expiry_while_waiting_for_owner`; verify `cargo test --locked -p buzz-acp --lib compact_valid_admission_crosses_wire_expiry_while_waiting_for_owner -- --test-threads=1`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/session_controls/receipt_writes.rs`
+
+Bound known-finalized local terminal receipt writes, fence persistence by exact owner/generation, and reuse reconciliation backoff without repeating provider effects.
+
+New module: `true`.
+
+- Required symbol: `pub(super) fn retain_receipt_write(`
+- Required symbol: `pub(super) fn retry_receipt_writes(`
+- Invocation: `crates/buzz-acp/src/session_controls/receipt_writes.rs` → `retry_control_outcome`; exact call `store.retry_control_outcome(&entry.scope, &entry.receipt, &entry.outcome)`; behavior test `compact_terminal_write_retries_after_repair_without_reexecuting_effect`; verify `cargo test --locked -p buzz-acp --lib compact_terminal_write_retries_after_repair_without_reexecuting_effect -- --test-threads=1`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`

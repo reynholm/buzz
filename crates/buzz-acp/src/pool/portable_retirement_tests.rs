@@ -57,6 +57,7 @@ impl Fixture {
             },
             scope: self.scope.clone(),
             dispatch_epoch: Uuid::new_v4(),
+            admitted_at: nostr::Timestamp::now().as_secs(),
             event,
         }
     }

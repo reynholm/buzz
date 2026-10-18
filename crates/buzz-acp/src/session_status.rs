@@ -77,7 +77,6 @@ struct Generation {
     id: Uuid,
     scope: StatusScope,
     session_id: String,
-    origin: Option<buzz_core::session_control::ControlOrigin>,
     snapshot: PathBuf,
     lock_path: PathBuf,
     state: Mutex<GenerationState>,
@@ -87,6 +86,7 @@ struct GenerationState {
     /// The held generation lock; `None` once revoked.
     guard: Option<File>,
     status: SessionStatus,
+    origin: Option<buzz_core::session_control::ControlOrigin>,
 }
 
 /// A handle on one scope generation. Clones share one revocable guard; none
@@ -198,11 +198,11 @@ impl SessionStatusRuntime {
             id,
             scope: scope.clone(),
             session_id: session_id.to_owned(),
-            origin,
             snapshot: self.shared.dir.join(file_name),
             lock_path,
             state: Mutex::new(GenerationState {
                 guard: Some(guard),
+                origin,
                 status: SessionStatus {
                     state,
                     reason,
@@ -215,7 +215,9 @@ impl SessionStatusRuntime {
         {
             let mut generation_state = lock(&generation.state);
             let status = generation_state.status.clone();
-            if let Err(err) = generation.write(&self.shared, &status) {
+            if let Err(err) =
+                generation.write(&self.shared, &status, generation_state.origin.as_ref())
+            {
                 generation.revoke_locked(&mut generation_state);
                 disable(&mut scopes, &scope, &err);
                 return None;
@@ -271,6 +273,49 @@ impl SessionStatusRuntime {
 }
 
 impl StatusBinding {
+    pub(crate) fn generation_id(&self) -> Uuid {
+        self.generation.id
+    }
+
+    /// Change the transition within this generation, retaining history/occupancy.
+    pub(crate) fn compacted(&self, origin: Option<buzz_core::session_control::ControlOrigin>) {
+        let generation = &self.generation;
+        let Some(shared) = generation.runtime.upgrade() else {
+            return;
+        };
+        let mut state = lock(&generation.state);
+        if state.guard.is_none() {
+            return;
+        }
+        let mut next = state.status.clone();
+        next.state = SessionState::Compacted;
+        next.reason = if origin.is_some() {
+            StatusReason::UserCompact
+        } else {
+            StatusReason::AutoCompact
+        };
+        next.transition_id = Uuid::new_v4();
+        match generation.write(&shared, &next, origin.as_ref()) {
+            Ok(()) => {
+                state.status = next;
+                state.origin = origin;
+            }
+            Err(error) => {
+                generation.revoke_locked(&mut state);
+                drop(state);
+                let mut scopes = lock(&shared.scopes);
+                if scopes
+                    .current
+                    .get(&generation.scope)
+                    .is_some_and(|current| current.id == generation.id)
+                {
+                    scopes.current.remove(&generation.scope);
+                }
+                disable(&mut scopes, &generation.scope, &error);
+            }
+        }
+    }
+
     /// Record the cold-start history coverage of this generation.
     pub(crate) fn set_history(&self, history: HistoryCoverage) {
         if history.validate().is_err() {
@@ -345,7 +390,7 @@ impl Generation {
         if !change(&mut next) {
             return;
         }
-        match self.write(&shared, &next) {
+        match self.write(&shared, &next, state.origin.as_ref()) {
             Ok(()) => state.status = next,
             Err(err) => {
                 self.revoke_locked(&mut state);
@@ -365,7 +410,12 @@ impl Generation {
 
     /// Atomically replace the snapshot: a bounded temp file in the same
     /// directory, renamed into place.
-    fn write(&self, shared: &Shared, status: &SessionStatus) -> io::Result<()> {
+    fn write(
+        &self,
+        shared: &Shared,
+        status: &SessionStatus,
+        origin: Option<&buzz_core::session_control::ControlOrigin>,
+    ) -> io::Result<()> {
         let mut envelope = StatusEnvelope::new(
             shared.identity.clone(),
             shared.instance_id,
@@ -373,7 +423,7 @@ impl Generation {
             self.id,
             status.clone(),
         );
-        envelope.origin = self.origin.clone();
+        envelope.origin = origin.cloned();
         let bytes = envelope
             .to_snapshot_bytes()
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
