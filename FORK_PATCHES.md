@@ -5500,12 +5500,13 @@ New module: `false`.
 
 ## `crates/buzz-cli/TESTING.md`
 
-Specify managed publisher scope, journal durability and retention, recovery opt-in/upgrade requirements and real versus mock-relay checks.
+Specify managed publisher scope, journal durability and retention, recovery opt-in/upgrade requirements and real versus mock-relay checks. Document mixed PDF, ZIP and Markdown attachment checks and authenticated byte comparisons.
 
 New module: `false`.
 
 - Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
+- Verify: `cargo test -p buzz-cli`
 
 ## `crates/buzz-cli/src/commands/delivery.rs`
 
@@ -5535,7 +5536,7 @@ New module: `true`.
 
 ## `crates/buzz-cli/src/commands/messages.rs`
 
-Expose messages deliver and preserve original route, stable UUID and signed callback mentions without suppressing ordinary progress or explicit edits.
+Expose messages deliver and preserve original route, stable UUID and signed callback mentions without suppressing ordinary progress or explicit edits. Emit generic attachments as filename links rather than image markup.
 
 New module: `false`.
 
@@ -5543,8 +5544,10 @@ New module: `false`.
 - Required symbol: `pub(super) fn event_mention_pubkeys(`
 - Required symbol: `async fn resolve_content_mentions(`
 - Invocation: `crates/buzz-cli/src/commands/delivery.rs` → `event_mention_pubkeys`; exact call `messages::event_mention_pubkeys(&chosen)`; behavior test `managed_recovery_mention_history_survives_lost_ack`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib managed_recovery_mention_history_survives_lost_ack -- --ignored --test-threads=1`
+- Invocation: `crates/buzz-cli/src/commands/messages.rs` → `attachment_markdown`; exact call `media_content.push_str(&crate::attachments::attachment_markdown(&desc));`; behavior test `messages_emit_file_links_for_multiple_attachments_and_keep_media_markup`; verify `cargo test -p buzz-cli`
 - Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
 - Verify: `cargo test -p buzz-cli mention -- --test-threads=1`
+- Verify: `cargo test -p buzz-cli`
 
 ## `crates/buzz-cli/src/commands/mod.rs`
 
@@ -5577,13 +5580,16 @@ New module: `false`.
 
 ## `crates/buzz-cli/src/lib.rs`
 
-Define messages deliver arguments and compile production-publisher regression tests.
+Define messages deliver arguments and compile production-publisher regression tests. Compile the attachment formatter and production upload regressions.
 
 New module: `false`.
 
 - Required symbol: `Deliver {`
 - Required symbol: `mod delivery_tests;`
+- Required symbol: `mod attachments;`
+- Required symbol: `mod attachment_tests;`
 - Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
+- Verify: `cargo test -p buzz-cli`
 
 ## `crates/buzz-core/src/kind.rs`
 
@@ -6115,3 +6121,42 @@ New module: `false`.
 
 - Required symbol: `## Fork: public text is in English`
 - Verify: `python3 scripts/fork/sync.py validate`
+
+## `crates/buzz-cli/src/attachments.rs`
+
+Preserve sanitized attachment basenames, enforce generic-file upload policy, and format download links while retaining image and video markup.
+
+New module: `true`.
+
+- Required symbol: `fn sanitize_filename(`
+- Required symbol: `fn validate_upload(`
+- Required symbol: `fn attachment_markdown(`
+- Required symbol: `pub filename: Option<String>`
+- Verify: `cargo test -p buzz-cli`
+
+## `crates/buzz-cli/src/attachment_tests.rs`
+
+Exercise document, archive and Markdown uploads, primary and legacy metadata, message links, media compatibility, and executable and size rejection.
+
+New module: `true`.
+
+- Required symbol: `uploads_documents_archives_and_markdown_with_original_names`
+- Required symbol: `messages_emit_file_links_for_multiple_attachments_and_keep_media_markup`
+- Verify: `cargo test -p buzz-cli`
+
+## `crates/buzz-cli/src/client.rs`
+
+Upload generic documents and archives and retain a sanitized basename across both Blossom endpoint paths.
+
+New module: `false`.
+
+- Invocation: `crates/buzz-cli/src/client.rs` → `validate_upload`; exact call `validate_upload(&mime, bytes.len() as u64)?;`; behavior test `rejects_detected_executables_before_upload`; verify `cargo test -p buzz-cli`
+- Verify: `cargo test -p buzz-cli`
+
+## `desktop/tests/e2e/file-attachment.spec.ts`
+
+Verify Markdown and ZIP picker uploads, file-card labels and sizes, and native download filenames alongside existing attachment flows.
+
+New module: `false`.
+
+- Verify: `cd desktop && pnpm test:e2e:smoke -- file-attachment.spec.ts`

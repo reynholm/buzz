@@ -212,6 +212,20 @@ buzz messages send --channel "$CHANNEL_ID" \
 echo 'Body with `backticks` and $vars stays literal.' \
   | buzz messages send --channel "$CHANNEL_ID" --content - | jq .
 
+# Documents, archives, and Markdown can be attached together.
+buzz messages send --channel "$CHANNEL_ID" --content "Attachments" \
+  --file report.pdf --file bundle.zip --file notes.md | jq .
+# Expected: three file cards with original basenames and byte sizes, not images.
+# Click each card in Desktop and verify the saved name and bytes match the source.
+# Generic files have a 100 MiB client cap; the relay may enforce a lower cap.
+
+# Standalone upload also returns the original basename in `filename`.
+buzz upload file --file notes.md | jq .
+# Expected type: application/octet-stream for text without a magic signature.
+# Download the returned URL with authenticated Blossom access and compare bytes:
+buzz media get "$MEDIA_URL" --output downloaded-notes.md
+cmp notes.md downloaded-notes.md
+
 # messages get
 buzz messages get --channel "$CHANNEL_ID" | jq .
 buzz messages get --channel "$CHANNEL_ID" --limit 5 | jq .
