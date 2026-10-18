@@ -254,6 +254,19 @@ pub(crate) async fn run_compaction_task(
     let execution = tokio::time::timeout_at(job.deadline, async {
         if tokio::time::Instant::now() >= job.deadline { return Err(ControlFailure::Timeout); }
         if !job.dispatch.current() { return Err(ControlFailure::Superseded); }
+        // A cached worker may have last served another channel. Fence every
+        // resume and raw compact frame to this admitted operation before I/O.
+        let observer_session = match &job.target {
+            CompactionTarget::Memory { session_id, .. } | CompactionTarget::Disk { session_id, .. }
+                if !session_id.is_empty() => Some(session_id.clone()),
+            _ => agent.state.sessions.get(&job.job.scope).cloned(),
+        };
+        agent.acp.set_observer_context(observer::context_for_turn(
+            Some(job.job.scope.channel_id()),
+            observer_session,
+            job.job.origin.command_event_id.clone(),
+            chrono::Utc::now().to_rfc3339(),
+        ));
         let session = tokio::select! {
             result = acquire_existing_session_for_compaction(&mut agent, &job, &ctx) => match result {
                 Ok(session) => session,

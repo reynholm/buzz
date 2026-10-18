@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Locator } from "@playwright/test";
-import { installMockBridge } from "../helpers/bridge";
+import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 import { waitForAnimations } from "../helpers/animations";
 const AGENT = "a4".repeat(32);
 const VIEWER = "deadbeef".repeat(8);
@@ -303,3 +303,188 @@ for (const [label, body] of [
     expect(payload.mentionPubkeys).toEqual([AGENT]);
   });
 }
+
+test("owned observer activity projects typed compaction lifecycle through the real store and panel", async ({
+  page,
+}) => {
+  const activityAgent = TEST_IDENTITIES.tyler.pubkey;
+  await installMockBridge(page, {
+    managedAgents: [
+      {
+        pubkey: activityAgent,
+        name: "Activity Agent",
+        status: "running",
+        channelNames: [CHANNEL],
+      },
+    ],
+  });
+  await page.goto("/");
+  await page.waitForFunction(
+    () => typeof window.__BUZZ_E2E_SEED_OBSERVER_EVENTS__ === "function",
+  );
+  await page.getByTestId(`channel-${CHANNEL}`).click();
+  const message = page
+    .getByTestId("message-row")
+    .filter({ has: page.getByText("Activity Agent", { exact: false }) })
+    .first();
+  await expect(message).toBeVisible();
+  await message.getByRole("button").first().click();
+  await expect(page.getByTestId("user-profile-panel")).toBeVisible();
+  await page.getByTestId(`user-profile-view-activity-${activityAgent}`).click();
+  const panel = page.getByTestId("agent-session-thread-panel");
+  await expect(panel).toBeVisible();
+  const base = {
+    agentIndex: 0,
+    channelId: "94a444a4-c0a3-5966-ab05-530c6ddc2301",
+    sessionId: "activity-session",
+    turnId: "compact-request",
+  };
+  const frame = (seq: number, kind: string, payload: unknown) => ({
+    ...base,
+    seq,
+    timestamp: new Date(
+      Date.parse("2026-10-01T12:00:00Z") + seq * 1000,
+    ).toISOString(),
+    kind,
+    payload,
+  });
+  const typed = (
+    seq: number,
+    status: string,
+    id = "compact-one",
+    summary?: string,
+  ) =>
+    frame(seq, "acp_read", {
+      method: "session/update",
+      params: {
+        sessionId: "activity-session",
+        update: {
+          sessionUpdate: "compaction_update",
+          compactionId: id,
+          status,
+          ...(summary ? { summary } : {}),
+        },
+      },
+    });
+  const seed = async (
+    events: Array<
+      Omit<ReturnType<typeof frame>, "channelId" | "sessionId" | "turnId"> & {
+        channelId: string | null;
+        sessionId: string | null;
+        turnId: string | null;
+      }
+    >,
+  ) =>
+    page.evaluate(
+      ({ agentPubkey, events }) =>
+        window.__BUZZ_E2E_SEED_OBSERVER_EVENTS__?.({ agentPubkey, events }),
+      { agentPubkey: activityAgent, events },
+    );
+  const initial = typed(3, "in_progress");
+  await seed([
+    {
+      ...frame(1, "agent_initialized", { agentIndex: 0, initializeResult: {} }),
+      channelId: null,
+      sessionId: null,
+      turnId: null,
+    },
+    frame(2, "acp_write", {
+      method: "session/prompt",
+      params: {
+        sessionId: "activity-session",
+        prompt: [{ type: "text", text: "/compact" }],
+      },
+    }),
+    initial,
+  ]);
+  const lifecycle = panel.getByTestId("transcript-lifecycle-item");
+  await expect(lifecycle.filter({ hasText: "Compacting context" })).toHaveCount(
+    1,
+  );
+  await expect(
+    lifecycle.filter({ hasText: "Requested compaction" }),
+  ).toHaveCount(1);
+  await waitForAnimations(page);
+  await page.screenshot({ path: `${SHOT}/activity-running-full.png` });
+  await panel.screenshot({ path: `${SHOT}/activity-running-clip.png` });
+  const terminal = typed(
+    5,
+    "failed",
+    "compact-one",
+    "Provider rejected compaction.",
+  );
+  await seed([
+    frame(4, "acp_read", {
+      method: "session/update",
+      params: {
+        sessionId: "activity-session",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "legacy-hook",
+          title: "PostCompact",
+          status: "completed",
+        },
+      },
+    }),
+    terminal,
+    typed(
+      6,
+      "completed",
+      "compact-two",
+      "Second operation retained its outcome.",
+    ),
+  ]);
+  await seed([initial, terminal]);
+  await expect(
+    lifecycle.filter({ hasText: "Context compaction failed" }),
+  ).toHaveCount(1);
+  await expect(lifecycle.filter({ hasText: "Context compacted" })).toHaveCount(
+    1,
+  );
+  await expect(
+    panel
+      .getByTestId("transcript-tool-item")
+      .filter({ hasText: "Context compacted" }),
+  ).toHaveCount(0);
+  const failure = lifecycle.filter({ hasText: "Context compaction failed" });
+  await expect(failure).toHaveClass(/text-destructive/);
+  await expect(failure).toContainText(
+    "Adapter summary: Provider rejected compaction.",
+  );
+  await expect(panel.getByTestId("transcript-suppressed-item")).toHaveCount(0);
+  const second = lifecycle.filter({
+    hasText: "Second operation retained its outcome.",
+  });
+  await expect(second).toContainText("Compaction origin unknown");
+  await expect(second).not.toContainText("Requested compaction");
+  await seed([
+    {
+      ...frame(7, "agent_initialized", { agentIndex: 0, initializeResult: {} }),
+      channelId: null,
+      sessionId: null,
+      turnId: null,
+    },
+    { ...typed(8, "in_progress"), turnId: "new-worker-turn" },
+  ]);
+  await expect(lifecycle.filter({ hasText: "Compacting context" })).toHaveCount(
+    1,
+  );
+  await expect(failure).toHaveCount(1);
+  await waitForAnimations(page);
+  await page.screenshot({ path: `${SHOT}/activity-outcomes-full.png` });
+  await panel.screenshot({ path: `${SHOT}/activity-outcomes-clip.png` });
+  await panel.getByRole("button", { name: "Open activity settings" }).click();
+  await page.getByTestId("agent-session-toggle-raw-feed").click();
+  await page.keyboard.press("Escape");
+  const raw = panel
+    .locator("details")
+    .filter({ has: page.locator("summary").filter({ hasText: "#5" }) });
+  await raw.locator("summary").click();
+  await expect(raw.locator("pre")).toContainText(
+    '"compactionId": "compact-one"',
+  );
+  await expect(raw.locator("pre")).toContainText('"status": "failed"');
+  await waitForAnimations(page);
+  await page.screenshot({ path: `${SHOT}/activity-raw-full.png` });
+  await panel.screenshot({ path: `${SHOT}/activity-raw-clip.png` });
+});

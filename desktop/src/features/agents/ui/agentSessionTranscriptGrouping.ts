@@ -531,7 +531,13 @@ export function buildTranscriptDisplayBlocks(
   items: TranscriptItem[],
   latestLiveSessionId: string | null = null,
 ): TranscriptDisplayBlock[] {
-  const sessionRuns = splitIntoSessionRuns(items);
+  const sessionRuns = splitIntoSessionRuns(
+    items.filter(
+      (item) =>
+        item.type !== "tool" ||
+        item.descriptor?.reason !== "typed-compaction-duplicate",
+    ),
+  );
 
   // Fast path: single session (or zero) — no boundary blocks needed.
   if (sessionRuns.length <= 1) {

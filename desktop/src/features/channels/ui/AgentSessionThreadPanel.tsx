@@ -133,6 +133,14 @@ export function AgentSessionThreadPanel({
     () => mergeObserverEventWindows(scopedEvents, archivedChannelEvents),
     [scopedEvents, archivedChannelEvents],
   );
+  const combinedTranscriptEvents = React.useMemo(
+    () =>
+      mergeObserverEventWindows(
+        scopeByChannel(events, sessionChannelId, true),
+        archivedChannelEvents,
+      ),
+    [events, sessionChannelId, archivedChannelEvents],
+  );
   const latestActivityAt = React.useMemo(
     () => getLatestActivityTimestamp(combinedHeaderEvents),
     [combinedHeaderEvents],
@@ -184,8 +192,9 @@ export function AgentSessionThreadPanel({
   // never keys (agentSessionTranscriptGrouping.ts:557-574), so we avoid
   // subscribing to the observer store from the outer panel.
   const transcriptBlockIds = React.useMemo(
-    () => (showRawFeed ? [] : deriveTranscriptBlockIds(combinedHeaderEvents)),
-    [combinedHeaderEvents, showRawFeed],
+    () =>
+      showRawFeed ? [] : deriveTranscriptBlockIds(combinedTranscriptEvents),
+    [combinedTranscriptEvents, showRawFeed],
   );
 
   // Stabilize the id array by VALUE so the hook's restoration effect (keyed on

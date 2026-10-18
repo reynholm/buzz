@@ -407,3 +407,13 @@ in `desktop/src/features/messages/lib/sessionControl.test.mjs`. The shared
 `crates/buzz-core/tests/fixtures/session_controls.json` command corpus runs against
 both actual parsers, including the Rust/JavaScript Unicode whitespace boundary.
 Mock-bridge coverage does not attest real-provider or native-platform behavior.
+
+The same registered workflow also opens an owned agent's production activity
+panel and ingests raw observer frames through `syncAgentObserverEvents`. It
+checks in-place typed compaction outcomes, replay, two operations in one turn,
+legacy hook deduplication, visible failures and the original raw rail. The
+focused `agentSessionCompaction` and `observerCompaction` tests cover exact wire
+validation, UTF-8 ID bounds, observed worker/resume and successful new-session ACK boundaries, missing-history
+unknown provenance, summary limits, terminal monotonicity and store rebuild/reset.
+Observer access remains owner-scoped; permission to send a remote session control
+does not authorize reading that agent's observer feed.

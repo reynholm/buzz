@@ -769,3 +769,52 @@ async fn compact_uses_pre_ack_new_session_advertisement_after_ordinary_completio
         serde_json::json!([{"type":"text","text":"/compact"}])
     );
 }
+
+#[tokio::test]
+async fn compact_cached_worker_replaces_previous_observer_scope() {
+    let (_fixture, ctx, mut pool, human, server) = setup().await;
+    let observer = crate::observer::ObserverHandle::in_process();
+    let mut agent = pool.try_claim(Some(&scope())).unwrap();
+    agent.acp.set_observer(Some(observer.clone()), 0);
+    agent
+        .acp
+        .set_observer_context(crate::observer::ObserverContext {
+            channel_id: Some("previous-channel".into()),
+            session_id: Some("previous-session".into()),
+            turn_id: Some("previous-turn".into()),
+            started_at: None,
+        });
+    pool.return_agent(agent);
+    let request = enqueue(&ctx, &pool, &human, &scope()).await;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    crate::control_tasks::dispatch(&mut pool, &ctx, &tx);
+    let mut result = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(result.outcome, Ok(()));
+    let events = observer.snapshot();
+    let frames: Vec<_> = events
+        .iter()
+        .filter(|event| {
+            event.payload["method"] == "session/prompt"
+                || event.payload["method"] == "session/update"
+        })
+        .collect();
+    assert!(frames.len() >= 2);
+    for frame in frames {
+        assert_eq!(
+            frame.channel_id.as_deref(),
+            Some(scope().channel_id().to_string().as_str())
+        );
+        assert_eq!(frame.session_id.as_deref(), Some("old-1"));
+        assert_eq!(
+            frame.turn_id.as_deref(),
+            Some(request.origin.command_event_id.as_str())
+        );
+        assert!(frame.started_at.is_some());
+    }
+    result.agent.acp.shutdown().await;
+    pool.join_set.shutdown().await;
+    server.abort();
+}

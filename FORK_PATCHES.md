@@ -5474,11 +5474,12 @@ New module: `true`.
 
 ## `TESTING.md`
 
-Document production-writer recovery, replica-floor premises, authenticated CLI/relay regression commands and evidence boundaries. Document fresh-build session-control smoke workflow and shared actual-parser fixture coverage.
+Document production-writer recovery, replica-floor premises, authenticated CLI/relay regression commands and evidence boundaries. Document fresh-build session-control smoke workflow and shared actual-parser fixture coverage. Document typed activity workflow, observed identity boundaries and unchanged observer ownership.
 
 New module: `false`.
 
 - Required symbol: `### Desktop scoped session controls`
+- Required symbol: `Observer access remains owner-scoped;`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 
@@ -7070,7 +7071,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/pool/compaction.rs`
 
-Acquire only the exact existing provider session, persist Started before a single compact prompt, and return separately typed control health/results.
+Acquire only the exact existing provider session, persist Started before a single compact prompt, and return separately typed control health/results. Reset stale worker observer context to the admitted channel, existing provider session and command identity before resume or compact I/O.
 
 New module: `true`.
 
@@ -7080,25 +7081,29 @@ New module: `true`.
 - Required symbol: `if live.lease != *lease || live.session_id != *session_id`
 - Required symbol: `Ok(_) => terminal,`
 - Required symbol: `let execution = tokio::time::timeout_at(job.deadline, async {`
+- Required symbol: `job.job.origin.command_event_id.clone(),`
 - Invocation: `crates/buzz-acp/src/pool/compaction.rs` → `begin_compaction_effect`; exact call `ctx.session_controls.begin_compaction_effect(&job)`; behavior test `compact_exact_prompt_and_durable_started_preserve_delivery_and_turns`; verify `cargo test --locked -p buzz-acp --lib compact_exact_prompt_and_durable_started_preserve_delivery_and_turns -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool/compaction.rs` → `session_resume`; exact call `.session_resume(session_id, &ctx.cwd, ctx.mcp_servers.clone(), None, None)`; behavior test `compact_never_calls_session_new_memory_or_disk_success`; verify `cargo test --locked -p buzz-acp --lib compact_never_calls_session_new_memory_or_disk_success -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool/compaction.rs` → `session_prompt_blocks_with_idle_timeout`; exact call `agent.acp.session_prompt_blocks_with_idle_timeout(&session.session_id, &["/compact"], ctx.idle_timeout, ctx.max_turn_duration)`; behavior test `compact_exact_prompt_and_durable_started_preserve_delivery_and_turns`; verify `cargo test --locked -p buzz-acp --lib compact_exact_prompt_and_durable_started_preserve_delivery_and_turns -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool/compaction.rs` → `set_observer_context`; exact call `agent.acp.set_observer_context(observer::context_for_turn(`; behavior test `compact_observer_routes_resume_prompt_and_updates_to_admitted_scope`; verify `cargo test --locked -p buzz-acp compact_ -- --test-threads=1`
 - Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/compaction_tests.rs`
 
-Exercise existing-only acquisition and actual compact RPC, durable markers, signed result submission and failure/redelivery behavior.
+Exercise existing-only acquisition and actual compact RPC, durable markers, signed result submission and failure/redelivery behavior. Regress actual disk-resume observer envelope routing from stale prior scope.
 
 New module: `true`.
 
+- Required symbol: `compact_observer_routes_resume_prompt_and_updates_to_admitted_scope`
 - Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/compaction_runtime_tests.rs`
 
-Exercise authorized controller admission, exact-owner scheduling, lazy wake, collection protection, bounded pending work and lifecycle termination.
+Exercise authorized controller admission, exact-owner scheduling, lazy wake, collection protection, bounded pending work and lifecycle termination. Regress actual cached-worker control-dispatch observer envelope routing.
 
 New module: `true`.
 
+- Required symbol: `compact_cached_worker_replaces_previous_observer_scope`
 - Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/session_controls/compaction.rs`
@@ -7271,12 +7276,13 @@ New module: `true`.
 
 ## `desktop/tests/e2e/session-controls.spec.ts`
 
-Registered production-menu workflow with remote cross-owner evidence, keyboard/submenu/Escape, untouched draft, native command routing, signed raw result projection and revoked send-time admission.
+Registered production-menu workflow with remote cross-owner evidence, keyboard/submenu/Escape, untouched draft, native command routing, signed raw result projection and revoked send-time admission. Owned-agent activity workflow ingests actual observer events through the production store and panel, covers running/failure/completion, two operations, replay, legacy dedup and raw rail.
 
 New module: `true`.
 
 - Required symbol: `known_agent_without_telemetry_still_has_current_scope_controls`
 - Required symbol: `revoked send-time permission preserves draft and publishes nothing`
+- Required symbol: `owned observer activity projects typed compaction lifecycle through the real store and panel`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 
 ## `desktop/src/features/channels/useMessageEventProfilePubkeys.ts`
@@ -7307,3 +7313,126 @@ New module: `false`.
 
 - Required symbol: `if (previous?.sessionControl || current?.sessionControl) return false;`
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionControl.test.mjs src/features/messages/lib/sessionControlPermissions.test.mjs`
+
+## `desktop/src/features/agents/ui/agentSessionCompaction.ts`
+
+Validate typed ACP compaction wire updates and project bounded, generation-scoped, monotonic lifecycle rows with evidence-based origin, safe summary and legacy deduplication. Correlate bounded exact numeric session/new requests to successful ACKs, splitting reused SIDs only at the real backend binding point. Attribute a manual watch to only its first newly observed ID, preserving prior IDs and retracting attribution on late pre-request history. Preserve pre-I/O resume boundaries, clear identity on exact failed resume ACK and prevent direct attachment replay from consuming bounded history.
+
+New module: `true`.
+
+- Required symbol: `export function parseCompactionUpdate(`
+- Required symbol: `export function processCompactionActivity(`
+- Required symbol: `utf8.encode(update.compactionId).length > 128`
+- Required symbol: `const terminal = prior && prior.status !== "in_progress";`
+- Required symbol: `if (typedScopes.has(hookScope))`
+- Required symbol: `Number.isSafeInteger(rpc.id)`
+- Required symbol: `const firstNew = candidates.find(`
+- Required symbol: `item.id === firstNew?.id`
+- Required symbol: `sessionId: params.sessionId,`
+- Required symbol: `update.summary.slice(0, MAX_SUMMARY)`
+- Required symbol: `activity.status === "failed" || activity.conflict`
+- Required symbol: `rpc.error === undefined &&`
+- Required symbol: `const newer = next.pendingAttachments.some(`
+- Required symbol: `next = rememberBoundary(next, {`
+- Required symbol: `if (!newer)`
+- Required symbol: `entry.id === boundary.id && entry.agent === boundary.agent`
+- Invocation: `desktop/src/features/agents/ui/agentSessionCompaction.ts` → `parseCompactionUpdate`; exact call `parseCompactionUpdate(event.payload)`; behavior test `production transcript mutates one compaction row to failed`; verify `node --import ./desktop/test-loader.mjs --experimental-strip-types --test desktop/src/features/agents/ui/agentSessionCompaction.test.mjs desktop/src/features/agents/observerCompaction.test.mjs`
+- Verify: `node --import ./desktop/test-loader.mjs --experimental-strip-types --test desktop/src/features/agents/ui/agentSessionCompaction.test.mjs desktop/src/features/agents/observerCompaction.test.mjs`
+
+## `desktop/src/features/agents/ui/agentSessionTranscript.ts`
+
+Consume the typed compaction lifecycle projection in actual incremental and rebuilt transcripts.
+
+New module: `false`.
+
+- Required symbol: `compactions: emptyCompactionActivityState(),`
+- Required symbol: `updateType !== "compaction_update"`
+- Invocation: `desktop/src/features/agents/ui/agentSessionTranscript.ts` → `processCompactionActivity`; exact call `processCompactionActivity(d.compactions, event, d.items)`; behavior test `production transcript mutates one compaction row to failed`; verify `node --import ./desktop/test-loader.mjs --experimental-strip-types --test desktop/src/features/agents/ui/agentSessionCompaction.test.mjs desktop/src/features/agents/observerCompaction.test.mjs`
+- Verify: `node --import ./desktop/test-loader.mjs --experimental-strip-types --test desktop/src/features/agents/ui/agentSessionCompaction.test.mjs desktop/src/features/agents/observerCompaction.test.mjs`
+
+## `desktop/src/features/agents/ui/agentSessionTypes.ts`
+
+Carry typed compaction state on existing lifecycle items and a scoped legacy-hook correlation key.
+
+New module: `false`.
+
+- Required symbol: `compaction?: CompactionActivity;`
+- Required symbol: `compactionScope?: string;`
+- Verify: `node --import ./desktop/test-loader.mjs --experimental-strip-types --test desktop/src/features/agents/ui/agentSessionCompaction.test.mjs desktop/src/features/agents/observerCompaction.test.mjs`
+
+## `desktop/src/features/agents/ui/agentSessionCompaction.test.mjs`
+
+Bind compaction semantics to production incremental/build, grouping and meaningful-item seams.
+
+New module: `true`.
+
+- Required symbol: `production transcript mutates one compaction row to`
+- Required symbol: `real worker initialization and session resume separate generations; turns do not`
+- Verify: `node --import ./desktop/test-loader.mjs --experimental-strip-types --test desktop/src/features/agents/ui/agentSessionCompaction.test.mjs desktop/src/features/agents/observerCompaction.test.mjs`
+
+## `desktop/src/features/agents/ui/agentSessionCompaction.jsdom-test.mjs`
+
+Render actual parsed/grouped compaction failure through the production activity presenter with literal untrusted summary text. Mount the production channel panel against the actual observer store to verify worker context and absence of duplicate legacy rows.
+
+New module: `true`.
+
+- Required symbol: `typed compaction failure survives production grouping and renders salient literal summary`
+- Required symbol: `production channel panel reads real observer store with worker context and hides only the correlated legacy duplicate`
+- Verify: `node --import ./desktop/test-jsdom-setup.mjs --import ./desktop/test-loader.mjs --experimental-strip-types --test-force-exit --test desktop/src/features/agents/ui/agentSessionCompaction.jsdom-test.mjs`
+
+## `desktop/src/features/agents/observerCompaction.test.mjs`
+
+Exercise production observer-store out-of-order rebuild, reconnect replay dedup, raw retention and reset.
+
+New module: `true`.
+
+- Required symbol: `production observer store handles replay and out-of-order rebuild, retains raw frames and resets lifecycle state`
+- Invocation: `desktop/src/features/agents/observerRelayStore.ts` → `processTranscriptEvent`; exact call `processTranscriptEvent(transcriptState, event)`; behavior test `production observer store handles replay and out-of-order rebuild, retains raw frames and resets lifecycle state`; verify `node --import ./desktop/test-loader.mjs --experimental-strip-types --test desktop/src/features/agents/ui/agentSessionCompaction.test.mjs desktop/src/features/agents/observerCompaction.test.mjs`
+- Verify: `node --import ./desktop/test-loader.mjs --experimental-strip-types --test desktop/src/features/agents/ui/agentSessionCompaction.test.mjs desktop/src/features/agents/observerCompaction.test.mjs`
+
+## `desktop/src/features/agents/ui/agentSessionPanelLayout.ts`
+
+Keep global worker initialization as non-rendering context only when deriving a channel transcript; raw rail remains channel-scoped.
+
+New module: `false`.
+
+- Required symbol: `includeWorkerBoundaries = false,`
+- Required symbol: `includeWorkerBoundaries &&`
+- Verify: `node --import ./desktop/test-loader.mjs --experimental-strip-types --test desktop/src/features/agents/ui/agentSessionCompaction.test.mjs desktop/src/features/agents/ui/agentSessionPanelLayout.test.mjs desktop/src/features/agents/observerCompaction.test.mjs`
+
+## `desktop/src/features/agents/ui/agentSessionPanelLayout.test.mjs`
+
+Regress scoped lifecycle generation and scroll-key preservation while raw channel filtering remains exact.
+
+New module: `false`.
+
+- Required symbol: `channel transcript retains global worker boundaries without expanding the raw channel rail`
+- Verify: `node --import ./desktop/test-loader.mjs --experimental-strip-types --test desktop/src/features/agents/ui/agentSessionCompaction.test.mjs desktop/src/features/agents/ui/agentSessionPanelLayout.test.mjs desktop/src/features/agents/observerCompaction.test.mjs`
+
+## `desktop/src/features/agents/ui/ManagedAgentSessionPanel.tsx`
+
+Use worker boundary context for channel transcript generation identity while preserving the raw/header channel window.
+
+New module: `false`.
+
+- Invocation: `desktop/src/features/agents/ui/ManagedAgentSessionPanel.tsx` → `scopeByChannel`; exact call `scopeByChannel(events, channelId, true)`; behavior test `production channel panel reads real observer store with worker context and hides only the correlated legacy duplicate`; verify `node --import ./desktop/test-jsdom-setup.mjs --import ./desktop/test-loader.mjs --experimental-strip-types --test-force-exit --test desktop/src/features/agents/ui/agentSessionCompaction.jsdom-test.mjs`
+- Verify: `node --import ./desktop/test-loader.mjs --experimental-strip-types --test desktop/src/features/agents/ui/agentSessionCompaction.test.mjs desktop/src/features/agents/ui/agentSessionPanelLayout.test.mjs desktop/src/features/agents/observerCompaction.test.mjs`
+
+## `desktop/src/features/channels/ui/AgentSessionThreadPanel.tsx`
+
+Use worker boundary context for channel transcript generation identity while preserving the raw/header channel window.
+
+New module: `false`.
+
+- Invocation: `desktop/src/features/channels/ui/AgentSessionThreadPanel.tsx` → `scopeByChannel`; exact call `scopeByChannel(events, sessionChannelId, true)`; behavior test `production channel panel reads real observer store with worker context and hides only the correlated legacy duplicate`; verify `node --import ./desktop/test-jsdom-setup.mjs --import ./desktop/test-loader.mjs --experimental-strip-types --test-force-exit --test desktop/src/features/agents/ui/agentSessionCompaction.jsdom-test.mjs`
+- Verify: `node --import ./desktop/test-loader.mjs --experimental-strip-types --test desktop/src/features/agents/ui/agentSessionCompaction.test.mjs desktop/src/features/agents/ui/agentSessionPanelLayout.test.mjs desktop/src/features/agents/observerCompaction.test.mjs`
+
+## `desktop/src/features/agents/ui/agentSessionTranscriptGrouping.ts`
+
+Exclude only proven typed-compaction duplicate legacy hooks from polished presentation; retain other suppressed rows and raw observer evidence.
+
+New module: `false`.
+
+- Required symbol: `item.descriptor?.reason !== "typed-compaction-duplicate"`
+- Invocation: `desktop/src/features/agents/ui/agentSessionTranscriptGrouping.ts` → `splitIntoSessionRuns`; exact call `splitIntoSessionRuns(`; behavior test `grouped production transcript removes correlated legacy hook instead of rendering a quiet duplicate`; verify `node --import ./desktop/test-loader.mjs --experimental-strip-types --test desktop/src/features/agents/ui/agentSessionCompaction.test.mjs desktop/src/features/agents/ui/agentSessionPanelLayout.test.mjs desktop/src/features/agents/observerCompaction.test.mjs`
+- Verify: `node --import ./desktop/test-loader.mjs --experimental-strip-types --test desktop/src/features/agents/ui/agentSessionCompaction.test.mjs desktop/src/features/agents/ui/agentSessionPanelLayout.test.mjs desktop/src/features/agents/observerCompaction.test.mjs`

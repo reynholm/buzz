@@ -118,3 +118,55 @@ test("observerEventScrollId returns distinct ids for same seq across a restart",
   const after = { seq: 1, timestamp: "2026-07-13T21:00:00.000Z" };
   assert.notEqual(observerEventScrollId(before), observerEventScrollId(after));
 });
+
+test("channel transcript retains global worker boundaries without expanding the raw channel rail", async () => {
+  const { buildTranscriptState } = await import("./agentSessionTranscript.ts");
+  const { deriveTranscriptBlockIds } = await import(
+    "./agentSessionTranscriptGrouping.ts"
+  );
+  const frame = (seq, kind, payload, channelId = "channel-1") => ({
+    seq,
+    timestamp: new Date(
+      Date.parse("2026-10-01T00:00:00Z") + seq * 1000,
+    ).toISOString(),
+    kind,
+    payload,
+    channelId,
+    sessionId: "provider",
+    agentIndex: 0,
+    turnId: "turn",
+  });
+  const typed = (seq, status) =>
+    frame(seq, "acp_read", {
+      method: "session/update",
+      params: {
+        sessionId: "provider",
+        update: {
+          sessionUpdate: "compaction_update",
+          compactionId: "id",
+          status,
+        },
+      },
+    });
+  const events = [
+    frame(1, "agent_initialized", {}, null),
+    typed(2, "completed"),
+    frame(3, "agent_initialized", {}, null),
+    typed(4, "in_progress"),
+    frame(5, "turn_started", {}, "other-channel"),
+  ];
+  const raw = scopeByChannel(events, "channel-1");
+  const transcriptEvents = scopeByChannel(events, "channel-1", true);
+  assert.equal(raw.length, 2);
+  const state = buildTranscriptState(transcriptEvents);
+  assert.equal(state.items.length, 2);
+  assert.notEqual(state.items[0].id, state.items[1].id);
+  assert.equal(
+    state.items.every((item) => item.channelId === "channel-1"),
+    true,
+  );
+  assert.equal(
+    new Set(deriveTranscriptBlockIds(transcriptEvents)).size,
+    deriveTranscriptBlockIds(transcriptEvents).length,
+  );
+});

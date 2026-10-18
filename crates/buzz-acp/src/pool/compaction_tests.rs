@@ -38,6 +38,19 @@ async fn run_compact(
     Arc<PromptContext>,
     std::path::PathBuf,
 ) {
+    run_compact_observed(status, rpc_error, None).await
+}
+
+async fn run_compact_observed(
+    status: &str,
+    rpc_error: bool,
+    observer: Option<crate::observer::ObserverHandle>,
+) -> (
+    ControlTaskResult,
+    Fixture,
+    Arc<PromptContext>,
+    std::path::PathBuf,
+) {
     let fixture = Fixture::new();
     let scope = scope();
     let mut ctx = ctx();
@@ -66,7 +79,16 @@ async fn run_compact(
     if rpc_error {
         env.push(("FAIL_PROMPT", "1"));
     }
-    let agent = fixture.agent(&env).await;
+    let mut agent = fixture.agent(&env).await;
+    agent.acp.set_observer(observer, 0);
+    agent
+        .acp
+        .set_observer_context(crate::observer::ObserverContext {
+            channel_id: Some("previous-channel".into()),
+            session_id: Some("previous-session".into()),
+            turn_id: Some("previous-turn".into()),
+            started_at: None,
+        });
     let (_tx, rx) = tokio::sync::oneshot::channel();
     let ctx = Arc::new(ctx);
     let result = run_compaction_task(agent, admitted, ctx.clone(), rx).await;
@@ -746,5 +768,35 @@ async fn finalized_started_survives_unavailable_store(mode: &str) {
             .count(),
         1
     );
+    result.agent.acp.shutdown().await;
+}
+
+#[tokio::test]
+async fn compact_observer_routes_resume_prompt_and_updates_to_admitted_scope() {
+    let observer = crate::observer::ObserverHandle::in_process();
+    let (mut result, _, _, _) =
+        run_compact_observed("completed", false, Some(observer.clone())).await;
+    assert_eq!(result.outcome, Ok(()));
+    let events = observer.snapshot();
+    for method in ["session/resume", "session/prompt", "session/update"] {
+        let frames: Vec<_> = events
+            .iter()
+            .filter(|event| event.payload["method"] == method)
+            .collect();
+        assert!(!frames.is_empty(), "missing {method} observation");
+        for frame in frames {
+            assert_eq!(
+                frame.channel_id.as_deref(),
+                Some(scope().channel_id().to_string().as_str()),
+                "{method} must route to admitted channel"
+            );
+            assert_eq!(frame.session_id.as_deref(), Some("old-1"));
+            assert_eq!(
+                frame.turn_id.as_deref(),
+                Some(result.job.job.origin.command_event_id.as_str())
+            );
+            assert!(frame.started_at.is_some());
+        }
+    }
     result.agent.acp.shutdown().await;
 }
