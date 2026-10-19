@@ -88,7 +88,7 @@ export function MessageSessionControls({
                 <span>Restart</span>
                 <span
                   id={`${descriptionId}-restart`}
-                  className="whitespace-normal text-2xs text-muted-foreground"
+                  className="whitespace-normal text-2xs text-[color:color-mix(in_srgb,hsl(var(--foreground))_90%,black)]"
                 >
                   Stops current work, including subagents. File changes are
                   kept.
@@ -112,7 +112,7 @@ export function MessageSessionControls({
                   <span>From scratch</span>
                   <span
                     id={`${descriptionId}-none`}
-                    className="whitespace-normal text-2xs text-muted-foreground"
+                    className="whitespace-normal text-2xs text-[color:color-mix(in_srgb,hsl(var(--foreground))_90%,black)]"
                   >
                     Keep the original assignment and your next request.
                   </span>
@@ -132,7 +132,7 @@ export function MessageSessionControls({
                   <span>Recent history</span>
                   <span
                     id={`${descriptionId}-recent`}
-                    className="whitespace-normal text-2xs text-muted-foreground"
+                    className="whitespace-normal text-2xs text-[color:color-mix(in_srgb,hsl(var(--foreground))_90%,black)]"
                   >
                     Keep the original assignment and recent messages.
                   </span>
@@ -152,7 +152,7 @@ export function MessageSessionControls({
                   <span>Entire thread</span>
                   <span
                     id={`${descriptionId}-all`}
-                    className="whitespace-normal text-2xs text-muted-foreground"
+                    className="whitespace-normal text-2xs text-[color:color-mix(in_srgb,hsl(var(--foreground))_90%,black)]"
                   >
                     Use the available thread history, within the history limit.
                   </span>

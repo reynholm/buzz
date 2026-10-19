@@ -124,6 +124,24 @@ async function sends(page: Page) {
     ),
   );
 }
+async function expectDescriptionStyle(item: Locator) {
+  const style = await item.evaluate((el) => {
+    const id = el.getAttribute("aria-describedby");
+    const description = id ? document.getElementById(id) : null;
+    const title = description?.previousElementSibling;
+    if (!description || !title) throw new Error("Menu description unavailable");
+    const titleStyle = getComputedStyle(title);
+    const descriptionStyle = getComputedStyle(description);
+    return {
+      titleSize: Number.parseFloat(titleStyle.fontSize),
+      descriptionSize: Number.parseFloat(descriptionStyle.fontSize),
+      titleColor: titleStyle.color,
+      descriptionColor: descriptionStyle.color,
+    };
+  });
+  expect(style.descriptionSize).toBeLessThan(style.titleSize);
+  expect(style.descriptionColor).not.toBe(style.titleColor);
+}
 test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
   page,
 }) => {
@@ -151,6 +169,7 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
     restart.getByText(restartDescription, { exact: true }),
   ).toBeVisible();
   await expect(restart).toHaveAccessibleDescription(restartDescription);
+  await expectDescriptionStyle(restart);
   await captureMenu(
     page,
     row(page, root).getByTestId("manage-current-session"),
@@ -170,6 +189,7 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
     const option = page.getByRole("menuitem", { name: label, exact: true });
     await expect(option.getByText(description, { exact: true })).toBeVisible();
     await expect(option).toHaveAccessibleDescription(description);
+    await expectDescriptionStyle(option);
   }
   await captureMenu(
     page,
