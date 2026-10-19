@@ -351,6 +351,35 @@ for (const [label, body] of [
     expect(payload.parentEventId).toBe(root);
     expect(payload.rootEventId).toBe(root);
     expect(payload.mentionPubkeys).toEqual([AGENT]);
+    if (body === "!compact") {
+      const control = page.getByTestId("message-session-control");
+      const commandId = await page
+        .getByTestId("message-row")
+        .filter({ has: control })
+        .getAttribute("data-message-id");
+      if (!commandId) throw new Error("Missing compact event identity");
+      for (const outcome of ["pending", "ok"]) {
+        await page.evaluate(
+          ({ commandId, outcome, pubkey, channelName }) =>
+            window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+              channelName,
+              pubkey,
+              kind: 7,
+              content: outcome === "pending" ? "⏳" : "✅",
+              extraTags: [
+                ["e", commandId],
+                ["buzz-session-result", "1", commandId, outcome, ""],
+              ],
+            }),
+          { commandId, outcome, pubkey: AGENT, channelName: CHANNEL },
+        );
+        await expect(control).toContainText(
+          outcome === "pending"
+            ? "Waiting for current work to finish · Compaction will start automatically"
+            : "Completed",
+        );
+      }
+    }
   });
 }
 

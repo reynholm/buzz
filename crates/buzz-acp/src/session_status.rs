@@ -340,6 +340,12 @@ impl StatusBinding {
         });
     }
 
+    /// Clear occupancy when the provider has not established its capacity.
+    pub(crate) fn clear_occupancy(&self) {
+        self.generation
+            .update(|status| status.occupancy.take().is_some());
+    }
+
     /// Retire this generation. A generation that is no longer current was
     /// already revoked, so this never touches a successor.
     pub(crate) fn retire(&self) {

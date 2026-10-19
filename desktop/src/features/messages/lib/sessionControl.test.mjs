@@ -103,6 +103,11 @@ test("results require exact target raw signer, exact e reference and bounded tag
     "Waiting for current work to stop",
   );
   assert.equal(
+    control([request({ content: "!compact" }), reaction("pending")]).targets[0]
+      .detail,
+    "Waiting for current work to finish · Compaction will start automatically",
+  );
+  assert.equal(
     control([request(), reaction("pending"), reaction()]).targets[0].state,
     "success",
   );
@@ -154,6 +159,19 @@ test("results require exact target raw signer, exact e reference and bounded tag
   );
 });
 const T = "6f1c2b3a-4d5e-4f60-8a7b-9c0d1e2f3a4b";
+test("compact wait expires without a terminal and fresh wait reports cover late admission", () => {
+  const now = Math.floor(Date.now() / 1000);
+  const command = request({ content: "!compact", created_at: now - 2000 });
+  const oldWait = reaction("pending", "", { created_at: now - 1100 });
+  assert.equal(control([command, oldWait]).targets[0].state, "expired");
+  const freshWait = reaction("pending", "", { created_at: now });
+  assert.equal(control([command, freshWait]).targets[0].state, "pending");
+  assert.equal(control([command, freshWait]).targets[0].expiresAt, now + 1050);
+  assert.equal(
+    control([command, oldWait, reaction()]).targets[0].state,
+    "success",
+  );
+});
 test("manual status uses matching bounded actor metadata and neutral fallback without it", () => {
   const tags = [
     ["h", "channel"],

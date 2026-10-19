@@ -6363,6 +6363,7 @@ New module: `false`.
 
 - Required symbol: `export function sessionStatusEqual(`
 - Required symbol: `export function sessionControlEqual(`
+- Required symbol: `target.expiresAt === other.expiresAt`
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionStatus.test.mjs src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs src/features/messages/lib/messageRowEquality.test.mjs src/features/messages/ui/MessageSessionStatus.test.mjs`
 - Verify: `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/lib/useSessionControlAction.jsdom-test.mjs src/features/messages/ui/MessageSessionControlRow.jsdom-test.mjs`
 
@@ -7172,6 +7173,9 @@ New module: `true`.
 - Required symbol: `pending.started = Some(receipt);`
 - Required symbol: `Err(_) => true,`
 - Required symbol: `outcome = Err(ControlFailure::StoreUnavailable);`
+- Required symbol: `COMPACT_QUEUE_WAIT`
+- Required symbol: `COMPACT_EXECUTION_WAIT`
+- Required symbol: `pub(crate) fn report_compaction_wait(`
 - Invocation: `crates/buzz-acp/src/session_controls/compaction.rs` → `begin_admitted_control_with_receipt`; exact call `.begin_admitted_control_with_receipt(
                 &job.job.scope,
                 &job.job.origin.command_event_id,
@@ -7243,6 +7247,7 @@ New module: `true`.
 - Required symbol: `const EXTERNAL_WHITESPACE = /^\p{White_Space}+|\p{White_Space}+$/gu;`
 - Required symbol: `content.replace(EXTERNAL_WHITESPACE, "")`
 - Required symbol: `event.tags.some((tag) => tag[0] === "buzz-session-result")`
+- Required symbol: `expiresAt?: number;`
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionControl.test.mjs src/features/messages/lib/sessionControlPermissions.test.mjs`
 
 ## `desktop/src/features/messages/lib/sessionControlPermissions.ts`
@@ -7783,3 +7788,28 @@ Immutable executable fixture for production version-probe regression tests.
 New module: `true`.
 
 - Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `crates/buzz-acp/src/acp/claude_context.rs`
+
+Use provider-confirmed Claude context capacity with same-session generation fencing; suppress provisional denominators, retain confirmed capacity across ordinary prompts, and consume filtered SDK results before diagnostic publication.
+
+New module: `true`.
+
+- Required symbol: `fn authoritative_window(result: &Value) -> Option<u64>`
+- Required symbol: `state.confirmed_window`
+- Required symbol: `state.generation != binding.generation_id()`
+- Required symbol: `models.len() > 64`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `consume_claude_context_frame`; exact call `if self.consume_claude_context_frame(&msg) {`; behavior test `claude_context_uses_provider_window_and_the_final_context_numerator`; verify `cargo test --locked -p buzz-acp -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `begin_claude_context_turn`; exact call `self.begin_claude_context_turn(session_id);`; behavior test `claude_confirmed_capacity_survives_an_ordinary_prompt_for_tool_published_answers`; verify `cargo test --locked -p buzz-acp -- --test-threads=1`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `desktop/tests/e2e/thread-head-stale-edit.spec.ts`
+
+Exercise the edited thread head only after making its hover-only Reply action actionable; retain gated backfill and edited-content regression assertions.
+
+New module: `false`.
+
+- Required symbol: `await timelineRow.hover();`
+- Required symbol: `await replyButton.click();`
+- Required symbol: `deferThreadReplies: true`
+- Verify: `pnpm --dir desktop exec playwright test --project=smoke tests/e2e/thread-head-stale-edit.spec.ts`

@@ -15,11 +15,12 @@ pub(crate) fn dispatch(
     ctx: &Arc<PromptContext>,
     tx: &mpsc::UnboundedSender<ControlTaskResult>,
 ) {
-    for job in ctx.session_controls.pending_compactions() {
+    for mut job in ctx.session_controls.pending_compactions() {
         let refusal = if !job.dispatch.current() {
             Some(ControlFailure::Superseded)
         } else if tokio::time::Instant::now() >= job.deadline {
-            Some(ControlFailure::Timeout)
+            // No provider operation started: the exact owner stayed busy.
+            Some(ControlFailure::Busy)
         } else {
             None
         };
@@ -30,13 +31,20 @@ pub(crate) fn dispatch(
         }
         let mut agent = match pool.claim_compaction(&job) {
             Ok(Some(agent)) => agent,
-            Ok(None) => continue,
+            Ok(None) => {
+                ctx.session_controls.report_compaction_wait(&job);
+                continue;
+            }
             Err(failure) => {
                 ctx.session_controls
                     .finish_compaction_job(&job, Err(failure));
                 continue;
             }
         };
+        // Resume and the compact RPC share one budget, starting only once the
+        // existing owner is acquired. Waiting never cancels its current work.
+        job.deadline =
+            tokio::time::Instant::now() + session_controls::compaction::COMPACT_EXECUTION_WAIT;
         if !ctx.session_controls.start_compaction(&job, agent.index) {
             pool.return_agent(agent);
             continue;

@@ -6,6 +6,7 @@
 //! 2. [`AcpClient::initialize`] — protocol version negotiation
 //! 3. [`AcpClient::session_new`] — create session with MCP server config
 
+mod claude_context;
 mod launch;
 
 use std::collections::{HashMap, HashSet};
@@ -237,6 +238,8 @@ pub struct AcpClient {
     goose_usage: UsageTracker,
     /// Per-turn prompt-response usage and Claude's optional cumulative cost.
     standard_usage: StandardUsageTracker,
+    /// Claude capacity evidence is local to a live status generation.
+    claude_context: HashMap<String, claude_context::State>,
     /// Known adapter identity for prompt-response usage mapping.
     standard_adapter: Option<StandardAdapterKind>,
     /// Ask Claude Code for summarized thinking on `session/new`. Opus omits
@@ -676,6 +679,7 @@ impl AcpClient {
             steer_rx: None,
             goose_usage: UsageTracker::default(),
             standard_usage: StandardUsageTracker::default(),
+            claude_context: HashMap::new(),
             standard_adapter,
             claude_thinking_summaries,
             resident_pids: HashSet::new(),
@@ -933,6 +937,10 @@ impl AcpClient {
             // Merge — _meta may already carry a system prompt from an adapter extension.
             params["_meta"]["sessionTitle"] = serde_json::Value::String(title.to_owned());
         }
+        if self.standard_adapter == Some(StandardAdapterKind::Claude) {
+            params["_meta"]["claudeCode"]["emitRawSDKMessages"] =
+                serde_json::json!([{ "type": "result" }]);
+        }
         if self.claude_thinking_summaries {
             // Merge — claude-agent-acp spreads these into the CLI's argv.
             params["_meta"]["claudeCode"]["options"]["extraArgs"]["thinking-display"] =
@@ -1067,6 +1075,7 @@ impl AcpClient {
         idle_timeout: std::time::Duration,
         max_duration: std::time::Duration,
     ) -> Result<StopReason, AcpError> {
+        self.begin_claude_context_turn(session_id);
         let params = build_prompt_params(session_id, prompt_blocks);
         let hard_deadline = tokio::time::Instant::now() + max_duration;
         self.current_hard_deadline = Some(hard_deadline);
@@ -1121,7 +1130,11 @@ impl AcpClient {
                 self.current_hard_deadline = None;
             }
         }
-        self.parse_prompt_response(session_id, &result?)
+        let parsed = result.and_then(|result| self.parse_prompt_response(session_id, &result));
+        if !matches!(parsed, Ok(StopReason::EndTurn)) {
+            self.reset_claude_context(session_id, Some(false));
+        }
+        parsed
     }
 
     /// Send a `session/cancel` **notification** (no `id` field, no response expected).
@@ -1133,6 +1146,7 @@ impl AcpClient {
     ///
     /// Note: async because writing to stdin requires async I/O.
     pub async fn session_cancel(&mut self, session_id: &str) -> Result<(), AcpError> {
+        self.reset_claude_context(session_id, Some(false));
         let params = serde_json::json!({
             "sessionId": session_id,
         });
@@ -1199,6 +1213,14 @@ impl AcpClient {
         binding: crate::session_status::StatusBinding,
     ) {
         self.session_status.retain(|_, bound| bound.is_live());
+        self.claude_context
+            .retain(|session, _| self.session_status.contains_key(session));
+        if self.standard_adapter == Some(StandardAdapterKind::Claude) {
+            self.claude_context.insert(
+                session_id.to_owned(),
+                claude_context::State::new(binding.generation_id()),
+            );
+        }
         self.compactions.bind(session_id, binding.generation_id());
         self.session_status.insert(session_id.to_owned(), binding);
     }
@@ -1206,6 +1228,7 @@ impl AcpClient {
     /// Stop routing context-occupancy notifications of `session_id`.
     pub(crate) fn clear_session_status(&mut self, session_id: &str) {
         self.session_status.remove(session_id);
+        self.claude_context.remove(session_id);
         self.compactions.clear(session_id);
     }
 
@@ -1223,6 +1246,8 @@ impl AcpClient {
         self.compactions.retain_sessions(sessions);
         self.session_status
             .retain(|session, binding| sessions.contains(session) && binding.is_live());
+        self.claude_context
+            .retain(|session, _| self.session_status.contains_key(session));
     }
 
     pub(crate) fn ensure_compaction_route(&mut self, session: &str) {
@@ -1571,9 +1596,6 @@ impl AcpClient {
                 continue;
             }
 
-            // Only log and reset idle after we have a valid non-empty line.
-            tracing::debug!(target: "acp::wire", "← {trimmed}");
-
             let msg: serde_json::Value = match serde_json::from_str(trimmed) {
                 Ok(v) => v,
                 Err(e) => {
@@ -1591,6 +1613,10 @@ impl AcpClient {
                     continue;
                 }
             };
+            if self.consume_claude_context_frame(&msg) {
+                continue;
+            }
+            tracing::debug!(target: "acp::wire", "← {trimmed}");
             self.observe("acp_read", msg.clone());
 
             // Check if this is a response to our expected request (has matching id
@@ -1895,8 +1921,6 @@ impl AcpClient {
                         continue;
                     }
 
-                    tracing::debug!(target: "acp::wire", "← {trimmed}");
-
                     let msg: serde_json::Value = match serde_json::from_str(trimmed) {
                         Ok(v) => v,
                         Err(e) => {
@@ -1914,6 +1938,10 @@ impl AcpClient {
                             continue;
                         }
                     };
+                    if self.consume_claude_context_frame(&msg) {
+                        continue;
+                    }
+                    tracing::debug!(target: "acp::wire", "← {trimmed}");
                     self.observe("acp_read", msg.clone());
 
                     let activity_now = Instant::now();
@@ -2110,6 +2138,11 @@ impl AcpClient {
             .unwrap_or("unknown");
 
         let session_id = msg["params"]["sessionId"].as_str();
+        if matches!(update_type, "config_option_update" | "current_model_update") {
+            if let Some(session) = session_id {
+                self.reset_claude_context(session, None);
+            }
+        }
         if update_type == "compaction_update" {
             if let Some(session) = session_id {
                 if let Some(origin) = self.compactions.update(session, update) {
@@ -2232,7 +2265,11 @@ impl AcpClient {
     fn handle_standard_usage_update(&mut self, msg: &serde_json::Value) {
         // Context occupancy is display status, routed by the notification's
         // own session ID before (and independently of) cost accounting.
-        crate::session_status::record_usage_update(&self.session_status, msg);
+        if self.standard_adapter == Some(StandardAdapterKind::Claude) {
+            self.record_claude_context_usage(msg);
+        } else {
+            crate::session_status::record_usage_update(&self.session_status, msg);
+        }
         if self.standard_adapter != Some(StandardAdapterKind::Claude) {
             return;
         }
@@ -4234,6 +4271,10 @@ sleep 1"#,
             serde_json::json!({ "append": "be brief" })
         );
         assert_eq!(meta["sessionTitle"], "Fizz");
+        assert_eq!(
+            meta["claudeCode"]["emitRawSDKMessages"],
+            serde_json::json!([{ "type": "result" }])
+        );
 
         for (case, cli) in [
             ("old CLI", "echo '2.1.93 (Claude Code)'"),
@@ -4241,7 +4282,15 @@ sleep 1"#,
             ("unclean version", "echo '2.1.284.garbage'"),
         ] {
             let meta = claude_session_meta_with_cli(cli).await;
-            assert!(meta.get("claudeCode").is_none(), "{case}: {meta}");
+            assert!(
+                meta["claudeCode"].get("options").is_none(),
+                "{case}: {meta}"
+            );
+            assert_eq!(
+                meta["claudeCode"]["emitRawSDKMessages"],
+                serde_json::json!([{ "type": "result" }]),
+                "{case}: result metadata does not depend on thinking-display support"
+            );
             assert_eq!(meta["sessionTitle"], "Fizz", "{case}");
         }
     }

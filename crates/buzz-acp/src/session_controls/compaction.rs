@@ -4,7 +4,10 @@ use crate::session_store::{ControlAttempt, ControlReceipt, ControlReceiptState};
 use buzz_core::session_control::{ControlOutcome, ControlResult};
 use std::time::Duration;
 
-pub(crate) const COMPACT_WAIT: Duration = Duration::from_secs(120);
+// Waiting for a foreground turn must not consume the provider execution budget.
+pub(crate) const COMPACT_QUEUE_WAIT: Duration =
+    Duration::from_secs(buzz_core::session_control::CONTROL_MAX_AGE_SECS);
+pub(crate) const COMPACT_EXECUTION_WAIT: Duration = Duration::from_secs(120);
 
 #[derive(Clone)]
 pub(crate) enum CompactionTarget {
@@ -30,6 +33,7 @@ pub(crate) struct AdmittedSessionControl {
 pub(super) struct PendingCompaction {
     pub(super) admitted: AdmittedSessionControl,
     pub(super) worker: Option<usize>,
+    waiting_reported: bool,
     started: Option<ControlReceipt>,
 }
 
@@ -86,6 +90,12 @@ impl SessionControlRuntime {
         state.prune_outcomes();
         if let Some(pending) = state.compactions.get(&job.scope) {
             if pending.admitted.job.origin.command_event_id == job.origin.command_event_id {
+                if pending.waiting_reported {
+                    state.publish(Publication {
+                        command_id: job.origin.command_event_id.clone(),
+                        result: ControlResult::Pending,
+                    });
+                }
                 return Ok(());
             }
             drop(state);
@@ -115,9 +125,10 @@ impl SessionControlRuntime {
                     job,
                     dispatch,
                     target,
-                    deadline: tokio::time::Instant::now() + COMPACT_WAIT,
+                    deadline: tokio::time::Instant::now() + COMPACT_QUEUE_WAIT,
                 },
                 worker: None,
+                waiting_reported: false,
                 started: None,
             },
         );
@@ -203,6 +214,24 @@ impl SessionControlRuntime {
             .collect()
     }
 
+    pub(crate) fn report_compaction_wait(&self, job: &AdmittedSessionControl) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let Some(pending) = state.compactions.get_mut(&job.job.scope) else {
+            return;
+        };
+        if pending.admitted.job.origin != job.job.origin
+            || pending.worker.is_some()
+            || pending.waiting_reported
+        {
+            return;
+        }
+        pending.waiting_reported = true;
+        state.publish(Publication {
+            command_id: job.job.origin.command_event_id.clone(),
+            result: ControlResult::Pending,
+        });
+    }
+
     pub(crate) fn start_compaction(&self, job: &AdmittedSessionControl, worker: usize) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         let Some(pending) = state.compactions.get_mut(&job.job.scope) else {
@@ -211,6 +240,7 @@ impl SessionControlRuntime {
         if pending.worker.is_some() || pending.admitted.job.origin != job.job.origin {
             return false;
         }
+        pending.admitted.deadline = job.deadline;
         pending.worker = Some(worker);
         true
     }

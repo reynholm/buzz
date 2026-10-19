@@ -37,6 +37,7 @@ export type SessionControlTarget = {
     | "success"
     | "failure";
   detail: string;
+  expiresAt?: number;
 };
 export type MessageSessionControl = {
   action: string;
@@ -87,7 +88,7 @@ function targetResult(
   target: string,
   reactions: readonly RelayEvent[],
   now: number,
-): Pick<SessionControlTarget, "state" | "detail"> {
+): Pick<SessionControlTarget, "state" | "detail" | "expiresAt"> {
   if (command.pending)
     return { state: "publishing", detail: "Sending request…" };
   const reports = reactions.filter(
@@ -111,8 +112,36 @@ function targetResult(
       state: terminal === "unconfirmed" ? "unconfirmed" : "failure",
       detail: FAILURE_COPY[terminal],
     };
-  if (outcomes.includes("pending"))
-    return { state: "pending", detail: "Waiting for current work to stop" };
+  if (outcomes.includes("pending")) {
+    const compact = parseSessionCommand(command.content)?.type === "compact";
+    // Queued compaction is in memory. A lost harness or terminal publication
+    // must not leave an unconditional promise to start automatically forever.
+    // Admission may happen near request expiry, so use the signed wait report.
+    const expiresAt = compact
+      ? reports.reduce(
+          (latest, event) =>
+            parseResult(event, command.id) === "pending"
+              ? Math.max(latest, event.created_at)
+              : latest,
+          command.created_at,
+        ) +
+        900 +
+        120 +
+        30
+      : undefined;
+    if (expiresAt !== undefined && now >= expiresAt)
+      return {
+        state: "expired",
+        detail: "Request expired · Result not confirmed",
+      };
+    return {
+      state: "pending",
+      detail: compact
+        ? "Waiting for current work to finish · Compaction will start automatically"
+        : "Waiting for current work to stop",
+      expiresAt,
+    };
+  }
   return now - command.created_at > 900
     ? { state: "expired", detail: "Request expired · Result not confirmed" }
     : { state: "unconfirmed", detail: "Result not confirmed" };

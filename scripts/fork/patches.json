@@ -9649,7 +9649,8 @@
       "is_new": false,
       "required_symbols": [
         "export function sessionStatusEqual(",
-        "export function sessionControlEqual("
+        "export function sessionControlEqual(",
+        "target.expiresAt === other.expiresAt"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -10931,7 +10932,10 @@
         "if pending_scopes + state.receipt_writes.len() >= 128",
         "pending.started = Some(receipt);",
         "Err(_) => true,",
-        "outcome = Err(ControlFailure::StoreUnavailable);"
+        "outcome = Err(ControlFailure::StoreUnavailable);",
+        "COMPACT_QUEUE_WAIT",
+        "COMPACT_EXECUTION_WAIT",
+        "pub(crate) fn report_compaction_wait("
       ],
       "invocation_seams": [
         {
@@ -11059,7 +11063,8 @@
         "parseSessionCommand(event.content)",
         "const EXTERNAL_WHITESPACE = /^\\p{White_Space}+|\\p{White_Space}+$/gu;",
         "content.replace(EXTERNAL_WHITESPACE, \"\")",
-        "event.tags.some((tag) => tag[0] === \"buzz-session-result\")"
+        "event.tags.some((tag) => tag[0] === \"buzz-session-result\")",
+        "expiresAt?: number;"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -11816,6 +11821,50 @@
       "invocation_seams": [],
       "verification_commands": [
         "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/acp/claude_context.rs",
+      "responsibility": "Use provider-confirmed Claude context capacity with same-session generation fencing; suppress provisional denominators, retain confirmed capacity across ordinary prompts, and consume filtered SDK results before diagnostic publication.",
+      "is_new": true,
+      "required_symbols": [
+        "fn authoritative_window(result: &Value) -> Option<u64>",
+        "state.confirmed_window",
+        "state.generation != binding.generation_id()",
+        "models.len() > 64"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/acp.rs",
+          "callee_symbol": "consume_claude_context_frame",
+          "invocation": "if self.consume_claude_context_frame(&msg) {",
+          "behavior_test": "claude_context_uses_provider_window_and_the_final_context_numerator",
+          "verification_command": "cargo test --locked -p buzz-acp -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/acp.rs",
+          "callee_symbol": "begin_claude_context_turn",
+          "invocation": "self.begin_claude_context_turn(session_id);",
+          "behavior_test": "claude_confirmed_capacity_survives_an_ordinary_prompt_for_tool_published_answers",
+          "verification_command": "cargo test --locked -p buzz-acp -- --test-threads=1"
+        }
+      ],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "desktop/tests/e2e/thread-head-stale-edit.spec.ts",
+      "responsibility": "Exercise the edited thread head only after making its hover-only Reply action actionable; retain gated backfill and edited-content regression assertions.",
+      "is_new": false,
+      "required_symbols": [
+        "await timelineRow.hover();",
+        "await replyButton.click();",
+        "deferThreadReplies: true"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir desktop exec playwright test --project=smoke tests/e2e/thread-head-stale-edit.spec.ts"
       ]
     }
   ]

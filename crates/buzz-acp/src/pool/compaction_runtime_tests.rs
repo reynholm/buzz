@@ -50,8 +50,47 @@ async fn compact_waits_for_exact_busy_owner_without_cancel_or_fork() {
     crate::control_tasks::dispatch(&mut pool, &ctx, &tx);
     assert!(rx.try_recv().is_err());
     assert!(pool.task_map().is_empty());
+    assert_eq!(
+        ctx.session_controls
+            .take_publications()
+            .iter()
+            .filter(|publication| {
+                publication.command_id == request.origin.command_event_id
+                    && publication.result == ControlResult::Pending
+            })
+            .count(),
+        1,
+        "a busy compact reports its wait instead of looking unconfirmed"
+    );
+    let admitted_deadline = ctx.session_controls.pending_compactions()[0].deadline;
+    ctx.session_controls
+        .queue_compaction(
+            request.clone(),
+            pool.compaction_target(&scope(), &ctx.session_controls, true),
+        )
+        .unwrap();
+    assert_eq!(
+        ctx.session_controls.pending_compactions()[0].deadline,
+        admitted_deadline,
+        "redelivery must not extend queue admission"
+    );
+    assert_eq!(
+        ctx.session_controls.take_publications()[0].result,
+        ControlResult::Pending,
+        "redelivery can retry the wait receipt without executing compact"
+    );
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(899)).await;
+    tokio::time::resume();
+    crate::control_tasks::dispatch(&mut pool, &ctx, &tx);
+    assert!(
+        ctx.session_controls.take_publications().is_empty(),
+        "waiting is reported once"
+    );
+    assert!(ctx.session_controls.compact_pending(&scope()));
     assert!(!fixture.methods().contains(&"session/cancel".into()));
     assert!(!fixture.methods().contains(&"session/new".into()));
+    let dispatch_started = tokio::time::Instant::now();
     pool.return_agent(owner);
     crate::control_tasks::dispatch(&mut pool, &ctx, &tx);
     let result = tokio::time::timeout(Duration::from_secs(5), rx.recv())
@@ -59,6 +98,9 @@ async fn compact_waits_for_exact_busy_owner_without_cancel_or_fork() {
         .unwrap()
         .unwrap();
     assert_eq!(result.job.job.origin, request.origin);
+    let execution_wait = crate::session_controls::compaction::COMPACT_EXECUTION_WAIT;
+    assert!(result.job.deadline >= dispatch_started + execution_wait);
+    assert!(result.job.deadline < dispatch_started + execution_wait + Duration::from_secs(1));
     assert_eq!(result.outcome, Ok(()));
     assert_eq!(result.agent.state.sessions[&scope()], "old-1");
     let config = crate::error_outcome_emission_tests::test_config();
@@ -281,7 +323,11 @@ async fn compact_duplicate_busy_deadline_restart_removal_and_shutdown_are_termin
             "deadline" => {
                 // The production scheduler consumes its actual stored deadline.
                 tokio::time::pause();
-                tokio::time::advance(Duration::from_secs(121)).await;
+                tokio::time::advance(
+                    crate::session_controls::compaction::COMPACT_QUEUE_WAIT
+                        + Duration::from_secs(1),
+                )
+                .await;
                 let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
                 crate::control_tasks::dispatch(&mut pool, &ctx, &tx);
             }
@@ -306,7 +352,7 @@ async fn compact_duplicate_busy_deadline_restart_removal_and_shutdown_are_termin
         }
         assert!(!ctx.session_controls.compact_pending(&scope()), "{ending}");
         let expected = match ending {
-            "deadline" => ControlFailure::Timeout,
+            "deadline" => ControlFailure::Busy,
             "restart" => ControlFailure::Superseded,
             "panic" => ControlFailure::Unconfirmed,
             _ => ControlFailure::Cancelled,
@@ -381,7 +427,7 @@ async fn compact_only_lazy_work_requires_existing_session() {
 }
 
 #[tokio::test]
-async fn compact_queue_resume_and_rpc_share_one_captured_deadline() {
+async fn compact_resume_and_rpc_share_one_execution_deadline() {
     for (remaining_ms, resume_delay, prompt_delay, prompts) in
         [(1000, "0.1", "1.1", 1), (100, "0.3", "0", 0)]
     {
@@ -404,24 +450,22 @@ async fn compact_queue_resume_and_rpc_share_one_captured_deadline() {
         let mut pool = crate::pool::AgentPool::from_slots(vec![Some(agent)]);
         let ctx = Arc::new(ctx);
         enqueue(&ctx, &pool, &human, &scope()).await;
-        let captured = ctx.session_controls.pending_compactions()[0].deadline;
-        tokio::time::pause();
-        tokio::time::advance(Duration::from_millis(120_000 - remaining_ms)).await;
-        tokio::time::resume();
-        assert_eq!(
-            ctx.session_controls.pending_compactions()[0].deadline,
-            captured
-        );
+        let mut job = ctx.session_controls.pending_compactions().pop().unwrap();
         assert!(
             !fixture.methods().contains(&"session/resume".into()),
             "queued waiting has not touched the provider"
         );
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        crate::control_tasks::dispatch(&mut pool, &ctx, &tx);
-        let mut result = tokio::time::timeout(Duration::from_secs(3), rx.recv())
-            .await
-            .unwrap()
-            .unwrap();
+        let mut agent = pool.claim_compaction(&job).unwrap().unwrap();
+        job.deadline = tokio::time::Instant::now() + Duration::from_millis(remaining_ms);
+        assert!(ctx.session_controls.start_compaction(&job, agent.index));
+        agent.state.control_dispatch = Some(job.dispatch.clone());
+        let (_control_tx, control_rx) = tokio::sync::oneshot::channel();
+        let mut result = tokio::time::timeout(
+            Duration::from_secs(3),
+            crate::pool::compaction::run_compaction_task(agent, job, ctx.clone(), control_rx),
+        )
+        .await
+        .unwrap();
         let outcome = result.outcome;
         result.agent.acp.shutdown().await;
         pool.join_set.shutdown().await;
@@ -429,7 +473,7 @@ async fn compact_queue_resume_and_rpc_share_one_captured_deadline() {
         assert_eq!(
             outcome,
             Err(ControlFailure::Timeout),
-            "queue, resume and RPC must not each receive a fresh budget"
+            "resume and RPC must not each receive a fresh execution budget"
         );
         assert_eq!(
             fixture

@@ -457,6 +457,14 @@ async fn adapter(
     name: &str,
     notifications: &[serde_json::Value],
 ) -> (AcpClient, tempfile::TempDir) {
+    adapter_with_stop(name, notifications, "end_turn").await
+}
+
+async fn adapter_with_stop(
+    name: &str,
+    notifications: &[serde_json::Value],
+    stop: &str,
+) -> (AcpClient, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(name);
     let mut script = String::from("#!/usr/bin/env bash\nread -r REQ\n");
@@ -465,7 +473,9 @@ async fn adapter(
     for notification in notifications {
         script.push_str(&format!("echo '{notification}'\n"));
     }
-    script.push_str(r#"echo '{"jsonrpc":"2.0","id":'"$ID"',"result":{"stopReason":"end_turn"}}'"#);
+    script.push_str(&format!(
+        r#"echo '{{"jsonrpc":"2.0","id":'"$ID"',"result":{{"stopReason":"{stop}"}}}}'"#
+    ));
     script.push_str("\nsleep 1\n");
     fs::write(&path, script).unwrap();
     set_mode(&path, 0o755);
@@ -545,12 +555,12 @@ async fn interleaved_updates(
     drop(dir);
     assert_eq!(
         percent(&runtime, &a),
-        Some(70),
-        "{name}: A keeps its own latest value"
+        (name != "claude-code").then_some(70),
+        "{name}: Claude requires an authoritative SDK result"
     );
     assert_eq!(
         percent(&runtime, &b),
-        Some(81),
+        (name != "claude-code").then_some(81),
         "{name}: late A never modifies B"
     );
     assert!(
@@ -581,5 +591,259 @@ async fn codex_usage_updates_route_by_their_own_session_id() {
         usage.and_then(|usage| usage.cumulative_cost_usd),
         None,
         "codex cost stays ignored"
+    );
+}
+
+fn claude_result(session: &str, windows: &[u64]) -> serde_json::Value {
+    use serde_json::json;
+    let models: serde_json::Map<String, serde_json::Value> = windows
+        .iter()
+        .enumerate()
+        .map(|(i, size)| (format!("alias-{i}"), json!({"contextWindow":size})))
+        .collect();
+    json!({"jsonrpc":"2.0", "method":"_claude/sdkMessage", "params":{
+        "sessionId":session, "message":{"type":"result", "subtype":"success",
+        "is_error":false, "num_turns":1, "modelUsage":models,
+        "result":"PRIVATE_RAW_RESULT_MARKER"}}})
+}
+
+async fn claude_context_case(notifications: &[serde_json::Value]) -> (Option<u8>, Option<u8>) {
+    let (root, runtime) = open_runtime();
+    let (a, b) = (thread(2, 'a'), thread(2, 'b'));
+    let (mut client, dir) = adapter("claude-code", notifications).await;
+    let observer = crate::observer::ObserverHandle::in_process();
+    client.set_observer(Some(observer.clone()), 0);
+    client.bind_session_status("sess-a", begin(&runtime, &a, "sess-a"));
+    client.bind_session_status("sess-b", begin(&runtime, &b, "sess-b"));
+    client
+        .session_prompt_with_idle_timeout(
+            "sess-a",
+            "hello",
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+    let actual = (percent(&runtime, &a), percent(&runtime, &b));
+    let events = serde_json::to_string(&observer.snapshot()).unwrap();
+    assert!(
+        !events.contains("PRIVATE_RAW_RESULT_MARKER"),
+        "SDK result text stays out of observer frames"
+    );
+    assert!(
+        !events.contains("_claude/sdkMessage"),
+        "private SDK envelope stays out of observer frames"
+    );
+    client.shutdown().await;
+    drop((dir, root));
+    actual
+}
+
+#[tokio::test]
+async fn claude_context_uses_provider_window_and_the_final_context_numerator() {
+    use serde_json::json;
+    for (used, capacity, expected) in [
+        (92_519, 1_000_000, 9),
+        (259_397, 1_000_000, 25),
+        (260_000, 1_000_000, 26),
+        (92_519, 200_000, 46),
+    ] {
+        let notifications = [
+            usage(Some("sess-a"), json!(used - 1), json!(200_000)),
+            claude_result("sess-a", &[capacity]),
+            usage(Some("sess-a"), json!(used), json!(200_000)),
+        ];
+        assert_eq!(
+            claude_context_case(&notifications).await,
+            (Some(expected), None)
+        );
+    }
+}
+
+#[tokio::test]
+async fn claude_context_stays_unknown_without_a_matching_unambiguous_result() {
+    use serde_json::json;
+    let stream = usage(Some("sess-a"), json!(259_397), json!(200_000));
+    for result in [
+        claude_result("sess-a", &[200_000, 1_000_000]),
+        claude_result("sess-b", &[1_000_000]),
+        claude_result("sess-retired", &[1_000_000]),
+    ] {
+        let notifications = [stream.clone(), result, stream.clone()];
+        assert_eq!(claude_context_case(&notifications).await, (None, None));
+    }
+    assert_eq!(claude_context_case(&[stream]).await, (None, None));
+}
+
+#[tokio::test]
+async fn claude_context_error_zero_turn_and_malformed_results_cannot_publish_capacity() {
+    use serde_json::json;
+    for (key, value) in [
+        ("is_error", json!(true)),
+        ("num_turns", json!(0)),
+        ("modelUsage", json!({})),
+        ("modelUsage", json!({"model":{"contextWindow":0}})),
+        ("modelUsage", json!({"model":{"contextWindow":"1000000"}})),
+    ] {
+        let mut result = claude_result("sess-a", &[1_000_000]);
+        result["params"]["message"][key] = value;
+        let stream = usage(Some("sess-a"), json!(259_397), json!(200_000));
+        assert_eq!(
+            claude_context_case(&[stream.clone(), result, stream]).await,
+            (None, None)
+        );
+    }
+}
+
+#[tokio::test]
+async fn claude_cancelled_prompt_clears_result_capacity() {
+    use serde_json::json;
+    let (root, runtime) = open_runtime();
+    let scope = thread(3, 'a');
+    let notifications = [
+        usage(Some("sess-a"), json!(90_000), json!(200_000)),
+        claude_result("sess-a", &[1_000_000]),
+        usage(Some("sess-a"), json!(92_519), json!(200_000)),
+    ];
+    let (mut client, dir) = adapter_with_stop("claude-code", &notifications, "cancelled").await;
+    client.bind_session_status("sess-a", begin(&runtime, &scope, "sess-a"));
+    let stop = client
+        .session_prompt_with_idle_timeout(
+            "sess-a",
+            "hello",
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stop, crate::acp::StopReason::Cancelled);
+    assert_eq!(percent(&runtime, &scope), None);
+    client.shutdown().await;
+    drop((dir, root));
+}
+
+/// Pause the provider before the second result. The snapshot read at this
+/// boundary is the input a tool-published kind-9 answer would freeze in tags.
+async fn claude_second_turn_before_result(updates: &[serde_json::Value]) -> Option<u8> {
+    use serde_json::json;
+    let (root, runtime) = open_runtime();
+    let scope = thread(4, 'a');
+    let dir = tempfile::tempdir().unwrap();
+    let gate = dir.path().join("continue");
+    let path = dir.path().join("claude-code");
+    let mut script = String::from("#!/usr/bin/env bash\n");
+    let read_request = r#"read -r REQ
+ID=$(printf '%s' "$REQ" | sed -E 's/.*"id":([0-9]+).*/\1/')
+"#;
+    let respond = r#"echo '{"jsonrpc":"2.0","id":'"$ID"',"result":{"stopReason":"end_turn"}}'
+"#;
+    script.push_str(read_request);
+    for frame in [
+        usage(Some("sess-a"), json!(90_000), json!(200_000)),
+        claude_result("sess-a", &[1_000_000]),
+        usage(Some("sess-a"), json!(92_519), json!(200_000)),
+    ] {
+        script.push_str(&format!("echo '{frame}'\n"));
+    }
+    script.push_str(respond);
+    script.push_str(read_request);
+    for frame in updates {
+        script.push_str(&format!("echo '{frame}'\n"));
+    }
+    let ready = json!({"jsonrpc":"2.0", "method":"session/update", "params":{
+        "sessionId":"sess-a", "update":{"sessionUpdate":"tool_call",
+        "toolCallId":"second-publish", "title":"Publishing", "kind":"other"}}});
+    script.push_str(&format!("echo '{ready}'\n"));
+    script.push_str("for ((i=0; i<300; i++)); do\n  [[ -f \"$CLAUDE_CONTEXT_TEST_GATE\" ]] && break\n  sleep 0.01\ndone\n");
+    script.push_str(respond);
+    script.push_str("sleep 1\n");
+    fs::write(&path, script).unwrap();
+    set_mode(&path, 0o755);
+    let mut client = AcpClient::spawn(
+        path.to_str().unwrap(),
+        &[],
+        &[(
+            "CLAUDE_CONTEXT_TEST_GATE".into(),
+            gate.to_str().unwrap().into(),
+        )],
+        false,
+    )
+    .await
+    .unwrap();
+    let observer = crate::observer::ObserverHandle::in_process();
+    client.set_observer(Some(observer.clone()), 0);
+    client.bind_session_status("sess-a", begin(&runtime, &scope, "sess-a"));
+    client
+        .session_prompt_with_idle_timeout(
+            "sess-a",
+            "first",
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+    assert_eq!(percent(&runtime, &scope), Some(9));
+    let check = async {
+        let mut at_publication = None;
+        for _ in 0..200 {
+            if observer.snapshot().iter().any(|event| {
+                event
+                    .payload
+                    .pointer("/params/update/toolCallId")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("second-publish")
+            }) {
+                at_publication = Some(percent(&runtime, &scope));
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        fs::write(&gate, b"continue").unwrap();
+        at_publication
+    };
+    let (turn, at_publication) = tokio::join!(
+        client.session_prompt_with_idle_timeout(
+            "sess-a",
+            "second",
+            Duration::from_secs(5),
+            Duration::from_secs(10)
+        ),
+        check
+    );
+    turn.unwrap();
+    client.shutdown().await;
+    drop((dir, root));
+    at_publication.expect("the second tool-publication boundary was observed")
+}
+
+#[tokio::test]
+async fn claude_confirmed_capacity_survives_an_ordinary_prompt_for_tool_published_answers() {
+    use serde_json::json;
+    assert_eq!(
+        claude_second_turn_before_result(&[usage(Some("sess-a"), json!(259_397), json!(200_000))])
+            .await,
+        Some(25)
+    );
+}
+
+#[tokio::test]
+async fn claude_model_change_and_ambiguous_result_clear_prior_confirmed_capacity() {
+    use serde_json::json;
+    let changed = json!({"jsonrpc":"2.0", "method":"session/update", "params":{
+        "sessionId":"sess-a", "update":{"sessionUpdate":"current_model_update",
+        "currentModelId":"different-alias"}}});
+    let stream = usage(Some("sess-a"), json!(259_397), json!(200_000));
+    assert_eq!(
+        claude_second_turn_before_result(&[changed, stream.clone()]).await,
+        None
+    );
+    assert_eq!(
+        claude_second_turn_before_result(&[
+            stream.clone(),
+            claude_result("sess-a", &[1_000_000, 200_000]),
+            stream
+        ])
+        .await,
+        None
     );
 }

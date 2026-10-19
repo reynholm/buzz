@@ -158,7 +158,8 @@ export function sessionControlEqual(
           target.pubkey === other.pubkey &&
           target.name === other.name &&
           target.state === other.state &&
-          target.detail === other.detail
+          target.detail === other.detail &&
+          target.expiresAt === other.expiresAt
         );
       }),
   );
