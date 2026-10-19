@@ -741,7 +741,7 @@ struct RelayScript {
 }
 
 struct Relay {
-    requests: Arc<AtomicUsize>,
+    history_requests: Arc<AtomicUsize>,
     server: tokio::task::JoinHandle<()>,
 }
 
@@ -784,14 +784,29 @@ async fn relay(script: RelayScript, ctx: &mut PromptContext, channel_id: Uuid) -
     use tokio::io::AsyncWriteExt;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base_url = format!("http://{}", listener.local_addr().unwrap());
-    let requests = Arc::new(AtomicUsize::new(0));
-    let counter = requests.clone();
+    let history_requests = Arc::new(AtomicUsize::new(0));
+    let counter = history_requests.clone();
     let server = tokio::spawn(async move {
         while let Ok((mut socket, _)) = listener.accept().await {
             let Some((path, body)) = read_request(&mut socket).await else {
                 continue;
             };
-            counter.fetch_add(1, Ordering::SeqCst);
+            // Working/reaction cleanup is fire-and-forget and may arrive after
+            // the turn returns. Count history reads, not those cosmetic calls
+            // or unrelated channel/profile metadata lookups.
+            let filters: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap_or_default();
+            let reads_history = path == "/query"
+                && filters.iter().any(|filter| {
+                    filter.get("ids").is_some()
+                        || filter["kinds"].as_array().is_some_and(|kinds| {
+                            kinds
+                                .iter()
+                                .any(|kind| matches!(kind.as_u64(), Some(9 | 40002)))
+                        })
+                });
+            if reads_history || path == "/count" {
+                counter.fetch_add(1, Ordering::SeqCst);
+            }
             let scan = body.contains("depth_limit");
             let history = path == "/query" && body.contains("\"#e\"") && !scan;
             let (status, body) = if (scan && script.fail_scan) || (history && script.fail_history) {
@@ -826,7 +841,10 @@ async fn relay(script: RelayScript, ctx: &mut PromptContext, channel_id: Uuid) -
             auth_tag_json: None,
         },
     );
-    Relay { requests, server }
+    Relay {
+        history_requests,
+        server,
+    }
 }
 
 fn reply(
@@ -864,7 +882,7 @@ fn root_event(keys: &Keys, channel_id: Uuid, mention: Option<&Keys>) -> nostr::E
 }
 
 /// Run one cold-start turn of `trigger` against a scripted relay and return
-/// the history coverage the provider prompt saw plus the relay request count.
+/// the history coverage the provider prompt saw plus the history request count.
 async fn cold_start(
     status: bool,
     limit: u32,
@@ -891,7 +909,11 @@ async fn cold_start(
         .map(|text| parse_snapshot(text.as_bytes()).unwrap())
         .and_then(|envelope| envelope.status.history);
     let methods = h.methods().join(",");
-    (history, relay.requests.load(Ordering::SeqCst), methods)
+    (
+        history,
+        relay.history_requests.load(Ordering::SeqCst),
+        methods,
+    )
 }
 
 fn coverage(
@@ -943,6 +965,8 @@ async fn counts_need_no_extra_history_walk() {
     let (_, with_status, _) = cold_start(true, 1, pinned_assignment).await;
     let (history, without_status, _) = cold_start(false, 1, pinned_assignment).await;
     assert_eq!(history, None);
+    // One batched context query, one count and one assignment scan.
+    assert_eq!(with_status, 3);
     assert_eq!(with_status, without_status);
 }
 

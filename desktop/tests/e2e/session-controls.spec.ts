@@ -7,7 +7,12 @@ const OWNER = "b4".repeat(32);
 const SECOND_AGENT = "c4".repeat(32);
 const CHANNEL = "agents";
 const SHOT = "test-results/session-controls";
-async function setup(page: Page, revoked = false, denied = false) {
+async function setup(
+  page: Page,
+  revoked = false,
+  denied = false,
+  rootAgeSeconds = 0,
+) {
   await installMockBridge(page, {
     ownerOnlyAccessBuild: true,
     managedAgents: [],
@@ -59,13 +64,14 @@ async function setup(page: Page, revoked = false, denied = false) {
     )
     .toBe(true);
   const event = await page.evaluate(
-    ({ pubkey, channelName }) =>
+    ({ pubkey, channelName, rootAgeSeconds }) =>
       window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
         channelName,
         pubkey,
         content: "A known agent can recover without optional telemetry.",
+        createdAt: Math.floor(Date.now() / 1000) - rootAgeSeconds,
       }),
-    { pubkey: AGENT, channelName: CHANNEL },
+    { pubkey: AGENT, channelName: CHANNEL, rootAgeSeconds },
   );
   if (!event?.id) throw new Error("Agent event not emitted");
   await expect(row(page, event.id)).toBeVisible();
@@ -397,8 +403,9 @@ test("denied viewer has no menu while another accessible agent retains recovery"
 test("correct-clock viewer sees expired old request and validated manual actor", async ({
   page,
 }) => {
-  const root = await setup(page);
-  await openThread(page, root);
+  const root = await setup(page, false, false, 1202);
+  // Load existing history when opening the thread. Backdated live events after
+  // an empty initial fetch do not model how an expired request is encountered.
   // Generic seeded replies intentionally include their author p. Confirm that
   // such a human target remains ordinary; it is not native send output.
   const generic = await page.evaluate(
@@ -453,6 +460,7 @@ test("correct-clock viewer sees expired old request and validated manual actor",
   expect(stored[1].tags.filter((tag: string[]) => tag[0] === "e")).toEqual([
     ["e", root, "", "reply"],
   ]);
+  await openThread(page, root);
   await expect(row(page, generic.id)).toContainText("!compact");
   await expect(
     row(page, generic.id).getByTestId("message-session-control"),
