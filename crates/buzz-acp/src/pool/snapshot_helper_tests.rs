@@ -3,34 +3,133 @@ use super::*;
 
 const SNAPSHOT: &str = include_str!("../process_tree/codex_bash_snapshot.txt");
 const SERVER: &str = r#"
-import json, os, pathlib, signal, subprocess, sys, time
+import json, os, pathlib, signal, subprocess, sys, threading, time
 root = pathlib.Path.cwd()
 child = None
+stderr_tail = bytearray()
+stderr_lock = threading.Lock()
+stderr_eof = threading.Event()
+stderr_done = threading.Event()
+stderr_read_error = None
+STDERR_LIMIT = 16 * 1024
+
+def capture_stderr(stream):
+    global stderr_read_error
+    try:
+        while True:
+            chunk = stream.buffer.read1(4096)
+            if not chunk:
+                stderr_eof.set()
+                return
+            with stderr_lock:
+                stderr_tail.extend(chunk)
+                del stderr_tail[:-STDERR_LIMIT]
+    except Exception as error:
+        with stderr_lock:
+            stderr_read_error = f'{type(error).__name__}: {error}'[:256]
+    finally:
+        try:
+            stream.close()
+        except Exception as error:
+            with stderr_lock:
+                if stderr_read_error is None:
+                    stderr_read_error = f'{type(error).__name__}: {error}'[:256]
+        stderr_done.set()
+
+def marker(name):
+    try:
+        with (root / name).open('rb') as source:
+            value = source.read(64)
+        if name == 'ready' and not value.endswith(b'\n'):
+            return ''
+        return value.decode('ascii', errors='replace').strip()
+    except FileNotFoundError:
+        return ''
+
+def process_details(pid):
+    # Linux-only detail is optional; the fixture also runs on macOS.
+    details = {'pid': pid}
+    for name, limit in [('stat', 1024), ('cmdline', 1024), (f'task/{pid}/children', 1024)]:
+        try:
+            with pathlib.Path(f'/proc/{pid}/{name}').open('rb') as source:
+                details[name] = source.read(limit).replace(b'\0', b' ').decode(errors='replace')
+        except OSError:
+            pass
+    return details
+
+def diagnostics(action):
+    with stderr_lock:
+        tail = bytes(stderr_tail).decode(errors='replace')
+        read_error = stderr_read_error
+    details = {'action': action, 'server_pid': os.getpid(), 'ready_pid': marker('ready'),
+        'work_pid': marker('child'), 'changed': marker('changed'), 'stderr_eof': stderr_eof.is_set(),
+        'stderr_done': stderr_done.is_set(), 'stderr_read_error': read_error}
+    if child is not None:
+        details['child'] = process_details(child.pid)
+        details['child_exit'] = child.poll()
+    if details['work_pid'].isdigit():
+        details['work'] = process_details(int(details['work_pid']))
+    # Test runners retain this captured output for a later Rust assertion failure,
+    # including the child-exit collection assertion after the last RPC returned.
+    print('snapshot-fixture ' + json.dumps(details), file=sys.stderr, flush=True)
+    print('snapshot-fixture stderr-tail:\n' + tail, file=sys.stderr, flush=True)
+
 for line in sys.stdin:
     action = line.strip()
-    if action == 'start':
-        env = dict(os.environ, BASH_ENV=str(root / 'startup'))
-        child = subprocess.Popen(['/bin/bash', '-lc', (root / 'snapshot').read_text()],
-            env=env, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
-        deadline = time.monotonic() + 5
-        while not (root / 'ready').exists():
-            assert time.monotonic() < deadline, 'shell startup did not reach barrier'
-            assert child.poll() is None, 'shell exited before barrier'
-            time.sleep(.01)
-    elif action == 'stop':
-        child.stdin.write('\n')
-        child.stdin.flush()
-        child.wait(timeout=5)
-    elif action == 'advance':
-        child.stdin.write('\n')
-        child.stdin.flush()
-        deadline = time.monotonic() + 5
-        while not (root / 'changed').exists():
-            assert time.monotonic() < deadline, 'snapshot did not exec ordinary work'
-            time.sleep(.01)
-    elif action == 'stop-child':
-        os.kill(int((root / 'child').read_text()), signal.SIGTERM)
+    try:
+        if action == 'start':
+            script = (root / 'snapshot').read_text()
+            env = dict(os.environ, BASH_ENV=str(root / 'startup'), BUZZ_TEST_SNAPSHOT_COMMAND=script)
+            env.pop('BUZZ_TEST_SNAPSHOT_GATE_PID', None)
+            (root / 'ready').unlink(missing_ok=True)
+            child = subprocess.Popen(['/bin/bash', '-lc', script], env=env,
+                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            deadline = time.monotonic() + 5
+            threading.Thread(target=capture_stderr, args=(child.stderr,), daemon=True).start()
+            while True:
+                ready = marker('ready')
+                if ready:
+                    assert ready == str(child.pid), f'wrong startup PID: {ready}; expected {child.pid}'
+                    break
+                assert time.monotonic() < deadline, 'shell startup did not reach barrier'
+                assert child.poll() is None, 'shell exited before barrier'
+                time.sleep(.01)
+        elif action == 'stop':
+            child.stdin.write('\n')
+            child.stdin.flush()
+            child.wait(timeout=5)
+        elif action == 'advance':
+            child.stdin.write('\n')
+            child.stdin.flush()
+            deadline = time.monotonic() + 5
+            while not (root / 'changed').exists():
+                assert time.monotonic() < deadline, 'snapshot did not exec ordinary work'
+                time.sleep(.01)
+        elif action == 'stop-child':
+            os.kill(int((root / 'child').read_text()), signal.SIGTERM)
+    except Exception:
+        diagnostics(action)
+        raise
+    diagnostics(action)
     print('ready', flush=True)
+"#;
+
+const STARTUP_GATE: &str = r#"
+BUZZ_TEST_SNAPSHOT_PID=${BASHPID:-$$}
+printf 'snapshot-startup phase=entry pid=%s ppid=%s subshell=%s\n' "$BUZZ_TEST_SNAPSHOT_PID" "$PPID" "${BASH_SUBSHELL:-0}" >&2
+if [[ ${BASH_EXECUTION_STRING-} != "${BUZZ_TEST_SNAPSHOT_COMMAND-}" ]]; then
+  printf 'snapshot-startup phase=skip-command pid=%s\n' "$BUZZ_TEST_SNAPSHOT_PID" >&2
+  return
+fi
+if [[ ${BASH_SUBSHELL:-0} != 0 ]]; then
+  printf 'snapshot-startup phase=skip-subshell pid=%s\n' "$BUZZ_TEST_SNAPSHOT_PID" >&2
+  return
+fi
+if [[ ${BUZZ_TEST_SNAPSHOT_GATE_PID-} == "$BUZZ_TEST_SNAPSHOT_PID" ]]; then
+  printf 'snapshot-startup phase=skip-reentry pid=%s\n' "$BUZZ_TEST_SNAPSHOT_PID" >&2
+  return
+fi
+BUZZ_TEST_SNAPSHOT_GATE_PID=$BUZZ_TEST_SNAPSHOT_PID
 "#;
 
 const ADAPTER: &str = r#"
@@ -92,12 +191,20 @@ async fn configured_worker(
     std::fs::write(dir.path().join("app-server"), SERVER).unwrap();
     std::fs::write(dir.path().join("snapshot"), script).unwrap();
     let startup = if parent == "exec" {
-        "trap 'unset BASH_ENV; exec /bin/bash -c \"printf changed > changed; read -r gate\"' EXIT\nprintf ready > ready\nread -r gate\n"
+        "trap 'unset BASH_ENV; exec /bin/bash -c \"printf changed > changed; read -r gate\"' EXIT\n"
     } else if with_child {
-        "sleep 60 &\nprintf '%s' $! > child\nprintf ready > ready\nread -r gate\n"
+        "sleep 60 &\nprintf '%s' $! > child\n"
     } else {
-        "printf ready > ready\nread -r gate\n"
+        ""
     };
+    let startup = format!(
+        "{STARTUP_GATE}{startup}{}",
+        r#"printf 'snapshot-startup phase=read-entry pid=%s ppid=%s\n' "$BUZZ_TEST_SNAPSHOT_PID" "$PPID" >&2
+printf '%s\n' "$BUZZ_TEST_SNAPSHOT_PID" > ready
+read -r gate
+printf 'snapshot-startup phase=read-exit pid=%s status=%s\n' "$BUZZ_TEST_SNAPSHOT_PID" "$?" >&2
+"#
+    );
     std::fs::write(dir.path().join("startup"), startup).unwrap();
     let mut agent = worker(0).await;
     agent.acp = AcpClient::spawn(
