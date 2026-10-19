@@ -679,13 +679,7 @@ pub(super) async fn prepare_message(
             .await
             .map_err(|e| CliError::Other(format!("upload failed for {file_path}: {e}")))?;
         media_tags.push(crate::client::build_imeta_tag(&desc));
-        if desc.mime_type.starts_with("video/") {
-            media_content.push_str("\n![video](");
-        } else {
-            media_content.push_str("\n![image](");
-        }
-        media_content.push_str(&desc.url);
-        media_content.push(')');
+        media_content.push_str(&crate::attachments::attachment_markdown(&desc));
     }
     let final_content = if media_content.is_empty() {
         p.content.clone()

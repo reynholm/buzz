@@ -48,6 +48,79 @@ async function chooseQuarterlyReport(page: Page) {
   });
 }
 
+for (const fixture of [
+  {
+    name: "notes [draft].md",
+    mime: "application/octet-stream",
+    ext: "bin",
+    hash: "c",
+  },
+  { name: "bundle.zip", mime: "application/zip", ext: "zip", hash: "d" },
+]) {
+  test(`${fixture.name} retains its name in the card and download request`, async ({
+    page,
+  }) => {
+    const url = `https://mock.relay/media/${fixture.hash.repeat(64)}.${fixture.ext}`;
+    await page.goto("/");
+    await page.evaluate(
+      (descriptor) => {
+        const config = (
+          window as Window & {
+            __BUZZ_E2E__?: { mock?: { uploadDescriptors?: unknown[] } };
+          }
+        ).__BUZZ_E2E__;
+        if (!config?.mock) throw new Error("mock bridge is missing");
+        config.mock.uploadDescriptors = [descriptor];
+      },
+      {
+        url,
+        sha256: fixture.hash.repeat(64),
+        size: 123,
+        type: fixture.mime,
+        uploaded: 0,
+        filename: fixture.name,
+      },
+    );
+    await page.getByTestId("channel-general").click();
+    const [chooser] = await Promise.all([
+      page.waitForEvent("filechooser"),
+      page.getByRole("button", { name: "Attach file" }).click(),
+    ]);
+    await chooser.setFiles({
+      buffer: Buffer.from("attachment"),
+      mimeType: fixture.mime,
+      name: fixture.name,
+    });
+    await expect(page.getByTestId("message-composer")).toContainText(
+      fixture.name,
+    );
+    await page.getByTestId("send-message").click();
+    const card = page.getByTestId("file-card");
+    await expect(card).toHaveCount(1);
+    await expect(card).toContainText(fixture.name);
+    await expect(card).toContainText("123 B");
+    await card.click();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (
+            window as Window & {
+              __BUZZ_E2E_COMMAND_PAYLOADS__?: Array<{
+                command: string;
+                payload: unknown;
+              }>;
+            }
+          ).__BUZZ_E2E_COMMAND_PAYLOADS__?.filter(
+            (entry) => entry.command === "download_file",
+          ),
+        ),
+      )
+      .toEqual([
+        { command: "download_file", payload: { url, filename: fixture.name } },
+      ]);
+  });
+}
+
 async function chooseLargeVideo(page: Page) {
   const [chooser] = await Promise.all([
     page.waitForEvent("filechooser"),

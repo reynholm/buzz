@@ -8,72 +8,8 @@ use sha2::{Digest, Sha256};
 
 use crate::error::CliError;
 
-/// Descriptor returned by the relay after a successful upload.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct BlobDescriptor {
-    /// Public URL of the uploaded blob.
-    pub url: String,
-    /// Hex-encoded SHA-256 of the file content.
-    pub sha256: String,
-    /// File size in bytes.
-    pub size: u64,
-    /// MIME type (e.g. `image/jpeg`).
-    #[serde(rename = "type")]
-    pub mime_type: String,
-    /// Unix timestamp when the file was uploaded.
-    pub uploaded: i64,
-    /// Image dimensions as `<width>x<height>` (optional).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dim: Option<String>,
-    /// Blurhash placeholder string (optional).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub blurhash: Option<String>,
-    /// Thumbnail URL (optional).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub thumb: Option<String>,
-    /// Duration in seconds for video/audio (optional).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub duration: Option<f64>,
-}
-
-/// Build an `imeta` tag array from a BlobDescriptor (NIP-92 media metadata).
-pub fn build_imeta_tag(d: &BlobDescriptor) -> Vec<String> {
-    let mut tag = vec![
-        "imeta".to_string(),
-        format!("url {}", d.url),
-        format!("m {}", d.mime_type),
-        format!("x {}", d.sha256),
-        format!("size {}", d.size),
-    ];
-    if let Some(ref dim) = d.dim {
-        tag.push(format!("dim {dim}"));
-    }
-    if let Some(ref bh) = d.blurhash {
-        tag.push(format!("blurhash {bh}"));
-    }
-    if let Some(ref th) = d.thumb {
-        tag.push(format!("thumb {th}"));
-    }
-    if let Some(dur) = d.duration {
-        tag.push(format!("duration {dur}"));
-    }
-    tag
-}
-
-/// MIME types accepted for upload.
-const ALLOWED_MIMES: &[&str] = &[
-    "image/jpeg",
-    "image/png",
-    "image/gif",
-    "image/webp",
-    "video/mp4",
-];
-
-/// Maximum file size for image uploads (50 MB).
-const MAX_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
-
-/// Maximum file size for video uploads (500 MB).
-const MAX_VIDEO_BYTES: u64 = 500 * 1024 * 1024;
+pub use crate::attachments::{build_imeta_tag, BlobDescriptor};
+use crate::attachments::{sanitize_filename, validate_upload, MAX_VIDEO_BYTES};
 
 /// Sign a NIP-98 HTTP auth event (kind:27235) and return the Authorization header value.
 ///
@@ -1227,6 +1163,14 @@ impl BuzzClient {
             return Err(CliError::Usage(format!("{file_path} is not a file")));
         }
 
+        // Bound allocation before reading; the MIME-specific cap follows sniffing.
+        if metadata.len() > MAX_VIDEO_BYTES {
+            return Err(CliError::Usage(format!(
+                "file too large: {} bytes (max {MAX_VIDEO_BYTES})",
+                metadata.len()
+            )));
+        }
+        let filename = sanitize_filename(file_path);
         let bytes = std::fs::read(file_path)
             .map_err(|e| CliError::Other(format!("failed to read {file_path}: {e}")))?;
 
@@ -1235,23 +1179,8 @@ impl BuzzClient {
             .map(|t| t.mime_type().to_string())
             .unwrap_or_else(|| "application/octet-stream".to_string());
 
-        if !ALLOWED_MIMES.contains(&mime.as_str()) {
-            return Err(CliError::Usage(format!("unsupported file type: {mime}")));
-        }
-
-        // 3. Size check
-        let max = if mime.starts_with("video/") {
-            MAX_VIDEO_BYTES
-        } else {
-            MAX_IMAGE_BYTES
-        };
-        if bytes.len() as u64 > max {
-            return Err(CliError::Usage(format!(
-                "file too large: {} bytes (max {})",
-                bytes.len(),
-                max
-            )));
-        }
+        // 3. Enforce the existing media policy and generic-file size cap.
+        validate_upload(&mime, bytes.len() as u64)?;
 
         // 4. SHA-256
         let sha256 = hex::encode(Sha256::digest(&bytes));
@@ -1305,7 +1234,10 @@ impl BuzzClient {
         // (404 or 405), fall back to the legacy /media/upload endpoint.  The 404/405 switch
         // itself is not retried; only transient failures on the selected legacy endpoint are.
         match result {
-            Ok(desc) => return Ok(desc),
+            Ok(mut desc) => {
+                desc.filename = Some(filename);
+                return Ok(desc);
+            }
             Err(CliError::Relay { status: s, body: _ })
                 if should_retry_legacy_upload(
                     reqwest::StatusCode::from_u16(s).unwrap_or(reqwest::StatusCode::NOT_FOUND),
@@ -1317,34 +1249,38 @@ impl BuzzClient {
         }
 
         let legacy_url = format!("{}/media/upload", self.relay_url);
-        self.with_retry_body(|| {
-            let upload_body = upload_body.clone();
-            let legacy_url = legacy_url.clone();
-            let mime = mime.clone();
-            let sha256 = sha256.clone();
-            async move {
-                let auth_header = sign_blossom_upload(&self.keys, &sha256, &mime, &self.relay_url)?;
-                let resp = self
-                    .with_auth_tag(
-                        self.http
-                            .put(&legacy_url)
-                            .timeout(upload_timeout)
-                            .header("Authorization", auth_header)
-                            .header("Content-Type", &mime)
-                            .header("X-SHA-256", &sha256)
-                            .body(upload_body),
-                    )
-                    .send()
-                    .await?;
-                if !resp.status().is_success() {
-                    let status = resp.status().as_u16();
-                    let body = resp.text().await.unwrap_or_default();
-                    return Err(CliError::Relay { status, body });
+        let mut desc: BlobDescriptor = self
+            .with_retry_body(|| {
+                let upload_body = upload_body.clone();
+                let legacy_url = legacy_url.clone();
+                let mime = mime.clone();
+                let sha256 = sha256.clone();
+                async move {
+                    let auth_header =
+                        sign_blossom_upload(&self.keys, &sha256, &mime, &self.relay_url)?;
+                    let resp = self
+                        .with_auth_tag(
+                            self.http
+                                .put(&legacy_url)
+                                .timeout(upload_timeout)
+                                .header("Authorization", auth_header)
+                                .header("Content-Type", &mime)
+                                .header("X-SHA-256", &sha256)
+                                .body(upload_body),
+                        )
+                        .send()
+                        .await?;
+                    if !resp.status().is_success() {
+                        let status = resp.status().as_u16();
+                        let body = resp.text().await.unwrap_or_default();
+                        return Err(CliError::Relay { status, body });
+                    }
+                    resp.json::<BlobDescriptor>().await.map_err(CliError::from)
                 }
-                resp.json::<BlobDescriptor>().await.map_err(CliError::from)
-            }
-        })
-        .await
+            })
+            .await?;
+        desc.filename = Some(filename);
+        Ok(desc)
     }
 
     /// Download a Blossom media blob using BUD-01 `t=get` auth.

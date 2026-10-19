@@ -369,7 +369,7 @@ New module: `true`.
 
 ## `desktop/src-tauri/src/managed_agents/discovery/tests.rs`
 
-Keep existing discovery tests and module topology; move explicit device-compatible resolution fixtures to tests/fixtures.rs to restore the inherited size ratchet
+Keep discovery test topology and device-compatible fixtures; use immutable executable version-probe fixtures with bounded timeout and descendant cleanup.
 
 New module: `false`.
 
@@ -580,7 +580,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/Cargo.toml`
 
-Safe hostname default using the already locked gethostname dependency
+Safe hostname default; patched ZIP 9 extraction, maintained Opus backend, and immutable compatible MeshLLM and NetEq sources shared across consumers.
 
 New module: `false`.
 
@@ -588,7 +588,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/Cargo.lock`
 
-Direct Desktop gethostname dependency without version changes Pin rustls 0.23.46 for the release, resolving RUSTSEC-2026-0346 through RUSTSEC-2026-0349 without unrelated dependency changes.
+Lock patched native dependencies, the immutable MeshLLM and NetEq compatibility pins, maintained Opus bindings and updated Tauri utilities; retain target-specific Windows updater constraints explicitly.
 
 New module: `false`.
 
@@ -2666,7 +2666,7 @@ New module: `false`.
 
 ## `Cargo.lock`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Pin rustls 0.23.46 for the release, resolving RUSTSEC-2026-0346 through RUSTSEC-2026-0349 without unrelated dependency changes.
+Preserve the fork dependency graph with patched rustls, Negentropy and ZIP versions and one immutable MeshLLM compatibility source.
 
 New module: `false`.
 
@@ -5613,13 +5613,14 @@ New module: `false`.
 
 ## `crates/buzz-cli/TESTING.md`
 
-Specify managed publisher scope, journal durability and retention, recovery opt-in/upgrade requirements and real versus mock-relay checks. Document session-status enrichment, its absence/failure behavior and its automated checks.
+Specify managed publisher scope, journal durability and retention, recovery opt-in/upgrade requirements and real versus mock-relay checks. Document session-status enrichment, its absence/failure behavior and its automated checks. Document mixed PDF, ZIP and Markdown attachment checks and authenticated byte comparisons.
 
 New module: `false`.
 
 - Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
 - Verify: `cargo test -p buzz-cli session_status -- --test-threads=1`
+- Verify: `cargo test -p buzz-cli`
 
 ## `crates/buzz-cli/src/commands/delivery.rs`
 
@@ -5649,7 +5650,7 @@ New module: `true`.
 
 ## `crates/buzz-cli/src/commands/messages.rs`
 
-Expose messages deliver and preserve original route, stable UUID and signed callback mentions without suppressing ordinary progress or explicit edits. Attach the sender's own best-effort session status to newly prepared kind-9 messages before signing, in the shared send/first-deliver preparation.
+Expose messages deliver and preserve original route, stable UUID and signed callback mentions without suppressing ordinary progress or explicit edits. Attach the sender's own best-effort session status to newly prepared kind-9 messages before signing, in the shared send/first-deliver preparation. Emit generic attachments as filename links rather than image markup.
 
 New module: `false`.
 
@@ -5662,9 +5663,11 @@ New module: `false`.
                 channel_uuid,
                 thread_ref.as_ref().map(|t| &t.root_event_id),
             ))`; behavior test `status_reply_carries_thread_status_and_keeps_existing_tags`; verify `cargo test -p buzz-cli session_status -- --test-threads=1`
+- Invocation: `crates/buzz-cli/src/commands/messages.rs` → `attachment_markdown`; exact call `media_content.push_str(&crate::attachments::attachment_markdown(&desc));`; behavior test `messages_emit_file_links_for_multiple_attachments_and_keep_media_markup`; verify `cargo test -p buzz-cli`
 - Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
 - Verify: `cargo test -p buzz-cli mention -- --test-threads=1`
 - Verify: `cargo test -p buzz-cli session_status -- --test-threads=1`
+- Verify: `cargo test -p buzz-cli`
 
 ## `crates/buzz-cli/src/commands/mod.rs`
 
@@ -5700,27 +5703,32 @@ New module: `false`.
 
 ## `crates/buzz-cli/src/lib.rs`
 
-Define messages deliver arguments and compile production-publisher regression tests. Configure the client with the harness-advertised session-status directory and compile session-status regressions.
+Define messages deliver arguments and compile production-publisher regression tests. Configure the client with the harness-advertised session-status directory and compile session-status regressions. Compile the attachment formatter and production upload regressions.
 
 New module: `false`.
 
 - Required symbol: `Deliver {`
 - Required symbol: `mod delivery_tests;`
 - Required symbol: `mod session_status_tests;`
+- Required symbol: `mod attachments;`
+- Required symbol: `mod attachment_tests;`
 - Invocation: `crates/buzz-cli/src/lib.rs` → `status_dir_from_env`; exact call `.with_session_status_dir(commands::session_status::status_dir_from_env());`; behavior test `binary_reads_the_status_directory_from_the_environment`; verify `cargo test -p buzz-cli --test session_status_env`
 - Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
 - Verify: `cargo test -p buzz-cli session_status -- --test-threads=1`
 - Verify: `cargo test -p buzz-cli --test session_status_env`
+- Verify: `cargo test -p buzz-cli`
 
 ## `crates/buzz-cli/src/client.rs`
 
-Carry the optional session-status instance directory with the client's relay URL and signing key.
+Carry the optional session-status instance directory with the client's relay URL and signing key. Upload generic documents and archives and retain a sanitized basename across both Blossom endpoint paths.
 
 New module: `false`.
 
 - Required symbol: `pub fn with_session_status_dir(`
 - Required symbol: `pub fn session_status_dir(&self)`
+- Invocation: `crates/buzz-cli/src/client.rs` → `validate_upload`; exact call `validate_upload(&mime, bytes.len() as u64)?;`; behavior test `rejects_detected_executables_before_upload`; verify `cargo test -p buzz-cli`
 - Verify: `cargo test -p buzz-cli session_status -- --test-threads=1`
+- Verify: `cargo test -p buzz-cli`
 
 ## `crates/buzz-cli/src/commands/session_status.rs`
 
@@ -5986,7 +5994,7 @@ New module: `false`.
 
 ## `deny.toml`
 
-Enforce RUSTSEC-2024-0449 after removing the retired YAML graph; preserve all unrelated advisory policies.
+Enforce vulnerability advisories including the removed unsafe-libyaml graph; record individual transitive maintenance-only exceptions with removal criteria in DEPENDENCY_SECURITY.md.
 
 New module: `false`.
 
@@ -7638,3 +7646,140 @@ New module: `true`.
 - Required symbol: `snapshot_uncertainty_is_owned_and_known_wrong_identity_stays_work`
 - Required symbol: `new_real_work_alongside_uncertain_snapshot_collects_after_its_exit`
 - Verify: `cargo test -p buzz-acp --lib snapshot_helper_tests -- --test-threads=1`
+
+## `crates/buzz-cli/src/attachments.rs`
+
+Preserve sanitized attachment basenames, enforce generic-file upload policy, and format download links while retaining image and video markup. Bound names to 255 UTF-8 bytes at character boundaries and preserve extensions.
+
+New module: `true`.
+
+- Required symbol: `fn sanitize_filename(`
+- Required symbol: `fn validate_upload(`
+- Required symbol: `fn attachment_markdown(`
+- Required symbol: `pub filename: Option<String>`
+- Verify: `cargo test -p buzz-cli`
+
+## `crates/buzz-cli/src/attachment_tests.rs`
+
+Exercise document, archive and Markdown uploads, primary and legacy metadata, message links, media compatibility, and executable and size rejection.
+
+New module: `true`.
+
+- Required symbol: `uploads_documents_archives_and_markdown_with_original_names`
+- Required symbol: `messages_emit_file_links_for_multiple_attachments_and_keep_media_markup`
+- Required symbol: `unicode_filenames_fit_relay_byte_limit_and_keep_extensions`
+- Verify: `cargo test -p buzz-cli`
+
+## `desktop/tests/e2e/file-attachment.spec.ts`
+
+Verify Markdown and ZIP picker uploads, file-card labels and sizes, and native download filenames alongside existing attachment flows.
+
+New module: `false`.
+
+- Verify: `cd desktop && pnpm test:e2e:smoke -- file-attachment.spec.ts`
+
+## `desktop/src-tauri/src/commands/media_download.rs`
+
+Fetch generic attachments through a bounded 100 MiB native path while retaining 50 MiB image/editor/clipboard caps and existing auth, redirect, and cancellation protections.
+
+New module: `false`.
+
+- Required symbol: `MAX_FILE_DOWNLOAD_BYTES`
+- Required symbol: `mod file_download_tests;`
+- Invocation: `desktop/src-tauri/src/commands/media_download.rs` → `fetch_blob_bytes_with_cap`; exact call `fetch_blob_bytes_with_cap(url, state, MAX_FILE_DOWNLOAD_BYTES, None).await`; behavior test `generic_download_above_fifty_mib_is_byte_exact`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib commands::media_download::file_download_tests::generic_download_above_fifty_mib_is_byte_exact -- --exact`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
+
+## `desktop/src-tauri/src/commands/media_download_file_tests.rs`
+
+Exercise the native HTTP file fetch above 50 MiB, the 100 MiB boundary, declared and streamed oversize rejection, preserved image caps, and an opt-in real-relay hash check.
+
+New module: `true`.
+
+- Required symbol: `generic_download_above_fifty_mib_is_byte_exact`
+- Required symbol: `generic_download_rejects_over_hundred_mib_with_or_without_length`
+- Required symbol: `native_download_from_relay_matches_expected_sha256`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
+
+## `desktop/src-tauri/src/commands/media_filename.rs`
+
+Bound sanitized filenames by UTF-8 bytes at character boundaries while preserving the extension for imeta ingest.
+
+New module: `false`.
+
+- Required symbol: `unicode_labels_fit_relay_utf8_byte_limit_without_losing_extensions`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
+
+## `crates/buzz-mesh-smoke/Cargo.toml`
+
+Use the same immutable patched MeshLLM source as the desktop consumer to avoid duplicate runtime types.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-mesh-smoke`
+
+## `desktop/src-tauri/src/commands/agent_discovery/managed_node.rs`
+
+Preserve confined Node.js extraction while propagating ZIP 9 entry-name decoding errors.
+
+New module: `false`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/discovery/tests/codex_version.rs`
+
+Exercise the production version probe with immutable scripts and explicit interpreter PATH inputs.
+
+New module: `false`.
+
+- Required symbol: `probe_codex_acp_version_uses_augmented_path_for_env_shebang_interpreter`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/discovery/tests/codex_version_fixture.rs`
+
+Provide immutable executable symlinks, mutable version data and cleanup for the deliberately surviving descendant.
+
+New module: `true`.
+
+- Required symbol: `struct VersionFixture`
+- Required symbol: `impl Drop for VersionFixture`
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `docs/fork/DEPENDENCY_SECURITY.md`
+
+Document patched release dependencies, immutable compatibility pins, target scope and temporary transitive maintenance exceptions.
+
+New module: `true`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `desktop/src-tauri/src/managed_agents/discovery/tests/fixtures/codex-version.sh`
+
+Immutable executable fixture for production version-probe regression tests.
+
+New module: `true`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/discovery/tests/fixtures/codex-hung.sh`
+
+Immutable executable fixture for production version-probe regression tests.
+
+New module: `true`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/discovery/tests/fixtures/codex-descendant.sh`
+
+Immutable executable fixture for production version-probe regression tests.
+
+New module: `true`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`
+
+## `desktop/src-tauri/src/managed_agents/discovery/tests/fixtures/env-node.sh`
+
+Immutable executable fixture for production version-probe regression tests.
+
+New module: `true`.
+
+- Verify: `just desktop-tauri-test desktop-tauri-check`

@@ -15,6 +15,20 @@ ignore = [
     # remove these when upstream catches up.
     { id = "RUSTSEC-2026-0194", reason = "transitive via rust-s3 and mesh-llm→plist; trusted-input XML only; no upstream fix available yet" },
     { id = "RUSTSEC-2026-0195", reason = "transitive via rust-s3 and mesh-llm→plist; trusted-input XML only; no upstream fix available yet" },
+    # INFO-only standalone-crate retirements after their APIs moved into zbus 6.
+    # Current notify-rust, ashpd and secret-service releases still require zbus
+    # 4/5 and these crates. Remove each exception once those parents migrate;
+    # see docs/fork/DEPENDENCY_SECURITY.md. Vulnerability advisories remain denied.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant merged into zbus 6; maintained D-Bus/portal/notification parents still require zbus 4/5" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names merged into zbus 6; maintained D-Bus/portal/notification parents still require zbus 4/5" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive merged into zbus 6; maintained D-Bus/portal/notification parents still require zbus 4/5" },
+    # user-idle 0.6 still selects legacy macOS Mach bindings. This is an
+    # INFO-only maintenance advisory, not a reported vulnerability; remove when
+    # user-idle migrates its platform bindings (DEPENDENCY_SECURITY.md).
+    { id = "RUSTSEC-2020-0168", reason = "transitive legacy Mach bindings via current user-idle 0.6; no compatible parent release using mach2" },
+    # Compile-time GTK3/WebKit binding macros still use proc-macro-error 1.
+    # Its replacement is a different crate; remove after those parents migrate.
+    { id = "RUSTSEC-2024-0370", reason = "transitive compile-time GTK3 macros in WebKitGTK bindings; no compatible parent release using proc-macro-error2" },
 ]
 
 [licenses]

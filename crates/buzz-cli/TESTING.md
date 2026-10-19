@@ -212,6 +212,30 @@ buzz messages send --channel "$CHANNEL_ID" \
 echo 'Body with `backticks` and $vars stays literal.' \
   | buzz messages send --channel "$CHANNEL_ID" --content - | jq .
 
+# Documents, archives, and Markdown can be attached together.
+buzz messages send --channel "$CHANNEL_ID" --content "Attachments" \
+  --file report.pdf --file bundle.zip --file notes.md | jq .
+# Expected: three file cards with original basenames and byte sizes, not images.
+# Click each card in Desktop and verify the saved name and bytes match the source.
+# Generic files have a 100 MiB client cap; the relay may enforce a lower cap.
+
+# Standalone upload also returns the original basename in `filename`.
+buzz upload file --file notes.md | jq .
+# Expected type: application/octet-stream for text without a magic signature.
+# Download the returned URL with authenticated Blossom access and compare bytes:
+buzz media get "$MEDIA_URL" --output downloaded-notes.md
+cmp notes.md downloaded-notes.md
+
+# Native download regression: upload a ZIP above 50 MiB and at most 100 MiB,
+# then exercise the same Rust fetch used by FileCard before its save dialog.
+# Supply the upload descriptor's URL and SHA-256, using the test relay identity.
+BUZZ_TEST_ATTACHMENT_URL="$MEDIA_URL" BUZZ_TEST_ATTACHMENT_SHA256="$MEDIA_SHA256" \
+  cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib \
+  commands::media_download::file_download_tests::native_download_from_relay_matches_expected_sha256 \
+  -- --ignored --exact
+# Also send a multibyte filename above 255 UTF-8 bytes on a filesystem that
+# supports it: imeta must fit 255 bytes, preserve the extension, and be accepted.
+
 # messages get
 buzz messages get --channel "$CHANNEL_ID" | jq .
 buzz messages get --channel "$CHANNEL_ID" --limit 5 | jq .

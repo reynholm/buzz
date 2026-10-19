@@ -555,7 +555,7 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/discovery/tests.rs",
-      "responsibility": "Keep existing discovery tests and module topology; move explicit device-compatible resolution fixtures to tests/fixtures.rs to restore the inherited size ratchet",
+      "responsibility": "Keep discovery test topology and device-compatible fixtures; use immutable executable version-probe fixtures with bounded timeout and descendant cleanup.",
       "is_new": false,
       "required_symbols": [
         "mod fixtures;",
@@ -820,7 +820,7 @@
     },
     {
       "path": "desktop/src-tauri/Cargo.toml",
-      "responsibility": "Safe hostname default using the already locked gethostname dependency",
+      "responsibility": "Safe hostname default; patched ZIP 9 extraction, maintained Opus backend, and immutable compatible MeshLLM and NetEq sources shared across consumers.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -830,7 +830,7 @@
     },
     {
       "path": "desktop/src-tauri/Cargo.lock",
-      "responsibility": "Direct Desktop gethostname dependency without version changes Pin rustls 0.23.46 for the release, resolving RUSTSEC-2026-0346 through RUSTSEC-2026-0349 without unrelated dependency changes.",
+      "responsibility": "Lock patched native dependencies, the immutable MeshLLM and NetEq compatibility pins, maintained Opus bindings and updated Tauri utilities; retain target-specific Windows updater constraints explicitly.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -4459,7 +4459,7 @@
     },
     {
       "path": "Cargo.lock",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Pin rustls 0.23.46 for the release, resolving RUSTSEC-2026-0346 through RUSTSEC-2026-0349 without unrelated dependency changes.",
+      "responsibility": "Preserve the fork dependency graph with patched rustls, Negentropy and ZIP versions and one immutable MeshLLM compatibility source.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -8560,14 +8560,15 @@
     },
     {
       "path": "crates/buzz-cli/TESTING.md",
-      "responsibility": "Specify managed publisher scope, journal durability and retention, recovery opt-in/upgrade requirements and real versus mock-relay checks. Document session-status enrichment, its absence/failure behavior and its automated checks.",
+      "responsibility": "Specify managed publisher scope, journal durability and retention, recovery opt-in/upgrade requirements and real versus mock-relay checks. Document session-status enrichment, its absence/failure behavior and its automated checks. Document mixed PDF, ZIP and Markdown attachment checks and authenticated byte comparisons.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
         "cargo test -p buzz-cli managed_ -- --test-threads=1",
         "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1",
-        "cargo test -p buzz-cli session_status -- --test-threads=1"
+        "cargo test -p buzz-cli session_status -- --test-threads=1",
+        "cargo test -p buzz-cli"
       ]
     },
     {
@@ -8606,7 +8607,7 @@
     },
     {
       "path": "crates/buzz-cli/src/commands/messages.rs",
-      "responsibility": "Expose messages deliver and preserve original route, stable UUID and signed callback mentions without suppressing ordinary progress or explicit edits. Attach the sender's own best-effort session status to newly prepared kind-9 messages before signing, in the shared send/first-deliver preparation.",
+      "responsibility": "Expose messages deliver and preserve original route, stable UUID and signed callback mentions without suppressing ordinary progress or explicit edits. Attach the sender's own best-effort session status to newly prepared kind-9 messages before signing, in the shared send/first-deliver preparation. Emit generic attachments as filename links rather than image markup.",
       "is_new": false,
       "required_symbols": [
         "MessagesCmd::Deliver {",
@@ -8629,12 +8630,20 @@
           "behavior_test": "status_reply_carries_thread_status_and_keeps_existing_tags",
           "verification_command": "cargo test -p buzz-cli session_status -- --test-threads=1",
           "coverage": "Actual parsed messages send/deliver dispatcher against the signature-checking mock relay; removing the call fails every positive status test and the binary environment test."
+        },
+        {
+          "caller_path": "crates/buzz-cli/src/commands/messages.rs",
+          "callee_symbol": "attachment_markdown",
+          "invocation": "media_content.push_str(&crate::attachments::attachment_markdown(&desc));",
+          "behavior_test": "messages_emit_file_links_for_multiple_attachments_and_keep_media_markup",
+          "verification_command": "cargo test -p buzz-cli"
         }
       ],
       "verification_commands": [
         "cargo test -p buzz-cli managed_ -- --test-threads=1",
         "cargo test -p buzz-cli mention -- --test-threads=1",
-        "cargo test -p buzz-cli session_status -- --test-threads=1"
+        "cargo test -p buzz-cli session_status -- --test-threads=1",
+        "cargo test -p buzz-cli"
       ]
     },
     {
@@ -8680,12 +8689,14 @@
     },
     {
       "path": "crates/buzz-cli/src/lib.rs",
-      "responsibility": "Define messages deliver arguments and compile production-publisher regression tests. Configure the client with the harness-advertised session-status directory and compile session-status regressions.",
+      "responsibility": "Define messages deliver arguments and compile production-publisher regression tests. Configure the client with the harness-advertised session-status directory and compile session-status regressions. Compile the attachment formatter and production upload regressions.",
       "is_new": false,
       "required_symbols": [
         "Deliver {",
         "mod delivery_tests;",
-        "mod session_status_tests;"
+        "mod session_status_tests;",
+        "mod attachments;",
+        "mod attachment_tests;"
       ],
       "invocation_seams": [
         {
@@ -8700,20 +8711,30 @@
       "verification_commands": [
         "cargo test -p buzz-cli managed_ -- --test-threads=1",
         "cargo test -p buzz-cli session_status -- --test-threads=1",
-        "cargo test -p buzz-cli --test session_status_env"
+        "cargo test -p buzz-cli --test session_status_env",
+        "cargo test -p buzz-cli"
       ]
     },
     {
       "path": "crates/buzz-cli/src/client.rs",
-      "responsibility": "Carry the optional session-status instance directory with the client's relay URL and signing key.",
+      "responsibility": "Carry the optional session-status instance directory with the client's relay URL and signing key. Upload generic documents and archives and retain a sanitized basename across both Blossom endpoint paths.",
       "is_new": false,
       "required_symbols": [
         "pub fn with_session_status_dir(",
         "pub fn session_status_dir(&self)"
       ],
-      "invocation_seams": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-cli/src/client.rs",
+          "callee_symbol": "validate_upload",
+          "invocation": "validate_upload(&mime, bytes.len() as u64)?;",
+          "behavior_test": "rejects_detected_executables_before_upload",
+          "verification_command": "cargo test -p buzz-cli"
+        }
+      ],
       "verification_commands": [
-        "cargo test -p buzz-cli session_status -- --test-threads=1"
+        "cargo test -p buzz-cli session_status -- --test-threads=1",
+        "cargo test -p buzz-cli"
       ]
     },
     {
@@ -9070,7 +9091,7 @@
     },
     {
       "path": "deny.toml",
-      "responsibility": "Enforce RUSTSEC-2024-0449 after removing the retired YAML graph; preserve all unrelated advisory policies.",
+      "responsibility": "Enforce vulnerability advisories including the removed unsafe-libyaml graph; record individual transitive maintenance-only exceptions with removal criteria in DEPENDENCY_SECURITY.md.",
       "is_new": false,
       "required_symbols": [
         "[advisories]"
@@ -11614,6 +11635,187 @@
       "invocation_seams": [],
       "verification_commands": [
         "cargo test -p buzz-acp --lib snapshot_helper_tests -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/attachments.rs",
+      "responsibility": "Preserve sanitized attachment basenames, enforce generic-file upload policy, and format download links while retaining image and video markup. Bound names to 255 UTF-8 bytes at character boundaries and preserve extensions.",
+      "is_new": true,
+      "required_symbols": [
+        "fn sanitize_filename(",
+        "fn validate_upload(",
+        "fn attachment_markdown(",
+        "pub filename: Option<String>"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-cli"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/attachment_tests.rs",
+      "responsibility": "Exercise document, archive and Markdown uploads, primary and legacy metadata, message links, media compatibility, and executable and size rejection.",
+      "is_new": true,
+      "required_symbols": [
+        "uploads_documents_archives_and_markdown_with_original_names",
+        "messages_emit_file_links_for_multiple_attachments_and_keep_media_markup",
+        "unicode_filenames_fit_relay_byte_limit_and_keep_extensions"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-cli"
+      ]
+    },
+    {
+      "path": "desktop/tests/e2e/file-attachment.spec.ts",
+      "responsibility": "Verify Markdown and ZIP picker uploads, file-card labels and sizes, and native download filenames alongside existing attachment flows.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && pnpm test:e2e:smoke -- file-attachment.spec.ts"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/media_download.rs",
+      "responsibility": "Fetch generic attachments through a bounded 100 MiB native path while retaining 50 MiB image/editor/clipboard caps and existing auth, redirect, and cancellation protections.",
+      "is_new": false,
+      "required_symbols": [
+        "MAX_FILE_DOWNLOAD_BYTES",
+        "mod file_download_tests;"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/commands/media_download.rs",
+          "callee_symbol": "fetch_blob_bytes_with_cap",
+          "invocation": "fetch_blob_bytes_with_cap(url, state, MAX_FILE_DOWNLOAD_BYTES, None).await",
+          "behavior_test": "generic_download_above_fifty_mib_is_byte_exact",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib commands::media_download::file_download_tests::generic_download_above_fifty_mib_is_byte_exact -- --exact"
+        }
+      ],
+      "verification_commands": [
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/media_download_file_tests.rs",
+      "responsibility": "Exercise the native HTTP file fetch above 50 MiB, the 100 MiB boundary, declared and streamed oversize rejection, preserved image caps, and an opt-in real-relay hash check.",
+      "is_new": true,
+      "required_symbols": [
+        "generic_download_above_fifty_mib_is_byte_exact",
+        "generic_download_rejects_over_hundred_mib_with_or_without_length",
+        "native_download_from_relay_matches_expected_sha256"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/media_filename.rs",
+      "responsibility": "Bound sanitized filenames by UTF-8 bytes at character boundaries while preserving the extension for imeta ingest.",
+      "is_new": false,
+      "required_symbols": [
+        "unicode_labels_fit_relay_utf8_byte_limit_without_losing_extensions"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace"
+      ]
+    },
+    {
+      "path": "crates/buzz-mesh-smoke/Cargo.toml",
+      "responsibility": "Use the same immutable patched MeshLLM source as the desktop consumer to avoid duplicate runtime types.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-mesh-smoke"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/agent_discovery/managed_node.rs",
+      "responsibility": "Preserve confined Node.js extraction while propagating ZIP 9 entry-name decoding errors.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/discovery/tests/codex_version.rs",
+      "responsibility": "Exercise the production version probe with immutable scripts and explicit interpreter PATH inputs.",
+      "is_new": false,
+      "required_symbols": [
+        "probe_codex_acp_version_uses_augmented_path_for_env_shebang_interpreter"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/discovery/tests/codex_version_fixture.rs",
+      "responsibility": "Provide immutable executable symlinks, mutable version data and cleanup for the deliberately surviving descendant.",
+      "is_new": true,
+      "required_symbols": [
+        "struct VersionFixture",
+        "impl Drop for VersionFixture"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "docs/fork/DEPENDENCY_SECURITY.md",
+      "responsibility": "Document patched release dependencies, immutable compatibility pins, target scope and temporary transitive maintenance exceptions.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/discovery/tests/fixtures/codex-version.sh",
+      "responsibility": "Immutable executable fixture for production version-probe regression tests.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/discovery/tests/fixtures/codex-hung.sh",
+      "responsibility": "Immutable executable fixture for production version-probe regression tests.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/discovery/tests/fixtures/codex-descendant.sh",
+      "responsibility": "Immutable executable fixture for production version-probe regression tests.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/managed_agents/discovery/tests/fixtures/env-node.sh",
+      "responsibility": "Immutable executable fixture for production version-probe regression tests.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-tauri-test desktop-tauri-check"
       ]
     }
   ]

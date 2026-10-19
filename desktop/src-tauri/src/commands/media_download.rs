@@ -19,8 +19,15 @@ use crate::commands::{
 };
 use crate::relay::{classify_request_error, relay_api_base_url_with_override, relay_error_message};
 
-/// Maximum download size: 50 MiB. Prevents OOM from oversized responses.
+#[cfg(test)]
+#[path = "media_download_file_tests.rs"]
+mod file_download_tests;
+
+/// Maximum image/editor download size: 50 MiB.
 pub(super) const MAX_DOWNLOAD_BYTES: u64 = 50 * 1024 * 1024;
+
+/// Generic attachments match the default relay and CLI upload cap: 100 MiB.
+const MAX_FILE_DOWNLOAD_BYTES: u64 = 100 * 1024 * 1024;
 
 /// Download request timeout.
 const DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
@@ -90,7 +97,7 @@ pub async fn download_image(
         .unwrap_or("png")
         .to_string();
 
-    let bytes = fetch_blob_bytes(&url, &state).await?;
+    let bytes = fetch_blob_bytes_with_cap(&url, &state, MAX_DOWNLOAD_BYTES, None).await?;
 
     // Validate the downloaded content is actually a supported media type.
     detect_and_validate_mime(&bytes)?;
@@ -105,7 +112,7 @@ pub async fn download_image(
 /// (the URL path is only the content hash, so it carries no human-readable
 /// name). We sanitize it defensively before using it as the suggested name.
 ///
-/// Mirrors `download_image`'s SSRF and size protections, but uses a generic
+/// Mirrors `download_image`'s SSRF protections with a 100 MiB file cap and a generic
 /// "All Files" dialog filter and derives the extension from the supplied
 /// filename rather than assuming an image.
 #[tauri::command]
@@ -131,7 +138,7 @@ pub async fn download_file(
 
     let bytes = fetch_blob_bytes(&url, &state).await?;
 
-    // Reuse the upload-side allow/deny policy: rejects executables, HTML, and
+    // Reuse the upload-side allow/deny policy: rejects executables and
     // other types the relay would never have accepted, while permitting the
     // arbitrary `application/octet-stream` / text payloads that uploads allow.
     detect_and_validate_mime(&bytes)?;
@@ -159,7 +166,7 @@ pub async fn copy_image_to_clipboard(
     let relay_base = relay_api_base_url_with_override(&state);
     validate_download_url(&url, &relay_base)?;
 
-    let bytes = fetch_blob_bytes(&url, &state).await?;
+    let bytes = fetch_blob_bytes_with_cap(&url, &state, MAX_DOWNLOAD_BYTES, None).await?;
     detect_and_validate_mime(&bytes)?;
 
     let img =
@@ -228,10 +235,10 @@ pub async fn copy_text_to_clipboard(
 }
 
 /// Fetch blob bytes from a (pre-validated) relay media URL through the app's
-/// HTTP client, enforcing the download size cap. The caller is responsible for
+/// HTTP client, enforcing the generic-file size cap. The caller is responsible for
 /// validating the URL origin and for any content-type checks on the result.
 async fn fetch_blob_bytes(url: &str, state: &State<'_, AppState>) -> Result<Vec<u8>, String> {
-    fetch_blob_bytes_with_cap(url, state, MAX_DOWNLOAD_BYTES, None).await
+    fetch_blob_bytes_with_cap(url, state, MAX_FILE_DOWNLOAD_BYTES, None).await
 }
 
 /// The command-facing error for a media-fetch response status, or `None` if

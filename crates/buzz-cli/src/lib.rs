@@ -1,4 +1,5 @@
 pub mod agent_management;
+mod attachments;
 mod client;
 mod commands;
 mod error;
@@ -2812,6 +2813,9 @@ mod tests {
 
 #[cfg(test)]
 mod delivery_tests;
+
+#[cfg(test)]
+mod attachment_tests;
 
 #[cfg(test)]
 mod session_status_tests;

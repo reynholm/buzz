@@ -1,10 +1,12 @@
+#![cfg(unix)]
+
 use super::super::probe_codex_acp_version_with_path;
+use super::codex_version_fixture::{link_script, VersionFixture};
 
 #[cfg(unix)]
 #[test]
 fn probe_codex_acp_version_uses_augmented_path_for_env_shebang_interpreter() {
     use std::fs;
-    use std::os::unix::fs::PermissionsExt;
     let temp = tempfile::tempdir().expect("temp dir");
     let script_dir = temp.path().join("script-bin");
     let interpreter_dir = temp.path().join("interpreter-bin");
@@ -14,17 +16,10 @@ fn probe_codex_acp_version_uses_augmented_path_for_env_shebang_interpreter() {
     fs::create_dir_all(&empty_path_dir).expect("empty path dir");
 
     let interpreter_path = interpreter_dir.join("node");
-    fs::write(
-        &interpreter_path,
-        "#!/bin/sh\necho '@agentclientprotocol/codex-acp 1.1.2'\n",
-    )
-    .expect("write interpreter");
-    fs::set_permissions(&interpreter_path, fs::Permissions::from_mode(0o755))
-        .expect("chmod interpreter");
-
+    link_script("codex-version.sh", &interpreter_path);
+    fs::write(interpreter_dir.join("version"), "1.1.2\n").expect("write version data");
     let shim_path = script_dir.join("codex-acp");
-    fs::write(&shim_path, "#!/usr/bin/env node\n").expect("write shim");
-    fs::set_permissions(&shim_path, fs::Permissions::from_mode(0o755)).expect("chmod shim");
+    link_script("env-node.sh", &shim_path);
 
     let scrubbed_path = std::env::join_paths([empty_path_dir.as_path()])
         .expect("join scrubbed PATH")
@@ -52,18 +47,10 @@ fn probe_codex_acp_version_uses_augmented_path_for_env_shebang_interpreter() {
 fn codex_adapter_availability_outdated_for_older_1x_binary() {
     use super::super::{codex_adapter_availability, codex_adapter_is_outdated};
     use crate::managed_agents::AcpAvailabilityStatus;
-    use std::os::unix::fs::PermissionsExt;
 
     for version in ["1.1.5", "1.1.7", "1.6.2", "1.9.0"] {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let bin = dir.path().join("codex-acp");
-        std::fs::write(
-            &bin,
-            format!("#!/bin/sh\necho '@agentclientprotocol/codex-acp {version}'\nexit 0\n"),
-        )
-        .expect("write script");
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755))
-            .expect("chmod script");
+        let fixture = VersionFixture::new(version);
+        let bin = fixture.binary();
 
         assert_eq!(
             codex_adapter_availability(&bin),
