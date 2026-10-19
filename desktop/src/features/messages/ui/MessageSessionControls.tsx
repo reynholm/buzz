@@ -1,4 +1,5 @@
 import { MoreHorizontal } from "lucide-react";
+import { useId } from "react";
 import { useRelayAgentsQuery } from "@/features/agents/hooks";
 import { useChannelDetailsQuery } from "@/features/channels/hooks";
 import { useCommunities } from "@/features/communities/useCommunities";
@@ -26,6 +27,7 @@ export function MessageSessionControls({
   message: TimelineMessage;
   channelId: string;
 }) {
+  const descriptionId = useId();
   const directory = useRelayAgentsQuery();
   const channel = useChannelDetailsQuery(channelId);
   const { activeCommunity } = useCommunities();
@@ -71,28 +73,33 @@ export function MessageSessionControls({
             <MoreHorizontal aria-hidden="true" className="size-4" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start">
+        <DropdownMenuContent align="start" className="max-w-80">
           {shared ? (
             <p className="max-w-72 px-2 py-1.5 text-xs text-muted-foreground">
               This session is shared across the channel.
             </p>
           ) : null}
-          <DropdownMenuItem
-            onSelect={() => {
-              void action.run({ type: "compact", content: "!compact" });
-            }}
-          >
-            Compact context
-          </DropdownMenuItem>
           <DropdownMenuSub>
-            <DropdownMenuSubTrigger>Start over</DropdownMenuSubTrigger>
-            <DropdownMenuPortal>
-              <DropdownMenuSubContent className="max-w-80">
-                <p className="px-2 py-1.5 text-xs text-muted-foreground">
+            <DropdownMenuSubTrigger
+              aria-label="Restart"
+              aria-describedby={`${descriptionId}-restart`}
+            >
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span>Restart</span>
+                <span
+                  id={`${descriptionId}-restart`}
+                  className="whitespace-normal text-2xs text-muted-foreground"
+                >
                   Stops current work, including subagents. File changes are
                   kept.
-                </p>
+                </span>
+              </span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuPortal>
+              <DropdownMenuSubContent className="max-w-80">
                 <DropdownMenuItem
+                  aria-label="From scratch"
+                  aria-describedby={`${descriptionId}-none`}
                   className="flex-col items-start gap-0.5"
                   onSelect={() => {
                     void action.run({
@@ -103,11 +110,17 @@ export function MessageSessionControls({
                   }}
                 >
                   <span>From scratch</span>
-                  <span className="text-xs text-muted-foreground">
+                  <span
+                    id={`${descriptionId}-none`}
+                    className="whitespace-normal text-2xs text-muted-foreground"
+                  >
                     Keep the original assignment and your next request.
                   </span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
+                  aria-label="Recent history"
+                  aria-describedby={`${descriptionId}-recent`}
+                  className="flex-col items-start gap-0.5"
                   onSelect={() => {
                     void action.run({
                       type: "restart",
@@ -116,9 +129,18 @@ export function MessageSessionControls({
                     });
                   }}
                 >
-                  Recent history
+                  <span>Recent history</span>
+                  <span
+                    id={`${descriptionId}-recent`}
+                    className="whitespace-normal text-2xs text-muted-foreground"
+                  >
+                    Keep the original assignment and recent messages.
+                  </span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
+                  aria-label="Entire thread"
+                  aria-describedby={`${descriptionId}-all`}
+                  className="flex-col items-start gap-0.5"
                   onSelect={() => {
                     void action.run({
                       type: "restart",
@@ -127,11 +149,24 @@ export function MessageSessionControls({
                     });
                   }}
                 >
-                  Entire thread
+                  <span>Entire thread</span>
+                  <span
+                    id={`${descriptionId}-all`}
+                    className="whitespace-normal text-2xs text-muted-foreground"
+                  >
+                    Use the available thread history, within the history limit.
+                  </span>
                 </DropdownMenuItem>
               </DropdownMenuSubContent>
             </DropdownMenuPortal>
           </DropdownMenuSub>
+          <DropdownMenuItem
+            onSelect={() => {
+              void action.run({ type: "compact", content: "!compact" });
+            }}
+          >
+            Compact context
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       {action.error ? (

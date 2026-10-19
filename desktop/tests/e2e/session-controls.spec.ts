@@ -144,27 +144,33 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
   await expect(
     page.getByRole("menuitem", { name: "Compact context", exact: true }),
   ).toBeVisible();
+  const restart = page.getByRole("menuitem", { name: "Restart", exact: true });
+  const restartDescription =
+    "Stops current work, including subagents. File changes are kept.";
+  await expect(
+    restart.getByText(restartDescription, { exact: true }),
+  ).toBeVisible();
+  await expect(restart).toHaveAccessibleDescription(restartDescription);
   await captureMenu(
     page,
     row(page, root).getByTestId("manage-current-session"),
     "menu-v3",
   );
-  await page.keyboard.press("End");
-  await expect(
-    page.getByRole("menuitem", { name: "Start over", exact: true }),
-  ).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(restart).toBeFocused();
   await page.keyboard.press("ArrowRight");
-  await expect(
-    page.getByText(
-      "Stops current work, including subagents. File changes are kept.",
-      { exact: true },
-    ),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Keep the original assignment and your next request.", {
-      exact: true,
-    }),
-  ).toBeVisible();
+  for (const [label, description] of [
+    ["From scratch", "Keep the original assignment and your next request."],
+    ["Recent history", "Keep the original assignment and recent messages."],
+    [
+      "Entire thread",
+      "Use the available thread history, within the history limit.",
+    ],
+  ]) {
+    const option = page.getByRole("menuitem", { name: label, exact: true });
+    await expect(option.getByText(description, { exact: true })).toBeVisible();
+    await expect(option).toHaveAccessibleDescription(description);
+  }
   await captureMenu(
     page,
     row(page, root).getByTestId("manage-current-session"),
@@ -175,10 +181,11 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
   await expect(trigger).toBeFocused();
   expect(await sends(page)).toHaveLength(0);
   await trigger.click();
-  await page.getByRole("menuitem", { name: "Start over", exact: true }).hover();
+  await page.getByRole("menuitem", { name: "Restart", exact: true }).hover();
   await page
     .getByRole("menuitem", {
-      name: "From scratch Keep the original assignment and your next request.",
+      name: "From scratch",
+      exact: true,
     })
     .click();
   await expect.poll(async () => (await sends(page)).length).toBe(1);
@@ -309,7 +316,7 @@ for (const [label, body] of [
       .click();
     if (label !== "Compact context")
       await page
-        .getByRole("menuitem", { name: "Start over", exact: true })
+        .getByRole("menuitem", { name: "Restart", exact: true })
         .hover();
     await page.getByRole("menuitem", { name: label, exact: true }).click();
     await expect.poll(async () => (await sends(page)).length).toBe(1);
@@ -338,7 +345,7 @@ test("two agent menus retain the selected signer and sibling scope", async ({
   await row(page, second.id)
     .getByRole("button", { name: "Manage current session" })
     .click();
-  await page.getByRole("menuitem", { name: "Start over", exact: true }).hover();
+  await page.getByRole("menuitem", { name: "Restart", exact: true }).hover();
   await page
     .getByRole("menuitem", { name: "Recent history", exact: true })
     .click();
