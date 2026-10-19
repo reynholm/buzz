@@ -2367,7 +2367,7 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/device_home_operations.rs",
-      "responsibility": "Device creation policy, default-private sources, atomic claim and durable recovery regression coverage; Task8 durable original-scope home deletion/label publication and retry",
+      "responsibility": "Device creation policy, default-private sources, atomic claim and durable recovery regression coverage; Task8 durable original-scope home deletion/label publication and retry; Preserve canonical persona coordinates for builtin claims and durable journal recovery",
       "is_new": true,
       "required_symbols": [
         "commit_home_claim_locked",
@@ -2399,7 +2399,7 @@
         {
           "caller_path": "desktop/src-tauri/src/managed_agents/device_home_operations.rs",
           "callee_symbol": "enqueue_home_events",
-          "invocation": "enqueue_home_events(&mut conn, operation)",
+          "invocation": "enqueue_home_events(dir, &mut conn, operation)",
           "behavior_test": "managed_agents::device_home_operations::tests::claim_transaction_failure_retains_intent_and_never_half_enqueues",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_home_operations::tests::claim_transaction_failure_retains_intent_and_never_half_enqueues -- --exact",
           "coverage": "production behavior with isolated injectable boundaries"
@@ -2447,7 +2447,7 @@
         {
           "caller_path": "desktop/src-tauri/src/managed_agents/device_home_operations.rs",
           "callee_symbol": "enqueue_home_events_in_transaction",
-          "invocation": "enqueue_home_events_in_transaction(&tx, operation)?;",
+          "invocation": "enqueue_home_events_in_transaction(&tx, operation, &definitions)?;",
           "behavior_test": "intent_save_and_each_sql_enqueue_failure_leave_no_partial_batch",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace intent_save_and_each_sql_enqueue_failure_leave_no_partial_batch",
           "coverage": "Production generic/native adapter runtime with MockRuntime, isolated app data, injected authority/process/key effects and real SQLite; Wry IPC wiring compile only, native/two-device acceptance outstanding"
@@ -2475,6 +2475,14 @@
           "behavior_test": "managed_agents::device_home_operations::label_tests",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace",
           "coverage": "R5 latest intent and scoped retry/timestamp regressions"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/device_home_operations.rs",
+          "callee_symbol": "persona_d_tag",
+          "invocation": ".map(|d| super::persona_events::persona_d_tag(&d))",
+          "behavior_test": "builtin_and_source_slug_claims_enqueue_canonical_persona_heads",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib builtin_and_source_slug_claims_enqueue_canonical_persona_heads",
+          "coverage": "Real signed events, local definitions and SQLite retention; builtin and source-slug coordinate regression"
         }
       ],
       "verification_commands": [
@@ -2484,7 +2492,7 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/device_home_operations/tests.rs",
-      "responsibility": "Device creation policy, default-private sources, atomic claim and durable recovery regression coverage",
+      "responsibility": "Device creation policy, default-private sources, atomic claim and durable recovery regression coverage; Canonical builtin/source-slug claims, exact signed-byte legacy recovery, and invalid event rejection",
       "is_new": true,
       "required_symbols": [],
       "invocation_seams": [],
@@ -3198,7 +3206,7 @@
     },
     {
       "path": "desktop/src-tauri/src/managed_agents/device_home_operations/label.rs",
-      "responsibility": "Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage; R5 coalesce all outstanding scope label worklists to latest intent with monotonic signed floors",
+      "responsibility": "Task8: durable secret-free device home deletion, label retries and owning production-adapter coverage; R5 coalesce all outstanding scope label worklists to latest intent with monotonic signed floors; canonical persona deduplication and superseded timestamp floors preserve builtin and source-slug label retries",
       "is_new": true,
       "required_symbols": [
         "fn coalesce_label_worklists"
@@ -3227,6 +3235,14 @@
           "behavior_test": "managed_agents::device_home_operations::label_tests",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace",
           "coverage": "R5 latest intent and scoped retry/timestamp regressions"
+        },
+        {
+          "caller_path": "desktop/src-tauri/src/managed_agents/device_home_operations/label.rs",
+          "callee_symbol": "persona_d_tag",
+          "invocation": ".get(&super::super::persona_events::persona_d_tag(&d))",
+          "behavior_test": "newer_label_is_signed_after_superseded_unenqueued_event",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib newer_label_is_signed_after_superseded_unenqueued_event",
+          "coverage": "Real signed future heads, durable coalesced label worklists and SQLite; canonical and local timestamp floors"
         }
       ],
       "verification_commands": [
