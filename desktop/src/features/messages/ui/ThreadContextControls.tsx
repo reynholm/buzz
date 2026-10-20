@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRelayAgentsQuery } from "@/features/agents/hooks";
 import { useChannelDetailsQuery } from "@/features/channels/hooks";
 import { useCommunities } from "@/features/communities/useCommunities";
+import { useUsersBatchQuery } from "@/features/profile/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { getEventById } from "@/shared/api/tauriEvents";
 import type { Channel, RelayEvent } from "@/shared/api/types";
@@ -21,6 +22,7 @@ import {
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
+import { UserAvatar } from "@/shared/ui/UserAvatar";
 import { MessageSessionControls } from "./MessageSessionControls";
 
 /** Scope changes unmount selected actions and invalidate their asynchronous work. */
@@ -135,6 +137,10 @@ function ThreadContextPicker({
           signerPubkey,
         })
       : [];
+  const profiles = useUsersBatchQuery(
+    agents.map((agent) => agent.pubkey),
+    { enabled: open },
+  );
   const target = agents.find((agent) => agent.pubkey === selected);
   React.useEffect(() => {
     if (selected && !target) setSelected(null);
@@ -230,7 +236,18 @@ function ThreadContextPicker({
                   setSelected(agent.pubkey);
                 }}
               >
-                {agent.label}
+                <span aria-hidden="true" className="shrink-0">
+                  <UserAvatar
+                    avatarUrl={
+                      profiles.data?.profiles[agent.pubkey]?.avatarUrl ?? null
+                    }
+                    displayName={agent.label}
+                    shape="squircle"
+                    size="xs"
+                    testId="thread-context-agent-avatar"
+                  />
+                </span>
+                <span className="min-w-0 break-words">{agent.label}</span>
               </DropdownMenuItem>
             ))
           ) : (

@@ -47,11 +47,13 @@ const bot = {
   channelIds: [channel.id],
 };
 const clients = [];
+const OriginalImage = window.Image;
 afterEach(() => {
   cleanup();
   for (const client of clients.splice(0)) client.clear();
   delete window.__TAURI_INTERNALS__;
   localStorage.clear();
+  window.Image = OriginalImage;
 });
 function setup({
   pending = false,
@@ -64,6 +66,7 @@ function setup({
   ownerEnabled = true,
   activeChannel = channel,
   ownerChannel = activeChannel,
+  profiles = {},
 } = {}) {
   localStorage.setItem(
     "buzz-communities",
@@ -85,10 +88,18 @@ function setup({
   client.setQueryData(["relay-agents"], directory);
   client.setQueryData(["channels", channel.id, "detail"], activeChannel);
   const sends = [];
+  const profileRequests = [];
   let resolveHistory;
   window.__TAURI_INTERNALS__ = {
     invoke: async (command, payload) => {
       if (command === "readd_community_relay") return;
+      if (command === "get_users_batch") {
+        profileRequests.push(payload.pubkeys);
+        return {
+          profiles,
+          missing: payload.pubkeys.filter((pubkey) => !profiles[pubkey]),
+        };
+      }
       if (command === "get_thread_replies") {
         if (historyFetcher) return historyFetcher();
         if (historyFails) throw new Error("History unavailable");
@@ -146,6 +157,7 @@ function setup({
     client,
     view,
     sends,
+    profileRequests,
     open,
     owner: () => owner,
     rerender: (nextHead) => view.rerender(tree(nextHead)),
@@ -174,6 +186,57 @@ test("production picker always lists one agent first, selection sends nothing an
     !view.queryByRole("menuitem", { name: "Compact context" }),
     "Back removes selected actions",
   );
+});
+test("production roster resolves profile images and falls back without duplicating accessible labels", async () => {
+  window.Image = class extends window.EventTarget {
+    complete = true;
+    naturalWidth = 1;
+    src = "";
+  };
+  const second = { ...bot, pubkey: "c".repeat(64), name: "Backup" };
+  const { view, open, profileRequests, sends } = setup({
+    directory: [bot, second],
+    headOverride: { ...head, tags: [...head.tags, ["p", second.pubkey]] },
+    profiles: {
+      [agent]: {
+        display_name: "Profile display name",
+        avatar_url: "https://example.test/scout.png",
+      },
+    },
+  });
+  await open();
+  const scout = await view.findByRole("menuitem", {
+    name: "Scout",
+    exact: true,
+  });
+  const backup = view.getByRole("menuitem", { name: "Backup", exact: true });
+  const image = await view.findByTestId("thread-context-agent-avatar-image");
+  assert.equal(image.getAttribute("src"), "https://example.test/scout.png");
+  assert.ok(scout.contains(image));
+  for (const row of [scout, backup]) {
+    const avatar = row.querySelector(
+      '[data-testid="thread-context-agent-avatar"]',
+    );
+    assert.ok(avatar);
+    assert.equal(avatar.getAttribute("data-avatar-shape"), "squircle");
+    assert.ok(avatar.classList.contains("h-5"));
+    assert.equal(avatar.parentElement.getAttribute("aria-hidden"), "true");
+  }
+  await waitFor(() =>
+    assert.equal(
+      backup.querySelector(
+        '[data-testid="thread-context-agent-avatar-fallback"]',
+      )?.textContent,
+      "B",
+    ),
+  );
+  assert.equal(
+    view.queryAllByRole("img").length,
+    0,
+    "Avatars are decorative beside the menu labels",
+  );
+  assert.deepEqual(profileRequests, [[agent, second.pubkey]]);
+  assert.equal(sends.length, 0);
 });
 test("production picker waits for complete history and recovers without exposing actions", async () => {
   const { view, open, resolveHistory } = setup({ pending: true });

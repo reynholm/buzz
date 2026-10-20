@@ -75,6 +75,9 @@ for line in sys.stdin:
         session = req['params']['sessionId']
         if os.environ.get('STATUS_WRONG_SESSION'):
             session = 'another-session'
+        if os.environ.get('STATUS_USAGE'):
+            used, size = json.loads(os.environ['STATUS_USAGE'])
+            print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':session,'update':{'sessionUpdate':'usage_update','used':used,'size':size}}}), flush=True)
         if os.environ.get('STATUS_TEXT'):
             print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':session,'update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':os.environ['STATUS_TEXT']}}}}), flush=True)
         if os.environ.get('STATUS_THOUGHT'):

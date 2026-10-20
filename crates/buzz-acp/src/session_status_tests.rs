@@ -89,6 +89,25 @@ fn set_mode(path: &Path, mode: u32) {
 // ---- layout and locks ----
 
 #[test]
+fn display_tags_follow_current_generation_and_reject_revoked_clones() {
+    let (_root, runtime) = open_runtime();
+    let scope = thread(1, 'a');
+    let binding = begin(&runtime, &scope, "old");
+    let clone = binding.clone();
+    binding.record_occupancy(95, 100);
+    assert_eq!(
+        binding.event_tags().unwrap(),
+        snapshot(&runtime, &scope).unwrap().event_tags().unwrap()
+    );
+    let next = begin(&runtime, &scope, "next");
+    assert!(binding.event_tags().is_none());
+    assert!(clone.event_tags().is_none());
+    assert_eq!(next.event_tags().unwrap()[0][3], "");
+    runtime.retire(&scope);
+    assert!(next.event_tags().is_none());
+}
+
+#[test]
 fn open_holds_instance_lock_in_private_layout() {
     let root = tempfile::tempdir().unwrap();
     let runtime = SessionStatusRuntime::open(root.path(), identity()).unwrap();

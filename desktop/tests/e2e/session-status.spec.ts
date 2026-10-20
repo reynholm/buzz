@@ -261,7 +261,9 @@ test("session status explains each transition once and shows reported context", 
 
   await expect(row(page, root)).toBeVisible();
   await row(timeline, root).hover();
-  await page.getByTestId(`reply-message-${root}`).click();
+  const reply = page.getByTestId(`reply-message-${root}`);
+  await reply.focus();
+  await reply.press("Enter");
   const threadPanel = page.getByTestId("message-thread-panel");
   await expect(threadPanel).toBeVisible();
 

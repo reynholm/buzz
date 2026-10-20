@@ -6202,7 +6202,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/session_status.rs`
 
-Session status runtime: private instance directory held by an instance lock, atomic bounded per-scope snapshots, generation locks with shared revocable guards, per-scope failure disabling, usage routing by notification session ID and harness-owned status directory env.
+Session status runtime: private instance directory held by an instance lock, atomic bounded per-scope snapshots, generation locks with shared revocable guards, per-scope failure disabling, usage routing by notification session ID and harness-owned status directory env. Serialize live binding display tags through the shared envelope, refusing retired or replaced generations.
 
 New module: `true`.
 
@@ -6216,7 +6216,9 @@ New module: `true`.
 - Required symbol: `pub(crate) fn apply_status_dir_env(`
 - Required symbol: `pub(crate) fn open_for_config(`
 - Required symbol: `pub(crate) fn compacted(`
+- Required symbol: `pub(crate) fn event_tags(`
 - Required symbol: `let mut next = state.status.clone();`
+- Invocation: `crates/buzz-acp/src/pool/restart_status.rs` → `event_tags`; exact call `.and_then(crate::session_status::StatusBinding::event_tags)`; behavior test `first_signed_status_carries_selected_history_actor_and_current_or_unknown_occupancy`; verify `cargo test -p buzz-acp --lib first_signed_status_carries_selected_history_actor_and_current_or_unknown_occupancy -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/session_status_tests.rs`
@@ -7835,7 +7837,7 @@ New module: `false`.
 
 ## `desktop/src/features/messages/ui/ThreadContextControls.tsx`
 
-Thread-scoped accessible agent roster from bounded canonical raw history, verified directory and current authority; agent-first picker, scope reset, independent context toolbar trigger and selected action lifetime. Passively subscribe to the active owning validated thread query without replacing query/retry options; ownerless read-only forum previews retain an isolated bounded fallback, while other absent/disabled owners are explicitly unavailable.
+Thread-scoped accessible agent roster from bounded canonical raw history, verified directory and current authority; agent-first picker, scope reset, independent context toolbar trigger and selected action lifetime. Passively subscribe to the active owning validated thread query without replacing query/retry options; ownerless read-only forum previews retain an isolated bounded fallback, while other absent/disabled owners are explicitly unavailable. Resolve eligible-agent profile avatars with decorative shared squircle rendering and initials fallback, preserving accessible collision labels.
 
 New module: `true`.
 
@@ -7850,6 +7852,9 @@ New module: `true`.
 - Invocation: `desktop/src/features/messages/ui/ThreadContextControls.tsx` → `useSyncExternalStore`; exact call `const ownedReplies = React.useSyncExternalStore(`; behavior test `opening the picker preserves the owning notification query validation across gated retries (stream)`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs`
 - Invocation: `desktop/src/features/messages/ui/ThreadContextControls.tsx` → `projectThreadContextAgents`; exact call `projectThreadContextAgents({`; behavior test `same-name agents remain distinct and a relay switch closes selected actions`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs`
 - Invocation: `desktop/src/features/messages/ui/ThreadContextControls.tsx` → `loadThreadReplies`; exact call `queryFn: () => loadThreadReplies(queryClient, channel.id, rootId)`; behavior test `read-only forum previews retain a bounded roster without replacing the disabled owner`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs`
+- Invocation: `desktop/src/features/messages/ui/ThreadContextControls.tsx` → `useUsersBatchQuery`; exact call `const profiles = useUsersBatchQuery(`; behavior test `production roster resolves profile images and falls back without duplicating accessible labels`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs`
+- Invocation: `desktop/src/features/messages/ui/ThreadContextControls.tsx` → `UserAvatar`; exact call `<UserAvatar
+                    avatarUrl={`; behavior test `production roster resolves profile images and falls back without duplicating accessible labels`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs`
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/threadContextAgents.test.mjs`
 - Verify: `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
@@ -7960,13 +7965,15 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/pool/restart_status.rs`
 
-First replacement-session status turn with selected context, exact-authority signed publication and separately prepared failure feedback.
+First replacement-session status turn with selected context, exact-authority signed publication and separately prepared failure feedback. Attach shared live generation/history/actor/occupancy tags before signing the first successful reply, retaining exact Prepared bytes across retries and leaving failure notices untagged.
 
 New module: `true`.
 
 - Required symbol: `fn run_status_task`
 - Required symbol: `fn publish_prepared`
 - Required symbol: `fn report_expired`
+- Required symbol: `.tags(status_tags)`
+- Invocation: `crates/buzz-acp/src/pool/restart_status.rs` → `tags`; exact call `.tags(status_tags)`; behavior test `first_signed_status_carries_selected_history_actor_and_current_or_unknown_occupancy`; verify `cargo test -p buzz-acp --lib first_signed_status_carries_selected_history_actor_and_current_or_unknown_occupancy -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/status_tasks.rs` → `run_status_task`; exact call `run_status_task(agent, job, ctx, task_dispatch, control_rx).await`; behavior test `checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap`; verify `cargo test -p buzz-acp --lib checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/status_tasks.rs` → `report_expired`; exact call `pool::restart_status::report_expired(job, ctx, dispatch)`; behavior test `expiry_scheduler_keeps_its_fence_when_cancellation_persistence_recovers`; verify `cargo test -p buzz-acp --lib expiry_scheduler_keeps_its_fence_when_cancellation_persistence_recovers -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `report_expired`; exact call `pool::restart_status::report_expired(job, ctx, dispatch)`; behavior test `a_known_local_panic_reports_failure_without_restarting_the_model`; verify `cargo test -p buzz-acp --lib a_known_local_panic_reports_failure_without_restarting_the_model -- --test-threads=1`
@@ -8083,3 +8090,12 @@ New module: `true`.
 - Required symbol: `fn stale_token_cleanup_cannot_fence_newer_pending_or_retiring_work_when_reads_fail`
 - Required symbol: `fn cancellation_preserves_a_confirmed_terminal_status_even_when_the_busy_cache_lags`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/restart_status_metadata_tests.rs`
+
+Actual authorized Restart admission, scheduler, ACP usage notifications and signed HTTP publication regressions for first-reply history/actor/current-generation tags, current or unavailable occupancy and exact prepared event persistence across all selected depths.
+
+New module: `true`.
+
+- Required symbol: `fn first_signed_status_carries_selected_history_actor_and_current_or_unknown_occupancy`
+- Verify: `cargo test -p buzz-acp --lib first_signed_status_carries_selected_history_actor_and_current_or_unknown_occupancy -- --test-threads=1`

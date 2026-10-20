@@ -363,6 +363,10 @@ async fn failure_outputs_never_become_status_and_keep_restart_result_successful(
         assert_eq!(posts.len(), 1);
         assert!(posts[0].content.contains("couldn't confirm"));
         assert!(!posts[0].content.contains("partial output"));
+        assert!(!posts[0]
+            .tags
+            .iter()
+            .any(|tag| tag.as_slice()[0].starts_with("buzz-session")));
         let record = fixture.record(&scope);
         assert_eq!(
             record
@@ -976,3 +980,6 @@ mod review_tests;
 
 #[path = "restart_status_unavailable_tests.rs"]
 mod unavailable_tests;
+
+#[path = "restart_status_metadata_tests.rs"]
+mod metadata_tests;

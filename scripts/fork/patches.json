@@ -9436,7 +9436,7 @@
     },
     {
       "path": "crates/buzz-acp/src/session_status.rs",
-      "responsibility": "Session status runtime: private instance directory held by an instance lock, atomic bounded per-scope snapshots, generation locks with shared revocable guards, per-scope failure disabling, usage routing by notification session ID and harness-owned status directory env.",
+      "responsibility": "Session status runtime: private instance directory held by an instance lock, atomic bounded per-scope snapshots, generation locks with shared revocable guards, per-scope failure disabling, usage routing by notification session ID and harness-owned status directory env. Serialize live binding display tags through the shared envelope, refusing retired or replaced generations.",
       "is_new": true,
       "required_symbols": [
         "pub(crate) const SESSION_STATUS_DIR_ENV: &str = \"BUZZ_SESSION_STATUS_DIR\";",
@@ -9449,9 +9449,18 @@
         "pub(crate) fn apply_status_dir_env(",
         "pub(crate) fn open_for_config(",
         "pub(crate) fn compacted(",
+        "pub(crate) fn event_tags(",
         "let mut next = state.status.clone();"
       ],
-      "invocation_seams": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/pool/restart_status.rs",
+          "callee_symbol": "event_tags",
+          "invocation": ".and_then(crate::session_status::StatusBinding::event_tags)",
+          "behavior_test": "first_signed_status_carries_selected_history_actor_and_current_or_unknown_occupancy",
+          "verification_command": "cargo test -p buzz-acp --lib first_signed_status_carries_selected_history_actor_and_current_or_unknown_occupancy -- --test-threads=1"
+        }
+      ],
       "verification_commands": [
         "cargo test -p buzz-acp -- --test-threads=1"
       ]
@@ -11902,7 +11911,7 @@
     },
     {
       "path": "desktop/src/features/messages/ui/ThreadContextControls.tsx",
-      "responsibility": "Thread-scoped accessible agent roster from bounded canonical raw history, verified directory and current authority; agent-first picker, scope reset, independent context toolbar trigger and selected action lifetime. Passively subscribe to the active owning validated thread query without replacing query/retry options; ownerless read-only forum previews retain an isolated bounded fallback, while other absent/disabled owners are explicitly unavailable.",
+      "responsibility": "Thread-scoped accessible agent roster from bounded canonical raw history, verified directory and current authority; agent-first picker, scope reset, independent context toolbar trigger and selected action lifetime. Passively subscribe to the active owning validated thread query without replacing query/retry options; ownerless read-only forum previews retain an isolated bounded fallback, while other absent/disabled owners are explicitly unavailable. Resolve eligible-agent profile avatars with decorative shared squircle rendering and initials fallback, preserving accessible collision labels.",
       "is_new": true,
       "required_symbols": [
         "export function ThreadContextControls(",
@@ -11937,6 +11946,20 @@
           "callee_symbol": "loadThreadReplies",
           "invocation": "queryFn: () => loadThreadReplies(queryClient, channel.id, rootId)",
           "behavior_test": "read-only forum previews retain a bounded roster without replacing the disabled owner",
+          "verification_command": "cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs"
+        },
+        {
+          "caller_path": "desktop/src/features/messages/ui/ThreadContextControls.tsx",
+          "callee_symbol": "useUsersBatchQuery",
+          "invocation": "const profiles = useUsersBatchQuery(",
+          "behavior_test": "production roster resolves profile images and falls back without duplicating accessible labels",
+          "verification_command": "cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs"
+        },
+        {
+          "caller_path": "desktop/src/features/messages/ui/ThreadContextControls.tsx",
+          "callee_symbol": "UserAvatar",
+          "invocation": "<UserAvatar\n                    avatarUrl={",
+          "behavior_test": "production roster resolves profile images and falls back without duplicating accessible labels",
           "verification_command": "cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs"
         }
       ],
@@ -12098,14 +12121,22 @@
     },
     {
       "path": "crates/buzz-acp/src/pool/restart_status.rs",
-      "responsibility": "First replacement-session status turn with selected context, exact-authority signed publication and separately prepared failure feedback.",
+      "responsibility": "First replacement-session status turn with selected context, exact-authority signed publication and separately prepared failure feedback. Attach shared live generation/history/actor/occupancy tags before signing the first successful reply, retaining exact Prepared bytes across retries and leaving failure notices untagged.",
       "is_new": true,
       "required_symbols": [
         "fn run_status_task",
         "fn publish_prepared",
-        "fn report_expired"
+        "fn report_expired",
+        ".tags(status_tags)"
       ],
       "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/pool/restart_status.rs",
+          "callee_symbol": "tags",
+          "invocation": ".tags(status_tags)",
+          "behavior_test": "first_signed_status_carries_selected_history_actor_and_current_or_unknown_occupancy",
+          "verification_command": "cargo test -p buzz-acp --lib first_signed_status_carries_selected_history_actor_and_current_or_unknown_occupancy -- --test-threads=1"
+        },
         {
           "caller_path": "crates/buzz-acp/src/status_tasks.rs",
           "callee_symbol": "run_status_task",
@@ -12302,6 +12333,18 @@
       "invocation_seams": [],
       "verification_commands": [
         "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/restart_status_metadata_tests.rs",
+      "responsibility": "Actual authorized Restart admission, scheduler, ACP usage notifications and signed HTTP publication regressions for first-reply history/actor/current-generation tags, current or unavailable occupancy and exact prepared event persistence across all selected depths.",
+      "is_new": true,
+      "required_symbols": [
+        "fn first_signed_status_carries_selected_history_actor_and_current_or_unknown_occupancy"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp --lib first_signed_status_carries_selected_history_actor_and_current_or_unknown_occupancy -- --test-threads=1"
       ]
     }
   ]

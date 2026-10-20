@@ -25,6 +25,8 @@ async function setup(
       {
         pubkey: AGENT,
         displayName: "ControlBot",
+        avatarUrl:
+          "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Crect width='32' height='32' fill='%233b82f6'/%3E%3Cpath d='M8 10h16v14H8z' fill='white'/%3E%3C/svg%3E",
         ownerPubkey: OWNER,
         isAgent: true,
       },
@@ -86,13 +88,28 @@ function row(page: Page | Locator, id: string) {
 }
 async function openThread(page: Page, root: string) {
   await row(page, root).hover();
-  await page.getByTestId(`reply-message-${root}`).click();
+  const reply = page.getByTestId(`reply-message-${root}`);
+  await reply.focus();
+  await reply.press("Enter");
   await expect(page.getByTestId("message-thread-panel")).toBeVisible();
 }
 async function selectAgent(page: Page, name = "ControlBot") {
   const trigger = page.getByTestId("manage-thread-context");
   await trigger.click();
-  await page.getByRole("menuitem", { name, exact: true }).click();
+  const agent = page.getByRole("menuitem", { name, exact: true });
+  const avatar = agent.getByTestId("thread-context-agent-avatar");
+  await expect(avatar).toHaveAttribute("data-avatar-shape", "squircle");
+  await expect(avatar.locator("..")).toHaveAttribute("aria-hidden", "true");
+  if (name === "ControlBot") {
+    await expect(
+      agent.getByTestId("thread-context-agent-avatar-image"),
+    ).toBeVisible();
+  } else {
+    await expect(
+      agent.getByTestId("thread-context-agent-avatar-fallback"),
+    ).toBeVisible();
+  }
+  await agent.click();
   return trigger;
 }
 async function captureMenu(page: Page, trigger: Locator, name: string) {
@@ -244,6 +261,12 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
   await expect(
     page.getByRole("menuitem", { name: "ControlBot", exact: true }),
   ).toBeVisible();
+  await expect(
+    page
+      .getByRole("menuitem", { name: "ControlBot", exact: true })
+      .getByTestId("thread-context-agent-avatar-image"),
+  ).toBeVisible();
+  await captureMenu(page, trigger, "agent-list-avatar-v1");
   expect(await sends(page)).toHaveLength(0);
   await page.getByRole("menuitem", { name: "ControlBot", exact: true }).click();
   await expect(

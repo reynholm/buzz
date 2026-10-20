@@ -262,9 +262,32 @@ async fn execute(
     if !controls.status_current(job, dispatch) {
         return Err(protocol("restart status superseded after prompt"));
     }
+    let thread_ref = if is_dm {
+        None
+    } else {
+        let root = nostr::EventId::from_hex(&crate::queue::reply_thread(&job.saved.command, None))
+            .map_err(|_| protocol("restart status has no valid thread root"))?;
+        Some(buzz_sdk::ThreadRef {
+            root_event_id: root,
+            parent_event_id: root,
+        })
+    };
+    let status_tags = agent
+        .state
+        .status
+        .get(&scope)
+        .and_then(crate::session_status::StatusBinding::event_tags)
+        .unwrap_or_default()
+        .into_iter()
+        .map(nostr::Tag::parse)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| protocol("restart status metadata could not be serialized"))?;
     let event =
-        build_failure_notice_event(&ctx.agent_keys, channel_id, &reply_tags(job, is_dm), &text)
-            .ok_or_else(|| protocol("restart status could not be signed"))?;
+        buzz_sdk::build_message(channel_id, &text, thread_ref.as_ref(), &[], false, &[], &[])
+            .map_err(|_| protocol("restart status could not be built"))?
+            .tags(status_tags)
+            .sign_with_keys(&ctx.agent_keys)
+            .map_err(|_| protocol("restart status could not be signed"))?;
     controls
         .transition_status(job, RestartStatusPhase::Prepared, Some(event), false, false)
         .map_err(|_| protocol("restart status bytes could not be persisted"))?;

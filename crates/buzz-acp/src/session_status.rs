@@ -277,6 +277,23 @@ impl StatusBinding {
         self.generation.id
     }
 
+    /// Serialize display tags only while this generation is still current.
+    pub(crate) fn event_tags(&self) -> Option<Vec<Vec<String>>> {
+        let generation = &self.generation;
+        let shared = generation.runtime.upgrade()?;
+        let state = lock(&generation.state);
+        state.guard.as_ref()?;
+        let mut envelope = StatusEnvelope::new(
+            shared.identity.clone(),
+            shared.instance_id,
+            generation.scope.clone(),
+            generation.id,
+            state.status.clone(),
+        );
+        envelope.origin = state.origin.clone();
+        envelope.event_tags().ok()
+    }
+
     /// Change the transition within this generation, retaining history/occupancy.
     pub(crate) fn compacted(&self, origin: Option<buzz_core::session_control::ControlOrigin>) {
         let generation = &self.generation;
