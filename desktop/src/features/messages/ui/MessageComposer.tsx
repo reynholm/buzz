@@ -965,7 +965,7 @@ function MessageComposerImpl({
               extraActions={toolbarExtraActions}
               threadContextControl={
                 typeof threadContextControl === "function"
-                  ? threadContextControl(prepareAgentPin)
+                  ? threadContextControl(prepareAgentPin, formRef)
                   : threadContextControl
               }
               formattingDisabled={composerDisabled}

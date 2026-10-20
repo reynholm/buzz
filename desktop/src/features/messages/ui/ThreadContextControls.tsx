@@ -31,10 +31,12 @@ export function ThreadContextControls({
   channel,
   threadHead,
   prepareAgentPin,
+  composerRef,
 }: {
   channel: Channel | null;
   threadHead: TimelineMessage | null;
   prepareAgentPin?: (pubkey: string) => () => void;
+  composerRef?: React.RefObject<HTMLFormElement | null>;
 }) {
   const { activeCommunity } = useCommunities();
   const identity = useIdentityQuery();
@@ -51,6 +53,7 @@ export function ThreadContextControls({
       relayUrl={relayUrl}
       signerPubkey={signerPubkey}
       prepareAgentPin={prepareAgentPin}
+      composerRef={composerRef}
     />
   );
 }
@@ -62,6 +65,7 @@ function ThreadContextPicker({
   relayUrl,
   signerPubkey,
   prepareAgentPin,
+  composerRef,
 }: {
   channel: Channel;
   head: TimelineMessage;
@@ -69,9 +73,14 @@ function ThreadContextPicker({
   relayUrl: string;
   signerPubkey: string;
   prepareAgentPin?: (pubkey: string) => () => void;
+  composerRef?: React.RefObject<HTMLFormElement | null>;
 }) {
   const [open, setOpen] = React.useState(false);
   const [selected, setSelected] = React.useState<string | null>(null);
+  const { triggerRef, menuPosition } = useContextMenuPosition(
+    open,
+    composerRef,
+  );
   const action = useSessionControlAction({
     targetPubkey: selected ?? "",
     channelId: channel.id,
@@ -171,6 +180,7 @@ function ThreadContextPicker({
           <DropdownMenuTrigger asChild>
             <button
               type="button"
+              ref={triggerRef}
               aria-label="Manage context"
               aria-busy={action.pending}
               aria-description={
@@ -200,9 +210,15 @@ function ThreadContextPicker({
           shared={target.shared}
           onBack={() => setSelected(null)}
           prepareAudience={() => prepareAgentPin?.(target.pubkey)}
+          menuPosition={menuPosition}
         />
       ) : (
-        <DropdownMenuContent align="start" className="max-w-80" key="agents">
+        <DropdownMenuContent
+          {...menuPosition}
+          align="start"
+          className="max-w-80"
+          key="agents"
+        >
           {!replies ? (
             <p
               role="status"
@@ -281,4 +297,48 @@ function ThreadContextPicker({
       )}
     </DropdownMenu>
   );
+}
+
+/** Match the mention overlay's gap above the entire composer, including uploads. */
+function useContextMenuPosition(
+  open: boolean,
+  composerRef?: React.RefObject<HTMLFormElement | null>,
+) {
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const [offsets, setOffsets] = React.useState({
+    sideOffset: 4,
+    alignOffset: 0,
+  });
+  React.useLayoutEffect(() => {
+    const composer = composerRef?.current;
+    const trigger = triggerRef.current;
+    if (!open || !composer || !trigger) return;
+    const update = () => {
+      const form = composer.getBoundingClientRect();
+      const button = trigger.getBoundingClientRect();
+      const gap =
+        Number.parseFloat(getComputedStyle(document.documentElement).fontSize) /
+          4 || 4;
+      const next = {
+        sideOffset: button.top - form.top + gap,
+        alignOffset: form.left - button.left,
+      };
+      setOffsets((previous) =>
+        previous.sideOffset === next.sideOffset &&
+        previous.alignOffset === next.alignOffset
+          ? previous
+          : next,
+      );
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(composer);
+    observer.observe(trigger);
+    window.addEventListener("resize", update);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, [composerRef, open]);
+  return { triggerRef, menuPosition: { side: "top" as const, ...offsets } };
 }

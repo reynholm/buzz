@@ -18,12 +18,14 @@ export function MessageSessionControls({
   shared,
   onBack,
   prepareAudience,
+  menuPosition,
 }: {
   action: ReturnType<typeof useSessionControlAction>;
   label: string;
   shared: boolean;
   onBack: () => void;
   prepareAudience?: () => (() => void) | undefined;
+  menuPosition: { side: "top"; sideOffset: number; alignOffset: number };
 }) {
   const descriptionId = useId();
   const run = (command: SessionCommand) => {
@@ -31,7 +33,7 @@ export function MessageSessionControls({
   };
   return (
     <>
-      <DropdownMenuContent align="start" className="max-w-80">
+      <DropdownMenuContent {...menuPosition} align="start" className="max-w-80">
         <DropdownMenuItem
           disabled={action.pending}
           onSelect={(event) => {

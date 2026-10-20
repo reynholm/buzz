@@ -109,8 +109,25 @@ async function selectAgent(page: Page, name = "ControlBot") {
       agent.getByTestId("thread-context-agent-avatar-fallback"),
     ).toBeVisible();
   }
+  await expectContextAboveComposer(page);
   await agent.click();
   return trigger;
+}
+async function expectContextAboveComposer(page: Page) {
+  const form = page
+    .getByTestId("thread-composer-overlay")
+    .getByTestId("message-composer");
+  const menu = page.getByRole("menu").first();
+  await expect(menu).toHaveAttribute("data-side", "top");
+  await expect
+    .poll(async () => {
+      const [field, popup] = await Promise.all([
+        form.boundingBox(),
+        menu.boundingBox(),
+      ]);
+      return field && popup ? field.y - popup.y - popup.height : -1;
+    })
+    .toBeGreaterThanOrEqual(3);
 }
 async function captureMenu(page: Page, trigger: Locator, name: string) {
   await waitForAnimations(page);
@@ -267,6 +284,7 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
       .getByTestId("thread-context-agent-avatar-image"),
   ).toBeVisible();
   await captureMenu(page, trigger, "agent-list-avatar-v1");
+  await expectContextAboveComposer(page);
   expect(await sends(page)).toHaveLength(0);
   await page.getByRole("menuitem", { name: "ControlBot", exact: true }).click();
   await expect(
@@ -736,6 +754,7 @@ test("context stays before mentions across formatting, focus and narrow thread l
   await page.keyboard.press("Space");
   const agent = page.getByRole("menuitem", { name: "ControlBot", exact: true });
   await expect(agent).toBeVisible();
+  await expectContextAboveComposer(page);
   await page.keyboard.press("ArrowDown");
   await expect(agent).toBeFocused();
   await page.keyboard.press("Enter");
@@ -750,6 +769,10 @@ test("context stays before mentions across formatting, focus and narrow thread l
     .click();
   await expect(page.getByTestId("focus-thread-drawer")).toBeVisible();
   await expectContextBeforeMentions(page);
+  await selectAgent(page);
+  await expectContextAboveComposer(page);
+  await composer.getByTestId("manage-thread-context").click();
+  await expect(page.getByRole("menu")).toHaveCount(0);
   await expect(input).toHaveText("Keep my layout draft");
   await page
     .getByRole("button", { name: "Show thread beside channel", exact: true })

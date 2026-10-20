@@ -459,7 +459,9 @@ treat a config-behavior diff without a matching AGENTS.md diff (or an explicit
 
 `Manage context` is a thread-only composer button immediately before mention
 management. An existing persisted root alone qualifies; drafts, placeholders and
-optimistic heads do not. Always show the accessible agent list first, even for
+optimistic heads do not. Its agent list and selected actions open above the entire
+composer with the mention overlay's gap; follow composer growth and pane resizing.
+Always show the accessible agent list first, even for
 one agent, then that agent's actions with Back to agents. Choosing an agent sends
 nothing. Project original signers and explicit agent p-tags from the bounded
 canonical root/reply data and verified directory, independently of automatic

@@ -7840,7 +7840,7 @@ New module: `false`.
 
 ## `desktop/src/features/messages/ui/ThreadContextControls.tsx`
 
-Thread-scoped accessible agent roster from bounded canonical raw history, verified directory and current authority; agent-first picker, scope reset, independent context toolbar trigger and selected action lifetime. Passively subscribe to the active owning validated thread query without replacing query/retry options; ownerless read-only forum previews retain an isolated bounded fallback, while other absent/disabled owners are explicitly unavailable. Resolve eligible-agent profile avatars with decorative shared squircle rendering and initials fallback, preserving accessible collision labels. Own publication progress across menu closure and preserve the selected action while authoritative history refreshes.
+Thread-scoped accessible agent roster from bounded canonical raw history, verified directory and current authority; agent-first picker, scope reset, independent context toolbar trigger and selected action lifetime. Passively subscribe to the active owning validated thread query without replacing query/retry options; ownerless read-only forum previews retain an isolated bounded fallback, while other absent/disabled owners are explicitly unavailable. Resolve eligible-agent profile avatars with decorative shared squircle rendering and initials fallback, preserving accessible collision labels. Own publication progress across menu closure and preserve the selected action while authoritative history refreshes. Position roster and selected actions above the complete composer with a rem-scaled gap, tracking composer and pane resizing.
 
 New module: `true`.
 
@@ -7848,10 +7848,12 @@ New module: `true`.
 - Required symbol: `key={JSON.stringify([relayUrl, signerPubkey, channel.id, rootId])}`
 - Required symbol: `aria-label="Manage context"`
 - Required symbol: `return query?.isActive() ? query.state : undefined;`
+- Required symbol: `function useContextMenuPosition(`
 - Invocation: `desktop/src/features/messages/ui/MessageThreadPanel.tsx` → `ThreadContextControls`; exact call `<ThreadContextControls
                   channel={channel}
                   threadHead={threadHead}
                   prepareAgentPin={prepareAgentPin}
+                  composerRef={composerRef}
                 />`; behavior test `known_agent_without_telemetry_still_has_current_scope_controls`; verify `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 - Invocation: `desktop/src/features/messages/ui/ThreadContextControls.tsx` → `useSyncExternalStore`; exact call `const ownedReplies = React.useSyncExternalStore(`; behavior test `opening the picker preserves the owning notification query validation across gated retries (stream)`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs`
 - Invocation: `desktop/src/features/messages/ui/ThreadContextControls.tsx` → `projectThreadContextAgents`; exact call `projectThreadContextAgents({`; behavior test `same-name agents remain distinct and a relay switch closes selected actions`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs`
@@ -7859,6 +7861,10 @@ New module: `true`.
 - Invocation: `desktop/src/features/messages/ui/ThreadContextControls.tsx` → `useUsersBatchQuery`; exact call `const profiles = useUsersBatchQuery(`; behavior test `production roster resolves profile images and falls back without duplicating accessible labels`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs`
 - Invocation: `desktop/src/features/messages/ui/ThreadContextControls.tsx` → `UserAvatar`; exact call `<UserAvatar
                     avatarUrl={`; behavior test `production roster resolves profile images and falls back without duplicating accessible labels`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs`
+- Invocation: `desktop/src/features/messages/ui/ThreadContextControls.tsx` → `useContextMenuPosition`; exact call `useContextMenuPosition(
+    open,
+    composerRef,
+  )`; behavior test `context stays before mentions across formatting, focus and narrow thread layouts`; verify `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/threadContextAgents.test.mjs`
 - Verify: `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
@@ -7920,7 +7926,7 @@ Forward the independent thread context slot through the composer dock without ed
 
 New module: `false`.
 
-- Required symbol: `threadContextControl(prepareAgentPin)`
+- Required symbol: `threadContextControl(prepareAgentPin, formRef)`
 - Invocation: `desktop/src/features/messages/ui/MessageComposer.tsx` → `ComposerDockToolbar`; exact call `<ComposerDockToolbar
               addressedAgents={
                 editTarget == null && !composerDisabled ? lockedAgents : []
@@ -7932,7 +7938,7 @@ New module: `false`.
               extraActions={toolbarExtraActions}
               threadContextControl={
                 typeof threadContextControl === "function"
-                  ? threadContextControl(prepareAgentPin)
+                  ? threadContextControl(prepareAgentPin, formRef)
                   : threadContextControl
               }`; behavior test `known_agent_without_telemetry_still_has_current_scope_controls`; verify `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
