@@ -401,7 +401,20 @@ async fn failure_outputs_never_become_status_and_keep_restart_result_successful(
 
 #[tokio::test]
 async fn selected_history_keeps_only_a_language_hint_from_omitted_russian_conversation() {
-    for command in ["!restart none", "!restart", "!restart all"] {
+    for (command, coverage) in [
+        (
+            "!restart none",
+            "<thread-context included=\"1\" total=\"3\" truncated=\"true\">",
+        ),
+        (
+            "!restart",
+            "<thread-context included=\"3\" total=\"3\" truncated=\"true\">",
+        ),
+        (
+            "!restart all",
+            "<thread-context included=\"3\" total=\"3\" truncated=\"false\">",
+        ),
+    ] {
         for language in ["ru", "en", "unknown"] {
             let fixture = Fixture::new();
             let human = Keys::generate();
@@ -474,6 +487,15 @@ async fn selected_history_keeps_only_a_language_hint_from_omitted_russian_conver
                 .split_once("</restart-status>")
                 .unwrap()
                 .0;
+            assert!(prompt.contains(coverage), "{command}: {prompt}");
+            for instruction in [
+                "State any missing context explicitly.",
+                "Distinguish missing task details from missing messages; use the supplied messages and history coverage markers (included, total, truncated) for any coverage claim.",
+                "Never call a supplied message absent.",
+                "Omitted history does not prove that no work was done or that a prior request was unfulfilled; report unknown outcomes as unknown.",
+            ] {
+                assert!(request.contains(instruction), "{command}: {request}");
+            }
             assert!(request.contains("Use the same language as the human conversation"));
             assert_eq!(
                 request.contains("Write this status in Russian."),
@@ -485,6 +507,12 @@ async fn selected_history_keeps_only_a_language_hint_from_omitted_russian_conver
                 language == "en",
                 "{command} language={language}: {request}"
             );
+            if command == "!restart none" {
+                assert!(!prompt.contains("[2] "));
+            } else {
+                assert!(prompt.contains("[2] "));
+                assert!(prompt.contains(text));
+            }
             if command == "!restart none" && language == "ru" {
                 assert!(!prompt.contains(text));
             }
