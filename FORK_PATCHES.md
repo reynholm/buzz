@@ -5620,7 +5620,7 @@ New module: `false`.
 
 ## `crates/buzz-cli/TESTING.md`
 
-Specify managed publisher scope, journal durability and retention, recovery opt-in/upgrade requirements and real versus mock-relay checks. Document session-status enrichment, its absence/failure behavior and its automated checks. Document mixed PDF, ZIP and Markdown attachment checks and authenticated byte comparisons.
+Specify managed publisher scope, journal durability and retention, recovery opt-in/upgrade requirements and real versus mock-relay checks. Document session-status enrichment, its absence/failure behavior and its automated checks. Document mixed PDF, ZIP and Markdown attachment checks and authenticated byte comparisons. Document blank message rejection, edit stdin behavior, attachment-only sends and binary regressions.
 
 New module: `false`.
 
@@ -5657,7 +5657,7 @@ New module: `true`.
 
 ## `crates/buzz-cli/src/commands/messages.rs`
 
-Expose messages deliver and preserve original route, stable UUID and signed callback mentions without suppressing ordinary progress or explicit edits. Attach the sender's own best-effort session status to newly prepared kind-9 messages before signing, in the shared send/first-deliver preparation. Emit generic attachments as filename links rather than image markup.
+Expose messages deliver and preserve original route, stable UUID and signed callback mentions without suppressing ordinary progress or explicit edits. Attach the sender's own best-effort session status to newly prepared kind-9 messages before signing, in the shared send/first-deliver preparation. Emit generic attachments as filename links rather than image markup. Reject blank send, first delivery, edit and diff bodies before building events; preserve attachment-only sends and resolve edit stdin before validation.
 
 New module: `false`.
 
@@ -5671,6 +5671,10 @@ New module: `false`.
                 thread_ref.as_ref().map(|t| &t.root_event_id),
             ))`; behavior test `status_reply_carries_thread_status_and_keeps_existing_tags`; verify `cargo test -p buzz-cli session_status -- --test-threads=1`
 - Invocation: `crates/buzz-cli/src/commands/messages.rs` → `attachment_markdown`; exact call `media_content.push_str(&crate::attachments::attachment_markdown(&desc));`; behavior test `messages_emit_file_links_for_multiple_attachments_and_keep_media_markup`; verify `cargo test -p buzz-cli`
+- Invocation: `crates/buzz-cli/src/commands/messages.rs` → `validate_nonempty_content`; exact call `validate_nonempty_content(&p.content)?;`; behavior test `blank_message_commands_fail_before_any_relay_request`; verify `cargo test -p buzz-cli --test message_content`
+- Invocation: `crates/buzz-cli/src/commands/messages.rs` → `validate_nonempty_content`; exact call `validate_nonempty_content(&diff_content)?;`; behavior test `blank_message_commands_fail_before_any_relay_request`; verify `cargo test -p buzz-cli --test message_content`
+- Invocation: `crates/buzz-cli/src/commands/messages.rs` → `validate_nonempty_content`; exact call `validate_nonempty_content(&content)?;`; behavior test `blank_message_commands_fail_before_any_relay_request`; verify `cargo test -p buzz-cli --test message_content`
+- Invocation: `crates/buzz-cli/src/commands/messages.rs` → `read_or_stdin`; exact call `let content = read_or_stdin(content)?;`; behavior test `message_commands_preserve_stdin_bytes_in_signed_events`; verify `cargo test -p buzz-cli --test message_content`
 - Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
 - Verify: `cargo test -p buzz-cli mention -- --test-threads=1`
 - Verify: `cargo test -p buzz-cli session_status -- --test-threads=1`
@@ -5710,7 +5714,7 @@ New module: `false`.
 
 ## `crates/buzz-cli/src/lib.rs`
 
-Define messages deliver arguments and compile production-publisher regression tests. Configure the client with the harness-advertised session-status directory and compile session-status regressions. Compile the attachment formatter and production upload regressions.
+Define messages deliver arguments and compile production-publisher regression tests. Configure the client with the harness-advertised session-status directory and compile session-status regressions. Compile the attachment formatter and production upload regressions. Document stdin support for message edits.
 
 New module: `false`.
 
@@ -8133,3 +8137,24 @@ Exercise the production picker with the actual persistent audience store for too
 New module: `true`.
 
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/contextActionAudience.test.mjs`
+
+## `crates/buzz-cli/src/validate.rs`
+
+Reject whitespace-only message bodies without changing general size-only validation or blank state-clearing semantics; hint when reading interactive stdin.
+
+New module: `false`.
+
+- Required symbol: `pub fn validate_nonempty_content(`
+- Required symbol: `std::io::stdin().is_terminal()`
+- Verify: `cargo test -p buzz-cli --test message_content`
+
+## `crates/buzz-cli/tests/message_content.rs`
+
+Run the actual CLI against a signature-checking mock relay to prove blank message commands make no requests, edits consume stdin, nonblank bytes survive and attachment-only sends publish.
+
+New module: `true`.
+
+- Required symbol: `blank_message_commands_fail_before_any_relay_request`
+- Required symbol: `message_commands_preserve_stdin_bytes_in_signed_events`
+- Required symbol: `attachment_only_message_still_uploads_and_publishes`
+- Verify: `cargo test -p buzz-cli --test message_content`

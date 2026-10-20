@@ -72,6 +72,16 @@ pub fn validate_content_size(content: &str) -> Result<(), CliError> {
     Ok(())
 }
 
+/// Reject empty or whitespace-only message content before any relay operations.
+pub fn validate_nonempty_content(content: &str) -> Result<(), CliError> {
+    if content.trim().is_empty() {
+        return Err(CliError::Usage(
+            "content is empty (did you forget to pipe stdin for --content - or --diff -?)".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Percent-encode for URL path segments and query parameter values.
 /// Encodes all bytes except RFC 3986 unreserved: A-Z a-z 0-9 - _ . ~
 #[cfg(test)]
@@ -167,7 +177,10 @@ pub fn sdk_err(e: buzz_sdk::SdkError) -> CliError {
 /// Read content from a string value or stdin if the value is "-".
 pub fn read_or_stdin(value: &str) -> Result<String, CliError> {
     if value == "-" {
-        use std::io::Read;
+        use std::io::{IsTerminal, Read};
+        if std::io::stdin().is_terminal() {
+            eprintln!("reading content from stdin until EOF");
+        }
         let mut buf = String::new();
         std::io::stdin()
             .read_to_string(&mut buf)
@@ -200,6 +213,23 @@ pub fn read_file_or_stdin(value: &str) -> Result<String, CliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nonempty_content_rejects_blank_text() {
+        for content in ["", " ", "\t\r\n", "\u{00a0}\u{2003}\u{3000}"] {
+            assert!(matches!(
+                validate_nonempty_content(content),
+                Err(CliError::Usage(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn nonempty_content_accepts_text_without_changing_it() {
+        for content in ["hello", "  hello\n", "\n```rust\nfn main() {}\n```\n"] {
+            assert!(validate_nonempty_content(content).is_ok());
+        }
+    }
 
     // --- validate_uuid ---
 
