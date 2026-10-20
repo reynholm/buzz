@@ -108,21 +108,8 @@ test("reaction pills render left-to-right in the order reactions were added", as
 
   const pills = await getPillOrder(row);
   expect(pills).toEqual(["👍", "❤️", "😂"]);
-  const controls = row.getByTestId("manage-current-session");
-  await expect(controls).toBeVisible();
-  await expect
-    .poll(async () => {
-      const body = await row.locator(".message-markdown").first().boundingBox();
-      const control = await controls.boundingBox();
-      const reactions = await row
-        .getByTestId("message-reactions")
-        .boundingBox();
-      if (!body || !control || !reactions)
-        throw new Error("agent reaction bounds missing");
-      expect(control.y).toBeGreaterThanOrEqual(body.y + body.height);
-      return Math.round(reactions.y - (control.y + control.height));
-    })
-    .toBe(6);
+  await expect(row.getByTestId("manage-current-session")).toHaveCount(0);
+  await expect.poll(() => getBodyToReactionGap(row)).toBe(6);
 
   // Screenshot for PR visual proof.
   const screenshotDir = path.resolve("test-results/reaction-order-screenshots");

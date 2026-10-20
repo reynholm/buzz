@@ -42,10 +42,11 @@ The native lock also updates `h2` to 0.4.16 and `rtrb` to 0.3.5, fixing
 [RUSTSEC-2026-0274](https://rustsec.org/advisories/RUSTSEC-2026-0274.html).
 NetEq 0.8.3 also declared an unused ringbuf dependency affected by
 [RUSTSEC-2026-0293](https://rustsec.org/advisories/RUSTSEC-2026-0293.html).
-The [compatibility pin](https://github.com/reynholm/videocall-rs/commit/16729881b0a80022a7cbe0acc94c9becf2fad313)
+The [compatibility pin](https://github.com/security-union/videocall-rs/commit/16729881b0a80022a7cbe0acc94c9becf2fad313)
 removes only that manifest entry; the decoder/jitter-buffer source and API
 remain identical to 0.8.3. Remove the pin when an upstream compatible NetEq
 release drops the unused dependency.
+The public source URL preserves the exact pinned commit and dependency contents.
 
 Tauri 2.12.4 with utilities 2.10.2 removes the retired Unicode package graph via urlpattern
 0.6. The coordinated Tauri 2 update is required because utilities 2.10 adds

@@ -11569,7 +11569,7 @@
     },
     {
       "path": "desktop/tests/e2e/reaction-order.spec.ts",
-      "responsibility": "Preserve ordinary6px reaction adjacency and separately assert intended agent controls before chronological/interactive reactions.",
+      "responsibility": "Preserve chronological reaction ordering, exact six-pixel body adjacency for ordinary and metadata-free agent messages, and absence of removed per-message session controls.",
       "is_new": false,
       "required_symbols": [
         "ordinary non-agent reactions stay adjacent to the message body",

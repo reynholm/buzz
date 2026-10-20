@@ -7593,7 +7593,7 @@ New module: `false`.
 
 ## `desktop/tests/e2e/reaction-order.spec.ts`
 
-Preserve ordinary6px reaction adjacency and separately assert intended agent controls before chronological/interactive reactions.
+Preserve chronological reaction ordering, exact six-pixel body adjacency for ordinary and metadata-free agent messages, and absence of removed per-message session controls.
 
 New module: `false`.
 
