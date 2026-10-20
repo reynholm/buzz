@@ -467,6 +467,24 @@ async fn selected_history_keeps_only_a_language_hint_from_omitted_russian_conver
                 prompt.contains(&format!("conversation-language=\"{language}\"")),
                 "{prompt}"
             );
+            let request = prompt
+                .split_once("<restart-status ")
+                .unwrap()
+                .1
+                .split_once("</restart-status>")
+                .unwrap()
+                .0;
+            assert!(request.contains("Use the same language as the human conversation"));
+            assert_eq!(
+                request.contains("Write this status in Russian."),
+                language == "ru",
+                "{command} language={language}: {request}"
+            );
+            assert_eq!(
+                request.contains("Write this status in English."),
+                language == "en",
+                "{command} language={language}: {request}"
+            );
             if command == "!restart none" && language == "ru" {
                 assert!(!prompt.contains(text));
             }

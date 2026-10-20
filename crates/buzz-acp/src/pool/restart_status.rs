@@ -231,8 +231,13 @@ async fn execute(
     if let Some(context) = &context {
         sections.push(crate::queue::format_conversation_context(context, None));
     }
+    let language_instruction = match language {
+        "ru" => " Write this status in Russian.",
+        "en" => " Write this status in English.",
+        _ => "",
+    };
     sections.push(format!(
-        "<restart-status conversation-language=\"{language}\">\n{REQUEST}\n</restart-status>"
+        "<restart-status conversation-language=\"{language}\">\n{REQUEST}{language_instruction}\n</restart-status>"
     ));
     if !controls.status_current(job, dispatch) {
         return Err(protocol("restart status superseded before prompt"));
