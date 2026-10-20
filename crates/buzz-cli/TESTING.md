@@ -541,6 +541,19 @@ buzz messages vote --event "$(printf '0%.0s' {1..64})" \
 buzz users set-profile 2>&1; echo "exit: $?"
 # exit: 1 (at least one field required)
 
+# Exit 1 before any relay request: empty or whitespace-only message text
+buzz messages send --channel "$CHANNEL_ID" --content - </dev/null
+printf ' \t\n' | buzz messages send --channel "$CHANNEL_ID" --content -
+buzz messages edit --event "$EVENT_ID" --content ""
+buzz messages send-diff --channel "$CHANNEL_ID" --repo https://example.com/repo \
+  --commit "$(printf 'a%.0s' {1..40})" --diff - </dev/null
+# stderr: {"error":"user_error","message":"content is empty (...)"}
+# Attachment-only sends remain valid with --content "" --file <path>.
+# `messages edit --content -` reads stdin just like send; surrounding whitespace
+# in a nonblank body is preserved. Interactive stdin prints an EOF hint to stderr.
+# Binary regressions (local mock relay, verifies signatures and no blank writes):
+cargo test -p buzz-cli --test message_content
+
 # Exit 3: No auth configured
 env -u BUZZ_PRIVATE_KEY \
   cargo run -p buzz-cli -- channels list 2>&1; echo "exit: $?"

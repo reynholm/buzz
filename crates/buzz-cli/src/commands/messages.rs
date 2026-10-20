@@ -6,7 +6,8 @@ use crate::client::{normalize_events, normalize_write_response, BuzzClient};
 use crate::error::CliError;
 use crate::validate::{
     infer_language, parse_event_id, parse_uuid, read_or_stdin, truncate_diff,
-    validate_content_size, validate_hex64, validate_uuid, MAX_DIFF_BYTES,
+    validate_content_size, validate_hex64, validate_nonempty_content, validate_uuid,
+    MAX_DIFF_BYTES,
 };
 use buzz_sdk::mentions::{
     extract_at_mentions_with_known, extract_nostr_uris, strip_code_regions, MENTION_CAP,
@@ -640,6 +641,9 @@ pub(super) async fn prepare_message(
     // quoting — the source of countless self-inflicted command-substitution
     // bugs for agent and human users alike.
     p.content = read_or_stdin(&p.content)?;
+    if p.files.is_empty() {
+        validate_nonempty_content(&p.content)?;
+    }
     validate_content_size(&p.content)?;
     if let Some(ref r) = p.reply_to {
         validate_hex64(r)?;
@@ -812,6 +816,7 @@ pub async fn cmd_send_diff_message(client: &BuzzClient, p: SendDiffParams) -> Re
 
     // Read diff from stdin if "--diff -"
     let diff_content = read_or_stdin(&p.diff)?;
+    validate_nonempty_content(&diff_content)?;
 
     // Truncate at 60 KiB hunk boundary
     let (diff, truncated) = truncate_diff(&diff_content, MAX_DIFF_BYTES);
@@ -904,13 +909,15 @@ pub async fn cmd_edit_message(
     content: &str,
 ) -> Result<(), CliError> {
     validate_hex64(event_id)?;
-    validate_content_size(content)?;
+    let content = read_or_stdin(content)?;
+    validate_nonempty_content(&content)?;
+    validate_content_size(&content)?;
 
     // Resolve channel_id from the event's h-tag
     let channel_uuid = resolve_channel_id(client, event_id).await?;
     let target_eid = parse_event_id(event_id)?;
 
-    let builder = buzz_sdk::build_edit(channel_uuid, target_eid, content)
+    let builder = buzz_sdk::build_edit(channel_uuid, target_eid, &content)
         .map_err(|e| CliError::Other(format!("build_edit failed: {e}")))?;
 
     let event = client.sign_event(builder)?;
