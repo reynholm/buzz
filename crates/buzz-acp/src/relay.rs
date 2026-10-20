@@ -605,6 +605,19 @@ impl RestClient {
     /// Submit once when the caller owns the complete retry budget. The
     /// acknowledgment is bounded independently from ordinary relay requests.
     pub(crate) async fn submit_event_once(&self, event: &Event) -> Result<(), RelayError> {
+        self.submit_event_once_checked(event, false).await
+    }
+
+    /// Require the relay to acknowledge this exact immutable signed event.
+    pub(crate) async fn submit_event_once_exact(&self, event: &Event) -> Result<(), RelayError> {
+        self.submit_event_once_checked(event, true).await
+    }
+
+    async fn submit_event_once_checked(
+        &self,
+        event: &Event,
+        exact: bool,
+    ) -> Result<(), RelayError> {
         let body = serde_json::to_vec(event)
             .map_err(|error| RelayError::Http(format!("event serialize error: {error}")))?;
         let url = format!("{}/events", self.base_url);
@@ -645,6 +658,14 @@ impl RestClient {
             serde_json::from_slice(&body).map_err(|error| RelayError::Http(error.to_string()))?;
         if acknowledgment.get("accepted").and_then(Value::as_bool) != Some(true) {
             return Err(RelayError::Http("relay did not accept event".into()));
+        }
+        if exact
+            && acknowledgment.get("event_id").and_then(Value::as_str)
+                != Some(event.id.to_hex().as_str())
+        {
+            return Err(RelayError::Http(
+                "relay acknowledgment did not match the prepared event".into(),
+            ));
         }
         Ok(())
     }

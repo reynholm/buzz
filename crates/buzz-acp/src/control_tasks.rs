@@ -7,7 +7,9 @@ pub(crate) fn wake_pending(
     queue: &mut EventQueue,
     controls: &session_controls::SessionControlRuntime,
 ) -> bool {
-    queue.has_flushable_work() || !controls.pending_compactions().is_empty()
+    queue.has_flushable_work()
+        || !controls.pending_compactions().is_empty()
+        || !controls.pending_statuses().is_empty()
 }
 
 pub(crate) fn dispatch(

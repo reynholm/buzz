@@ -111,6 +111,8 @@ export type MessageComposerProps = {
   /** Render the app-wide upload queue above this composer dock. */
   showBackgroundUploadProgress?: boolean;
   toolbarExtraActions?: ReactNode;
+  /** Thread-only control directly before mention management. */
+  threadContextControl?: ReactNode;
   typingParentEventId?: string | null;
   typingRootEventId?: string | null;
 };

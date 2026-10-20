@@ -38,6 +38,7 @@ export const MessageComposerToolbar = React.memo(
     composerDisabled,
     editor,
     extraActions,
+    threadContextControl,
     formattingDisabled,
     gifMediaController,
     isEmojiPickerOpen,
@@ -70,6 +71,7 @@ export const MessageComposerToolbar = React.memo(
     composerDisabled: boolean;
     editor: Editor | null;
     extraActions?: React.ReactNode;
+    threadContextControl?: React.ReactNode;
     formattingDisabled: boolean;
     gifMediaController: Pick<MediaUploadController, "setPendingImeta">;
     isEmojiPickerOpen: boolean;
@@ -98,6 +100,22 @@ export const MessageComposerToolbar = React.memo(
     shakeVersionByPubkey?: Readonly<Record<string, number>>;
   }) {
     const shouldReduceMotion = useReducedMotion();
+    const mentionButton = (
+      <ComposerMentionButton
+        agents={addressedAgents}
+        confirmationTitle={autoPinConfirmationTitle}
+        disabled={composerDisabled}
+        onConfirmationDismiss={onAutoPinConfirmationDismiss}
+        onConfirmationHoverChange={onAutoPinConfirmationHoverChange}
+        onConfirmationTurnOff={onAutoPinConfirmationTurnOff}
+        onCaptureSelection={onCaptureSelection}
+        onOpen={onOpenMentionPicker}
+        onRemove={onRemoveAddressedAgent}
+        pulseVersionByPubkey={pulseVersionByPubkey}
+        shakeVersionByPubkey={shakeVersionByPubkey}
+        showAgents
+      />
+    );
 
     return (
       <div
@@ -118,6 +136,8 @@ export const MessageComposerToolbar = React.memo(
            * The Aa toggle is duplicated inside both groups so
            * AnimatePresence handles the crossfade.
            */}
+          {threadContextControl}
+          {threadContextControl ? mentionButton : null}
           <AnimatePresence mode="popLayout" initial={false}>
             {voiceNoteRecorder ? (
               <motion.div
@@ -225,20 +245,7 @@ export const MessageComposerToolbar = React.memo(
                 variants={ingressControlVariants}
                 transition={presenceSpring}
               >
-                <ComposerMentionButton
-                  agents={addressedAgents}
-                  confirmationTitle={autoPinConfirmationTitle}
-                  disabled={composerDisabled}
-                  onConfirmationDismiss={onAutoPinConfirmationDismiss}
-                  onConfirmationHoverChange={onAutoPinConfirmationHoverChange}
-                  onConfirmationTurnOff={onAutoPinConfirmationTurnOff}
-                  onCaptureSelection={onCaptureSelection}
-                  onOpen={onOpenMentionPicker}
-                  onRemove={onRemoveAddressedAgent}
-                  pulseVersionByPubkey={pulseVersionByPubkey}
-                  shakeVersionByPubkey={shakeVersionByPubkey}
-                  showAgents
-                />
+                {!threadContextControl ? mentionButton : null}
                 <Tooltip disableHoverableContent>
                   <TooltipTrigger asChild>
                     <Button

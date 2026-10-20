@@ -2,7 +2,7 @@ use super::*;
 
 // Session-control regressions construct every job through the existing author
 // capability; no raw event can call the controller's effect API.
-async fn authorized_control(
+pub(super) async fn authorized_control(
     ctx: &PromptContext,
     human: &Keys,
     scope: &SessionScope,

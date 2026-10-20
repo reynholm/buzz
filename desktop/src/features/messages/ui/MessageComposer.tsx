@@ -98,6 +98,7 @@ function MessageComposerImpl({
   showBackgroundUploadProgress = true,
   showTopBorder = false,
   toolbarExtraActions,
+  threadContextControl,
   typingParentEventId = null,
   typingRootEventId = null,
 }: MessageComposerProps) {
@@ -961,6 +962,7 @@ function MessageComposerImpl({
               composerDisabled={composerDisabled}
               editor={richText.editor}
               extraActions={toolbarExtraActions}
+              threadContextControl={threadContextControl}
               formattingDisabled={composerDisabled}
               gifMediaController={media}
               isEmojiPickerOpen={isEmojiPickerOpen}

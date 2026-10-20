@@ -457,14 +457,31 @@ treat a config-behavior diff without a matching AGENTS.md diff (or an explicit
 
 ## Scoped session controls
 
-`Manage current session` is a separate menu beside the quiet message status,
-including for known agents without optional telemetry. It targets the original
-agent signer and canonical thread root. Fresh verified relay ownership, policy,
+`Manage context` is a thread-only composer button immediately before mention
+management. An existing persisted root alone qualifies; drafts, placeholders and
+optimistic heads do not. Always show the accessible agent list first, even for
+one agent, then that agent's actions with Back to agents. Choosing an agent sends
+nothing. Project original signers and explicit agent p-tags from the bounded
+canonical root/reply data and verified directory, independently of automatic
+mention pins; incomplete history cannot claim a complete roster. Bind the roster
+to the active owning thread query's raw data and validation state. A
+passive cache subscription must not replace that owner's expected-reply query
+function or retry policy. Read-only project forum previews use an isolated
+bounded fallback only while their ordinary owner is disabled; an active owner's
+pending/error state always takes precedence. Other missing owners remain
+unavailable. Keep the button available while the editor is disabled or sending.
+Message rows retain quiet
+status and signed command/result rows without a duplicate control trigger.
+
+Actions target the selected original agent signer and canonical thread root.
+Fresh verified relay ownership, policy,
 channel type and membership authorize publication; local inventory and status
 tags never grant access. Preserve owner/sibling-only DMs and independently
 operated cross-owner relay agents in marked builds. Managed runtime access
 remains governed by rule 11. The action captures relay and signer before reads,
-revalidates at click, and leaves the composer draft untouched on every outcome.
+revalidates at click, and leaves the composer draft, selection, attachments and
+mentions untouched on every outcome. Thread, relay and requester changes reset
+the picker and retire selected actions before any awaited result can publish.
 
 Start over stops current work, including subagents, while keeping file changes.
 Its submenu carries that warning once; no additional confirmation is required.
@@ -475,6 +492,8 @@ not. Conflicts are unconfirmed. Manual transition actors use validated matching
 supporting tags and existing batched profile reads; absent metadata stays neutral.
 
 `messages/lib/sessionControl*.test.mjs`,
+`messages/lib/threadContextAgents.test.mjs`,
+`messages/ui/ThreadContextControls.jsdom-test.mjs`,
 `messages/lib/useSessionControlAction.jsdom-test.mjs`, and the registered
 `desktop/tests/e2e/session-controls.spec.ts` cover grammar, permissions, races,
 command presentation, keyboard menus and draft preservation. Keep the existing

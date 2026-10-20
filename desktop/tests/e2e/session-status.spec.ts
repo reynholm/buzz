@@ -168,6 +168,20 @@ test("session status explains each transition once and shows reported context", 
   });
 
   const timeline = page.getByTestId("message-timeline");
+  const resumedRow = row(timeline, resumed);
+  const scrollToLatest = page.getByTestId("message-scroll-to-latest");
+  // Live arrivals can wait behind the timeline's pending-tail affordance.
+  await expect
+    .poll(
+      async () =>
+        (await resumedRow.isVisible()) || (await scrollToLatest.isVisible()),
+    )
+    .toBe(true);
+  if (!(await resumedRow.isVisible())) {
+    await expect(scrollToLatest).toBeVisible();
+    await scrollToLatest.click();
+  }
+  await expect(resumedRow).toBeVisible();
 
   // New session: explanation with exact history, no fabricated percentage.
   await expect(statusOf(page, first)).toContainText("New session");
@@ -206,9 +220,13 @@ test("session status explains each transition once and shows reported context", 
   const statusGroup = statusOf(page, first).locator("..");
   await expect(
     statusGroup.getByRole("button", { name: "Manage current session" }),
-  ).toBeVisible();
+  ).toHaveCount(0);
+  await expect(page.getByTestId("manage-current-session")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Manage context" }),
+  ).toHaveCount(0);
   await waitForAnimations(page);
-  await statusGroup.screenshot({ path: `${SHOT}/status-with-controls.png` });
+  await statusGroup.screenshot({ path: `${SHOT}/quiet-status.png` });
 
   // Thread scope: a human root, two agent replies in one thread transition.
   const root = await emit(page, {
@@ -242,7 +260,8 @@ test("session status explains each transition once and shows reported context", 
   });
 
   await expect(row(page, root)).toBeVisible();
-  await page.getByTestId(`reply-message-${root}`).click({ force: true });
+  await row(timeline, root).hover();
+  await page.getByTestId(`reply-message-${root}`).click();
   const threadPanel = page.getByTestId("message-thread-panel");
   await expect(threadPanel).toBeVisible();
 
@@ -257,6 +276,26 @@ test("session status explains each transition once and shows reported context", 
   // The human root never gets a status line.
   await expect(statusOf(threadPanel, root)).toHaveCount(0);
   await expectQuietRows(threadPanel);
+
+  const context = threadPanel.getByRole("button", { name: "Manage context" });
+  await expect(context).toBeVisible();
+  await context.click();
+  const agent = page.getByRole("menuitem", { name: "StatusBot", exact: true });
+  await expect(agent).toBeVisible();
+  await agent.click();
+  await expect(
+    page.getByRole("menuitem", { name: "Compact context", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("menuitem", { name: "Restart", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("menuitem", { name: "Back to agents", exact: true })
+    .click();
+  await expect(agent).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(context).toBeFocused();
+  await expect(page.getByTestId("manage-current-session")).toHaveCount(0);
 
   await waitForAnimations(page);
   await page.screenshot({ path: `${SHOT}/thread-status.png` });

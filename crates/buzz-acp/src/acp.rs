@@ -8,6 +8,7 @@
 
 mod claude_context;
 mod launch;
+mod restart_status;
 
 use std::collections::{HashMap, HashSet};
 
@@ -155,6 +156,7 @@ fn build_initialize_params() -> serde_json::Value {
 /// One `AcpClient` per agent process. Multiple sessions can be created on the
 /// same client via repeated calls to [`session_new`](AcpClient::session_new).
 pub struct AcpClient {
+    status_capture: Option<restart_status::StatusCapture>,
     termination: terminate::TerminationState,
     #[cfg(test)]
     pub(crate) background_child_snapshots: std::collections::VecDeque<Option<HashSet<u32>>>,
@@ -684,6 +686,7 @@ impl AcpClient {
             claude_thinking_summaries,
             resident_pids: HashSet::new(),
             session_status: HashMap::new(),
+            status_capture: None,
             compactions: compaction::CompactionTracker::default(),
         })
     }
@@ -2086,6 +2089,12 @@ impl AcpClient {
                                     last_activity_at = activity_now;
                                     tracing::debug!("idle clock reset: tool call started");
                                 }
+                                if self.status_capture_invalid() {
+                                    return Err(AcpError::Protocol(
+                                        "status turn attempted a tool or exceeded its output limit"
+                                            .into(),
+                                    ));
+                                }
                             }
                             "_goose/unstable/session/update" => {
                                 self.handle_goose_usage_update(&msg);
@@ -2131,6 +2140,7 @@ impl AcpClient {
     /// leave it `None` and are steered via `_session/steering` instead, which
     /// needs no run id.
     fn handle_session_update(&mut self, msg: &serde_json::Value) -> bool {
+        self.capture_status_update(msg);
         let update = &msg["params"]["update"];
         let update_type = update
             .get("sessionUpdate")
@@ -2350,6 +2360,19 @@ impl AcpClient {
             .get("id")
             .cloned()
             .ok_or_else(|| AcpError::Protocol("permission request missing id".into()))?;
+
+        if self.status_capture.as_ref().is_some_and(|capture| {
+            msg["params"]["sessionId"].as_str() == Some(capture.session.as_str())
+        }) {
+            if let Some(capture) = &mut self.status_capture {
+                capture.invalid = true;
+            }
+            let response = permission_response_cancelled(&id);
+            self.write_ndjson(&response).await?;
+            return Err(AcpError::Protocol(
+                "tools are forbidden during restart status".into(),
+            ));
+        }
 
         // Store pending permission id so cancel_with_cleanup can respond to it.
         self.pending_permission_id = Some(id.clone());

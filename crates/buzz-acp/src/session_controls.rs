@@ -121,6 +121,8 @@ struct ScopeControl {
     lifetime: Arc<()>,
     epoch: Uuid,
     retiring: Option<ControlJob>,
+    // Exact locally accepted Restart ownership survives unavailable store reads.
+    restart_status_token: Option<Uuid>,
     retirement: retirement::Retirement,
 }
 
@@ -131,6 +133,8 @@ struct State {
     publications: std::collections::VecDeque<retirement::Publication>,
     compactions: HashMap<SessionScope, compaction::PendingCompaction>,
     receipt_writes: HashMap<String, receipt_writes::ReceiptPersistence>,
+    statuses: HashMap<SessionScope, status::StatusJob>,
+    status_authority: Option<status::Authority>,
     outcomes: HashMap<
         String,
         (
@@ -164,8 +168,11 @@ impl State {
         self.publications.push_back(publication);
     }
     fn prune_quiescent(&mut self) {
-        self.scopes
-            .retain(|_, entry| entry.retiring.is_some() || Arc::strong_count(&entry.lifetime) > 1);
+        self.scopes.retain(|scope, entry| {
+            entry.retiring.is_some()
+                || self.statuses.contains_key(scope)
+                || Arc::strong_count(&entry.lifetime) > 1
+        });
     }
 }
 
@@ -204,6 +211,7 @@ impl SessionControlRuntime {
                 lifetime: Arc::new(()),
                 epoch: Uuid::new_v4(),
                 retiring: None,
+                restart_status_token: None,
                 retirement: retirement::Retirement::default(),
             });
         ControlDispatch {
@@ -244,6 +252,7 @@ impl SessionControlRuntime {
             .filter(|(_, entry)| entry.retiring.is_some())
             .map(|(scope, _)| scope)
             .chain(state.compactions.keys())
+            .chain(state.statuses.keys())
             .collect::<std::collections::HashSet<_>>()
             .len();
         if pending_scope_count + state.receipt_writes.len() >= 128
@@ -264,7 +273,21 @@ impl SessionControlRuntime {
             depth,
             origin: job.origin.clone(),
         };
-        let superseded = store.request_restart_superseding(&job.scope, &intent)?;
+        let status = crate::session_store::RestartStatus {
+            token: intent.token,
+            origin: intent.origin.clone(),
+            scope: job.scope.clone(),
+            command: job.event.clone(),
+            owner: store.instance(),
+            deadline: 0,
+            phase: crate::session_store::RestartStatusPhase::WaitingRetirement,
+            prepared: None,
+            failure_notice: false,
+            notice: None,
+            notice_confirmed: false,
+        };
+        let superseded = store.request_restart_status(&job.scope, &intent, status)?;
+        state.statuses.remove(&job.scope);
         if matches!(store.load(&job.scope), LoadOutcome::Found(record) if record.pending_restart.as_ref().map(|saved| saved.token) != Some(intent.token))
         {
             return Ok(false);
@@ -298,6 +321,7 @@ impl SessionControlRuntime {
                 lifetime: Arc::new(()),
                 epoch: job.dispatch_epoch,
                 retiring: Some(job),
+                restart_status_token: Some(intent.token),
                 retirement: retirement.reset(),
             },
         );
@@ -341,11 +365,24 @@ impl SessionControlRuntime {
             .map(|(scope, _)| scope.clone())
             .collect();
         scopes.extend(state.compactions.keys().cloned());
+        scopes.extend(state.statuses.keys().cloned());
         scopes
     }
 
     /// Explicit channel revocation clears control-only records even without resume.
     pub(crate) fn revoke_channel(&self, channel: Uuid) -> Result<(), StoreError> {
+        let scopes: Vec<_> = self
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .statuses
+            .keys()
+            .filter(|scope| scope.channel_id() == channel)
+            .cloned()
+            .collect();
+        for scope in scopes {
+            self.cancel_status(&scope);
+        }
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let removed: Vec<_> = state
             .compactions
@@ -415,6 +452,7 @@ impl ControlDispatch {
 pub(crate) mod compaction;
 mod receipt_writes;
 mod retirement;
+pub(crate) mod status;
 pub(crate) use compaction::{AdmittedSessionControl, CompactionTarget};
 pub(crate) use retirement::Publication;
 

@@ -1,4 +1,3 @@
-import { MessageSessionControls } from "./MessageSessionControls";
 import { MessageSessionControlRow } from "./MessageSessionControlRow";
 import * as React from "react";
 import { AlertTriangle } from "lucide-react";
@@ -705,12 +704,6 @@ export const MessageRow = React.memo(
         <div className="flex items-start gap-1">
           {message.sessionStatus ? (
             <MessageSessionStatus status={message.sessionStatus} />
-          ) : null}
-          {channelId &&
-          isAuthorAgent &&
-          !message.sessionControl &&
-          message.kind === 9 ? (
-            <MessageSessionControls channelId={channelId} message={message} />
           ) : null}
         </div>
         {!message.sessionControl ? (

@@ -84,7 +84,8 @@ impl SessionStore {
         scope: &SessionScope,
         intent: &RestartIntent,
     ) -> Result<(), StoreError> {
-        self.request_restart_inner(scope, intent, false).map(|_| ())
+        self.request_restart_inner(scope, intent, false, None)
+            .map(|_| ())
     }
 
     /// Supersede this instance's active controls in the same atomic reset.
@@ -93,7 +94,16 @@ impl SessionStore {
         scope: &SessionScope,
         intent: &RestartIntent,
     ) -> Result<Vec<String>, StoreError> {
-        self.request_restart_inner(scope, intent, true)
+        self.request_restart_inner(scope, intent, true, None)
+    }
+
+    pub(super) fn controls_request_restart_status(
+        &self,
+        scope: &SessionScope,
+        intent: &RestartIntent,
+        status: RestartStatus,
+    ) -> Result<Vec<String>, StoreError> {
+        self.request_restart_inner(scope, intent, true, Some(status))
     }
 
     fn request_restart_inner(
@@ -101,6 +111,7 @@ impl SessionStore {
         scope: &SessionScope,
         intent: &RestartIntent,
         supersede: bool,
+        status: Option<RestartStatus>,
     ) -> Result<Vec<String>, StoreError> {
         let mut superseded = Vec::new();
         intent
@@ -136,6 +147,7 @@ impl SessionStore {
             );
             record.reason = Some(SessionReason::UserRestart(intent.depth));
             record.pending_restart = Some(intent.clone());
+            record.restart_status = status;
             Ok(record)
         })
         .or_else(|err| match err {
@@ -153,6 +165,13 @@ impl SessionStore {
                 return Err(StoreError::Conflict);
             }
             record.pending_restart = None;
+            if let Some(status) = record
+                .restart_status
+                .as_mut()
+                .filter(|status| status.token == token && status.active())
+            {
+                status.phase = RestartStatusPhase::Cancelled;
+            }
             Ok(record)
         })
     }
@@ -250,7 +269,21 @@ impl SessionStore {
             }
             match prior.state {
                 ControlReceiptState::Started => {
-                    prior.state = ControlReceiptState::Finished(*result)
+                    prior.state = ControlReceiptState::Finished(*result);
+                    if let Some(status) = record
+                        .restart_status
+                        .as_mut()
+                        .filter(|status| status.origin.command_event_id == command_id)
+                    {
+                        if *result == Ok(())
+                            && status.phase == RestartStatusPhase::WaitingRetirement
+                        {
+                            status.phase = RestartStatusPhase::Pending;
+                            status.deadline = unix_now()?.saturating_add(120);
+                        } else if result.is_err() {
+                            status.phase = RestartStatusPhase::Cancelled;
+                        }
+                    }
                 }
                 ControlReceiptState::Finished(previous) if previous == *result => {
                     return Err(StoreError::AlreadyRecorded)
@@ -406,7 +439,11 @@ fn unix_now() -> Result<u64, StoreError> {
 /// Validate persisted metadata without dropping legacy provider records.
 pub(super) fn valid_controls(record: &SessionRecord) -> bool {
     let mut ids = HashSet::new();
-    record.control_receipts.len() <= MAX_CONTROL_RECEIPTS
+    record
+        .restart_status
+        .as_ref()
+        .is_none_or(RestartStatus::valid)
+        && record.control_receipts.len() <= MAX_CONTROL_RECEIPTS
         && record
             .control_receipts
             .iter()

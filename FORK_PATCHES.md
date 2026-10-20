@@ -2196,7 +2196,7 @@ New module: `true`.
 
 ## `desktop/src/features/agents/AGENTS.md`
 
-Device sharing creation UI, authoritative home presentation and saved-definition recovery Document scoped session permission, routing, restart warning, original command/result authority and batched actor behavior.
+Device sharing creation UI, authoritative home presentation and saved-definition recovery Document scoped session permission, routing, restart warning, original command/result authority and batched actor behavior. Thread-composer agent-first context placement, bounded raw participant roster, disabled-editor availability and captured scope reset.
 
 New module: `false`.
 
@@ -2807,6 +2807,7 @@ New module: `false`.
 - Required symbol: `mod session_status;`
 - Required symbol: `name == session_status::SESSION_STATUS_DIR_ENV`
 - Required symbol: `ctx.session_controls.compact_pending(&scope) && batch.continuation.is_none()`
+- Required symbol: `fn handle_owner_cancel_for_scope`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `result_refreshes_idle_clock`; exact call `if result_refreshes_idle_clock(&result.source) {`; behavior test `error_outcome_emission_tests::channel_result_refreshes_idle_clock_wiring`; verify `cargo test -p buzz-acp --lib error_outcome_emission_tests::channel_result_refreshes_idle_clock_wiring -- --exact`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `depart_idle_sessions`; exact call `pool.depart_idle_sessions(session_store::Departure::IdleSleep);`; behavior test `pool_sleep_marks_every_idle_session`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `restart`; exact call `match ctx.session_controls.restart(job) {`; behavior test `restart_during_delayed_acquisition_fences_old_dispatch`; verify `cargo test -p buzz-acp -- --test-threads=1`
@@ -2819,6 +2820,7 @@ New module: `false`.
 - Invocation: `crates/buzz-acp/src/lib.rs` → `admit_authorized`; exact call `session_controls::admit_authorized(`; behavior test `controls_use_author_capability_before_subscription_and_reserve_wrong_targets`; verify `cargo test -p buzz-acp --lib controls_use_author_capability_before_subscription_and_reserve_wrong_targets -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `capture`; exact call `agent.state.control_dispatch = Some(ctx.session_controls.capture(&scope));`; behavior test `busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue`; verify `cargo test -p buzz-acp --lib busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `retirement_pending`; exact call `if ctx.session_controls.retirement_pending(&scope)
+            || ctx.session_controls.status_pending(&scope)
             || (ctx.session_controls.compact_pending(&scope) && batch.continuation.is_none())`; behavior test `busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue`; verify `cargo test -p buzz-acp --lib busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `current`; exact call `    if result
         .agent
@@ -2840,6 +2842,9 @@ New module: `false`.
 - Invocation: `crates/buzz-acp/src/lib.rs` → `wake_pending`; exact call `control_tasks::wake_pending(&mut queue, &ctx.session_controls);`; behavior test `compact_only_lazy_work_requires_existing_session`; verify `cargo test --locked -p buzz-acp --lib compact_only_lazy_work_requires_existing_session -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `compaction_panicked`; exact call `controls.compaction_panicked(i);`; behavior test `compact_actual_panic_terminalizes_started_without_ordinary_retry`; verify `cargo test --locked -p buzz-acp --lib compact_actual_panic_terminalizes_started_without_ordinary_retry -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `compaction_target`; exact call `pool.compaction_target(&job.scope, &ctx.session_controls, config.session_resume)`; behavior test `compact_resume_disabled_disk_refusal_and_replay_never_wake`; verify `cargo test --locked -p buzz-acp --lib compact_resume_ -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `handle_owner_cancel_for_scope`; exact call `handle_owner_cancel_for_scope(
+                                        &mut pool, &mut queue, &ctx.session_controls, &scope, observer.as_ref(),
+                                    );`; behavior test `uncertain_owner_cancel_has_no_chat_sender_and_fences_held_feedback`; verify `cargo test -p buzz-acp --lib uncertain_owner_cancel_has_no_chat_sender_and_fences_held_feedback -- --test-threads=1`
 - Verify: `just ci`
 
 ## `crates/buzz-acp/src/pool.rs`
@@ -5475,7 +5480,7 @@ New module: `true`.
 
 ## `TESTING.md`
 
-Document production-writer recovery, replica-floor premises, authenticated CLI/relay regression commands and evidence boundaries. Document fresh-build session-control smoke workflow and shared actual-parser fixture coverage. Document typed activity workflow, observed identity boundaries and unchanged observer ownership.
+Document production-writer recovery, replica-floor premises, authenticated CLI/relay regression commands and evidence boundaries. Document fresh-build session-control smoke workflow and shared actual-parser fixture coverage. Document typed activity workflow, observed identity boundaries and unchanged observer ownership. Thread-composer context workflow and bounded jsdom failure diagnostics with external process-tree containment.
 
 New module: `false`.
 
@@ -6293,13 +6298,15 @@ New module: `true`.
 
 ## `desktop/tests/e2e/session-status.spec.ts`
 
-Mock-bridge smoke workflow for session status: new session with exact history, continuation rows at 79% and 80%, unknown context, thread navigation and one explanation per loaded transition. Capture the current quiet status paragraph with its separate session-control trigger.
+Mock-bridge smoke workflow for session status: new session with exact history, continuation rows at 79% and 80%, unknown context, thread navigation and one explanation per loaded transition. Capture the current quiet status paragraph without a message-row control trigger. Preserve all quiet-status/history/percentage/count assertions while verifying the removed row trigger and the thread-composer context agent/action/Back/Escape flow with natural hover/click.
 
 New module: `true`.
 
 - Required symbol: `session status explains each transition once and shows reported context`
-- Required symbol: `status-with-controls.png`
-- Verify: `cd desktop && pnpm test:e2e:smoke`
+- Required symbol: `quiet-status.png`
+- Required symbol: `await row(timeline, root).hover();`
+- Required symbol: `name: "Manage context"`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 
 ## `desktop/src/features/messages/lib/formatTimelineMessages.ts`
 
@@ -6323,12 +6330,11 @@ New module: `false`.
 
 ## `desktop/src/features/messages/ui/MessageRow.tsx`
 
-Render the session status line in the shared message body below content and above reactions, and compare the derived status by value in the row memo. Render session controls beside the quiet paragraph and compact request rows; compare correlated results by value.
+Render quiet session status and signed compact command/result rows with value-based memo invalidation; context actions live only in the thread composer.
 
 New module: `false`.
 
-- Required symbol: `<MessageSessionControls channelId={channelId} message={message} />`
-- Invocation: `desktop/src/features/messages/ui/MessageRow.tsx` → `MessageSessionStatus`; exact call `<MessageSessionStatus status={message.sessionStatus} />`; behavior test `session status explains each transition once and shows reported context`; verify `cd desktop && pnpm test:e2e:smoke`
+- Invocation: `desktop/src/features/messages/ui/MessageRow.tsx` → `MessageSessionStatus`; exact call `<MessageSessionStatus status={message.sessionStatus} />`; behavior test `session status explains each transition once and shows reported context`; verify `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 - Invocation: `desktop/src/features/messages/ui/MessageRow.tsx` → `sessionStatusEqual`; exact call `sessionStatusEqual(
       prev.message.sessionStatus,
       next.message.sessionStatus,
@@ -6339,7 +6345,7 @@ New module: `false`.
       next.message.sessionControl,
     )`; behavior test `MessageRow memo invalidates when only a raw correlated result changes`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/lib/useSessionControlAction.jsdom-test.mjs src/features/messages/ui/MessageSessionControlRow.jsdom-test.mjs`
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/sessionStatus.test.mjs src/features/messages/lib/formatTimelineMessages.sessionStatus.test.mjs src/features/messages/lib/messageRowEquality.test.mjs src/features/messages/ui/MessageSessionStatus.test.mjs`
-- Verify: `cd desktop && pnpm test:e2e:smoke`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 - Verify: `just desktop-test desktop-typecheck`
 - Verify: `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/lib/useSessionControlAction.jsdom-test.mjs src/features/messages/ui/MessageSessionControlRow.jsdom-test.mjs`
 
@@ -6554,7 +6560,8 @@ New module: `true`.
 - Required symbol: `pub(crate) fn revoke_channel`
 - Required symbol: `pub(crate) fn finish(`
 - Required symbol: `self.runtime.epoch(&self.scope) == self.epoch`
-- Invocation: `crates/buzz-acp/src/session_controls.rs` → `request_restart_superseding`; exact call `let superseded = store.request_restart_superseding(&job.scope, &intent)?;`; behavior test `checked_retirement_supersedes_started_compact_without_a_compact_rpc`; verify `cargo test -p buzz-acp --lib checked_retirement_supersedes_started_compact_without_a_compact_rpc -- --test-threads=1`
+- Required symbol: `restart_status_token: Some(intent.token)`
+- Invocation: `crates/buzz-acp/src/session_controls.rs` → `request_restart_status`; exact call `let superseded = store.request_restart_status(&job.scope, &intent, status)?;`; behavior test `checked_retirement_supersedes_started_compact_without_a_compact_rpc`; verify `cargo test -p buzz-acp --lib checked_retirement_supersedes_started_compact_without_a_compact_rpc -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/session_history.rs`
@@ -6711,7 +6718,10 @@ New module: `true`.
 - Required symbol: `fn lose_retirement_evidence`
 - Required symbol: `fn retirement_evidence_lost`
 - Required symbol: `fn owns_retirement`
+- Required symbol: `let status_current = entry.epoch == job.dispatch_epoch;`
 - Invocation: `crates/buzz-acp/src/session_controls/retirement.rs` → `finish_control_attempt`; exact call `store.finish_control_attempt(scope, &job.origin.command_event_id, &outcome)`; behavior test `checked_retirement_terminal_store_failure_retains_gate_and_reports_uncertainty`; verify `cargo test -p buzz-acp --lib checked_retirement_terminal_store_failure_retains_gate_and_reports_uncertainty -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/session_controls/retirement.rs` → `status_ready`; exact call `if release && outcome.is_ok() && status_current {
+            Self::status_ready(state, store, scope);`; behavior test `unavailable_cancel_during_retirement_cannot_recreate_the_followup_after_clean_exit`; verify `cargo test -p buzz-acp --lib unavailable_cancel_during_retirement_cannot_recreate_the_followup_after_clean_exit -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/session_controls/publish.rs`
@@ -7196,7 +7206,9 @@ Dispatch typed control tasks through shared worker ownership and retirement, wit
 
 New module: `true`.
 
-- Required symbol: `queue.has_flushable_work() || !controls.pending_compactions().is_empty()`
+- Required symbol: `queue.has_flushable_work()
+        || !controls.pending_compactions().is_empty()
+        || !controls.pending_statuses().is_empty()`
 - Required symbol: `} else if tokio::time::Instant::now() >= job.deadline {`
 - Required symbol: `*last_activity = tokio::time::Instant::now();`
 - Invocation: `crates/buzz-acp/src/control_tasks.rs` → `run_compaction_task`; exact call `run_compaction_task(agent, job, ctx_clone, control_rx).await`; behavior test `compact_waits_for_exact_busy_owner_without_cancel_or_fork`; verify `cargo test --locked -p buzz-acp --lib compact_waits_for_exact_busy_owner_without_cancel_or_fork -- --test-threads=1`
@@ -7305,13 +7317,14 @@ New module: `true`.
 
 ## `desktop/src/features/messages/ui/MessageSessionControls.tsx`
 
-Separate accessible Radix current-session menu with exact actions, restart warning, helper copy and fresh permission checks; retain recovery without telemetry.
+Selected-agent action surface with explicit captured scope, Back navigation, exact restart/compact grammar, single restart warning, shared-session disclosure and fresh fenced publication.
 
 New module: `true`.
 
 - Required symbol: `export function MessageSessionControls(`
-- Required symbol: `Manage current session`
 - Required symbol: `Stops current work, including subagents. File changes are`
+- Required symbol: `Back to agents`
+- Invocation: `desktop/src/features/messages/ui/ThreadContextControls.tsx` → `MessageSessionControls`; exact call `<MessageSessionControls`; behavior test `production picker always lists one agent first, selection sends nothing and Back restores the roster`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 
 ## `desktop/src/features/messages/ui/MessageSessionControlRow.tsx`
@@ -7334,7 +7347,7 @@ New module: `true`.
 
 ## `desktop/tests/e2e/session-controls.spec.ts`
 
-Registered production-menu workflow with remote cross-owner evidence, keyboard/submenu/Escape, untouched draft, native command routing, signed raw result projection and revoked send-time admission. Owned-agent activity workflow ingests actual observer events through the production store and panel, covers running/failure/completion, two operations, replay, legacy dedup and raw rail. Final matrix also verifies exact second-agent selection, denied viewer, old-clock expiry and validated actor copy with distinct before/control captures.
+Registered thread-composer Manage context → agent → action workflow: canonical target routing, signed outcomes, draft preservation, toolbar order, keyboard/click/touch navigation, disabled-editor Compact, sibling isolation, denied/revoked access and unchanged owned activity projection. Scope the open-thread root capture/status assertion to its actual thread-head row, independently of the timeline copy. Cover context-only publication preserving a deliberately unpinned composer draft/attachment/native selection/caret, plus formatting/focus/narrow toolbar order and Space/arrow selection. Exercise reset acknowledgment separately from a generated reply or independent follow-up failure, preserving draft, signer, canonical thread and ordinary event deduplication.
 
 New module: `true`.
 
@@ -7344,6 +7357,12 @@ New module: `true`.
 - Required symbol: `two agent menus retain the selected signer and sibling scope`
 - Required symbol: `denied viewer has no menu while another accessible agent retains recovery`
 - Required symbol: `correct-clock viewer sees expired old request and validated manual actor`
+- Required symbol: `context controls remain available while sending disables the thread editor`
+- Required symbol: `touch selection and Back retain the first agent-list step without sending`
+- Required symbol: `context selection and Compact preserve an unpinned draft, attachment, selection and caret`
+- Required symbol: `context stays before mentions across formatting, focus and narrow thread layouts`
+- Required symbol: `restart_acknowledgment_is_distinct_from_generated_status`
+- Required symbol: `restart_success_and_followup_failure_remain_independent`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 
 ## `desktop/src/features/channels/useMessageEventProfilePubkeys.ts`
@@ -7813,3 +7832,254 @@ New module: `false`.
 - Required symbol: `await replyButton.click();`
 - Required symbol: `deferThreadReplies: true`
 - Verify: `pnpm --dir desktop exec playwright test --project=smoke tests/e2e/thread-head-stale-edit.spec.ts`
+
+## `desktop/src/features/messages/ui/ThreadContextControls.tsx`
+
+Thread-scoped accessible agent roster from bounded canonical raw history, verified directory and current authority; agent-first picker, scope reset, independent context toolbar trigger and selected action lifetime. Passively subscribe to the active owning validated thread query without replacing query/retry options; ownerless read-only forum previews retain an isolated bounded fallback, while other absent/disabled owners are explicitly unavailable.
+
+New module: `true`.
+
+- Required symbol: `export function ThreadContextControls(`
+- Required symbol: `key={JSON.stringify([relayUrl, signerPubkey, channel.id, rootId])}`
+- Required symbol: `aria-label="Manage context"`
+- Required symbol: `return query?.isActive() ? query.state : undefined;`
+- Invocation: `desktop/src/features/messages/ui/MessageThreadPanel.tsx` → `ThreadContextControls`; exact call `<ThreadContextControls
+                  channel={channel}
+                  threadHead={threadHead}
+                />`; behavior test `known_agent_without_telemetry_still_has_current_scope_controls`; verify `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
+- Invocation: `desktop/src/features/messages/ui/ThreadContextControls.tsx` → `useSyncExternalStore`; exact call `const ownedReplies = React.useSyncExternalStore(`; behavior test `opening the picker preserves the owning notification query validation across gated retries (stream)`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs`
+- Invocation: `desktop/src/features/messages/ui/ThreadContextControls.tsx` → `projectThreadContextAgents`; exact call `projectThreadContextAgents({`; behavior test `same-name agents remain distinct and a relay switch closes selected actions`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs`
+- Invocation: `desktop/src/features/messages/ui/ThreadContextControls.tsx` → `loadThreadReplies`; exact call `queryFn: () => loadThreadReplies(queryClient, channel.id, rootId)`; behavior test `read-only forum previews retain a bounded roster without replacing the disabled owner`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/threadContextAgents.test.mjs`
+- Verify: `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
+
+## `desktop/src/features/messages/lib/threadContextAgents.ts`
+
+Project deduplicated verified agent signers and explicit agent p-tags from the canonical thread, excluding sibling/delegated identities, and preserve permission and same-name disambiguation independently of mention pins.
+
+New module: `true`.
+
+- Required symbol: `export function hasPersistedThread(`
+- Required symbol: `export function projectThreadContextAgents(`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/threadContextAgents.test.mjs`
+
+## `desktop/src/features/messages/lib/threadContextAgents.test.mjs`
+
+Production projection and bounded loader regressions for root-only/pending heads, raw nested authors, addressed agents, same-name deduplication, permissions, partial pages and sibling isolation.
+
+New module: `true`.
+
+- Required symbol: `root-only addressed agents and raw nested signers deduplicate without sibling or display attribution leakage`
+- Required symbol: `bounded production thread loader includes later-page collapsed participants and fails rather than returning partial history`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/lib/threadContextAgents.test.mjs`
+
+## `desktop/src/features/messages/ui/ThreadContextControls.jsdom-test.mjs`
+
+Mount the real picker for agent-first selection, no implicit send, Back, incomplete history, denied/revoked authority and thread/requester/relay reset. Wait for scheduled query notifications and assert boolean DOM absence to bound failure diagnostics. Mount the production owning query and gate notification-target retries to reject false completeness; non-forum missing-owner caches remain non-actionable, and a disabled forum owner retains isolated paginated recovery.
+
+New module: `true`.
+
+- Required symbol: `production picker always lists one agent first, selection sends nothing and Back restores the roster`
+- Required symbol: `same-name agents remain distinct and a relay switch closes selected actions`
+- Required symbol: `opening the picker preserves the owning notification query validation across gated retries`
+- Required symbol: `a missing non-forum owning query is unavailable rather than a complete roster`
+- Required symbol: `read-only forum previews retain a bounded roster without replacing the disabled owner`
+- Verify: `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs`
+
+## `desktop/src/features/messages/ui/MessageThreadPanel.tsx`
+
+Provide a real persisted thread scope to composer context management while retaining focus/overlay thread layout and draft ownership.
+
+New module: `false`.
+
+- Required symbol: `threadContextControl={`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
+
+## `desktop/src/features/messages/ui/MessageComposer.types.ts`
+
+Expose a narrow thread-only context control slot without extending general composer authority.
+
+New module: `false`.
+
+- Required symbol: `threadContextControl?: ReactNode;`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
+
+## `desktop/src/features/messages/ui/MessageComposer.tsx`
+
+Forward the independent thread context slot through the composer dock without editor disabled/sending gates or draft mutations.
+
+New module: `false`.
+
+- Required symbol: `threadContextControl={threadContextControl}`
+- Invocation: `desktop/src/features/messages/ui/MessageComposer.tsx` → `ComposerDockToolbar`; exact call `<ComposerDockToolbar
+              addressedAgents={
+                editTarget == null && !composerDisabled ? lockedAgents : []
+              }
+              autoPinConfirmationTitle={autoPinConfirmationTitle}
+              layoutMode={layoutMode}
+              composerDisabled={composerDisabled}
+              editor={richText.editor}
+              extraActions={toolbarExtraActions}
+              threadContextControl={threadContextControl}`; behavior test `known_agent_without_telemetry_still_has_current_scope_controls`; verify `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
+
+## `desktop/src/features/messages/ui/MessageComposerToolbar.tsx`
+
+Place context management directly before mention management and retain both positions across formatting/voice layouts; keep the context trigger independent of the disabled editor.
+
+New module: `false`.
+
+- Required symbol: `{threadContextControl}`
+- Required symbol: `{threadContextControl ? mentionButton : null}`
+- Invocation: `desktop/src/features/messages/ui/ComposerDockToolbar.tsx` → `MessageComposerToolbar`; exact call `<MessageComposerToolbar {...toolbarProps} />`; behavior test `known_agent_without_telemetry_still_has_current_scope_controls`; verify `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
+
+## `crates/buzz-acp/src/acp/restart_status.rs`
+
+Bounded exact-session text capture for a status-only ACP turn, excluding thoughts, tools and overflow.
+
+New module: `true`.
+
+- Required symbol: `fn begin_status_capture`
+- Required symbol: `fn take_status_text`
+- Required symbol: `fn capture_status_update`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `capture_status_update`; exact call `self.capture_status_update(msg);`; behavior test `overflow_empty_thought_and_rate_limited_output_never_publish_partial_answers`; verify `cargo test -p buzz-acp --lib overflow_empty_thought_and_rate_limited_output_never_publish_partial_answers -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/status_tasks.rs`
+
+Typed finite-priority restart-status scheduling without human queue mutation or unrelated-scope blocking.
+
+New module: `true`.
+
+- Required symbol: `fn dispatch(`
+- Required symbol: `fn finish(`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `status_tasks::dispatch`; exact call `status_tasks::dispatch(&mut pool, &ctx, &status_tx);`; behavior test `checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap`; verify `cargo test -p buzz-acp --lib checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/restart_status.rs`
+
+First replacement-session status turn with selected context, exact-authority signed publication and separately prepared failure feedback.
+
+New module: `true`.
+
+- Required symbol: `fn run_status_task`
+- Required symbol: `fn publish_prepared`
+- Required symbol: `fn report_expired`
+- Invocation: `crates/buzz-acp/src/status_tasks.rs` → `run_status_task`; exact call `run_status_task(agent, job, ctx, task_dispatch, control_rx).await`; behavior test `checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap`; verify `cargo test -p buzz-acp --lib checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/status_tasks.rs` → `report_expired`; exact call `pool::restart_status::report_expired(job, ctx, dispatch)`; behavior test `expiry_scheduler_keeps_its_fence_when_cancellation_persistence_recovers`; verify `cargo test -p buzz-acp --lib expiry_scheduler_keeps_its_fence_when_cancellation_persistence_recovers -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `report_expired`; exact call `pool::restart_status::report_expired(job, ctx, dispatch)`; behavior test `a_known_local_panic_reports_failure_without_restarting_the_model`; verify `cargo test -p buzz-acp --lib a_known_local_panic_reports_failure_without_restarting_the_model -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/status_language.rs`
+
+Bounded signed conversation-language inference under owner/requester trust policy; numbered prose retained, substantive unsupported prose replaces old certainty, verified agents excluded.
+
+New module: `true`.
+
+- Required symbol: `struct Evidence`
+- Required symbol: `fn trusted_authors`
+- Required symbol: `fn infer(`
+- Invocation: `crates/buzz-acp/src/pool/session_history.rs` → `language.observe`; exact call `language.observe(event, humans, channel, target);`; behavior test `numbered_and_unsupported_latest_prose_replace_old_english_at_every_depth`; verify `cargo test -p buzz-acp --lib numbered_and_unsupported_latest_prose_replace_old_english_at_every_depth -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/session_controls/status.rs`
+
+Exact accepted-token local ownership and immediate cancellation fencing independent of store readability, fresh admission checks, observer cancellation targets and finite status priority.
+
+New module: `true`.
+
+- Required symbol: `struct StatusJob`
+- Required symbol: `fn status_current`
+- Required symbol: `fn cancel_status_for_token`
+- Required symbol: `enum StatusCancellation`
+- Required symbol: `fn cancellable_status_scopes`
+- Invocation: `crates/buzz-acp/src/session_controls/retirement.rs` → `status_ready`; exact call `Self::status_ready(state, store, scope);`; behavior test `checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap`; verify `cargo test -p buzz-acp --lib checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `cancellable_status_scopes`; exact call `.cancellable_status_scopes()`; behavior test `unavailable_pending_record_cancel_retires_local_fence_before_a_worker_is_free`; verify `cargo test -p buzz-acp --lib unavailable_pending_record_cancel_retires_local_fence_before_a_worker_is_free -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/session_store_status.rs`
+
+Bounded backward-compatible restart-status metadata, immutable prepared events and no-effect dead-owner reconciliation.
+
+New module: `true`.
+
+- Required symbol: `struct RestartStatus`
+- Required symbol: `fn status_transition`
+- Required symbol: `fn recover_status`
+- Invocation: `crates/buzz-acp/src/session_store_orphans.rs` → `recover_status`; exact call `match self.recover_status(saved) {`; behavior test `reconstruction_claims_only_dead_owners_and_never_replays_started_model_attempts`; verify `cargo test -p buzz-acp --lib reconstruction_claims_only_dead_owners_and_never_replays_started_model_attempts -- --test-threads=1`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/restart_status_runtime_tests.rs`
+
+Production-bound authorized Restart, scheduler, fake ACP, signed HTTP, language, failure, cancellation and reconstruction regressions.
+
+New module: `true`.
+
+- Required symbol: `fn checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap`
+- Required symbol: `fn reconstruction_claims_only_dead_owners_and_never_replays_started_model_attempts`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/restart_status_edge_tests.rs`
+
+Production-bound overflow, rate-limit, reply routing, deadline, persistence failure and verified-agent language regressions.
+
+New module: `true`.
+
+- Required symbol: `fn overflow_empty_thought_and_rate_limited_output_never_publish_partial_answers`
+- Required symbol: `fn acknowledgment_without_a_completion_write_retains_prepared_bytes_and_token`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/SESSION_CONTROLS.md`
+
+Documented status-only Restart behavior, signed delivery, cancellation and crash uncertainty, language trust policy and provider limits.
+
+New module: `true`.
+
+- Required symbol: `# Restart status turns`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/session_model_thread.md`
+
+Restart-status runtime guidance and acceptance contract.
+
+New module: `false`.
+
+- Required symbol: `<restart-status>`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/session_model_channel.md`
+
+Restart-status runtime guidance and acceptance contract.
+
+New module: `false`.
+
+- Required symbol: `<restart-status>`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/restart_status_review_tests.rs`
+
+Production-path review regressions for numbered/unsupported language across history depths and true nonowner admission, pre-first-poll status/expiry fences, uncertain owner cancellation and durable failure delivery.
+
+New module: `true`.
+
+- Required symbol: `fn numbered_and_unsupported_latest_prose_replace_old_english_at_every_depth`
+- Required symbol: `fn scheduler_keeps_its_original_fence_before_the_first_status_poll`
+- Required symbol: `fn expiry_scheduler_keeps_its_fence_when_cancellation_persistence_recovers`
+- Required symbol: `fn uncertain_owner_cancel_has_no_chat_sender_and_fences_held_feedback`
+- Required symbol: `fn owned_failure_feedback_requires_persistence_and_retries_only_its_saved_bytes`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/restart_status_unavailable_tests.rs`
+
+Actual checked-retirement and scheduler regressions for owner/observer cancellation with missing/unreadable records, WaitingRetirement write failure, held expiry feedback, queued human preservation, stale-token protection and confirmed terminal status.
+
+New module: `true`.
+
+- Required symbol: `fn unavailable_pending_record_cancel_retires_local_fence_before_a_worker_is_free`
+- Required symbol: `fn unavailable_cancel_during_retirement_cannot_recreate_the_followup_after_clean_exit`
+- Required symbol: `fn unavailable_record_cancel_fences_already_scheduled_workerless_expiry_feedback`
+- Required symbol: `fn stale_token_cleanup_cannot_fence_newer_pending_or_retiring_work_when_reads_fail`
+- Required symbol: `fn cancellation_preserves_a_confirmed_terminal_status_even_when_the_busy_cache_lags`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`

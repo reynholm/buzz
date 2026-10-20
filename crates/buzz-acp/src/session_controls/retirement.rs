@@ -231,9 +231,15 @@ impl SessionControlRuntime {
             }
         }
         let command_id = job.origin.command_event_id.clone();
+        // Reset completion stays independent; a cancelled follow-up must not
+        // acquire a fresh post-cancellation epoch when retirement finishes.
+        let status_current = entry.epoch == job.dispatch_epoch;
         entry.retirement.terminal = true;
         if release {
             entry.retiring = None;
+        }
+        if release && outcome.is_ok() && status_current {
+            Self::status_ready(state, store, scope);
         }
         state.publish(Publication {
             command_id,

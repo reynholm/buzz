@@ -209,6 +209,7 @@ async fn retirement_foreground_panic_cannot_attest_replacement_or_forget_origina
         &tx,
         &mut tasks,
         None,
+        None,
     );
     // Before the fix this is the actual ordinary replacement path that lets
     // the next checked drive attest a fresh process instead of the lost one.

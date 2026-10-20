@@ -28,6 +28,7 @@ mod session_controls;
 mod session_status;
 mod session_store;
 mod setup_mode;
+mod status_tasks;
 mod usage;
 mod worker_retirement;
 
@@ -669,6 +670,7 @@ impl QueuedNormalListenerEvent {
     ) {
         if controls.retirement_pending(&self.scope)
             || controls.compact_pending(&self.scope)
+            || controls.status_pending(&self.scope)
             || !self.accepted
             || !queue.is_scope_in_flight(&self.scope)
         {
@@ -1629,6 +1631,7 @@ async fn publish_relay_observer_event(
 /// Maximum age (seconds) for an observer control frame to be considered fresh.
 const OBSERVER_CONTROL_FRESHNESS_SECS: i64 = 300;
 
+#[allow(clippy::too_many_arguments)]
 fn handle_relay_observer_control_event(
     keys: &nostr::Keys,
     event: nostr::Event,
@@ -1637,6 +1640,7 @@ fn handle_relay_observer_control_event(
     observer: Option<&observer::ObserverHandle>,
     owner_pubkey_hex: &str,
     event_publisher: RelayEventPublisher,
+    controls: &session_controls::SessionControlRuntime,
 ) {
     // Defense-in-depth: verify signature even though the relay already checked.
     if let Err(e) = buzz_core::verify_event(&event) {
@@ -1677,7 +1681,7 @@ fn handle_relay_observer_control_event(
     let command_type = payload.get("type").and_then(|value| value.as_str());
     match command_type {
         Some("cancel_turn") => {
-            handle_cancel_turn_control(&payload, pool, queue, observer);
+            handle_cancel_turn_control_with_status(&payload, pool, queue, observer, Some(controls));
         }
         Some("switch_model") => {
             handle_switch_model_control(&payload, pool, observer);
@@ -1840,11 +1844,22 @@ fn emit_project_owner_control_result(
 
 /// Cancel the unambiguous active turn, revoking its background authority even
 /// when a prior ordinary control already consumed the one-shot sender.
+#[cfg(test)]
 fn handle_cancel_turn_control(
     payload: &serde_json::Value,
     pool: &mut AgentPool,
     queue: &mut EventQueue,
     observer: Option<&observer::ObserverHandle>,
+) {
+    handle_cancel_turn_control_with_status(payload, pool, queue, observer, None);
+}
+
+fn handle_cancel_turn_control_with_status(
+    payload: &serde_json::Value,
+    pool: &mut AgentPool,
+    queue: &mut EventQueue,
+    observer: Option<&observer::ObserverHandle>,
+    controls: Option<&session_controls::SessionControlRuntime>,
 ) {
     let Some(channel_id) = payload
         .get("channelId")
@@ -1855,7 +1870,16 @@ fn handle_cancel_turn_control(
         return;
     };
 
-    let status = if pool.channel_control_is_ambiguous(channel_id) {
+    let pending_status: Vec<_> = controls
+        .map(|controls| {
+            controls
+                .cancellable_status_scopes()
+                .into_iter()
+                .filter(|scope| scope.channel_id() == channel_id)
+                .collect()
+        })
+        .unwrap_or_default();
+    let status = if pool.channel_control_is_ambiguous(channel_id) || pending_status.len() > 1 {
         "ambiguous_target"
     } else {
         // Use only the active task's actual scope. A channel-only frame cannot
@@ -1868,8 +1892,16 @@ fn handle_cancel_turn_control(
         let revoked = active_scope
             .as_ref()
             .is_some_and(|scope| cancel_background_collection_for_scope(pool, queue, scope));
+        let status_scope = active_scope.as_ref().or_else(|| pending_status.first());
+        let cancellation = status_scope
+            .zip(controls)
+            .map(|(scope, controls)| controls.cancel_status_outcome(scope))
+            .unwrap_or(session_controls::status::StatusCancellation::None);
+        let status_cancelled = cancellation != session_controls::status::StatusCancellation::None;
         let sent = signal_in_flight_task(pool, channel_id, ControlSignal::Cancel);
-        if sent || revoked {
+        if cancellation == session_controls::status::StatusCancellation::Unconfirmed {
+            "unconfirmed"
+        } else if sent || revoked || status_cancelled {
             "sent"
         } else {
             "no_active_turn"
@@ -2957,6 +2989,11 @@ async fn run_harness(
         )
     });
     prompt_context.session_controls = session_controls::SessionControlRuntime::new(control_store);
+    prompt_context.session_controls.configure_status_authority(
+        config.respond_to.clone(),
+        config.respond_to_allowlist.clone(),
+        startup_owner.clone(),
+    );
     let ctx = Arc::new(prompt_context);
 
     if !config.memory_enabled {
@@ -3119,6 +3156,7 @@ async fn run_harness(
     enum PoolEvent {
         Result(Box<PromptResult>),
         Control(Box<pool::compaction::ControlTaskResult>),
+        Status(Box<pool::restart_status::StatusTaskResult>),
         Panic(tokio::task::JoinError),
         SteerAck(SteerAckEvent),
         Wake(u32, Result<AgentPool, String>),
@@ -3126,7 +3164,9 @@ async fn run_harness(
         Recovery(recovery_wake::RecoveryWake),
     }
 
+    let (status_tx, mut status_rx) = mpsc::unbounded_channel();
     loop {
+        status_tasks::dispatch(&mut pool, &ctx, &status_tx);
         control_tasks::dispatch(&mut pool, &ctx, &control_tx);
         while let Some(Some(result)) = result_publications.join_next().now_or_never() {
             if let Err(error) = result {
@@ -3270,9 +3310,10 @@ async fn run_harness(
                     tracing::info!("shutting down");
                     break;
                 }
+                Some(result) = status_rx.recv() => Some(PoolEvent::Status(Box::new(result))),
                 Some(result) = control_rx.recv() => Some(PoolEvent::Control(Box::new(result))),
                 _ = async {
-                    match ctx.session_controls.compaction_deadline() {
+                    match [ctx.session_controls.compaction_deadline(), ctx.session_controls.status_deadline()].into_iter().flatten().min() {
                         Some(deadline) => tokio::time::sleep_until(deadline).await,
                         None => std::future::pending().await,
                     }
@@ -3376,6 +3417,7 @@ async fn run_harness(
                                     observer.as_ref(),
                                     owner_hex,
                                     relay.event_publisher(),
+                                    &ctx.session_controls,
                                 );
                             } else {
                                 tracing::warn!("observer control frame received but no owner resolved — dropping");
@@ -3582,21 +3624,9 @@ async fn run_harness(
                                             .await,
                                         &buzz_event.event,
                                     );
-                                    let background_pending = cancel_background_collection_for_scope(
-                                        &mut pool, &mut queue, &scope,
+                                    handle_owner_cancel_for_scope(
+                                        &mut pool, &mut queue, &ctx.session_controls, &scope, observer.as_ref(),
                                     );
-                                    let fired = signal_in_flight_task_for_scope(
-                                        &mut pool,
-                                        &scope,
-                                        ControlSignal::Cancel,
-                                    );
-                                    if !fired && !background_pending {
-                                        tracing::warn!(
-                                            channel_id = %buzz_event.channel_id,
-                                            scope = %scope.telemetry_label(),
-                                            "!cancel received but no in-flight task — no-op"
-                                        );
-                                    }
                                     continue; // consume event — do NOT push to queue
                                 }
                                 // Not from owner — fall through to normal prompt handling.
@@ -3946,6 +3976,29 @@ async fn run_harness(
                     typing_channels.insert(scope, thread_tags);
                 }
             }
+            Some(PoolEvent::Status(result)) => {
+                status_tasks::finish(
+                    &mut pool,
+                    &ctx,
+                    *result,
+                    &removed_channels,
+                    config,
+                    &mut crash_history,
+                    &respawn_tx,
+                    &mut respawn_tasks,
+                    observer.clone(),
+                    &mut last_activity,
+                );
+                for (scope, tags) in dispatch_pending(
+                    &mut pool,
+                    &mut queue,
+                    &ctx,
+                    &mut last_activity,
+                    observer.as_ref(),
+                ) {
+                    typing_channels.insert(scope, tags);
+                }
+            }
             Some(PoolEvent::Control(result)) => {
                 control_tasks::finish(
                     &mut pool,
@@ -4005,6 +4058,7 @@ async fn run_harness(
                     &respawn_tx,
                     &mut respawn_tasks,
                     observer.clone(),
+                    Some(ctx.clone()),
                 ) == LoopAction::Exit
                 {
                     break;
@@ -4034,6 +4088,7 @@ async fn run_harness(
                     &respawn_tx,
                     &mut respawn_tasks,
                     observer.clone(),
+                    Some(ctx.clone()),
                 );
                 if pool.live_count() == 0 && !any_respawn_in_flight(&crash_history) {
                     tracing::error!("all agents dead — exiting");
@@ -4136,6 +4191,7 @@ async fn run_harness(
                     .is_some_and(|dispatch| !dispatch.current())
                     || ctx.session_controls.retirement_pending(&scope)
                     || ctx.session_controls.compact_pending(&scope)
+                    || ctx.session_controls.status_pending(&scope)
                 {
                     queue.release_native_steer(&scope, &event_id);
                     continue;
@@ -4282,9 +4338,15 @@ async fn run_harness(
         }
     }
 
+    let status_scopes = ctx.session_controls.shutdown_statuses();
     let compact_workers = ctx.session_controls.shutdown_compactions();
     for meta in pool.task_map_mut().values_mut() {
-        if compact_workers.contains(&meta.agent_index) {
+        if compact_workers.contains(&meta.agent_index)
+            || meta
+                .scope
+                .as_ref()
+                .is_some_and(|scope| status_scopes.contains(scope))
+        {
             if let Some(tx) = meta.control_tx.take() {
                 let _ = tx.send(ControlSignal::Cancel);
             }
@@ -4335,6 +4397,7 @@ async fn run_harness(
                         None => break, // join_set empty
                     }
                 }
+                Some(mut result) = status_rx.recv() => { result.agent.acp.shutdown().await; }
                 Some(mut result) = control_rx.recv() => {
                     ctx.session_controls.finish_compaction_job(&result.job, Err(buzz_core::session_control::ControlFailure::Unconfirmed));
                     result.agent.acp.shutdown().await;
@@ -4361,6 +4424,9 @@ async fn run_harness(
         let idx = pr.agent.index;
         pr.agent.acp.shutdown().await;
         tracing::debug!(agent = idx, "reaped late-arriving agent on shutdown");
+    }
+    while let Ok(mut result) = status_rx.try_recv() {
+        result.agent.acp.shutdown().await;
     }
     while let Ok(mut result) = control_rx.try_recv() {
         result.agent.acp.shutdown().await;
@@ -4515,6 +4581,39 @@ fn signal_in_flight_task(
         }
     }
     false
+}
+
+// An uncertain cancellation cannot establish durable publication ownership.
+// Keep its observer outcome and prior attempt record; this seam has no sender.
+fn handle_owner_cancel_for_scope(
+    pool: &mut AgentPool,
+    queue: &mut EventQueue,
+    controls: &session_controls::SessionControlRuntime,
+    scope: &scope::SessionScope,
+    observer: Option<&observer::ObserverHandle>,
+) -> session_controls::status::StatusCancellation {
+    let cancellation = controls.cancel_status_outcome(scope);
+    let status_pending = cancellation != session_controls::status::StatusCancellation::None;
+    if cancellation == session_controls::status::StatusCancellation::Unconfirmed {
+        if let Some(observer) = observer {
+            observer.emit(
+                "control_result",
+                None,
+                &observer::ObserverContext {
+                    channel_id: Some(scope.channel_id().to_string()),
+                    ..Default::default()
+                },
+                serde_json::json!({"type":"cancel_turn", "status":"unconfirmed", "requestId":null}),
+            );
+        }
+    }
+    let background_pending = cancel_background_collection_for_scope(pool, queue, scope);
+    let fired = signal_in_flight_task_for_scope(pool, scope, ControlSignal::Cancel);
+    if !fired && !background_pending && !status_pending {
+        tracing::warn!(channel_id = %scope.channel_id(), scope = %scope.telemetry_label(),
+            "!cancel received but no in-flight task — no-op");
+    }
+    cancellation
 }
 
 /// Revoke background collection independently of the task's one-shot sender.
@@ -5056,6 +5155,7 @@ fn dispatch_pending(
         let channel_id = batch.channel_id;
         let scope = batch.scope.clone();
         if ctx.session_controls.retirement_pending(&scope)
+            || ctx.session_controls.status_pending(&scope)
             || (ctx.session_controls.compact_pending(&scope) && batch.continuation.is_none())
         {
             held.push(batch);
@@ -5848,12 +5948,17 @@ fn recover_panicked_agent(
     respawn_tx: &mpsc::Sender<RespawnResult>,
     respawn_tasks: &mut tokio::task::JoinSet<()>,
     observer: Option<observer::ObserverHandle>,
+    status_feedback: Option<Arc<PromptContext>>,
 ) {
     let task_id = join_error.id();
     let Some(mut meta) = pool.task_map_mut().remove(&task_id) else {
         tracing::error!("panic for unknown task {task_id:?} — bug");
         return;
     };
+    let status_token = meta
+        .control_dispatch
+        .as_ref()
+        .and_then(|dispatch| dispatch.intent.as_ref().map(|intent| intent.token));
     if let Some(dispatch) = meta.control_dispatch.take() {
         if !dispatch.current() {
             meta.recoverable_batch = None;
@@ -5862,6 +5967,15 @@ fn recover_panicked_agent(
     }
     let i = meta.agent_index;
     controls.compaction_panicked(i);
+    if let (Some(scope), Some(token)) = (&meta.scope, status_token) {
+        if let (Some(ctx), Some(job)) = (status_feedback, controls.status_panicked(scope, token)) {
+            let dispatch = controls.capture(scope);
+            pool.join_set
+                .spawn(pool::restart_status::report_expired(job, ctx, dispatch));
+        } else {
+            controls.cancel_status_for_token(scope, token);
+        }
+    }
     pool.clear_runtime_hold(i);
 
     // Requeue BEFORE mark_complete (same rationale as handle_prompt_result).
@@ -5983,6 +6097,7 @@ fn drain_ready_join_results(
     respawn_tx: &mpsc::Sender<RespawnResult>,
     respawn_tasks: &mut tokio::task::JoinSet<()>,
     observer: Option<observer::ObserverHandle>,
+    status_feedback: Option<Arc<PromptContext>>,
 ) -> LoopAction {
     while let Some(Some(join_result)) = pool.join_set.join_next().now_or_never() {
         if let Err(join_error) = join_result {
@@ -6000,6 +6115,7 @@ fn drain_ready_join_results(
                 respawn_tx,
                 respawn_tasks,
                 observer.clone(),
+                status_feedback.clone(),
             );
             if pool.live_count() == 0 && !any_respawn_in_flight(crash_history) {
                 return LoopAction::Exit;
@@ -11246,6 +11362,7 @@ mod error_outcome_emission_tests {
             &respawn_tx,
             &mut respawn_tasks,
             Some(observer.clone()),
+            None,
         );
 
         let panic = observer
@@ -11340,6 +11457,7 @@ mod error_outcome_emission_tests {
             &mut crash_history,
             &respawn_tx,
             &mut respawn_tasks,
+            None,
             None,
         );
 

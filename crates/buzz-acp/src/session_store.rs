@@ -35,8 +35,11 @@ use buzz_core::session_control::RestartDepth;
 #[allow(dead_code)]
 // Control controller consumes these durable APIs independently of provider resume.
 mod controls;
+#[path = "session_store_status.rs"]
+mod restart_status;
 #[allow(unused_imports)] // Durable controller contract, independent of provider acquisition.
 pub use controls::{ControlAttempt, ControlReceipt, ControlReceiptState, RestartIntent};
+pub(crate) use restart_status::{RestartStatus, RestartStatusPhase, STATUS_TEXT_BYTES};
 
 /// Delivered event ids kept per record, oldest dropped first.
 pub const MAX_STORED_DELIVERED_IDS: usize = 2048;
@@ -181,6 +184,9 @@ pub struct SessionRecord {
     /// Bounded durable control deduplication, empty on legacy v2 records.
     #[serde(default)]
     pub control_receipts: Vec<ControlReceipt>,
+    /// Optional on legacy records; independent from the terminal reset result.
+    #[serde(default)]
+    pub(crate) restart_status: Option<RestartStatus>,
 }
 
 /// Result of reading a scope's record.
@@ -452,6 +458,7 @@ impl SessionStore {
                 reason: None,
                 revision: Some(Uuid::new_v4()),
                 pending_restart: current.and_then(|r| r.pending_restart.clone()),
+                restart_status: current.and_then(|r| r.restart_status.clone()),
                 control_receipts: current
                     .map(|r| r.control_receipts.clone())
                     .unwrap_or_default(),
@@ -493,6 +500,7 @@ impl SessionStore {
             let owned = owned_record(current, lease)?;
             let mut record = self.tombstone(Some(&owned));
             record.pending_restart = owned.pending_restart;
+            record.restart_status = owned.restart_status;
             Ok(record)
         })
     }
@@ -616,6 +624,12 @@ impl SessionStore {
             reason: Some(SessionReason::Discarded),
             revision: Some(Uuid::new_v4()),
             pending_restart: None,
+            restart_status: current
+                .and_then(|r| r.restart_status.clone())
+                .map(|mut status| {
+                    status.phase = RestartStatusPhase::Cancelled;
+                    status
+                }),
             control_receipts: current
                 .map(|r| r.control_receipts.clone())
                 .unwrap_or_default(),

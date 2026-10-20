@@ -19,6 +19,9 @@ for line in sys.stdin:
     req = json.loads(line)
     method = req.get('method')
     log.write(f"{method}\n")
+    if method is None and req.get('id') == 'permission-one':
+        assert req['result']['outcome']['outcome']=='cancelled'
+        log.write('permission-denied\n')
     if 'id' not in req or method is None:
         continue
     reply = {'jsonrpc': '2.0', 'id': req['id']}
@@ -26,6 +29,14 @@ for line in sys.stdin:
         caps = {'sessionCapabilities': {'resume': {}}} if os.environ.get('RESUME_CAP') == '1' else {}
         reply['result'] = {'protocolVersion': 1, 'agentCapabilities': caps}
     elif method == 'session/new':
+        if os.environ.get('CHECK_STATUS_STARTED_ROOT'):
+            import pathlib
+            records=[json.loads(p.read_text()) for p in pathlib.Path(os.environ['CHECK_STATUS_STARTED_ROOT']).rglob('*.json')]
+            assert any(record.get('restart_status',{}).get('phase')=='started' for record in records)
+        if os.environ.get('FAIL_NEW'):
+            reply['error'] = {'code':-32000,'message':'deliberate startup failure'}
+            print(json.dumps(reply), flush=True)
+            continue
         time.sleep(delay)
         created += 1
         if os.environ.get('NEW_ADVERTISE') == '1':
@@ -61,13 +72,24 @@ for line in sys.stdin:
             print(json.dumps(reply), flush=True)
             continue
         prompt_count += 1
+        session = req['params']['sessionId']
+        if os.environ.get('STATUS_WRONG_SESSION'):
+            session = 'another-session'
+        if os.environ.get('STATUS_TEXT'):
+            print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':session,'update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':os.environ['STATUS_TEXT']}}}}), flush=True)
+        if os.environ.get('STATUS_THOUGHT'):
+            print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':session,'update':{'sessionUpdate':'agent_thought_chunk','content':{'type':'text','text':'private reasoning'}}}}), flush=True)
+        if os.environ.get('STATUS_TOOL'):
+            print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':session,'update':{'sessionUpdate':'tool_call','toolCallId':'one','title':'forbidden tool','kind':'execute'}}}), flush=True)
+        if os.environ.get('STATUS_PERMISSION'):
+            print(json.dumps({'jsonrpc':'2.0','id':'permission-one','method':'session/request_permission','params':{'sessionId':session,'options':[{'kind':'allow_once','optionId':'allow'}]}}), flush=True)
         if os.environ.get('PROMPTS'):
             with open(os.environ['PROMPTS'], 'a') as out:
                 out.write(json.dumps(req['params']) + '\n')
         if str(prompt_count) == os.environ.get('FAIL_PROMPT'):
-            reply['error'] = {'code': -32000, 'message': 'deliberate prompt failure'}
+            reply['error'] = {'code': int(os.environ.get('FAIL_PROMPT_CODE','-32000')), 'message': 'deliberate prompt failure'}
         else:
-            reply['result'] = {'stopReason': 'end_turn'}
+            reply['result'] = {'stopReason': os.environ.get('STATUS_STOP','end_turn')}
     else:
         reply['result'] = {}
     print(json.dumps(reply), flush=True)
@@ -231,6 +253,7 @@ fn stored(live: impl FnOnce(&mut LiveSession)) -> LoadOutcome {
         revision: None,
         pending_restart: None,
         control_receipts: Vec::new(),
+        restart_status: None,
         live: Some(session),
         reason: None,
     }))
@@ -290,6 +313,7 @@ fn decision_tombstone_is_discarded() {
         revision: None,
         pending_restart: None,
         control_receipts: Vec::new(),
+        restart_status: None,
         live: None,
         reason: Some(SessionReason::Discarded),
     }));
@@ -1362,3 +1386,6 @@ mod retirement_tests;
 
 #[path = "compaction_tests.rs"]
 mod compaction_tests;
+
+#[path = "restart_status_runtime_tests.rs"]
+mod restart_status_tests;

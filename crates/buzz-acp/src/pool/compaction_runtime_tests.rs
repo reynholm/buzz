@@ -657,6 +657,7 @@ async fn compact_actual_panic_terminalizes_started_without_ordinary_retry() {
         &tx,
         &mut tasks,
         None,
+        None,
     );
     assert!(!ctx.session_controls.compact_pending(&scope()));
     assert!(!queue.has_undispatched_work());

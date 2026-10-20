@@ -1100,6 +1100,7 @@ async fn background_lost_prompt_task_releases_pool_side_hold_before_respawn() {
         &respawn_tx,
         &mut respawn_tasks,
         None,
+        None,
     );
     assert!(
         !pool.has_runtime_hold(),

@@ -197,3 +197,43 @@ report/event ID, in the original thread, with its callback mention. A second
 background group must produce a second report/key. Explicit cancel/rotate and
 membership removal still invalidate collection according to the lifecycle
 runbook above. Agent fixtures cannot mark this human check complete.
+
+## Restart status
+
+The `restart_status_tests` filter covers authorized admission, checked retirement,
+the typed scheduler, fake ACP processes, selected history and a signature-checking
+HTTP relay. It covers context depths, conversation-language hints, reply routing,
+queued input, duplicates, bounded failures, cancellation and crash uncertainty.
+See [SESSION_CONTROLS.md](SESSION_CONTROLS.md) for the contract and its limits.
+Use the full package suite before accepting the change; a focused filter is an
+iteration aid, not a substitute for package validation.
+
+For each supported real adapter, use a disposable session and the actual build
+under review:
+
+1. Start an English assignment, then discuss progress in Russian. Restart with
+   None, Recent and All. Each successful reset should produce one useful Russian
+   status without another mention. With None, omitted progress must be reported
+   as unknown. Repeat an English conversation and expect English.
+2. Repeat while the old worker is busy. Wait for checked reset completion; no
+   status may run before that boundary. Queue a real new instruction during the
+   status turn: it must run afterward in its original form. A sibling thread
+   must continue independently.
+3. Cancel, remove the agent, or issue a newer Restart during status generation.
+   Late output must not begin a newly authorized send. A send already submitted
+   may still become visible; lost acknowledgment remains unconfirmed. Inspect
+   adapter activity and verify that no task tool or subagent executed.
+4. Check that the reply is signed by the selected agent, in the canonical thread
+   or DM, with no mention/broadcast tags. Repeat the same signed Restart and
+   confirm it does not create another model turn or message.
+5. Send an ordinary follow-up after a confirmed status. It should reuse the new
+   session while ordinary provider-resume and rotation limits still apply.
+   Simulate provider failure and loss of acknowledgment separately: the reset
+   acknowledgment stays successful, and failure/uncertainty is reported honestly.
+6. Restart the disposable harness with a pending or prepared follow-up. Recovery
+   must preserve uncertainty and prepared bytes without invoking the model or
+   automatically posting that old reply. Later ordinary input remains available.
+
+Record build identity, adapter, selected depth, actual language, signed reply
+provenance and observed tool activity. Browser fixtures alone cannot certify
+provider behavior. Human acceptance remains separate from agent validation.

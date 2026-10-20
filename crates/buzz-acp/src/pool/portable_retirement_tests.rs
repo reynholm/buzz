@@ -45,8 +45,11 @@ impl Fixture {
     // covered separately; production never constructs jobs from unsigned input.
     fn job(&self, depth: RestartDepth) -> ControlJob {
         let keys = Keys::generate();
-        let event = EventBuilder::new(Kind::Custom(9), format!("!restart {}", depth.as_wire()))
-            .tags([Tag::parse(["nonce", &Uuid::new_v4().to_string()]).unwrap()])
+        let event = EventBuilder::new(Kind::Custom(9), SessionCommand::Restart(depth).as_content())
+            .tags([
+                Tag::parse(["h", &self.scope.channel_id().to_string()]).unwrap(),
+                Tag::parse(["nonce", &Uuid::new_v4().to_string()]).unwrap(),
+            ])
             .sign_with_keys(&keys)
             .unwrap();
         ControlJob {

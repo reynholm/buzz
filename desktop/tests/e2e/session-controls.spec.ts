@@ -12,8 +12,12 @@ async function setup(
   revoked = false,
   denied = false,
   rootAgeSeconds = 0,
+  sendMessageDelayMs = 0,
+  mockOptions: Parameters<typeof installMockBridge>[1] = {},
 ) {
   await installMockBridge(page, {
+    ...mockOptions,
+    sendMessageDelayMs,
     ownerOnlyAccessBuild: true,
     managedAgents: [],
     relayAgentRevalidationRevokedPubkeys: revoked ? [AGENT] : [],
@@ -77,13 +81,19 @@ async function setup(
   await expect(row(page, event.id)).toBeVisible();
   return event.id;
 }
-function row(page: Page, id: string) {
+function row(page: Page | Locator, id: string) {
   return page.locator(`[data-testid="message-row"][data-message-id="${id}"]`);
 }
 async function openThread(page: Page, root: string) {
   await row(page, root).hover();
   await page.getByTestId(`reply-message-${root}`).click();
   await expect(page.getByTestId("message-thread-panel")).toBeVisible();
+}
+async function selectAgent(page: Page, name = "ControlBot") {
+  const trigger = page.getByTestId("manage-thread-context");
+  await trigger.click();
+  await page.getByRole("menuitem", { name, exact: true }).click();
+  return trigger;
 }
 async function captureMenu(page: Page, trigger: Locator, name: string) {
   await waitForAnimations(page);
@@ -130,6 +140,47 @@ async function sends(page: Page) {
     ),
   );
 }
+async function composerSelection(input: Locator) {
+  return input.evaluate((element) => {
+    const selection = window.getSelection();
+    if (
+      !selection?.anchorNode ||
+      !selection.focusNode ||
+      !element.contains(selection.anchorNode) ||
+      !element.contains(selection.focusNode)
+    )
+      return null;
+    const offset = (node: Node, position: number) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      range.setEnd(node, position);
+      return range.toString().length;
+    };
+    return {
+      anchor: offset(selection.anchorNode, selection.anchorOffset),
+      focus: offset(selection.focusNode, selection.focusOffset),
+      text: selection.toString(),
+    };
+  });
+}
+async function expectContextBeforeMentions(page: Page) {
+  const composer = page.getByTestId("thread-composer-overlay");
+  const context = composer.getByTestId("manage-thread-context");
+  const mention = composer.getByTestId("message-insert-mention");
+  await expect(context).toBeVisible();
+  await expect(context).toBeInViewport();
+  await expect(mention).toBeVisible();
+  await expect(mention).toBeInViewport();
+  expect(
+    await context.evaluate((element) =>
+      Boolean(
+        element.nextElementSibling?.querySelector(
+          '[data-testid="message-insert-mention"]',
+        ),
+      ),
+    ),
+  ).toBe(true);
+}
 async function expectDescriptionStyle(item: Locator) {
   const style = await item.evaluate((el) => {
     const id = el.getAttribute("aria-describedby");
@@ -152,22 +203,53 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
   page,
 }) => {
   const root = await setup(page);
-  const trigger = row(page, root).getByRole("button", {
-    name: "Manage current session",
-  });
-  await expect(trigger).toBeVisible();
-  await waitForAnimations(page);
-  await row(page, root).screenshot({ path: `${SHOT}/before-controls.png` });
   await expect(
-    row(page, root).getByTestId("message-session-status"),
+    page.getByRole("button", { name: "Manage context" }),
   ).toHaveCount(0);
-  const draft = page.getByTestId("message-input");
+  await openThread(page, root);
+  const trigger = page.getByTestId("manage-thread-context");
+  await expect(trigger).toBeVisible();
+  await expect(trigger).toHaveAccessibleName("Manage context");
+  await expect(trigger.locator("svg.lucide-brain-cog")).toHaveAttribute(
+    "aria-hidden",
+    "true",
+  );
+  const mention = page
+    .getByTestId("thread-composer-overlay")
+    .getByTestId("message-insert-mention");
+  expect(
+    await trigger.evaluate((element) =>
+      element.nextElementSibling?.contains(
+        document.querySelector(
+          '[data-testid="thread-composer-overlay"] [data-testid="message-insert-mention"]',
+        ),
+      ),
+    ),
+  ).toBe(true);
+  await expect(mention).toBeVisible();
+  await expect(page.getByTestId("manage-current-session")).toHaveCount(0);
+  await waitForAnimations(page);
+  const threadHead = row(
+    page.getByTestId("message-thread-panel").getByTestId("message-thread-head"),
+    root,
+  );
+  await threadHead.screenshot({ path: `${SHOT}/before-controls.png` });
+  await expect(threadHead.getByTestId("message-session-status")).toHaveCount(0);
+  const draft = page
+    .getByTestId("thread-composer-overlay")
+    .getByTestId("message-input");
   await draft.fill("Preserve this unfinished request");
   await trigger.focus();
   await page.keyboard.press("Enter");
   await expect(
+    page.getByRole("menuitem", { name: "ControlBot", exact: true }),
+  ).toBeVisible();
+  expect(await sends(page)).toHaveLength(0);
+  await page.getByRole("menuitem", { name: "ControlBot", exact: true }).click();
+  await expect(
     page.getByRole("menuitem", { name: "Compact context", exact: true }),
   ).toBeVisible();
+  expect(await sends(page)).toHaveLength(0);
   const restart = page.getByRole("menuitem", { name: "Restart", exact: true });
   const restartDescription =
     "Stops current work, including subagents. File changes are kept.";
@@ -176,12 +258,8 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
   ).toBeVisible();
   await expect(restart).toHaveAccessibleDescription(restartDescription);
   await expectDescriptionStyle(restart);
-  await captureMenu(
-    page,
-    row(page, root).getByTestId("manage-current-session"),
-    "menu-v3",
-  );
-  await page.keyboard.press("Home");
+  await captureMenu(page, trigger, "menu-v3");
+  await restart.focus();
   await expect(restart).toBeFocused();
   await page.keyboard.press("ArrowRight");
   for (const [label, description] of [
@@ -197,17 +275,13 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
     await expect(option).toHaveAccessibleDescription(description);
     await expectDescriptionStyle(option);
   }
-  await captureMenu(
-    page,
-    row(page, root).getByTestId("manage-current-session"),
-    "restart-submenu-v3",
-  );
+  await captureMenu(page, trigger, "restart-submenu-v3");
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();
   expect(await sends(page)).toHaveLength(0);
-  await trigger.click();
-  await page.getByRole("menuitem", { name: "Restart", exact: true }).hover();
+  await selectAgent(page);
+  await page.getByRole("menuitem", { name: "Restart", exact: true }).click();
   await page
     .getByRole("menuitem", {
       name: "From scratch",
@@ -223,7 +297,6 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
   expect(call.expectedSignerPubkey).toBe(VIEWER);
   expect(call.expectedRelayUrl).toBeTruthy();
   await expect(draft).toHaveText("Preserve this unfinished request");
-  await openThread(page, root);
   await expect(page.getByTestId("message-session-control")).toContainText(
     "Start over from scratch",
   );
@@ -300,18 +373,20 @@ test("revoked send-time permission preserves draft and publishes nothing", async
   page,
 }) => {
   const root = await setup(page, true);
-  await page.getByTestId("message-input").fill("Keep my draft");
-  await row(page, root)
-    .getByRole("button", { name: "Manage current session" })
-    .click();
+  await openThread(page, root);
+  const draft = page
+    .getByTestId("thread-composer-overlay")
+    .getByTestId("message-input");
+  await draft.fill("Keep my draft");
+  await selectAgent(page);
   await page
     .getByRole("menuitem", { name: "Compact context", exact: true })
     .click();
-  await expect(row(page, root).getByRole("alert")).toContainText(
-    "Could not send session control",
-  );
+  await expect(
+    page.getByTestId("thread-composer-overlay").getByRole("alert"),
+  ).toContainText("Could not send session control");
   expect(await sends(page)).toHaveLength(0);
-  await expect(page.getByTestId("message-input")).toHaveText("Keep my draft");
+  await expect(draft).toHaveText("Keep my draft");
 });
 
 for (const [label, body] of [
@@ -335,15 +410,11 @@ for (const [label, body] of [
     );
     if (!reply?.id) throw new Error("Agent reply not emitted");
     await openThread(page, root);
-    await page
-      .getByTestId("message-thread-panel")
-      .locator(`[data-message-id="${reply.id}"]`)
-      .getByRole("button", { name: "Manage current session" })
-      .click();
+    await selectAgent(page);
     if (label !== "Compact context")
       await page
         .getByRole("menuitem", { name: "Restart", exact: true })
-        .hover();
+        .click();
     await page.getByRole("menuitem", { name: label, exact: true }).click();
     await expect.poll(async () => (await sends(page)).length).toBe(1);
     const payload = (await sends(page))[0].payload as Record<string, unknown>;
@@ -397,10 +468,13 @@ test("two agent menus retain the selected signer and sibling scope", async ({
     { pubkey: SECOND_AGENT, channelName: CHANNEL },
   );
   if (!second?.id) throw new Error("Second agent event not emitted");
-  await row(page, second.id)
-    .getByRole("button", { name: "Manage current session" })
-    .click();
-  await page.getByRole("menuitem", { name: "Restart", exact: true }).hover();
+  await openThread(page, second.id);
+  await page.getByTestId("manage-thread-context").click();
+  await expect(
+    page.getByRole("menuitem", { name: "ControlBot", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("menuitem", { name: "SecondBot", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Restart", exact: true }).click();
   await page
     .getByRole("menuitem", { name: "Recent history", exact: true })
     .click();
@@ -423,10 +497,210 @@ test("denied viewer has no menu while another accessible agent retains recovery"
 }) => {
   const root = await setup(page, false, true);
   await expect(row(page, root)).toBeVisible();
+  await openThread(page, root);
+  await page.getByTestId("manage-thread-context").click();
   await expect(
-    row(page, root).getByRole("button", { name: "Manage current session" }),
-  ).toHaveCount(0);
+    page
+      .getByRole("status")
+      .filter({ hasText: "No agents you can manage in this thread." }),
+  ).toBeVisible();
+  await expect(page.getByRole("menuitem")).toHaveCount(0);
   expect(await sends(page)).toHaveLength(0);
+});
+
+test("context controls remain available while sending disables the thread editor", async ({
+  page,
+}) => {
+  const root = await setup(page, false, false, 0, 5_000);
+  await openThread(page, root);
+  const composer = page.getByTestId("thread-composer-overlay");
+  const editor = composer.getByTestId("message-input");
+  await editor.fill("Hold this send while managing context");
+  await composer.getByTestId("send-message").click();
+  await expect(editor).toHaveAttribute("contenteditable", "false");
+  await expect(page.getByTestId("manage-thread-context")).toBeEnabled();
+  await selectAgent(page);
+  const compact = page.getByRole("menuitem", {
+    name: "Compact context",
+    exact: true,
+  });
+  await expect(compact).toBeEnabled();
+  await compact.click();
+  await expect.poll(async () => (await sends(page)).length).toBe(2);
+  const payload = (await sends(page))[1].payload as Record<string, unknown>;
+  expect(payload.content).toBe("!compact");
+  expect(payload.mentionPubkeys).toEqual([AGENT]);
+  expect(payload.rootEventId).toBe(root);
+  expect(payload.parentEventId).toBe(root);
+});
+
+test("context selection and Compact preserve an unpinned draft, attachment, selection and caret", async ({
+  page,
+}) => {
+  const root = await setup(page, false, false, 0, 0, {
+    deferredComposerUploads: true,
+    uploadDescriptors: [
+      {
+        url: `https://mock.relay/media/${"a".repeat(64)}.pdf`,
+        sha256: "a".repeat(64),
+        size: 12345,
+        type: "application/pdf",
+        uploaded: 0,
+        filename: "context-draft.pdf",
+      },
+    ],
+  });
+  await openThread(page, root);
+  const composer = page.getByTestId("thread-composer-overlay");
+  const input = composer.getByTestId("message-input");
+  const mention = composer.getByTestId("message-insert-mention");
+  await mention.click();
+  await composer
+    .getByTestId("mention-autocomplete")
+    .getByRole("button", { name: "Automatically mention ControlBot" })
+    .click();
+  await expect(
+    composer.getByTestId(`composer-address-lock-${AGENT}`),
+  ).toBeVisible();
+  await mention.click();
+  await composer.getByTestId(`composer-address-lock-remove-${AGENT}`).click();
+  await expect(
+    composer.getByTestId(`composer-address-lock-${AGENT}`),
+  ).toHaveCount(0);
+  await input.fill("Keep this draft");
+  const [chooser] = await Promise.all([
+    page.waitForEvent("filechooser"),
+    composer.getByRole("button", { name: "Attach file" }).click(),
+  ]);
+  await chooser.setFiles({
+    buffer: Buffer.from("context attachment"),
+    mimeType: "application/pdf",
+    name: "context-draft.pdf",
+  });
+  await expect(composer).toContainText("context-draft.pdf");
+  await expect(input).toHaveText("Keep this draft");
+  await input.focus();
+  await expect(input).toBeFocused();
+  await input.evaluate((element) => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      const index = (node.textContent ?? "").indexOf("this");
+      if (index < 0) continue;
+      const range = document.createRange();
+      range.setStart(node, index);
+      range.setEnd(node, index + "this".length);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+      return;
+    }
+    throw new Error("Could not establish the initial draft selection");
+  });
+  const selection = { anchor: 5, focus: 9, text: "this" };
+  await expect.poll(() => composerSelection(input)).toEqual(selection);
+  await selectAgent(page);
+  expect(await sends(page)).toHaveLength(0);
+  await page.keyboard.press("Escape");
+  await input.focus();
+  await expect.poll(() => composerSelection(input)).toEqual(selection);
+  await input.press("ArrowRight");
+  const caret = { anchor: 9, focus: 9, text: "" };
+  await expect.poll(() => composerSelection(input)).toEqual(caret);
+  await selectAgent(page);
+  await page
+    .getByRole("menuitem", { name: "Compact context", exact: true })
+    .click();
+  await expect.poll(async () => (await sends(page)).length).toBe(1);
+  const payload = (await sends(page))[0].payload as Record<string, unknown>;
+  expect(payload.content).toBe("!compact");
+  expect(payload.mentionPubkeys).toEqual([AGENT]);
+  expect(payload.mediaTags ?? []).toEqual([]);
+  await expect(input).toHaveText("Keep this draft");
+  await expect(composer).toContainText("context-draft.pdf");
+  await expect(
+    composer.getByTestId(`composer-address-lock-${AGENT}`),
+  ).toHaveCount(0);
+  await expect(mention).toHaveAccessibleName("Mention someone");
+  await input.focus();
+  await expect.poll(() => composerSelection(input)).toEqual(caret);
+});
+
+test("context stays before mentions across formatting, focus and narrow thread layouts", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.addInitScript(() =>
+    localStorage.setItem("buzz.channels.threadViewMode", "split"),
+  );
+  const root = await setup(page);
+  await openThread(page, root);
+  const composer = page.getByTestId("thread-composer-overlay");
+  const input = composer.getByTestId("message-input");
+  await input.fill("Keep my layout draft");
+  await expectContextBeforeMentions(page);
+  await composer.getByRole("button", { name: "Toggle formatting" }).click();
+  await expect(
+    composer.getByRole("button", { name: "Close formatting" }),
+  ).toBeVisible();
+  await expectContextBeforeMentions(page);
+  await composer.getByTestId("manage-thread-context").focus();
+  await page.keyboard.press("Space");
+  const agent = page.getByRole("menuitem", { name: "ControlBot", exact: true });
+  await expect(agent).toBeVisible();
+  await page.keyboard.press("ArrowDown");
+  await expect(agent).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("menuitem", { name: "Compact context", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(composer.getByTestId("manage-thread-context")).toBeFocused();
+  await composer.getByRole("button", { name: "Close formatting" }).click();
+  await page
+    .getByRole("button", { name: "Expand thread", exact: true })
+    .click();
+  await expect(page.getByTestId("focus-thread-drawer")).toBeVisible();
+  await expectContextBeforeMentions(page);
+  await expect(input).toHaveText("Keep my layout draft");
+  await page
+    .getByRole("button", { name: "Show thread beside channel", exact: true })
+    .click();
+  await expect(page.getByTestId("focus-thread-drawer")).toHaveCount(0);
+  await page.setViewportSize({ width: 860, height: 720 });
+  await expect(page.getByTestId("thread-view-mode-toggle")).toHaveCount(0);
+  await expectContextBeforeMentions(page);
+  await composer.getByTestId("manage-thread-context").click();
+  await expect(agent).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(input).toHaveText("Keep my layout draft");
+  expect(await sends(page)).toHaveLength(0);
+});
+
+test.describe("touch context navigation", () => {
+  test.use({ hasTouch: true });
+  test("touch selection and Back retain the first agent-list step without sending", async ({
+    page,
+  }) => {
+    const root = await setup(page);
+    await openThread(page, root);
+    const trigger = page.getByTestId("manage-thread-context");
+    await trigger.tap();
+    await page.getByRole("menuitem", { name: "ControlBot", exact: true }).tap();
+    await expect(
+      page.getByRole("menuitem", { name: "Compact context", exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("menuitem", { name: "Back to agents", exact: true })
+      .tap();
+    await expect(
+      page.getByRole("menuitem", { name: "ControlBot", exact: true }),
+    ).toBeVisible();
+    expect(await sends(page)).toHaveLength(0);
+    await page.keyboard.press("Escape");
+    await expect(trigger).toBeFocused();
+  });
 });
 
 test("correct-clock viewer sees expired old request and validated manual actor", async ({
@@ -489,7 +763,12 @@ test("correct-clock viewer sees expired old request and validated manual actor",
   expect(stored[1].tags.filter((tag: string[]) => tag[0] === "e")).toEqual([
     ["e", root, "", "reply"],
   ]);
-  await openThread(page, root);
+  const summary = page.locator(
+    `[data-testid="message-thread-summary"][data-thread-head-id="${root}"]`,
+  );
+  await expect(summary).toContainText("2 replies");
+  await summary.click();
+  await expect(page.getByTestId("message-thread-panel")).toBeVisible();
   await expect(row(page, generic.id)).toContainText("!compact");
   await expect(
     row(page, generic.id).getByTestId("message-session-control"),
@@ -714,3 +993,140 @@ test("owned observer activity projects typed compaction lifecycle through the re
   await page.screenshot({ path: `${SHOT}/activity-raw-full.png` });
   await panel.screenshot({ path: `${SHOT}/activity-raw-clip.png` });
 });
+
+for (const [name, response, eventId] of [
+  [
+    "restart_acknowledgment_is_distinct_from_generated_status",
+    "The assignment is understood. Validation is still open; the next step is to run the focused checks.",
+    "d8".repeat(32),
+  ],
+  [
+    "restart_success_and_followup_failure_remain_independent",
+    "The session restarted, but I couldn't confirm its task-status reply. Your next message can continue the conversation.",
+    "e8".repeat(32),
+  ],
+] as const) {
+  test(name, async ({ page }) => {
+    const root = await setup(page);
+    const sibling = await page.evaluate(
+      ({ channelName, pubkey }) =>
+        window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+          channelName,
+          pubkey,
+          content: "An independent sibling thread stays unchanged.",
+        }),
+      { channelName: CHANNEL, pubkey: SECOND_AGENT },
+    );
+    if (!sibling?.id) throw new Error("Sibling event not emitted");
+    await openThread(page, root);
+    const panel = page.getByTestId("message-thread-panel");
+    const draft = page
+      .getByTestId("thread-composer-overlay")
+      .getByTestId("message-input");
+    await draft.fill("Preserve the next real task instruction");
+    await selectAgent(page);
+    await page.getByRole("menuitem", { name: "Restart", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "From scratch", exact: true })
+      .click();
+    await expect.poll(async () => (await sends(page)).length).toBe(1);
+    const payload = (await sends(page))[0].payload as Record<string, unknown>;
+    expect(payload.content).toBe("!restart none");
+    expect(payload.mentionPubkeys).toEqual([AGENT]);
+    expect(payload.parentEventId).toBe(root);
+    expect(payload.rootEventId).toBe(root);
+    expect(payload.expectedSignerPubkey).toBe(VIEWER);
+    expect(payload.expectedRelayUrl).toBeTruthy();
+    const control = panel.getByTestId("message-session-control");
+    const command = panel
+      .getByTestId("message-row")
+      .filter({ has: page.getByTestId("message-session-control") });
+    await expect(command).toHaveCount(1);
+    const commandId = await command.getAttribute("data-message-id");
+    if (!commandId) throw new Error("Missing restart event identity");
+    await expect(control).toContainText("Result not confirmed");
+    await page.evaluate(
+      ({ channelName, pubkey, commandId }) =>
+        window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+          channelName,
+          pubkey,
+          kind: 7,
+          content: "✅",
+          extraTags: [
+            ["e", commandId],
+            ["buzz-session-result", "1", commandId, "ok", ""],
+          ],
+        }),
+      { channelName: CHANNEL, pubkey: AGENT, commandId },
+    );
+    // A reset acknowledgment proves no model answer or provider readiness.
+    await expect(control).toContainText("Completed");
+    await expect(panel.getByText(response, { exact: true })).toHaveCount(0);
+    await expect(
+      panel.getByText(/session is ready|ready to continue/i),
+    ).toHaveCount(0);
+    await expect(draft).toHaveText("Preserve the next real task instruction");
+    const createdAt = Math.floor(Date.now() / 1000);
+    const input = {
+      channelName: CHANNEL,
+      pubkey: AGENT,
+      kind: 9,
+      content: response,
+      extraTags: [["e", root, "", "reply"]],
+      id: eventId,
+      createdAt,
+    };
+    await page.evaluate(
+      (input) => window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.(input),
+      input,
+    );
+    await expect(row(panel, eventId)).toHaveCount(1);
+    await expect(row(panel, eventId)).toContainText(response);
+    // Replay the same mock event to bind ordinary timeline deduplication.
+    await page.evaluate(
+      (input) => window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.(input),
+      input,
+    );
+    await expect(row(panel, eventId)).toHaveCount(1);
+    await expect(control).toContainText("Completed");
+    await expect(control).not.toContainText("Failed");
+    await expect(draft).toHaveText("Preserve the next real task instruction");
+    const raw = await page.evaluate(
+      async (eventId) =>
+        JSON.parse(
+          String(
+            await window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__?.("get_event", {
+              eventId,
+            }),
+          ),
+        ),
+      eventId,
+    );
+    expect(raw.kind).toBe(9);
+    expect(raw.pubkey).toBe(AGENT);
+    expect(raw.content).toBe(response);
+    expect(raw.tags.filter((tag: string[]) => tag[0] === "p")).toEqual([]);
+    expect(raw.tags.filter((tag: string[]) => tag[0] === "broadcast")).toEqual(
+      [],
+    );
+    expect(
+      raw.tags
+        .filter((tag: string[]) => tag[0] === "e")
+        .map((tag: string[]) => tag[1]),
+    ).toContain(root);
+    expect(
+      raw.tags
+        .filter((tag: string[]) => tag[0] === "e")
+        .map((tag: string[]) => tag[1]),
+    ).not.toContain(sibling.id);
+    await expect(row(page, sibling.id)).not.toContainText(response);
+    expect(await sends(page)).toHaveLength(1);
+    if (name === "restart_success_and_followup_failure_remain_independent") {
+      await expect(
+        panel.getByText("Validation is complete and the agent is ready.", {
+          exact: true,
+        }),
+      ).toHaveCount(0);
+    }
+  });
+}

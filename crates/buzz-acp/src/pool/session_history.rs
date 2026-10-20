@@ -130,8 +130,25 @@ pub(super) async fn selected(
     depth: RestartDepth,
     ctx: &PromptContext,
 ) -> (Option<ConversationContext>, Option<FirstMention>) {
+    let (context, mention, _) =
+        selected_with_language(target, channel, depth, ctx, &HashSet::new()).await;
+    (context, mention)
+}
+
+pub(super) async fn selected_with_language(
+    target: &ContextTarget,
+    channel: Uuid,
+    depth: RestartDepth,
+    ctx: &PromptContext,
+    humans: &HashSet<String>,
+) -> (
+    Option<ConversationContext>,
+    Option<FirstMention>,
+    &'static str,
+) {
+    let mut language = super::status_language::Evidence::default();
     if *target == ContextTarget::None {
-        return (None, Some(FirstMention::NotFound));
+        return (None, Some(FirstMention::NotFound), "unknown");
     }
     let mut reader = Reader {
         ctx,
@@ -168,6 +185,7 @@ pub(super) async fn selected(
         let mut events = events.iter().collect::<Vec<_>>();
         events.sort_by(|a, b| key(a).cmp(&key(b)));
         for event in events {
+            language.observe(event, humans, channel, target);
             let Some(message) = json_to_context_message(event) else {
                 continue;
             };
@@ -226,6 +244,7 @@ pub(super) async fn selected(
             .map(|(at, id)| (at, id.to_owned()));
         let short = events.len() < PAGE;
         for event in events {
+            language.observe(&event, humans, channel, target);
             let Some(message) = json_to_context_message(&event) else {
                 continue;
             };
@@ -371,7 +390,7 @@ pub(super) async fn selected(
     }
     let mut context = Some(context);
     enforce_render_budget(&mut context, None, &pins);
-    (context, Some(mention))
+    (context, Some(mention), language.language())
 }
 
 /// Reconcile assignment discovery with the bodies actually supplied after

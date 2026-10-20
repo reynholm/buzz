@@ -399,7 +399,8 @@ reaping: startup and periodic cleanup can inspect and stop agents from other
 Desktop instances. Do not mount the host `/proc` into a native QA container;
 verify its visible process set and mount list before exercising the app.
 
-The registered mock-bridge smoke workflow drives the production message menu,
+The registered mock-bridge smoke workflow drives the thread composer's
+Manage context → agent list → selected agent actions flow,
 verified directory refresh, native send boundary, canonical thread routing and
 compact request row. It also checks keyboard submenu/Escape focus return,
 permission revocation and draft preservation. Run it with a fresh E2E build and
@@ -408,6 +409,16 @@ refuse an existing server:
 ```sh
 CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts
 ```
+
+For jsdom absence assertions, compare a boolean with a descriptive message
+(for example, `assert.ok(!view.queryByRole("menuitem"), "No actions after revocation")`).
+Do not pass a live DOM element to `assert.equal(element, null)`: Node's failure
+diff can traverse the jsdom/React graph and exhaust memory. Await asynchronous
+query-cache notifications before asserting their rendered effect. Run test and
+build process trees under an external hard memory limit, zero swap and a runtime
+deadline; fail closed if containment cannot be established. A V8 heap flag or
+in-process test timeout alone cannot bound native allocation or a stalled event
+loop.
 
 Raw result and actor projection regressions live beside the production formatter
 in `desktop/src/features/messages/lib/sessionControl.test.mjs`. The shared

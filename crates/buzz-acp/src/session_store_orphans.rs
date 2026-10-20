@@ -4,6 +4,7 @@ use super::*;
 #[derive(Debug, Default)]
 pub(crate) struct OrphanSweep {
     pub finished: Vec<String>,
+    pub reconciled_statuses: usize,
     pub failures: usize,
     pub more: bool,
     pub revisit: bool,
@@ -89,6 +90,32 @@ impl SessionStore {
                         continue;
                     }
                 };
+                if let Some(saved) = record.restart_status.as_ref().filter(|saved| {
+                    saved.owner != self.instance
+                        && record.pending_restart.as_ref().map(|intent| intent.token)
+                            == Some(saved.token)
+                        && self.record_path(&saved.scope) == path
+                }) {
+                    if saved.active()
+                        || matches!(
+                            saved.phase,
+                            RestartStatusPhase::WaitingRetirement | RestartStatusPhase::Unconfirmed
+                        )
+                    {
+                        if self.instance_liveness(saved.owner) == InstanceLiveness::Dead {
+                            match self.recover_status(saved) {
+                                Ok(()) => progress.reconciled_statuses += 1,
+                                Err(error) => progress.failed(&path, error),
+                            }
+                        } else {
+                            progress.revisit = true;
+                        }
+                    }
+                }
+                if progress.finished.len() + progress.reconciled_statuses >= limit {
+                    progress.more = true;
+                    return Ok(progress);
+                }
                 let orphans: Vec<_> = record
                     .control_receipts
                     .iter()
@@ -108,7 +135,10 @@ impl SessionStore {
                             }
                         }
                     })
-                    .take(limit.saturating_sub(progress.finished.len()))
+                    .take(
+                        limit
+                            .saturating_sub(progress.finished.len() + progress.reconciled_statuses),
+                    )
                     .cloned()
                     .collect();
                 if orphans.is_empty() {
@@ -146,7 +176,7 @@ impl SessionStore {
                         .extend(orphans.into_iter().map(|receipt| receipt.command_id)),
                     Err(error) => progress.failed(&path, error),
                 }
-                if progress.finished.len() == limit {
+                if progress.finished.len() + progress.reconciled_statuses == limit {
                     progress.more = true;
                     return Ok(progress);
                 }
