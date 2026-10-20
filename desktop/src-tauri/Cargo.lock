@@ -6190,7 +6190,7 @@ dependencies = [
 [[package]]
 name = "neteq"
 version = "0.8.3"
-source = "git+https://github.com/reynholm/videocall-rs.git?rev=16729881b0a80022a7cbe0acc94c9becf2fad313#16729881b0a80022a7cbe0acc94c9becf2fad313"
+source = "git+https://github.com/security-union/videocall-rs.git?rev=16729881b0a80022a7cbe0acc94c9becf2fad313#16729881b0a80022a7cbe0acc94c9becf2fad313"
 dependencies = [
  "log",
  "serde",

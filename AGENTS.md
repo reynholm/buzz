@@ -427,6 +427,10 @@ See [TESTING.md](TESTING.md) for the full multi-agent E2E guide.
 For mobile simulator screenshots, save the PNGs in a local directory and run
 `./scripts/post-screenshots.sh <PR-number> <png-dir>` or use the third argument
 with a markdown template containing `{{filename}}` placeholders.
+For a fork, select both destinations explicitly:
+`./scripts/post-screenshots.sh --repo owner/repo --remote fork <PR-number> <png-dir>`.
+The script preserves screenshot history with a normal push and signs off its
+asset commit using the effective Git identity. A rejected push stops publication.
 
 The desktop app requires the E2E mock bridge to render — it cannot run in a plain
 browser. Use `just desktop-screenshot` to capture screenshots (builds frontend,

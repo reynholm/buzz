@@ -10443,7 +10443,7 @@ async function handleSendChannelMessage(
           args.parentEventId,
           rootEventId,
           args.mentionPubkeys,
-        ),
+        ).filter((tag) => tag[0] !== "p" || tag[1] !== mockPubkey),
         ...extraTags,
       ],
       content: args.content.trim(),

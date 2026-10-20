@@ -132,9 +132,11 @@ impl AgentPool {
     }
 
     pub(super) fn runtime_claim_allowed(&self, index: usize, scope: Option<&SessionScope>) -> bool {
-        self.runtime_holds
-            .get(&index)
-            .is_none_or(|hold| scope == Some(&hold.scope))
+        !self.retire_on_return.contains(&index)
+            && self
+                .runtime_holds
+                .get(&index)
+                .is_none_or(|hold| scope == Some(&hold.scope))
     }
 
     fn continuation_matches(
@@ -189,8 +191,9 @@ impl AgentPool {
             {
                 return
             }
-            Some(children) => hold.blocking_pids = children,
-            None => {} // Unknown state must not authorize killing live work.
+            Some(children) if !children.is_empty() => hold.blocking_pids = children,
+            Some(_) => {} // Preserve observed exit until polling queues collection.
+            None => {}    // Unknown state must not authorize killing live work.
         }
         if hold.continuation.as_ref().is_some_and(|continuation| {
             !self.continuation_matches(agent, &hold.scope, continuation)
@@ -220,9 +223,19 @@ impl AgentPool {
                 }
                 continue;
             }
+            if self.retire_on_return.contains(&index) {
+                self.runtime_holds.remove(&index);
+                continue;
+            }
             let Some(hold) = self.runtime_holds.get(&index) else {
                 continue;
             };
+            if hold.blocking_pids.is_empty() && !hold.collection_pending {
+                // Unknown discovery held this worker conservatively, but no
+                // workload was observed. Empty now is not a completion event.
+                self.runtime_holds.remove(&index);
+                continue;
+            }
             let valid = hold.continuation.as_ref().is_some_and(|continuation| {
                 self.agents[index].as_ref().is_some_and(|agent| {
                     self.continuation_matches(agent, &hold.scope, continuation)

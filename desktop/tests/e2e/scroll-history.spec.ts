@@ -433,12 +433,12 @@ test("does not teleport upward when user abandons fetch by jumping to bottom", a
   // dispatches a real WheelEvent that whichever element owns scrolling
   // must honor. Wheel up in 2000-delta chunks (the browser applies its
   // own delta scaling so the actual scrolled distance is typically a
-  // fraction of this) until scrollTop crosses below 500 or we hit a
-  // step cap.
+  // fraction of this) until the older-fetch indicator is visible or we
+  // hit the step cap. A position below 500px can still be above the fetch
+  // boundary, so scroll position alone does not establish the premise.
   await timeline.hover();
   for (let attempt = 0; attempt < 32; attempt += 1) {
-    const metrics = await getTimelineMetrics(page);
-    if (metrics.scrollTop < 500) {
+    if (await page.getByTestId("message-timeline-fetching-older").isVisible()) {
       break;
     }
     await page.mouse.wheel(0, -2000);

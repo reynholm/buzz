@@ -457,6 +457,8 @@ pub struct BuzzClient {
     auth_tag: Option<Tag>,
     /// Raw JSON of the auth tag for the `x-auth-tag` HTTP header.
     auth_tag_json: Option<String>,
+    /// Session-status instance directory advertised by an agent harness.
+    session_status_dir: Option<std::path::PathBuf>,
 }
 
 impl BuzzClient {
@@ -486,7 +488,20 @@ impl BuzzClient {
             keys,
             auth_tag,
             auth_tag_json,
+            session_status_dir: None,
         })
+    }
+
+    /// Read session status for new kind-9 messages from `dir`, an agent
+    /// harness instance directory. `None` disables status enrichment.
+    pub fn with_session_status_dir(mut self, dir: Option<std::path::PathBuf>) -> Self {
+        self.session_status_dir = dir;
+        self
+    }
+
+    /// The configured session-status instance directory, if any.
+    pub fn session_status_dir(&self) -> Option<&std::path::Path> {
+        self.session_status_dir.as_deref()
     }
 
     /// Get the keypair.

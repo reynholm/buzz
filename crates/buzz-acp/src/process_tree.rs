@@ -3,7 +3,9 @@
 //! Pool sleep kills the worker's process group. Children that are still
 //! doing the turn's work (a subagent, a background shell) must keep the
 //! worker alive. Long-lived helpers such as MCP servers must not, or a
-//! lazy pool would never sleep.
+//! lazy pool would never sleep. Agent CLIs often start MCP servers through
+//! launcher chains (`npm exec`, `sh -c`, a node launcher script); a chain
+//! whose every leaf is a helper is a helper too.
 
 use std::collections::{HashMap, HashSet};
 
@@ -20,15 +22,6 @@ pub struct ChildProcess {
 /// Arguments of ordinary work must not turn it into a resident just because a
 /// task mentions MCP, or a working directory happens to contain those letters.
 pub fn is_resident_helper(command: &str) -> bool {
-    fn helper_name(path: &str) -> bool {
-        let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
-        name == "mcp"
-            || name.starts_with("mcp-")
-            || name.starts_with("mcp_")
-            || name.contains("-mcp")
-            || name.contains("_mcp")
-            || path.split('/').any(|part| part == "@modelcontextprotocol")
-    }
     let mut parts = command.split_whitespace();
     let Some(executable) = parts.next() else {
         return false;
@@ -41,11 +34,42 @@ pub fn is_resident_helper(command: &str) -> bool {
         // The first non-option word is the script. Inline programs (-c/-e)
         // and interpreter flags with their own values are deliberately unknown.
         if let Some(script) = parts.next().filter(|part| !part.starts_with('-')) {
-            return helper_name(script);
+            return helper_name(script) || in_helper_package(script);
         }
     }
     false
 }
+
+fn helper_name(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+    name == "mcp"
+        || name.starts_with("mcp-")
+        || name.starts_with("mcp_")
+        || name.contains("-mcp")
+        || name.contains("_mcp")
+        || path.split('/').any(|part| part == "@modelcontextprotocol")
+}
+
+/// Whether a script path lies inside an installed package with a helper
+/// name: the component right after `node_modules/` (or after its `@scope/`).
+/// Ordinary directories are not packages, so a work directory that merely
+/// contains the letters never qualifies.
+fn in_helper_package(script: &str) -> bool {
+    let parts: Vec<&str> = script.split('/').collect();
+    parts.iter().enumerate().any(|(index, part)| {
+        if *part != "node_modules" {
+            return false;
+        }
+        let package = match parts.get(index + 1) {
+            Some(scope) if scope.starts_with('@') => parts.get(index + 2),
+            other => other,
+        };
+        package.is_some_and(|package| helper_name(package))
+    })
+}
+
+/// Launcher chains deeper than this are treated as work.
+const MAX_LAUNCHER_DEPTH: usize = 8;
 
 /// Parse one `ps -axo pid=,ppid=,command=` line.
 ///
@@ -68,21 +92,78 @@ pub fn parse_ps_line(line: &str) -> Option<(u32, u32, String)> {
 pub struct ProcessTree {
     children: HashMap<u32, Vec<ChildProcess>>,
     resident_helpers: HashSet<u32>,
+    snapshot_helpers: HashSet<u32>,
+    snapshot_candidates: HashSet<u32>,
+    uncertain_snapshots: HashSet<u32>,
 }
 
 impl ProcessTree {
-    /// Direct children that are work, excluding startup residents and helpers.
+    #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+    pub(crate) fn from_snapshot_with_identities(output: &str, identities: Option<&str>) -> Self {
+        let mut tree = parse_snapshot(output).unwrap();
+        let snapshots = codex_snapshots::candidates(&tree);
+        codex_helpers::apply_snapshot_identities(&mut tree, &snapshots, identities);
+        tree
+    }
+
+    /// Snapshot shells are bookkeeping only while their current identity matches.
+    pub(crate) fn is_snapshot_helper(&self, pid: u32) -> bool {
+        self.snapshot_helpers.contains(&pid)
+    }
+
+    /// A structural snapshot branch must never authorize permanent residency.
+    pub(crate) fn is_snapshot_candidate(&self, pid: u32) -> bool {
+        self.snapshot_candidates.contains(&pid)
+    }
+
+    /// Missing executable proof is uncertainty rather than observed task work.
+    pub(crate) fn is_uncertain_snapshot(&self, pid: u32) -> bool {
+        self.uncertain_snapshots.contains(&pid)
+    }
+
+    /// Startup residents exclude snapshot branches, whose children may be real work.
+    pub(crate) fn startup_resident_pids(&self, parent: u32) -> HashSet<u32> {
+        let mut residents = HashSet::new();
+        let mut pending = vec![parent];
+        while let Some(parent) = pending.pop() {
+            for child in self.children(parent) {
+                if !self.is_snapshot_candidate(child.pid) && residents.insert(child.pid) {
+                    pending.push(child.pid);
+                }
+            }
+        }
+        residents
+    }
+
+    /// Definite work children, excluding residents, helpers and uncertain snapshots.
     pub fn blocking_pids(&self, parent: u32, resident: &HashSet<u32>) -> HashSet<u32> {
         self.children(parent)
             .iter()
-            .filter(|child| !resident.contains(&child.pid) && !self.is_resident_helper(child))
+            .filter(|child| {
+                !resident.contains(&child.pid)
+                    && !self.is_resident_helper(child)
+                    && !self.is_uncertain_snapshot(child.pid)
+            })
             .map(|child| child.pid)
             .collect()
     }
 
-    /// Helpers confirmed by executable identity, or the existing MCP classifier.
+    /// Helpers confirmed by executable identity, the MCP classifier, or a
+    /// launcher whose children are all helpers. A childless non-helper is work.
     pub fn is_resident_helper(&self, child: &ChildProcess) -> bool {
-        self.resident_helpers.contains(&child.pid) || is_resident_helper(&child.command)
+        self.is_snapshot_helper(child.pid) || self.is_helper_within(child, MAX_LAUNCHER_DEPTH)
+    }
+
+    fn is_helper_within(&self, child: &ChildProcess, depth: usize) -> bool {
+        if self.resident_helpers.contains(&child.pid) || is_resident_helper(&child.command) {
+            return true;
+        }
+        let children = self.children(child.pid);
+        depth > 0
+            && !children.is_empty()
+            && children
+                .iter()
+                .all(|grandchild| self.is_helper_within(grandchild, depth - 1))
     }
 
     /// Direct children in this snapshot.
@@ -127,6 +208,9 @@ pub fn snapshot() -> Option<ProcessTree> {
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod codex_helpers;
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod codex_snapshots;
+
 #[cfg(unix)]
 fn parse_snapshot(output: &str) -> Option<ProcessTree> {
     let mut tree = ProcessTree::default();
@@ -145,7 +229,7 @@ fn parse_snapshot(output: &str) -> Option<ProcessTree> {
 }
 
 #[cfg(unix)]
-fn bounded_output(
+pub(crate) fn bounded_output(
     mut command: tokio::process::Command,
     timeout: std::time::Duration,
     limit: usize,
@@ -307,3 +391,56 @@ mod classification_regression_tests {
 
 #[cfg(all(test, unix))]
 mod snapshot_tests;
+
+#[cfg(all(test, unix))]
+mod launcher_chain_tests {
+    use super::*;
+
+    #[test]
+    fn npm_exec_mcp_chain_is_resident() {
+        let tree = parse_snapshot(concat!(
+            "11 10 S npm exec @zereight/mcp-gitlab\n",
+            "12 11 S sh -c 'mcp-gitlab'\n",
+            "13 12 S node /home/u/.npm/_npx/d6b1/node_modules/.bin/mcp-gitlab\n",
+        ))
+        .expect("valid process snapshot");
+        assert!(tree.is_resident_helper(&tree.children(10)[0]));
+        assert!(tree.blocking_pids(10, &HashSet::new()).is_empty());
+    }
+
+    #[test]
+    fn launcher_into_scoped_mcp_package_is_resident() {
+        let tree = parse_snapshot(concat!(
+            "21 10 S /usr/bin/node /home/u/.cache/b24-mcp/launcher.cjs\n",
+            "22 21 S /usr/bin/node /home/u/.cache/b24-mcp/versions/1.1.2/node_modules/@bitrix/b24-mcp/dist/cli.js\n",
+        ))
+        .expect("valid process snapshot");
+        assert!(tree.blocking_pids(10, &HashSet::new()).is_empty());
+    }
+
+    #[test]
+    fn shell_with_non_helper_leaf_still_blocks() {
+        let tree = parse_snapshot(concat!(
+            "31 10 S /bin/bash -c sleep 600\n",
+            "32 31 S sleep 600\n",
+            "41 10 S npm exec @upstash/context7-mcp\n",
+        ))
+        .expect("valid process snapshot");
+        // 41 has no children yet: not proven resident on this poll.
+        assert_eq!(
+            tree.blocking_pids(10, &HashSet::new()),
+            HashSet::from([31, 41])
+        );
+    }
+
+    #[test]
+    fn work_dir_named_like_mcp_is_not_a_package() {
+        assert!(!is_resident_helper("python3 /home/u/my-mcp-project/run.py"));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod retirement_tests;
+
+#[cfg(unix)]
+pub(crate) mod retirement;

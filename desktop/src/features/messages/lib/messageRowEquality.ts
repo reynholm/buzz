@@ -1,4 +1,5 @@
 import type {
+  MessageSessionStatus,
   TimelineMessage,
   TimelineReaction,
 } from "@/features/messages/types";
@@ -69,6 +70,28 @@ export function reactionsEqual(
   return true;
 }
 
+/** Derived session status: rebuilt per format pass, compared by value. The
+ * explanation can move between rows whose own tags did not change, so this
+ * must be compared in addition to `tagsEqual`. */
+export function sessionStatusEqual(
+  a: MessageSessionStatus | undefined,
+  b: MessageSessionStatus | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.percent !== b.percent) return false;
+  const left = a.explanation;
+  const right = b.explanation;
+  if (left === right) return true;
+  if (!left || !right) return false;
+  if (left.title !== right.title || left.detail !== right.detail) return false;
+  const leftHistory = left.history ?? [];
+  const rightHistory = right.history ?? [];
+  return (
+    leftHistory.length === rightHistory.length &&
+    leftHistory.every((phrase, index) => phrase === rightHistory[index])
+  );
+}
+
 export function numberArrayEqual(
   a: readonly number[] | undefined,
   b: readonly number[] | undefined,
@@ -116,4 +139,28 @@ export function depthGuideActionsEqual(
     }
   }
   return true;
+}
+
+/** Results arrive independently of the request body and ordinary reaction pills. */
+export function sessionControlEqual(
+  a: TimelineMessage["sessionControl"],
+  b: TimelineMessage["sessionControl"],
+): boolean {
+  if (a === b) return true;
+  return Boolean(
+    a &&
+      b &&
+      a.action === b.action &&
+      a.targets.length === b.targets.length &&
+      a.targets.every((target, i) => {
+        const other = b.targets[i];
+        return (
+          target.pubkey === other.pubkey &&
+          target.name === other.name &&
+          target.state === other.state &&
+          target.detail === other.detail &&
+          target.expiresAt === other.expiresAt
+        );
+      }),
+  );
 }

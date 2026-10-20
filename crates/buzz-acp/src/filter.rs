@@ -371,6 +371,13 @@ pub async fn match_event(
     rules: &[SubscriptionRule],
     agent_pubkey_hex: &str,
 ) -> Option<MatchedRule> {
+    if serde_json::to_value(event)
+        .ok()
+        .is_some_and(|raw| crate::session_controls::reserved_raw(&raw))
+    {
+        return None;
+    }
+
     let filter_ctx = FilterContext::from_event(event, channel_id);
 
     for (index, rule) in rules.iter().enumerate() {

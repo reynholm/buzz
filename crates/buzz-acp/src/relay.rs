@@ -505,6 +505,45 @@ impl RestClient {
             .map_err(|e| RelayError::Http(e.to_string()))
     }
 
+    /// Decode one raw history response with a byte ceiling on actual received
+    /// chunks, including when Content-Length is absent or misleading. The
+    /// deadline covers request, body reading and decoding independently of the
+    /// caller's total history budget.
+    pub async fn query_raw_bounded(
+        &self,
+        filters: &[Value],
+        max_bytes: usize,
+    ) -> Result<Value, RelayError> {
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            let body = serde_json::to_vec(filters).map_err(|e| RelayError::Http(e.to_string()))?;
+            let mut response = self.bridge_post("/query", &body).await?;
+            if response
+                .content_length()
+                .is_some_and(|size| size > max_bytes as u64)
+            {
+                return Err(RelayError::Http(
+                    "history response exceeds byte budget".into(),
+                ));
+            }
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|e| RelayError::Http(e.to_string()))?
+            {
+                if chunk.len() > max_bytes.saturating_sub(bytes.len()) {
+                    return Err(RelayError::Http(
+                        "history response exceeds byte budget".into(),
+                    ));
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            serde_json::from_slice(&bytes).map_err(|e| RelayError::Http(e.to_string()))
+        })
+        .await
+        .map_err(|_| RelayError::Http("history request deadline exceeded".into()))?
+    }
+
     /// Query every historical event matching one raw filter across bounded pages.
     ///
     /// Uses the bridge's composite `(until, before_id)` cursor so a full page
@@ -561,6 +600,74 @@ impl RestClient {
         resp.json()
             .await
             .map_err(|e| RelayError::Http(e.to_string()))
+    }
+
+    /// Submit once when the caller owns the complete retry budget. The
+    /// acknowledgment is bounded independently from ordinary relay requests.
+    pub(crate) async fn submit_event_once(&self, event: &Event) -> Result<(), RelayError> {
+        self.submit_event_once_checked(event, false).await
+    }
+
+    /// Require the relay to acknowledge this exact immutable signed event.
+    pub(crate) async fn submit_event_once_exact(&self, event: &Event) -> Result<(), RelayError> {
+        self.submit_event_once_checked(event, true).await
+    }
+
+    async fn submit_event_once_checked(
+        &self,
+        event: &Event,
+        exact: bool,
+    ) -> Result<(), RelayError> {
+        let body = serde_json::to_vec(event)
+            .map_err(|error| RelayError::Http(format!("event serialize error: {error}")))?;
+        let url = format!("{}/events", self.base_url);
+        let auth = self.nip98_header("POST", &url, Some(&body))?;
+        let mut request = self
+            .http
+            .post(&url)
+            .header("Authorization", auth)
+            .header("Content-Type", "application/json")
+            .body(body);
+        if let Some(tag) = &self.auth_tag_json {
+            request = request.header("x-auth-tag", tag);
+        }
+        let mut response = request
+            .send()
+            .await
+            .map_err(|error| RelayError::Http(error.to_string()))?;
+        if !response.status().is_success() {
+            return Err(RelayError::Http(format!(
+                "POST /events returned HTTP {}",
+                response.status()
+            )));
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|error| RelayError::Http(error.to_string()))?
+        {
+            if body.len().saturating_add(chunk.len()) > 64 * 1024 {
+                return Err(RelayError::Http(
+                    "event acknowledgment exceeds byte limit".into(),
+                ));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let acknowledgment: Value =
+            serde_json::from_slice(&body).map_err(|error| RelayError::Http(error.to_string()))?;
+        if acknowledgment.get("accepted").and_then(Value::as_bool) != Some(true) {
+            return Err(RelayError::Http("relay did not accept event".into()));
+        }
+        if exact
+            && acknowledgment.get("event_id").and_then(Value::as_str)
+                != Some(event.id.to_hex().as_str())
+        {
+            return Err(RelayError::Http(
+                "relay acknowledgment did not match the prepared event".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Submit a signed event via the HTTP bridge: `POST /events` with NIP-98 auth.

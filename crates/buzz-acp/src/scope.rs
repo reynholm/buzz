@@ -67,7 +67,7 @@ impl std::fmt::Display for SessionPolicy {
 /// This is the canonical key for provider sessions, queue partitions, in-flight
 /// tracking, and context gathering. The channel remains the authorization and
 /// collaboration boundary; the scope is the default *execution* boundary.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SessionScope {
     /// The whole channel is one session. Used for DMs always, and for every
     /// channel event under [`SessionPolicy::Channel`].
@@ -199,7 +199,19 @@ mod tests {
             let prompt = policy.append_session_model(base);
             assert!(prompt.starts_with(base.trim_end()));
             assert_eq!(prompt.matches("## Session Model").count(), 1);
-            assert!(prompt.ends_with("assume the owning session has it handled."));
+            assert!(prompt.contains("assume the owning session has it handled."));
+            assert!(prompt.ends_with("Later ordinary requests resume normal work."));
+            assert_eq!(
+                prompt
+                    .matches(
+                        "A harness-owned `<restart-status>` request is a single status-only turn."
+                    )
+                    .count(),
+                1
+            );
+            assert!(prompt.contains(
+                "Do not execute the task, inspect files or logs, run tools or subagents, or send the reply yourself."
+            ));
             assert!(prompt.contains("DMs stay one conversation"));
             assert!(prompt.contains(
                 "core memory, your workspace on disk, relay access, and channel authorization"

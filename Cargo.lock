@@ -974,6 +974,7 @@ dependencies = [
  "chrono",
  "clap",
  "evalexpr",
+ "fs2",
  "futures-util",
  "git-credential-nostr",
  "git-sign-nostr",
@@ -981,6 +982,7 @@ dependencies = [
  "httparse",
  "nix 0.31.3",
  "nostr 0.44.7",
+ "process-wrap 10.0.1",
  "reqwest 0.13.4",
  "rustls",
  "serde",
@@ -996,6 +998,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "win32job",
  "zeroize",
 ]
 
@@ -11720,6 +11723,16 @@ name = "widestring"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72069c3113ab32ab29e5584db3c6ec55d416895e60715417b5b883a357c3e471"
+
+[[package]]
+name = "win32job"
+version = "2.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c6a6724ccfbf34154a8691bd868b0fcd2be2ca3f7b47b32614654f1a01b191c"
+dependencies = [
+ "thiserror 1.0.69",
+ "windows 0.61.3",
+]
 
 [[package]]
 name = "winapi"

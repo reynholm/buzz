@@ -1,9 +1,12 @@
+import { MessageSessionControlRow } from "./MessageSessionControlRow";
 import * as React from "react";
 import { AlertTriangle } from "lucide-react";
 import {
   depthGuideActionsEqual,
   numberArrayEqual,
   reactionsEqual,
+  sessionStatusEqual,
+  sessionControlEqual,
   tagsEqual,
 } from "@/features/messages/lib/messageRowEquality";
 import {
@@ -55,6 +58,7 @@ import {
   MessageHeaderRow,
   MessageMetaSegments,
 } from "./MessageHeader";
+import { MessageSessionStatus } from "./MessageSessionStatus";
 import { MessageTimestamp } from "./MessageTimestamp";
 import { SentFromThreadLine } from "./SentFromThreadLine";
 import { WaveMessageAttachment } from "./WaveMessageAttachment";
@@ -164,7 +168,8 @@ export const MessageRow = React.memo(
   }) {
     // Keep the transient send state with its timestamp rather than collapsing
     // it into a grouped message row with no header.
-    const isDisplayedAsContinuation = isContinuation && !message.pending;
+    const isDisplayedAsContinuation =
+      isContinuation && !message.pending && !message.sessionControl;
     const [expandedDiffId, setExpandedDiffId] = React.useState<string | null>(
       null,
     );
@@ -686,23 +691,38 @@ export const MessageRow = React.memo(
     const messageBodyNode = (
       <>
         <SentFromThreadLine channelId={channelId} tags={message.tags} />
-        {renderBody()}
+        {message.sessionControl ? (
+          <MessageSessionControlRow
+            actor={message.author}
+            control={message.sessionControl}
+            createdAt={message.createdAt}
+          />
+        ) : (
+          renderBody()
+        )}
         {continuationMetadataNode}
-        <MessageReactions
-          messageId={message.id}
-          reactions={reactions}
-          canToggle={canToggleReactions}
-          pending={reactionPending}
-          burstEmojiOnRender={badgeBurstEmoji}
-          onBurstEmojiRendered={(emoji) => {
-            setBadgeBurstEmoji((current) =>
-              current === emoji ? null : current,
-            );
-          }}
-          onSelect={(emoji) => {
-            void handleReactionSelect(emoji);
-          }}
-        />
+        <div className="flex items-start gap-1">
+          {message.sessionStatus ? (
+            <MessageSessionStatus status={message.sessionStatus} />
+          ) : null}
+        </div>
+        {!message.sessionControl ? (
+          <MessageReactions
+            messageId={message.id}
+            reactions={reactions}
+            canToggle={canToggleReactions}
+            pending={reactionPending}
+            burstEmojiOnRender={badgeBurstEmoji}
+            onBurstEmojiRendered={(emoji) => {
+              setBadgeBurstEmoji((current) =>
+                current === emoji ? null : current,
+              );
+            }}
+            onSelect={(emoji) => {
+              void handleReactionSelect(emoji);
+            }}
+          />
+        ) : null}
         {reactionErrorMessage ? (
           <p className="mt-1.5 text-xs text-destructive">
             {reactionErrorMessage}
@@ -962,6 +982,14 @@ export const MessageRow = React.memo(
     // thread (see messageRowEquality.ts).
     reactionsEqual(prev.message.reactions, next.message.reactions) &&
     tagsEqual(prev.message.tags, next.message.tags) &&
+    sessionStatusEqual(
+      prev.message.sessionStatus,
+      next.message.sessionStatus,
+    ) &&
+    sessionControlEqual(
+      prev.message.sessionControl,
+      next.message.sessionControl,
+    ) &&
     prev.message.role === next.message.role &&
     prev.message.personaDisplayName === next.message.personaDisplayName &&
     prev.currentPubkey === next.currentPubkey &&

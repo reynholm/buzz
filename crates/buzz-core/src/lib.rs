@@ -40,6 +40,10 @@ pub mod presence;
 pub mod private_managed_agent;
 /// Canonical relay runtime identities.
 pub mod relay;
+/// Shared session-control command and result contract.
+pub mod session_control;
+/// Shared session-status contract: snapshot format, identity, scope names and wire tags.
+pub mod session_status;
 /// Tenant identity — the server-resolved community key carried on scoped paths.
 pub mod tenant;
 /// NIP-CW thread-mode normalized newest-first window contract.

@@ -1,3 +1,8 @@
+import {
+  emptyCompactionActivityState,
+  processCompactionActivity,
+  type CompactionActivityState,
+} from "./agentSessionCompaction";
 import type {
   AgentActivityDescriptor,
   AgentActivityRenderClass,
@@ -49,6 +54,7 @@ export type TranscriptState = {
   >;
   continuationSeq: number;
   latestSessionId: string | null;
+  compactions: CompactionActivityState;
 };
 
 export function createEmptyTranscriptState(): TranscriptState {
@@ -61,6 +67,7 @@ export function createEmptyTranscriptState(): TranscriptState {
     pendingPermissions: new Map(),
     continuationSeq: 0,
     latestSessionId: null,
+    compactions: emptyCompactionActivityState(),
   };
 }
 
@@ -81,6 +88,7 @@ type TranscriptDraft = {
   >;
   continuationSeq: number;
   latestSessionId: string | null;
+  compactions: CompactionActivityState;
   changed: boolean;
 };
 
@@ -94,6 +102,7 @@ function draftFrom(state: TranscriptState): TranscriptDraft {
     pendingPermissions: state.pendingPermissions,
     continuationSeq: state.continuationSeq,
     latestSessionId: state.latestSessionId,
+    compactions: state.compactions,
     changed: false,
   };
 }
@@ -1105,7 +1114,7 @@ export function processTranscriptEvent(
             updateType,
           );
         }
-      } else {
+      } else if (updateType !== "compaction_update") {
         // Free-form observer status records are not part of the ACP session/update
         // union. Surface only explicit title/text payloads; leave all other
         // unknown frames out of the feed instead of guessing at semantics.
@@ -1143,7 +1152,20 @@ export function processTranscriptEvent(
     }
   }
 
-  if (!d.changed && d.latestSessionId === state.latestSessionId) {
+  const compaction = processCompactionActivity(d.compactions, event, d.items);
+  d.compactions = compaction.state;
+  for (const item of compaction.upserts) {
+    if (d.itemsById.has(item.id)) replaceItem(d, item.id, item);
+    else {
+      sealOpenMessages(d);
+      pushItem(d, item);
+    }
+  }
+  if (
+    !d.changed &&
+    d.latestSessionId === state.latestSessionId &&
+    d.compactions === state.compactions
+  ) {
     return state;
   }
 
@@ -1156,6 +1178,7 @@ export function processTranscriptEvent(
     pendingPermissions: d.pendingPermissions,
     continuationSeq: d.continuationSeq,
     latestSessionId: d.latestSessionId,
+    compactions: d.compactions,
   };
 }
 

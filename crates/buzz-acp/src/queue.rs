@@ -2101,7 +2101,7 @@ fn conversation_context_status(
 }
 
 /// Format a conversation context section (thread or DM).
-fn format_conversation_context(
+pub(crate) fn format_conversation_context(
     ctx: &ConversationContext,
     profile_lookup: Option<&PromptProfileLookup>,
 ) -> String {
@@ -2539,6 +2539,7 @@ mod tests {
             queue.retry_after.insert(conv(channel), deadline);
             let (tx, mut rx) = tokio::sync::mpsc::channel(1);
             tx.send(crate::RespawnResult {
+                retirement: None,
                 index: 0,
                 result: Err(anyhow::anyhow!("wake token")),
             })

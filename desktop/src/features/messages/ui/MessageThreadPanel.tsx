@@ -36,6 +36,7 @@ import { Separator } from "@/shared/ui/separator";
 import { ComposerActivityAccessory } from "./ComposerActivityAccessory";
 import { ComposerDockBackdrop } from "./ComposerDockBackdrop";
 import { MessageComposer } from "./MessageComposer";
+import { ThreadContextControls } from "./ThreadContextControls";
 import {
   MessageThreadPanelHeader,
   ThreadMessageSkeleton,
@@ -836,6 +837,12 @@ export function MessageThreadPanel({
                 type: "thread",
                 rootTags: threadHead.tags,
               }}
+              threadContextControl={
+                <ThreadContextControls
+                  channel={channel}
+                  threadHead={threadHead}
+                />
+              }
               channelId={channelId}
               channelName={channelName}
               channelType={channel?.channelType ?? null}

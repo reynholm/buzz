@@ -171,26 +171,39 @@ test("pending and huddle rows omit both copy-link surfaces", async ({
     )
     .toBe(true);
 
-  const { huddleId, pendingId } = await page.evaluate((huddleKind) => {
-    const emit = window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__;
-    if (!emit) throw new Error("Mock message emitter is unavailable.");
-    const pending = emit({
-      channelName: "general",
-      content: "Pending copy-link regression",
-      id: "c".repeat(64),
-      pending: true,
-    });
-    const huddle = emit({
-      channelName: "general",
-      content: JSON.stringify({
-        ephemeral_channel_id: "10000000-0000-4000-8000-000000000001",
-      }),
-      id: "d".repeat(64),
-      kind: huddleKind,
-    });
-    return { huddleId: huddle.id, pendingId: pending.id };
-  }, KIND_HUDDLE_STARTED);
+  const { huddleId, pendingId, huddleKind, huddleContent } =
+    await page.evaluate((huddleKind) => {
+      const emit = window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__;
+      if (!emit) throw new Error("Mock message emitter is unavailable.");
+      const pending = emit({
+        channelName: "general",
+        content: "Pending copy-link regression",
+        id: "c".repeat(64),
+        pending: true,
+      });
+      const huddle = emit({
+        channelName: "general",
+        content: JSON.stringify({
+          ephemeral_channel_id: "10000000-0000-4000-8000-000000000001",
+        }),
+        id: "10c4b33e".repeat(8),
+        kind: huddleKind,
+      });
+      return {
+        huddleId: huddle.id,
+        pendingId: pending.id,
+        huddleKind: huddle.kind,
+        huddleContent: huddle.content,
+      };
+    }, KIND_HUDDLE_STARTED);
 
+  expect(huddleKind).toBe(KIND_HUDDLE_STARTED);
+  expect(JSON.parse(huddleContent)).toEqual({
+    ephemeral_channel_id: "10000000-0000-4000-8000-000000000001",
+  });
+  const huddleRow = page.locator(`[data-message-id="${huddleId}"]`);
+  await expect(huddleRow.getByTestId("huddle-attachment")).toBeVisible();
+  await expect(huddleRow).toContainText("Huddle");
   await expectCopyLinkUnavailable(
     page.locator(`[data-message-id="${pendingId}"]`),
     pendingId,

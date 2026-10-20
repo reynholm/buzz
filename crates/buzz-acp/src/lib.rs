@@ -22,9 +22,15 @@ mod relay;
 mod run_task;
 mod runtime;
 use runtime::{AgentRuntime, PoolStartup, SessionMode};
+mod control_tasks;
 mod scope;
+mod session_controls;
+mod session_status;
+mod session_store;
 mod setup_mode;
+mod status_tasks;
 mod usage;
+mod worker_retirement;
 
 pub use usage::TurnUsage;
 
@@ -370,6 +376,9 @@ mod inbound_author_gate {
     }
 
     impl AuthorizedListenerEvent {
+        pub(crate) fn event(&self) -> &relay::BuzzEvent {
+            &self.buzz_event
+        }
         pub(crate) fn into_parts(self) -> (relay::BuzzEvent, String) {
             (self.buzz_event, self.effective_author)
         }
@@ -653,12 +662,18 @@ impl QueuedNormalListenerEvent {
     fn steer_or_interrupt(
         self,
         handling: MultipleEventHandling,
+        controls: &session_controls::SessionControlRuntime,
         owner: Option<&str>,
         pool: &mut AgentPool,
         queue: &mut EventQueue,
         steer_ack_tx: &mpsc::UnboundedSender<SteerAckEvent>,
     ) {
-        if !self.accepted || !queue.is_scope_in_flight(&self.scope) {
+        if controls.retirement_pending(&self.scope)
+            || controls.compact_pending(&self.scope)
+            || controls.status_pending(&self.scope)
+            || !self.accepted
+            || !queue.is_scope_in_flight(&self.scope)
+        {
             return;
         }
         let Some(signal) = mode_gate_signal(handling, &self.effective_author, owner) else {
@@ -1616,6 +1631,7 @@ async fn publish_relay_observer_event(
 /// Maximum age (seconds) for an observer control frame to be considered fresh.
 const OBSERVER_CONTROL_FRESHNESS_SECS: i64 = 300;
 
+#[allow(clippy::too_many_arguments)]
 fn handle_relay_observer_control_event(
     keys: &nostr::Keys,
     event: nostr::Event,
@@ -1624,6 +1640,7 @@ fn handle_relay_observer_control_event(
     observer: Option<&observer::ObserverHandle>,
     owner_pubkey_hex: &str,
     event_publisher: RelayEventPublisher,
+    controls: &session_controls::SessionControlRuntime,
 ) {
     // Defense-in-depth: verify signature even though the relay already checked.
     if let Err(e) = buzz_core::verify_event(&event) {
@@ -1664,7 +1681,7 @@ fn handle_relay_observer_control_event(
     let command_type = payload.get("type").and_then(|value| value.as_str());
     match command_type {
         Some("cancel_turn") => {
-            handle_cancel_turn_control(&payload, pool, queue, observer);
+            handle_cancel_turn_control_with_status(&payload, pool, queue, observer, Some(controls));
         }
         Some("switch_model") => {
             handle_switch_model_control(&payload, pool, observer);
@@ -1827,11 +1844,22 @@ fn emit_project_owner_control_result(
 
 /// Cancel the unambiguous active turn, revoking its background authority even
 /// when a prior ordinary control already consumed the one-shot sender.
+#[cfg(test)]
 fn handle_cancel_turn_control(
     payload: &serde_json::Value,
     pool: &mut AgentPool,
     queue: &mut EventQueue,
     observer: Option<&observer::ObserverHandle>,
+) {
+    handle_cancel_turn_control_with_status(payload, pool, queue, observer, None);
+}
+
+fn handle_cancel_turn_control_with_status(
+    payload: &serde_json::Value,
+    pool: &mut AgentPool,
+    queue: &mut EventQueue,
+    observer: Option<&observer::ObserverHandle>,
+    controls: Option<&session_controls::SessionControlRuntime>,
 ) {
     let Some(channel_id) = payload
         .get("channelId")
@@ -1842,7 +1870,16 @@ fn handle_cancel_turn_control(
         return;
     };
 
-    let status = if pool.channel_control_is_ambiguous(channel_id) {
+    let pending_status: Vec<_> = controls
+        .map(|controls| {
+            controls
+                .cancellable_status_scopes()
+                .into_iter()
+                .filter(|scope| scope.channel_id() == channel_id)
+                .collect()
+        })
+        .unwrap_or_default();
+    let status = if pool.channel_control_is_ambiguous(channel_id) || pending_status.len() > 1 {
         "ambiguous_target"
     } else {
         // Use only the active task's actual scope. A channel-only frame cannot
@@ -1855,8 +1892,16 @@ fn handle_cancel_turn_control(
         let revoked = active_scope
             .as_ref()
             .is_some_and(|scope| cancel_background_collection_for_scope(pool, queue, scope));
+        let status_scope = active_scope.as_ref().or_else(|| pending_status.first());
+        let cancellation = status_scope
+            .zip(controls)
+            .map(|(scope, controls)| controls.cancel_status_outcome(scope))
+            .unwrap_or(session_controls::status::StatusCancellation::None);
+        let status_cancelled = cancellation != session_controls::status::StatusCancellation::None;
         let sent = signal_in_flight_task(pool, channel_id, ControlSignal::Cancel);
-        if sent || revoked {
+        if cancellation == session_controls::status::StatusCancellation::Unconfirmed {
+            "unconfirmed"
+        } else if sent || revoked || status_cancelled {
             "sent"
         } else {
             "no_active_turn"
@@ -2113,6 +2158,7 @@ fn any_respawn_in_flight(crash_history: &[SlotCircuit]) -> bool {
 /// Result of a background respawn task.
 struct RespawnResult {
     index: usize,
+    retirement: Option<worker_retirement::RetirementReturn>,
     /// Tuple: (initialized client, protocol version, agent name).
     result: Result<(AcpClient, u32, String)>,
 }
@@ -2127,6 +2173,7 @@ struct RespawnResult {
 /// `EventQueue::withheld_native_steer`: `channel_id` is the routing key,
 /// `event_id` is the hex id of the single event the steer carried.
 struct SteerAckEvent {
+    control_dispatch: Option<session_controls::ControlDispatch>,
     channel_id: Uuid,
     /// Session scope of the steered event — the queue-side withhold/release
     /// and deadline extension target this, not the whole channel.
@@ -2168,6 +2215,7 @@ impl RespawnGuard {
         // respawn_in_flight guard has drifted — that's a bug, not a transient.
         match self.tx.try_send(RespawnResult {
             index: self.index,
+            retirement: None,
             result,
         }) {
             Ok(()) => self.sent = true,
@@ -2192,6 +2240,7 @@ impl Drop for RespawnGuard {
             // Best-effort: try_send in Drop (can't await).
             let _ = self.tx.try_send(RespawnResult {
                 index: self.index,
+                retirement: None,
                 result: Err(anyhow::anyhow!("respawn task panicked or was cancelled")),
             });
         }
@@ -2244,6 +2293,46 @@ fn idle_pool_sleep_due(
         && !wake_or_respawn_in_flight
         && !runtime_busy
         && inactivity_expired(last_activity, now, bound, turn_in_flight)
+}
+
+/// Whether a completed prompt result counts as activity for the idle clocks
+/// (`idle_pool_sleep_secs` and `exit_after_inactivity_secs`).
+///
+/// Turn completion must refresh `last_activity`: measured from dispatch, a
+/// turn longer than the idle bound would look idle on the first tick after it
+/// completes, and teardown would take the worker's children with it.
+/// Heartbeat results are excluded: heartbeats are dispatched only into an idle
+/// pool, so a pool kept alive by its own heartbeats would never sleep.
+fn result_refreshes_idle_clock(source: &PromptSource) -> bool {
+    // Exhaustive on purpose: a new PromptSource variant must decide
+    // explicitly whether its completion keeps the pool awake.
+    match source {
+        PromptSource::Channel(_) => true,
+        PromptSource::Heartbeat => false,
+    }
+}
+
+#[cfg(test)]
+mod idle_clock_refresh_tests {
+    use super::*;
+
+    #[test]
+    fn channel_turn_completion_refreshes_idle_clock() {
+        // A completed channel turn is activity: otherwise a turn longer than
+        // the idle bound is torn down on the first tick after it completes.
+        assert!(result_refreshes_idle_clock(&PromptSource::Channel(
+            scope::SessionScope::Conversation {
+                channel_id: Uuid::new_v4()
+            }
+        )));
+    }
+
+    #[test]
+    fn heartbeat_completion_does_not_refresh_idle_clock() {
+        // Heartbeats fire only into an idle pool; counting them as activity
+        // would keep a heartbeat-enabled pool awake forever.
+        assert!(!result_refreshes_idle_clock(&PromptSource::Heartbeat));
+    }
 }
 
 #[cfg(test)]
@@ -2658,7 +2747,8 @@ async fn run_harness(
     mut shutdown_rx: watch::Receiver<()>,
     startup_ready: tokio::sync::oneshot::Sender<()>,
 ) -> Result<()> {
-    let runtime = AgentRuntime::prepare(config)?;
+    let mut runtime = AgentRuntime::prepare(config)?;
+    runtime.enable_session_status();
     let config = runtime.config();
 
     tracing::info!("buzz-acp starting: {}", config.summary());
@@ -2681,11 +2771,18 @@ async fn run_harness(
         );
     }
 
+    let session_store = pool::open_session_store(
+        config.session_store_dir.clone(),
+        config.session_resume,
+        &config.keys.public_key().to_hex(),
+        &config.relay_url,
+    );
     let mut pool = if config.lazy_pool {
         AgentPool::from_slots((0..config.agents).map(|_| None).collect())
     } else {
         initialize_agent_pool(&runtime.startup(observer.clone()), None).await?
     };
+    pool.set_session_store(session_store.clone());
     let mut pool_ready = !config.lazy_pool;
     let mut pool_lifecycle: PoolLifecycle<AgentPool> = PoolLifecycle::listening();
 
@@ -2876,11 +2973,28 @@ async fn run_harness(
         );
     }
 
-    let ctx = Arc::new(runtime.prompt_context(
+    let mut prompt_context = runtime.prompt_context(
         relay.rest_client(),
         channel_info_map,
         SessionMode::Conversation,
-    )?);
+    )?;
+    // Controls remain durable when provider resume is disabled. Never attach this
+    // control-only store to workers, so it cannot retain provider IDs or deliveries.
+    let control_store = session_store.clone().or_else(|| {
+        pool::open_session_store(
+            config.session_store_dir.clone(),
+            true,
+            &pubkey_hex,
+            &config.relay_url,
+        )
+    });
+    prompt_context.session_controls = session_controls::SessionControlRuntime::new(control_store);
+    prompt_context.session_controls.configure_status_authority(
+        config.respond_to.clone(),
+        config.respond_to_allowlist.clone(),
+        startup_owner.clone(),
+    );
+    let ctx = Arc::new(prompt_context);
 
     if !config.memory_enabled {
         tracing::info!(
@@ -2974,6 +3088,11 @@ async fn run_harness(
     let (respawn_tx, mut respawn_rx) = mpsc::channel::<RespawnResult>(config.agents as usize);
     // JoinSet for respawn tasks so shutdown can abort them.
     let mut respawn_tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
+    let mut parked_retirements = HashMap::new();
+    let (control_tx, mut control_rx) =
+        mpsc::unbounded_channel::<pool::compaction::ControlTaskResult>();
+    let mut result_publications = tokio::task::JoinSet::new();
+    let mut orphan_reconciliation = session_controls::OrphanReconciliation::default();
     let (wake_tx, mut wake_rx) = mpsc::channel::<(u32, Result<AgentPool, String>)>(1);
     let mut wake_tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
 
@@ -3013,15 +3132,8 @@ async fn run_harness(
     // Cleared on re-add (KIND_MEMBER_ADDED_NOTIFICATION) so re-joined channels
     // regain session affinity.
     //
-    // Known limitation: if a batch is in-flight when the channel is removed AND
-    // re-added before the batch returns, the stale batch may be requeued. This
-    // is acceptable because: (a) the agent is a member again and has access,
-    // (b) the events are from the agent's authorized history, (c) the window
-    // is extremely narrow (membership changes are rare, prompt turns are seconds),
-    // and (d) fixing this would require per-channel epoch tracking on TaskMeta
-    // and PromptResult — significant complexity for a benign edge case. If strict
-    // causal invalidation is needed, add a monotonic epoch counter per channel
-    // and capture it in TaskMeta at dispatch time.
+    // The control dispatch epoch also fences remove/re-add while a task is
+    // checked out; a late result cannot requeue revoked work into the rejoin.
     let mut removed_channels: HashSet<Uuid> = HashSet::new();
 
     //
@@ -3043,6 +3155,8 @@ async fn run_harness(
     // borrow, yielding a typed enum so the outer code can dispatch cleanly.
     enum PoolEvent {
         Result(Box<PromptResult>),
+        Control(Box<pool::compaction::ControlTaskResult>),
+        Status(Box<pool::restart_status::StatusTaskResult>),
         Panic(tokio::task::JoinError),
         SteerAck(SteerAckEvent),
         Wake(u32, Result<AgentPool, String>),
@@ -3050,7 +3164,38 @@ async fn run_harness(
         Recovery(recovery_wake::RecoveryWake),
     }
 
+    let (status_tx, mut status_rx) = mpsc::unbounded_channel();
     loop {
+        status_tasks::dispatch(&mut pool, &ctx, &status_tx);
+        control_tasks::dispatch(&mut pool, &ctx, &control_tx);
+        while let Some(Some(result)) = result_publications.join_next().now_or_never() {
+            if let Err(error) = result {
+                tracing::warn!(%error, "control result publication task failed; durable outcome retained");
+            }
+        }
+        let publication_capacity = 128usize.saturating_sub(result_publications.len());
+        orphan_reconciliation.drive(&ctx.session_controls, publication_capacity);
+        worker_retirement::drive(
+            &mut pool,
+            &ctx.session_controls,
+            &mut parked_retirements,
+            config,
+            &mut crash_history,
+            &respawn_tx,
+            &mut respawn_tasks,
+            observer.clone(),
+        );
+        for publication in ctx
+            .session_controls
+            .take_publications_up_to(128usize.saturating_sub(result_publications.len()))
+        {
+            let rest = ctx.rest_client.clone();
+            result_publications.spawn(async move {
+                if let Err(error) = session_controls::publish::publish_result(&rest, &publication).await {
+                    tracing::warn!(command = %publication.command_id, %error, "session control result delivery failed; durable outcome retained");
+                }
+            });
+        }
         // Whether buffered work is waiting on a lazy pool. Also gates the
         // retry-deadline sleep arm below: a `Failed` lifecycle keeps its
         // (possibly past) `retry_at` until the next wake, so sleeping on it
@@ -3058,7 +3203,7 @@ async fn run_harness(
         // busy spin — whenever the queued work drained after a failed wake.
         let mut lazy_wake_work_pending = false;
         if config.lazy_pool && !pool_ready {
-            lazy_wake_work_pending = queue.has_flushable_work();
+            lazy_wake_work_pending = control_tasks::wake_pending(&mut queue, &ctx.session_controls);
             if let Some(attempt) = pool_lifecycle
                 .start_wake_if_due(lazy_wake_work_pending, tokio::time::Instant::now())
             {
@@ -3165,6 +3310,23 @@ async fn run_harness(
                     tracing::info!("shutting down");
                     break;
                 }
+                Some(result) = status_rx.recv() => Some(PoolEvent::Status(Box::new(result))),
+                Some(result) = control_rx.recv() => Some(PoolEvent::Control(Box::new(result))),
+                _ = async {
+                    match [ctx.session_controls.compaction_deadline(), ctx.session_controls.status_deadline()].into_iter().flatten().min() {
+                        Some(deadline) => tokio::time::sleep_until(deadline).await,
+                        None => std::future::pending().await,
+                    }
+                } => None,
+                Some(result) = result_publications.join_next(), if !result_publications.is_empty() => {
+                    let _ = result_rx;
+                    if let Err(error) = result { tracing::warn!(%error, "control result publication task failed; durable outcome retained"); }
+                    None
+                }
+                _ = orphan_reconciliation.wake() => {
+                    let _ = result_rx;
+                    None
+                }
                 wake = recovery_wake::wait(&mut respawn_rx, retry_at, maintenance_at) => {
                     Some(PoolEvent::Recovery(wake))
                 }
@@ -3255,6 +3417,7 @@ async fn run_harness(
                                     observer.as_ref(),
                                     owner_hex,
                                     relay.event_publisher(),
+                                    &ctx.session_controls,
                                 );
                             } else {
                                 tracing::warn!("observer control frame received but no owner resolved — dropping");
@@ -3354,6 +3517,14 @@ async fn run_harness(
                                     // complete normally (the relay may reject actions if
                                     // the agent lost access).
                                     let drained_ids = queue.drain_channel(ch);
+                                    if let Err(error) = ctx.session_controls.revoke_channel(ch) {
+                                        tracing::warn!(%error, "session control revocation failed");
+                                    }
+                                    pool.discard_durable_channel(ch);
+                                    pool::session_visibility::retire_channel(
+                                        ctx.session_status.as_ref(),
+                                        ch,
+                                    );
                                     let invalidated = if pool_ready {
                                         pool.invalidate_channel_sessions(ch)
                                     } else {
@@ -3453,83 +3624,9 @@ async fn run_harness(
                                             .await,
                                         &buzz_event.event,
                                     );
-                                    let background_pending = cancel_background_collection_for_scope(
-                                        &mut pool, &mut queue, &scope,
+                                    handle_owner_cancel_for_scope(
+                                        &mut pool, &mut queue, &ctx.session_controls, &scope, observer.as_ref(),
                                     );
-                                    let fired = signal_in_flight_task_for_scope(
-                                        &mut pool,
-                                        &scope,
-                                        ControlSignal::Cancel,
-                                    );
-                                    if !fired && !background_pending {
-                                        tracing::warn!(
-                                            channel_id = %buzz_event.channel_id,
-                                            scope = %scope.telemetry_label(),
-                                            "!cancel received but no in-flight task — no-op"
-                                        );
-                                    }
-                                    continue; // consume event — do NOT push to queue
-                                }
-                                // Not from owner — fall through to normal prompt handling.
-                            }
-
-                            // Mirrors !shutdown / !cancel: kind:9, content
-                            // "!rotate", from owner, mentions THIS agent.
-                            //
-                            // Rotation is explicit owner intent to start the
-                            // next turn in this channel with a fresh ACP
-                            // session. It is consumed by the harness and never
-                            // forwarded to the agent. If a turn is in-flight,
-                            // cancel it, drop its triggering batch, and
-                            // invalidate the channel session when the task
-                            // returns. If idle, invalidate the cached channel
-                            // session immediately. Queued future events remain
-                            // queued and will create a fresh session on dispatch.
-                            let is_rotate = is_owner_control_command(
-                                &buzz_event.event,
-                                kind_u32,
-                                "!rotate",
-                                &pubkey_hex,
-                            );
-                            if is_rotate {
-                                let from_owner = owner_cache.get().is_some_and(|owner| {
-                                    buzz_event.event.pubkey.to_hex() == *owner
-                                });
-                                if from_owner {
-                                    // Scope-exact: rotate only the thread the
-                                    // owner's !rotate belongs to. Under the
-                                    // default channel policy the scope is the
-                                    // channel's sole conversation, matching the
-                                    // prior channel-wide rotate.
-                                    let scope = scope::SessionScope::derive(
-                                        config.session_policy,
-                                        buzz_event.channel_id,
-                                        is_dm_channel(buzz_event.channel_id, &ctx.channel_info)
-                                            .await,
-                                        &buzz_event.event,
-                                    );
-                                    queue.remove_continuation(&scope);
-                                    let fired = signal_in_flight_task_for_scope(
-                                        &mut pool,
-                                        &scope,
-                                        ControlSignal::Rotate,
-                                    );
-                                    if fired {
-                                        tracing::info!(
-                                            channel_id = %buzz_event.channel_id,
-                                            scope = %scope.telemetry_label(),
-                                            "!rotate received — cancelling in-flight turn and rotating session"
-                                        );
-                                    } else {
-                                        let invalidated =
-                                            pool.invalidate_scope_session(&scope);
-                                        tracing::info!(
-                                            channel_id = %buzz_event.channel_id,
-                                            scope = %scope.telemetry_label(),
-                                            invalidated,
-                                            "!rotate received — invalidated idle session for scope"
-                                        );
-                                    }
                                     continue; // consume event — do NOT push to queue
                                 }
                                 // Not from owner — fall through to normal prompt handling.
@@ -3558,6 +3655,53 @@ async fn run_harness(
                             .await
                             else {
                                 continue;
+                            };
+                            let authorized_event = match session_controls::admit_authorized(
+                                authorized_event, &ctx, nostr::Timestamp::now().as_secs(),
+                            ).await {
+                                session_controls::Admission::Normal(event) => event,
+                                session_controls::Admission::Ignored => continue,
+                                session_controls::Admission::Refused { event, origin, failure } => {
+                                    tracing::warn!(command = %event.id, actor = %origin.actor_pubkey, code = failure.as_wire(), "session control refused");
+                                    ctx.session_controls.queue_result(event.id.to_hex(), buzz_core::session_control::ControlResult::Terminal(Err(failure)));
+                                    continue;
+                                }
+                                session_controls::Admission::Control(job) => {
+                                    if matches!(job.command, buzz_core::session_control::SessionCommand::Restart(_)) {
+                                        let scope = job.scope.clone();
+                                        let command_id = job.origin.command_event_id.clone();
+                                        match ctx.session_controls.restart(job) {
+                                            Ok(true) => {
+                                                queue.remove_continuation(&scope);
+                                                typing_channels.remove(&scope);
+                                                pool::session_visibility::retire_scope(ctx.session_status.as_ref(), &scope);
+                                                let targets = pool.retirement_targets(&scope);
+                                                let waiting = targets.iter().any(|index| pool.retirement_waits_for_foreign(*index, &scope));
+                                                for index in &targets { pool.mark_retire_on_return(*index); }
+                                                ctx.session_controls.plan_retirement(&scope, targets);
+                                                if waiting { ctx.session_controls.publish_pending(&scope); }
+                                                signal_in_flight_task_for_scope(&mut pool, &scope, ControlSignal::Rotate);
+                                            }
+                                            Ok(false) => {
+                                                if let Some(result) = ctx.session_controls.prior_result(&scope, &command_id) { ctx.session_controls.queue_result(command_id, result); }
+                                            }
+                                            Err(error) => {
+                                                use buzz_core::session_control::{ControlFailure, ControlResult};
+                                                let failure = match error { session_store::StoreError::Busy => ControlFailure::Busy, session_store::StoreError::StaleRequest => ControlFailure::StaleRequest, _ => ControlFailure::StoreUnavailable };
+                                                ctx.session_controls.queue_result(command_id, ControlResult::Terminal(Err(failure)));
+                                                tracing::warn!(%error, "session restart admission failed");
+                                            }
+                                        }
+                                    }
+                                    else if matches!(job.command, buzz_core::session_control::SessionCommand::Compact) {
+                                        let command_id = job.origin.command_event_id.clone();
+                                        let target = pool.compaction_target(&job.scope, &ctx.session_controls, config.session_resume);
+                                        if let Err(failure) = ctx.session_controls.queue_compaction(job, target) {
+                                            ctx.session_controls.queue_result(command_id, buzz_core::session_control::ControlResult::Terminal(Err(failure)));
+                                        }
+                                    }
+                                    continue;
+                                }
                             };
                             let Some(ingress) =
                                 AuthorizedNormalListenerEvent(authorized_event)
@@ -3604,6 +3748,7 @@ async fn run_harness(
                             // decision.
                             queued.steer_or_interrupt(
                                 config.multiple_event_handling,
+                                &ctx.session_controls,
                                 owner_cache.get(),
                                 &mut pool,
                                 &mut queue,
@@ -3639,7 +3784,7 @@ async fn run_harness(
                         last_activity,
                         tokio::time::Instant::now(),
                         inactivity_bound,
-                        queue.has_in_flight() || heartbeat_in_flight || pool.has_runtime_hold()
+                        !ctx.session_controls.pending_scopes().is_empty() || queue.has_in_flight() || heartbeat_in_flight || pool.has_runtime_hold()
                             || queue.has_undispatched_work(),
                     ) {
                         tracing::info!(
@@ -3672,7 +3817,7 @@ async fn run_harness(
                         idle_pool_sleep_bound,
                         queue.has_in_flight() || heartbeat_in_flight,
                         !pool.join_set.is_empty(),
-                        queue.has_undispatched_work(),
+                        queue.has_undispatched_work() || !ctx.session_controls.pending_scopes().is_empty(),
                         !wake_tasks.is_empty()
                             || any_respawn_in_flight(&crash_history),
                         pool.has_runtime_hold(),
@@ -3681,6 +3826,7 @@ async fn run_harness(
                             idle_pool_sleep_seconds = config.idle_pool_sleep_secs,
                             "idle pool sleep bound reached — tearing pool back to lazy state"
                         );
+                        pool.depart_idle_sessions(session_store::Departure::IdleSleep);
                         shutdown_agent_pool(&mut pool).await;
                         // Return to the exact pre-wake lazy state: empty slots,
                         // Listening lifecycle. The top-of-loop wake path re-wakes
@@ -3688,6 +3834,7 @@ async fn run_harness(
                         pool = AgentPool::from_slots(
                             (0..config.agents).map(|_| None).collect(),
                         );
+                        pool.set_session_store(session_store.clone());
                         pool_ready = false;
                         pool_lifecycle = PoolLifecycle::listening();
                         last_activity = tokio::time::Instant::now();
@@ -3775,14 +3922,23 @@ async fn run_harness(
         match pool_event {
             Some(PoolEvent::Recovery(wake)) => {
                 match wake {
-                    recovery_wake::RecoveryWake::Respawn(rr) => {
+                    recovery_wake::RecoveryWake::Respawn(mut rr) => {
+                        if worker_retirement::finish(
+                            &mut pool,
+                            &ctx.session_controls,
+                            &mut parked_retirements,
+                            &mut rr,
+                        ) {
+                            continue;
+                        }
                         crash_history[rr.index].respawn_in_flight = false;
                         match rr.result {
                             Ok((acp, protocol_version, agent_name)) => {
+                                pool.finish_worker_retirement(rr.index);
                                 let agent = OwnedAgent {
                                     index: rr.index,
                                     acp,
-                                    state: SessionState::default(),
+                                    state: SessionState::with_store(session_store.clone()),
                                     model_capabilities: None,
                                     desired_model: config.model.clone(),
                                     model_overridden: false,
@@ -3820,6 +3976,52 @@ async fn run_harness(
                     typing_channels.insert(scope, thread_tags);
                 }
             }
+            Some(PoolEvent::Status(result)) => {
+                status_tasks::finish(
+                    &mut pool,
+                    &ctx,
+                    *result,
+                    &removed_channels,
+                    config,
+                    &mut crash_history,
+                    &respawn_tx,
+                    &mut respawn_tasks,
+                    observer.clone(),
+                    &mut last_activity,
+                );
+                for (scope, tags) in dispatch_pending(
+                    &mut pool,
+                    &mut queue,
+                    &ctx,
+                    &mut last_activity,
+                    observer.as_ref(),
+                ) {
+                    typing_channels.insert(scope, tags);
+                }
+            }
+            Some(PoolEvent::Control(result)) => {
+                control_tasks::finish(
+                    &mut pool,
+                    &ctx,
+                    *result,
+                    &removed_channels,
+                    config,
+                    &mut crash_history,
+                    &respawn_tx,
+                    &mut respawn_tasks,
+                    observer.clone(),
+                    &mut last_activity,
+                );
+                for (scope, tags) in dispatch_pending(
+                    &mut pool,
+                    &mut queue,
+                    &ctx,
+                    &mut last_activity,
+                    observer.as_ref(),
+                ) {
+                    typing_channels.insert(scope, tags);
+                }
+            }
             Some(PoolEvent::Result(result)) => {
                 // Stop the typing indicator for the completed turn's exact scope,
                 // not the whole channel — a sibling thread still running in the
@@ -3839,6 +4041,7 @@ async fn run_harness(
                     &mut respawn_tasks,
                     observer.clone(),
                     Some(&ctx.rest_client),
+                    &mut last_activity,
                 ) == LoopAction::Exit
                 {
                     break;
@@ -3847,6 +4050,7 @@ async fn run_harness(
                     &mut pool,
                     &mut queue,
                     config,
+                    &ctx.session_controls,
                     &mut heartbeat_in_flight,
                     &removed_channels,
                     &mut typing_channels,
@@ -3854,14 +4058,11 @@ async fn run_harness(
                     &respawn_tx,
                     &mut respawn_tasks,
                     observer.clone(),
+                    Some(ctx.clone()),
                 ) == LoopAction::Exit
                 {
                     break;
                 }
-                // Quiet time starts when the turn finishes. Measuring it from
-                // dispatch made a turn longer than the sleep bound look idle
-                // on the next tick, and `killpg` then took its children with it.
-                last_activity = tokio::time::Instant::now();
                 for (scope, thread_tags) in dispatch_pending(
                     &mut pool,
                     &mut queue,
@@ -3878,6 +4079,7 @@ async fn run_harness(
                     &mut pool,
                     &mut queue,
                     config,
+                    &ctx.session_controls,
                     join_error,
                     &mut heartbeat_in_flight,
                     &removed_channels,
@@ -3886,6 +4088,7 @@ async fn run_harness(
                     &respawn_tx,
                     &mut respawn_tasks,
                     observer.clone(),
+                    Some(ctx.clone()),
                 );
                 if pool.live_count() == 0 && !any_respawn_in_flight(&crash_history) {
                     tracing::error!("all agents dead — exiting");
@@ -3902,6 +4105,7 @@ async fn run_harness(
                 }
             }
             Some(PoolEvent::SteerAck(SteerAckEvent {
+                control_dispatch,
                 channel_id,
                 scope,
                 event_id,
@@ -3982,6 +4186,16 @@ async fn run_harness(
                 //     pending_steer on every return path. If it does,
                 //     treat as PromptCompletedNeutral to avoid leaking
                 //     the withheld event in `withheld_native_steer`.
+                if control_dispatch
+                    .as_ref()
+                    .is_some_and(|dispatch| !dispatch.current())
+                    || ctx.session_controls.retirement_pending(&scope)
+                    || ctx.session_controls.compact_pending(&scope)
+                    || ctx.session_controls.status_pending(&scope)
+                {
+                    queue.release_native_steer(&scope, &event_id);
+                    continue;
+                }
                 let (release_withheld, drop_withheld, signal_fallback) = match &ack {
                     Ok(pool::SteerAck::Success { .. }) => (false, true, false),
                     // -32601 = method_not_found: agent does not implement the
@@ -4072,6 +4286,7 @@ async fn run_harness(
                         pool = pool_lifecycle
                             .take_ready()
                             .expect("successful wake stores a ready pool");
+                        pool.set_session_store(session_store.clone());
                         pool_ready = true;
                         emit_runtime_lifecycle(
                             observer.as_ref(),
@@ -4123,6 +4338,21 @@ async fn run_harness(
         }
     }
 
+    let status_scopes = ctx.session_controls.shutdown_statuses();
+    let compact_workers = ctx.session_controls.shutdown_compactions();
+    for meta in pool.task_map_mut().values_mut() {
+        if compact_workers.contains(&meta.agent_index)
+            || meta
+                .scope
+                .as_ref()
+                .is_some_and(|scope| status_scopes.contains(scope))
+        {
+            if let Some(tx) = meta.control_tx.take() {
+                let _ = tx.send(ControlSignal::Cancel);
+            }
+        }
+    }
+
     // Drain wake tasks gracefully rather than aborting: an in-flight
     // initialize_agent_pool observes the shutdown watch at its biased per-slot
     // select and reaps its partially-spawned agents itself. `shutdown()` here
@@ -4167,6 +4397,11 @@ async fn run_harness(
                         None => break, // join_set empty
                     }
                 }
+                Some(mut result) = status_rx.recv() => { result.agent.acp.shutdown().await; }
+                Some(mut result) = control_rx.recv() => {
+                    ctx.session_controls.finish_compaction_job(&result.job, Err(buzz_core::session_control::ControlFailure::Unconfirmed));
+                    result.agent.acp.shutdown().await;
+                }
                 maybe_result = rx_ref.recv() => {
                     if let Some(mut pr) = maybe_result {
                         let idx = pr.agent.index;
@@ -4190,6 +4425,12 @@ async fn run_harness(
         pr.agent.acp.shutdown().await;
         tracing::debug!(agent = idx, "reaped late-arriving agent on shutdown");
     }
+    while let Ok(mut result) = status_rx.try_recv() {
+        result.agent.acp.shutdown().await;
+    }
+    while let Ok(mut result) = control_rx.try_recv() {
+        result.agent.acp.shutdown().await;
+    }
     // Explicitly shut down idle agents still sitting in their slots.
     for slot in pool.agents_mut().iter_mut() {
         if let Some(agent) = slot.take() {
@@ -4201,20 +4442,9 @@ async fn run_harness(
     }
     drop(pool);
 
-    // Abort any in-flight respawn tasks. They may be sleeping in backoff or
-    // running spawn_and_init — either way, we don't want them spawning new
-    // children after the main loop has exited. RespawnGuard::Drop sends a
-    // failure result for aborted tasks, so respawn_in_flight is cleared.
-    respawn_tasks.shutdown().await;
-
-    // Drain any respawn results that completed before the abort. Explicitly
-    // shut down returned agents instead of relying on AcpClient::Drop.
-    while let Ok(rr) = respawn_rx.try_recv() {
-        if let Ok((mut acp, _, _)) = rr.result {
-            acp.shutdown().await;
-            tracing::debug!(agent = rr.index, "reaped respawned agent on shutdown");
-        }
-    }
+    let _uncertain_retirements =
+        worker_retirement::shutdown(&mut parked_retirements, &mut respawn_tasks, &mut respawn_rx)
+            .await;
 
     // Cancel any in-flight presence heartbeat before sending offline.
     if let Some(h) = presence_task.take() {
@@ -4327,6 +4557,14 @@ fn signal_in_flight_task(
     if let Some(meta) = entry {
         if matches!(mode, ControlSignal::Steer | ControlSignal::Interrupt)
             && meta
+                .control_dispatch
+                .as_ref()
+                .is_some_and(|dispatch| !dispatch.current())
+        {
+            return false;
+        }
+        if matches!(mode, ControlSignal::Steer | ControlSignal::Interrupt)
+            && meta
                 .recoverable_batch
                 .as_ref()
                 .and_then(|batch| batch.continuation.as_ref())
@@ -4343,6 +4581,39 @@ fn signal_in_flight_task(
         }
     }
     false
+}
+
+// An uncertain cancellation cannot establish durable publication ownership.
+// Keep its observer outcome and prior attempt record; this seam has no sender.
+fn handle_owner_cancel_for_scope(
+    pool: &mut AgentPool,
+    queue: &mut EventQueue,
+    controls: &session_controls::SessionControlRuntime,
+    scope: &scope::SessionScope,
+    observer: Option<&observer::ObserverHandle>,
+) -> session_controls::status::StatusCancellation {
+    let cancellation = controls.cancel_status_outcome(scope);
+    let status_pending = cancellation != session_controls::status::StatusCancellation::None;
+    if cancellation == session_controls::status::StatusCancellation::Unconfirmed {
+        if let Some(observer) = observer {
+            observer.emit(
+                "control_result",
+                None,
+                &observer::ObserverContext {
+                    channel_id: Some(scope.channel_id().to_string()),
+                    ..Default::default()
+                },
+                serde_json::json!({"type":"cancel_turn", "status":"unconfirmed", "requestId":null}),
+            );
+        }
+    }
+    let background_pending = cancel_background_collection_for_scope(pool, queue, scope);
+    let fired = signal_in_flight_task_for_scope(pool, scope, ControlSignal::Cancel);
+    if !fired && !background_pending && !status_pending {
+        tracing::warn!(channel_id = %scope.channel_id(), scope = %scope.telemetry_label(),
+            "!cancel received but no in-flight task — no-op");
+    }
+    cancellation
 }
 
 /// Revoke background collection independently of the task's one-shot sender.
@@ -4484,6 +4755,17 @@ fn try_native_steer(
         ack_tx,
     };
 
+    let control_dispatch = pool
+        .task_map()
+        .values()
+        .find(|meta| meta.scope.as_ref() == Some(&scope))
+        .and_then(|meta| meta.control_dispatch.clone());
+    if control_dispatch
+        .as_ref()
+        .is_some_and(|dispatch| !dispatch.current())
+    {
+        return false;
+    }
     match pool.send_steer(&scope, request) {
         Ok(()) => {
             // Withhold the queued event synchronously BEFORE spawning
@@ -4513,6 +4795,7 @@ fn try_native_steer(
             tokio::spawn(async move {
                 let ack = ack_rx.await;
                 let _ = ack_tx_clone.send(SteerAckEvent {
+                    control_dispatch,
                     channel_id,
                     scope: scope_for_watcher,
                     event_id: event_id_for_watcher,
@@ -4689,6 +4972,7 @@ mod try_native_steer_fallback_log_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -4870,6 +5154,13 @@ fn dispatch_pending(
         };
         let channel_id = batch.channel_id;
         let scope = batch.scope.clone();
+        if ctx.session_controls.retirement_pending(&scope)
+            || ctx.session_controls.status_pending(&scope)
+            || (ctx.session_controls.compact_pending(&scope) && batch.continuation.is_none())
+        {
+            held.push(batch);
+            continue;
+        }
         if let Some(continuation) = &batch.continuation {
             match pool.continuation_state(&scope, continuation) {
                 pool::ContinuationState::Ready => {}
@@ -5000,6 +5291,7 @@ fn dispatch_pending(
                 None
             };
 
+        agent.state.control_dispatch = Some(ctx.session_controls.capture(&scope));
         let result_tx = pool.result_tx();
         let ctx_clone = Arc::clone(ctx);
         let agent_index = agent.index;
@@ -5022,6 +5314,7 @@ fn dispatch_pending(
         let (control_tx, control_rx) = tokio::sync::oneshot::channel::<ControlSignal>();
         let turn_id = Uuid::new_v4().to_string();
         let task_turn_id = turn_id.clone();
+        let control_dispatch = agent.state.control_dispatch.clone();
 
         let abort_handle = pool.join_set.spawn(async move {
             pool::run_prompt_task(
@@ -5046,6 +5339,7 @@ fn dispatch_pending(
                 recoverable_batch,
                 control_tx: Some(control_tx),
                 steer_tx,
+                control_dispatch,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -5175,7 +5469,30 @@ fn handle_prompt_result(
     respawn_tasks: &mut tokio::task::JoinSet<()>,
     observer: Option<observer::ObserverHandle>,
     rest_client: Option<&relay::RestClient>,
+    last_activity: &mut tokio::time::Instant,
 ) -> LoopAction {
+    // Quiet time starts when the turn finishes. Measuring it from dispatch
+    // made a turn longer than the sleep bound look idle on the next tick, and
+    // `killpg` then took its children with it. Refresh before anything else,
+    // in particular before the in-flight guard is released below.
+    if result_refreshes_idle_clock(&result.source) {
+        *last_activity = tokio::time::Instant::now();
+    }
+    if result
+        .agent
+        .state
+        .control_dispatch
+        .as_ref()
+        .is_some_and(|dispatch| !dispatch.current())
+    {
+        result.agent.state.invalidate(&result.source);
+        result.agent.background_context = None;
+        result.batch = None;
+        result.outcome = result.outcome.discard_retired_output();
+    }
+    if let Some(dispatch) = result.agent.state.control_dispatch.take() {
+        dispatch.finish();
+    }
     let before = pool.task_map().len();
     let agent_index = result.agent.index;
     // Continuations always have a recovery token at dispatch. Explicit owner
@@ -5425,6 +5742,11 @@ fn handle_prompt_result(
         }
     };
 
+    if pool.needs_retirement(&result.agent) {
+        pool.return_for_retirement(result.agent);
+        return LoopAction::Continue;
+    }
+
     match result.outcome {
         // Successful prompt — return agent to pool.
         PromptOutcome::Ok(_) => {
@@ -5617,6 +5939,7 @@ fn recover_panicked_agent(
     pool: &mut AgentPool,
     queue: &mut EventQueue,
     config: &Config,
+    controls: &session_controls::SessionControlRuntime,
     join_error: tokio::task::JoinError,
     heartbeat_in_flight: &mut bool,
     removed_channels: &HashSet<Uuid>,
@@ -5625,13 +5948,34 @@ fn recover_panicked_agent(
     respawn_tx: &mpsc::Sender<RespawnResult>,
     respawn_tasks: &mut tokio::task::JoinSet<()>,
     observer: Option<observer::ObserverHandle>,
+    status_feedback: Option<Arc<PromptContext>>,
 ) {
     let task_id = join_error.id();
-    let Some(meta) = pool.task_map_mut().remove(&task_id) else {
+    let Some(mut meta) = pool.task_map_mut().remove(&task_id) else {
         tracing::error!("panic for unknown task {task_id:?} — bug");
         return;
     };
+    let status_token = meta
+        .control_dispatch
+        .as_ref()
+        .and_then(|dispatch| dispatch.intent.as_ref().map(|intent| intent.token));
+    if let Some(dispatch) = meta.control_dispatch.take() {
+        if !dispatch.current() {
+            meta.recoverable_batch = None;
+        }
+        dispatch.finish();
+    }
     let i = meta.agent_index;
+    controls.compaction_panicked(i);
+    if let (Some(scope), Some(token)) = (&meta.scope, status_token) {
+        if let (Some(ctx), Some(job)) = (status_feedback, controls.status_panicked(scope, token)) {
+            let dispatch = controls.capture(scope);
+            pool.join_set
+                .spawn(pool::restart_status::report_expired(job, ctx, dispatch));
+        } else {
+            controls.cancel_status_for_token(scope, token);
+        }
+    }
     pool.clear_runtime_hold(i);
 
     // Requeue BEFORE mark_complete (same rationale as handle_prompt_result).
@@ -5687,6 +6031,19 @@ fn recover_panicked_agent(
         );
     }
 
+    if controls.owns_retirement(i) {
+        // run_prompt_task's client has already unwound. The existing completion,
+        // liveness and reaction guards retain no process ownership or snapshot.
+        pool.mark_retire_on_return(i);
+        controls.lose_retirement_evidence(i);
+        crash_history[i].respawn_in_flight = true;
+        tracing::error!(
+            agent = i,
+            "foreground panic lost original retirement evidence; gate remains unconfirmed"
+        );
+        return;
+    }
+
     // Panics count as crashes for the circuit breaker.
     // The panicked task already dropped the AcpClient, so we just need to
     // check the circuit and spawn a fresh agent in the background.
@@ -5732,6 +6089,7 @@ fn drain_ready_join_results(
     pool: &mut AgentPool,
     queue: &mut EventQueue,
     config: &Config,
+    controls: &session_controls::SessionControlRuntime,
     heartbeat_in_flight: &mut bool,
     removed_channels: &HashSet<Uuid>,
     typing_channels: &mut HashMap<scope::SessionScope, ThreadTags>,
@@ -5739,6 +6097,7 @@ fn drain_ready_join_results(
     respawn_tx: &mpsc::Sender<RespawnResult>,
     respawn_tasks: &mut tokio::task::JoinSet<()>,
     observer: Option<observer::ObserverHandle>,
+    status_feedback: Option<Arc<PromptContext>>,
 ) -> LoopAction {
     while let Some(Some(join_result)) = pool.join_set.join_next().now_or_never() {
         if let Err(join_error) = join_result {
@@ -5747,6 +6106,7 @@ fn drain_ready_join_results(
                 pool,
                 queue,
                 config,
+                controls,
                 join_error,
                 heartbeat_in_flight,
                 removed_channels,
@@ -5755,6 +6115,7 @@ fn drain_ready_join_results(
                 respawn_tx,
                 respawn_tasks,
                 observer.clone(),
+                status_feedback.clone(),
             );
             if pool.live_count() == 0 && !any_respawn_in_flight(crash_history) {
                 return LoopAction::Exit;
@@ -5772,7 +6133,7 @@ fn dispatch_heartbeat(
     if *heartbeat_in_flight {
         return;
     }
-    let agent = match pool.try_claim(None) {
+    let mut agent = match pool.try_claim(None) {
         Some(a) => a,
         None => return,
     };
@@ -5781,6 +6142,7 @@ fn dispatch_heartbeat(
         .heartbeat_prompt
         .clone()
         .unwrap_or_else(default_heartbeat_prompt);
+    agent.state.control_dispatch = None;
     let result_tx = pool.result_tx();
     let ctx_clone = Arc::clone(ctx);
     let agent_index = agent.index;
@@ -5810,6 +6172,7 @@ fn dispatch_heartbeat(
             recoverable_batch: None,
             control_tx: None,
             steer_tx: None,
+            control_dispatch: None,
             successful_steer_deliveries: HashSet::new(),
         },
     );
@@ -6464,7 +6827,7 @@ fn build_mcp_servers(config: &Config) -> Vec<McpServer> {
                 }
             }
             for (name, value) in &config.persona_env_vars {
-                if git::is_managed_env(name) {
+                if git::is_managed_env(name) || name == session_status::SESSION_STATUS_DIR_ENV {
                     env.retain(|entry| entry.name != *name);
                     env.push(EnvVar {
                         name: name.clone(),
@@ -6622,6 +6985,7 @@ mod owner_control_command_tests {
                 recoverable_batch: None,
                 control_tx: Some(control_tx),
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -6668,6 +7032,7 @@ mod owner_control_command_tests {
                 recoverable_batch: None,
                 control_tx: Some(control_tx),
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -9718,6 +10083,8 @@ mod build_mcp_servers_tests {
             config_path: std::path::PathBuf::from("./buzz-acp.toml"),
             context_message_limit: 12,
             max_turns_per_session: 0,
+            session_store_dir: None,
+            session_resume: true,
             presence_enabled: true,
             typing_enabled: true,
             memory_enabled: false,
@@ -10265,6 +10632,7 @@ mod edit_native_steer_tests {
                 recoverable_batch: None,
                 control_tx: Some(control_tx),
                 steer_tx: Some(steer_tx),
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -10285,6 +10653,7 @@ mod edit_native_steer_tests {
             .push(&mut queue, scope.clone())
             .steer_or_interrupt(
                 MultipleEventHandling::Steer,
+                &Default::default(),
                 None,
                 &mut pool,
                 &mut queue,
@@ -10380,7 +10749,7 @@ mod error_outcome_emission_tests {
     use nostr::{EventBuilder, Keys, Kind};
     use std::collections::HashSet;
 
-    fn test_config() -> Config {
+    pub(super) fn test_config() -> Config {
         Config {
             keys: nostr::Keys::generate(),
             relay_url: "ws://localhost:3000".into(),
@@ -10410,6 +10779,8 @@ mod error_outcome_emission_tests {
             config_path: std::path::PathBuf::from("./buzz-acp.toml"),
             context_message_limit: 12,
             max_turns_per_session: 0,
+            session_store_dir: None,
+            session_resume: true,
             presence_enabled: true,
             typing_enabled: true,
             memory_enabled: false,
@@ -10483,6 +10854,89 @@ mod error_outcome_emission_tests {
         agent.state.set_scope_owner_generation(scope, generation);
     }
 
+    /// Runs one successful result through `handle_prompt_result` with an idle
+    /// clock last refreshed an hour ago. Returns the stale reading, the clock
+    /// after handling, and whether a heartbeat is still marked in flight.
+    async fn idle_clock_after_result(
+        source: PromptSource,
+        mut heartbeat_in_flight: bool,
+    ) -> (tokio::time::Instant, tokio::time::Instant, bool) {
+        let scope = source.scope().cloned();
+        let mut pool = AgentPool::from_slots(vec![None]);
+        let task_id = pool.join_set.spawn(async {}).id();
+        pool.task_map_mut().insert(
+            task_id,
+            crate::pool::TaskMeta {
+                agent_index: 0,
+                channel_id: source.channel_id(),
+                scope,
+                turn_id: "idle-clock-turn".to_string(),
+                recoverable_batch: None,
+                control_tx: None,
+                steer_tx: None,
+                control_dispatch: None,
+                successful_steer_deliveries: HashSet::new(),
+            },
+        );
+        let mut queue = EventQueue::new(config::DedupMode::Queue);
+        let config = test_config();
+        let removed_channels = HashSet::new();
+        let mut crash_history = vec![SlotCircuit {
+            crash_times: Vec::new(),
+            open_until: None,
+            respawn_in_flight: false,
+        }];
+        let (respawn_tx, _respawn_rx) = mpsc::channel(8);
+        let mut respawn_tasks = tokio::task::JoinSet::new();
+        let result = PromptResult {
+            agent: dummy_agent(0).await,
+            source,
+            turn_id: "idle-clock-turn".to_string(),
+            outcome: PromptOutcome::Ok(crate::acp::StopReason::EndTurn),
+            batch: None,
+        };
+        let stale = tokio::time::Instant::now() - Duration::from_secs(3600);
+        let mut last_activity = stale;
+        handle_prompt_result(
+            &mut pool,
+            &mut queue,
+            &config,
+            result,
+            &mut heartbeat_in_flight,
+            &removed_channels,
+            &mut crash_history,
+            &respawn_tx,
+            &mut respawn_tasks,
+            None,
+            None,
+            &mut last_activity,
+        );
+        (stale, last_activity, heartbeat_in_flight)
+    }
+
+    #[tokio::test]
+    async fn channel_result_refreshes_idle_clock_wiring() {
+        // Guards the call inside handle_prompt_result itself, not only the
+        // result_refreshes_idle_clock mapper: dropping the call fails here.
+        let channel_id = Uuid::new_v4();
+        let (stale, last_activity, _) = idle_clock_after_result(
+            PromptSource::Channel(scope::SessionScope::Conversation { channel_id }),
+            false,
+        )
+        .await;
+        assert!(last_activity > stale);
+    }
+
+    #[tokio::test]
+    async fn heartbeat_result_leaves_idle_clock_stale() {
+        // A pool kept alive only by its own heartbeats must still be able to
+        // sleep, so heartbeat completions leave the clock untouched.
+        let (stale, last_activity, heartbeat_in_flight) =
+            idle_clock_after_result(PromptSource::Heartbeat, true).await;
+        assert_eq!(last_activity, stale);
+        assert!(!heartbeat_in_flight);
+    }
+
     #[tokio::test]
     async fn successful_native_steer_is_transferred_to_live_session_delivery_state() {
         let channel_id = Uuid::new_v4();
@@ -10514,6 +10968,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::from([
                     crate::pool::SuccessfulSteerDelivery {
                         event_id: steer_event_id.into(),
@@ -10554,6 +11009,7 @@ mod error_outcome_emission_tests {
             &mut respawn_tasks,
             None,
             None,
+            &mut tokio::time::Instant::now(),
         );
 
         let returned = pool.agents_mut()[0].as_ref().expect("returned agent");
@@ -10594,6 +11050,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::from([
                     crate::pool::SuccessfulSteerDelivery {
                         event_id: "stale-event".into(),
@@ -10634,6 +11091,7 @@ mod error_outcome_emission_tests {
             &mut respawn_tasks,
             None,
             None,
+            &mut tokio::time::Instant::now(),
         );
 
         let returned = pool.agents_mut()[0].as_ref().expect("returned agent");
@@ -10716,6 +11174,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::from([
                     crate::pool::SuccessfulSteerDelivery {
                         event_id: "stale-event".into(),
@@ -10755,6 +11214,7 @@ mod error_outcome_emission_tests {
             &mut respawn_tasks,
             None,
             None,
+            &mut tokio::time::Instant::now(),
         );
 
         let returned = pool.agents_mut()[0].as_ref().expect("returned agent");
@@ -10785,6 +11245,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -10824,6 +11285,7 @@ mod error_outcome_emission_tests {
             &mut respawn_tasks,
             Some(observer.clone()),
             None,
+            &mut tokio::time::Instant::now(),
         );
 
         let turn_errors: Vec<_> = observer
@@ -10865,6 +11327,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -10890,6 +11353,7 @@ mod error_outcome_emission_tests {
             &mut pool,
             &mut queue,
             &config,
+            &Default::default(),
             join_error,
             &mut heartbeat_in_flight,
             &removed_channels,
@@ -10898,6 +11362,7 @@ mod error_outcome_emission_tests {
             &respawn_tx,
             &mut respawn_tasks,
             Some(observer.clone()),
+            None,
         );
 
         let panic = observer
@@ -10958,6 +11423,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: Some(batch),
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -10983,6 +11449,7 @@ mod error_outcome_emission_tests {
             &mut pool,
             &mut queue,
             &config,
+            &Default::default(),
             join_error,
             &mut heartbeat_in_flight,
             &removed_channels,
@@ -10990,6 +11457,7 @@ mod error_outcome_emission_tests {
             &mut crash_history,
             &respawn_tx,
             &mut respawn_tasks,
+            None,
             None,
         );
 
@@ -11057,6 +11525,7 @@ mod error_outcome_emission_tests {
                     recoverable_batch: None,
                     control_tx: None,
                     steer_tx: None,
+                    control_dispatch: None,
                     successful_steer_deliveries: HashSet::new(),
                 },
             );
@@ -11093,6 +11562,7 @@ mod error_outcome_emission_tests {
                 &mut respawn_tasks,
                 Some(observer.clone()),
                 None,
+                &mut tokio::time::Instant::now(),
             );
             let events = observer.snapshot();
             let turn_error = events.iter().find(|e| e.kind == "turn_error").unwrap();
@@ -11156,6 +11626,7 @@ mod error_outcome_emission_tests {
                     recoverable_batch: None,
                     control_tx: None,
                     steer_tx: None,
+                    control_dispatch: None,
                     successful_steer_deliveries: HashSet::new(),
                 },
             );
@@ -11189,6 +11660,7 @@ mod error_outcome_emission_tests {
                 &mut respawn_tasks,
                 None,
                 None,
+                &mut tokio::time::Instant::now(),
             );
             (
                 queue.pending_channels(),
@@ -11266,6 +11738,7 @@ mod error_outcome_emission_tests {
                     recoverable_batch: None,
                     control_tx: None,
                     steer_tx: None,
+                    control_dispatch: None,
                     successful_steer_deliveries: HashSet::new(),
                 },
             );
@@ -11299,6 +11772,7 @@ mod error_outcome_emission_tests {
                 &mut respawn_tasks,
                 None,
                 None,
+                &mut tokio::time::Instant::now(),
             );
             (
                 queue.pending_channels(),
@@ -11344,6 +11818,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -11395,6 +11870,7 @@ mod error_outcome_emission_tests {
             &mut respawn_tasks,
             Some(observer.clone()),
             None,
+            &mut tokio::time::Instant::now(),
         );
 
         let events = observer.snapshot();
@@ -11443,6 +11919,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -11493,6 +11970,7 @@ mod error_outcome_emission_tests {
             &mut respawn_tasks,
             Some(observer.clone()),
             None,
+            &mut tokio::time::Instant::now(),
         );
 
         let events = observer.snapshot();
@@ -11567,6 +12045,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -11615,6 +12094,7 @@ mod error_outcome_emission_tests {
             &mut respawn_tasks,
             Some(observer.clone()),
             None,
+            &mut tokio::time::Instant::now(),
         );
 
         // Batch preserved as a cancelled merge, not dead-lettered — same
@@ -11710,6 +12190,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -11751,6 +12232,7 @@ mod error_outcome_emission_tests {
             &mut respawn_tasks,
             Some(observer.clone()),
             None,
+            &mut tokio::time::Instant::now(),
         );
 
         // No batch to merge — the queue has nothing pending for any channel.
@@ -11846,6 +12328,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -11883,6 +12366,7 @@ mod error_outcome_emission_tests {
                 &mut respawn_tasks,
                 None,
                 None,
+                &mut tokio::time::Instant::now(),
             ),
             LoopAction::Continue
         ));
@@ -12003,6 +12487,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -12036,6 +12521,7 @@ mod error_outcome_emission_tests {
             &mut respawn_tasks,
             None,
             None,
+            &mut tokio::time::Instant::now(),
         );
 
         // The batch must not be requeued: pending_channels returns 0.
@@ -12112,6 +12598,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -12145,6 +12632,7 @@ mod error_outcome_emission_tests {
             &mut respawn_tasks,
             Some(observer.clone()),
             Some(&rest),
+            &mut tokio::time::Instant::now(),
         );
 
         // The batch must not be requeued: pending_channels returns 0.
@@ -12384,6 +12872,7 @@ mod error_outcome_emission_tests {
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -12417,6 +12906,7 @@ mod error_outcome_emission_tests {
             &mut respawn_tasks,
             None,
             None,
+            &mut tokio::time::Instant::now(),
         );
 
         // Non-auth application error: batch IS requeued (first attempt, retry budget > 0).

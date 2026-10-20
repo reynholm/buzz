@@ -24,6 +24,8 @@ export default defineConfig({
         "**/owned-agent-discovery.spec.ts",
         "**/thread-head-stale-edit.spec.ts",
         "**/thread-follow.spec.ts",
+        "**/session-status.spec.ts",
+        "**/session-controls.spec.ts",
         "**/sidebar-offcanvas-rail.spec.ts",
         "**/tooltip-semantics.spec.ts",
         "**/search-scope-screenshots.spec.ts",

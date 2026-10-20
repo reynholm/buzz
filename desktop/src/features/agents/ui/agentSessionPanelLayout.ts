@@ -7,9 +7,18 @@ import type { ObserverEvent } from "./agentSessionTypes";
 export function scopeByChannel<T extends { channelId?: string | null }>(
   items: readonly T[],
   channelId: string | null | undefined,
+  includeWorkerBoundaries = false,
 ): T[] {
   if (!channelId) return items as T[];
-  return items.filter((item) => item.channelId === channelId);
+  // Worker initialization has no channel, but fences typed operation identity.
+  // Only transcript derivation opts in; raw channel disclosure stays scoped.
+  return items.filter(
+    (item) =>
+      item.channelId === channelId ||
+      (includeWorkerBoundaries &&
+        "kind" in item &&
+        item.kind === "agent_initialized"),
+  );
 }
 
 /**

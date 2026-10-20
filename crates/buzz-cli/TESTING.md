@@ -770,3 +770,69 @@ check requires a disposable persisted journal and a relay/proxy boundary that
 can stop the publisher after acceptance; preserve the journal and confirm
 readback by event ID before recovery. Do not infer real power-loss durability
 from process-kill tests alone.
+
+## Session-status enrichment
+
+An agent harness advertises its private status instance directory in
+`BUZZ_SESSION_STATUS_DIR`. When it is set, `messages send` (kind 9, the
+default) and the first preparation of `messages deliver` add two tags to the
+new event before signing:
+
+```text
+["buzz-session", "<state>", "<reason>", "<percent or empty>"]
+["buzz-session-info", "1", "<transition UUID>", "thread|conversation", "<read>", "<total>", "exact|lower_bound|unknown"]
+```
+
+The destination decides the snapshot. A reply matches the thread scope of its
+canonical NIP-10 root (thread policy) or the channel's conversation scope
+(channel policy and DMs); a top-level message matches only the conversation
+scope. A message in another thread never borrows a thread's status. If both a
+thread and a conversation snapshot are current, the scope is ambiguous and no
+tags are added. Mixed execution scopes can exist after unresolved channel metadata
+was conservatively admitted as a DM. Under thread policy, the harness withholds
+or retires conversation display status unless metadata verifies a DM; this
+includes ordinary turns of a retained session. Channel policy still permits
+conversation status without channel metadata. A thread whose optional status
+fails therefore cannot fall back to an uncertain conversation's telemetry.
+
+Absence and failure never block or alter a valid publication: the message is
+sent exactly as before, without status tags and without a diagnostic, when
+
+- the variable is unset, empty, relative or not UTF-8, or its final component
+  is not the instance UUID;
+- the instance lock is missing or not held (the harness is gone);
+- the snapshot is missing, not a regular file (for example a symlink), larger
+  than 16 KiB, malformed, of another format version or otherwise invalid;
+- the snapshot belongs to another relay or signing key (identity is the CLI's
+  own relay URL and key, with `http`/`ws` and `https`/`wss` folded), another
+  channel, thread root or instance;
+- the snapshot's generation lock is missing or not held (a revoked generation
+  whose file could not be removed), or the scope is ambiguous.
+
+The lookup is read-only and bounded: it reads at most two snapshots, makes no
+network calls, keeps no acknowledgment state and never creates, writes,
+deletes or renames anything in the status directory. Locks are probed with
+nonblocking attempts only; a lock the CLI can take is released at once and
+treated as not held. A failed send therefore leaves the snapshot and its
+transition untouched, and the next message still carries the explanation.
+
+Only kind-9 messages are enriched. Forum posts and comments (`--kind 45001`,
+`--kind 45003`), `messages send-diff`, edits, deletions and other commands keep
+their existing tags. `messages deliver` journals the signed event with the
+tags of its first preparation: a same-key retry and late timestamp recovery
+replay those original tags even after the live status has changed, while a new
+delivery key captures the current status.
+
+Automated local checks (mock relay and a harness-shaped status directory with
+real OS locks; no harness process):
+
+```sh
+cargo test -p buzz-cli session_status -- --test-threads=1
+cargo test -p buzz-cli --test session_status_env
+```
+
+Human check against a local relay: run an agent under the harness, let it
+reply in a thread, then read the reply back with
+`buzz messages thread --channel "$CHANNEL_ID" --event "$REPLY_ID" | jq '.[].tags'`
+and expect both tags. Stop the harness and send again with the same
+environment: expect no status tags and a normal publication.

@@ -1,3 +1,4 @@
+import { attachSessionControls } from "@/features/messages/lib/sessionControl";
 import type {
   Channel,
   ChannelMember,
@@ -45,6 +46,10 @@ import { formatTime } from "@/features/messages/lib/dateFormatters";
 // Pure overlay helper lives in a sibling .mjs so node:test (no TS loader)
 // can exercise the exact same source the renderer uses.
 import { applyEditTagOverlay } from "@/features/messages/lib/applyEditTagOverlay.mjs";
+import {
+  parseSessionStatusTags,
+  attachSessionStatuses,
+} from "@/features/messages/lib/sessionStatus";
 import { truncateNpub } from "@/shared/lib/pubkey";
 
 const HEX_RE = /^[0-9a-f]+$/i;
@@ -459,7 +464,7 @@ export function formatTimelineMessages(
     return depth;
   }
 
-  return visibleEvents.map((event) => {
+  const messages: TimelineMessage[] = visibleEvents.map((event) => {
     const author = getAuthorLabel(event);
     const authorPubkey =
       authorPubkeyByEventId.get(event.id) ??
@@ -542,6 +547,21 @@ export function formatTimelineMessages(
       })(),
     };
   });
+  // Self-reported agent session status, from each event's original tags.
+  attachSessionControls(
+    messages,
+    visibleEvents,
+    events.filter((event) => !deletedEventIds.has(event.id)),
+    profiles,
+    undefined,
+    roleByPubkey,
+  );
+  return attachSessionStatuses(
+    messages,
+    visibleEvents,
+    channel?.id ?? null,
+    profiles,
+  );
 }
 
 function extractSystemMessagePubkeys(event: RelayEvent): string[] {
@@ -657,6 +677,24 @@ export function collectMessageProfilePubkeys(events: RelayEvent[]) {
       ...collectMessageAuthorPubkeys(events),
       ...collectMessageMentionPubkeys(events),
       ...collectReactionActorPubkeys(events),
+      ...collectSessionActorPubkeys(events),
     ]),
+  ];
+}
+
+/** Valid manual transition actors join the surface's existing batched profile read. */
+export function collectSessionActorPubkeys(
+  events: Array<{ kind?: number; tags?: string[][] }>,
+): string[] {
+  return [
+    ...new Set(
+      events.flatMap((event) => {
+        const actor =
+          event.kind === 9
+            ? parseSessionStatusTags(event.tags)?.actorPubkey
+            : null;
+        return actor ? [actor] : [];
+      }),
+    ),
   ];
 }

@@ -5,16 +5,20 @@
 //! 1. [`AcpClient::spawn`] — launch agent binary as subprocess
 //! 2. [`AcpClient::initialize`] — protocol version negotiation
 //! 3. [`AcpClient::session_new`] — create session with MCP server config
-//! 4. [`AcpClient::session_prompt_with_idle_timeout`] — send prompt with idle/hard deadline, return stop reason
-//! 5. [`AcpClient::session_cancel`] / [`AcpClient::cancel_with_cleanup`] — cancel in-flight turn
 
+mod claude_context;
 mod launch;
+mod restart_status;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use futures_util::StreamExt;
-use tokio::process::{Child, ChildStdin, ChildStdout};
+#[cfg(not(windows))]
+use tokio::process::Child;
+use tokio::process::{ChildStdin, ChildStdout};
 use tokio_util::codec::{FramedRead, LinesCodec, LinesCodecError};
+#[cfg(windows)]
+use windows_job::ContainedChild as Child;
 
 use crate::observer::{ObserverContext, ObserverHandle};
 use crate::usage::{
@@ -97,6 +101,10 @@ pub enum AcpError {
     #[error("Agent process exited unexpectedly")]
     AgentExited,
 
+    /// Internal generation cancellation; it says nothing about transport health.
+    #[error("Dispatch retired by session control")]
+    DispatchRetired,
+
     #[error("Idle timeout — no agent activity for {0:?}")]
     IdleTimeout(std::time::Duration),
 
@@ -148,6 +156,14 @@ fn build_initialize_params() -> serde_json::Value {
 /// One `AcpClient` per agent process. Multiple sessions can be created on the
 /// same client via repeated calls to [`session_new`](AcpClient::session_new).
 pub struct AcpClient {
+    status_capture: Option<restart_status::StatusCapture>,
+    termination: terminate::TerminationState,
+    #[cfg(test)]
+    pub(crate) background_child_snapshots: std::collections::VecDeque<Option<HashSet<u32>>>,
+    #[cfg(test)]
+    pub(crate) process_tree_snapshots:
+        std::collections::VecDeque<Option<crate::process_tree::ProcessTree>>,
+    compactions: compaction::CompactionTracker,
     /// The agent child process (kept alive to prevent zombie).
     child: Child,
     /// Sole stdin writer; None after an interrupted/failed frame closes it.
@@ -209,6 +225,9 @@ pub struct AcpClient {
     /// a JSON-RPC *success*, not `-32601` — which the main loop would read as
     /// a delivered steer and drop the user's message from the queue.
     steering_supported: bool,
+    /// Whether `initialize` advertised `sessionCapabilities.resume`. Set once
+    /// by [`initialize`](Self::initialize); gates `session/resume`.
+    resume_supported: bool,
     /// Per-turn channel for receiving goose-native non-cancelling steer
     /// requests from the main loop. Installed by
     /// [`install_steer_rx`](Self::install_steer_rx) at dispatch and
@@ -221,6 +240,8 @@ pub struct AcpClient {
     goose_usage: UsageTracker,
     /// Per-turn prompt-response usage and Claude's optional cumulative cost.
     standard_usage: StandardUsageTracker,
+    /// Claude capacity evidence is local to a live status generation.
+    claude_context: HashMap<String, claude_context::State>,
     /// Known adapter identity for prompt-response usage mapping.
     standard_adapter: Option<StandardAdapterKind>,
     /// Ask Claude Code for summarized thinking on `session/new`. Opus omits
@@ -232,6 +253,10 @@ pub struct AcpClient {
     /// Seeded at `initialize`, extended by newly created `session/new`
     /// processes and MCP helpers. Their own turn-work children still block sleep.
     resident_pids: HashSet<u32>,
+    /// Status snapshots of this worker's provider sessions, keyed by the
+    /// provider session ID. Usage notifications select an entry by their own
+    /// `params.sessionId`, never by the current turn.
+    session_status: HashMap<String, crate::session_status::StatusBinding>,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -416,6 +441,7 @@ fn build_client_capabilities() -> serde_json::Value {
         "auth": {
             "terminal": true
         },
+        "session": {"compaction": {}},
         // Signal to goose that we handle `_goose/unstable/session/update`
         // notifications. Without this the custom notification is suppressed
         // on goose's side and usage data is never emitted.
@@ -431,10 +457,17 @@ fn build_client_capabilities() -> serde_json::Value {
     })
 }
 
+#[path = "acp/compaction.rs"]
+mod compaction;
+
+#[cfg(all(test, unix))]
+#[path = "acp/compaction_tests.rs"]
+mod compaction_tests;
+
 impl AcpClient {
     /// Kill the agent subprocess and wait for it to exit (no zombies).
     ///
-    /// `Drop` only calls `start_kill()` (sends SIGKILL but doesn't reap).
+    /// `Drop` cannot await guaranteed reaping.
     /// Call this when you need guaranteed cleanup — e.g., in `run_models`
     /// before process exit.
     pub async fn shutdown(&mut self) {
@@ -443,8 +476,8 @@ impl AcpClient {
         // ensures subprocesses (MCP servers, tool processes) are cleaned up
         // rather than orphaned to init.
         //
-        // Falls back to start_kill() (direct child only) on non-Unix or if
-        // the child has been polled to completion (id() returns None).
+        // Falls back to platform child cleanup (the whole job on Windows)
+        // on non-Unix or when id() returns None after the parent exits.
         match self.child.id() {
             Some(pid) if kill_process_group(pid) => {}
             _ => {
@@ -506,9 +539,9 @@ impl AcpClient {
             .stdout(Stdio::piped())
             // Inherit stderr so agent logs are visible in the harness terminal.
             .stderr(Stdio::inherit())
-            // Ensure the child is killed when the AcpClient is dropped (best-effort).
-            // Callers MUST still call shutdown().await for guaranteed cleanup.
-            .kill_on_drop(true);
+            // AcpClient owns cleanup. Tokio must not independently signal a
+            // checked retirement whose initial snapshot could not be verified.
+            .kill_on_drop(false);
 
         // Per-persona env vars (e.g., GOOSE_PROVIDER, BUZZ_AGENT_PROVIDER).
         // For most keys, operator precedence wins: skip injection if already set
@@ -570,6 +603,7 @@ impl AcpClient {
         // over the harness-owned agent identity in native shells.
         cmd.env_remove("GIT_CONFIG_PARAMETERS");
         cmd.env_remove("NOSTR_PRIVATE_KEY");
+        crate::session_status::apply_status_dir_env(&mut cmd, extra_env);
         if extra_env.iter().any(|(name, _)| name == "GIT_CONFIG_COUNT") {
             // Native shells inherit these overrides, while buzz-agent clears
             // them for MCP. Let both paths use the harness's agent identity.
@@ -583,14 +617,11 @@ impl AcpClient {
             }
         }
 
-        // Spawn the agent in its own process group so SIGKILL doesn't propagate
-        // to the harness's own process group on Unix.
-        // tokio::process::Command::process_group is a stable tokio API (no extra imports needed).
+        // Unix isolates signals; Windows assigns containment before resuming.
         #[cfg(unix)]
         cmd.process_group(0);
 
-        // Suppress the console window that Windows otherwise allocates for every
-        // console-subsystem child process spawned from a GUI/non-console parent.
+        // Preserve the hidden-window policy on Windows.
         configure_no_window(&mut cmd);
 
         let standard_adapter =
@@ -606,10 +637,15 @@ impl AcpClient {
         let claude_thinking_summaries = standard_adapter == Some(StandardAdapterKind::Claude)
             && !launch_prefixed
             && claude_cli_accepts_thinking_display(&cmd).await;
-        let mut child = cmd.spawn().map_err(|error| {
+        let program = cmd.as_std().get_program().to_owned();
+        #[cfg(windows)]
+        let spawned = windows_job::spawn(cmd);
+        #[cfg(not(windows))]
+        let spawned = cmd.spawn();
+        let mut child = spawned.map_err(|error| {
             std::io::Error::new(
                 error.kind(),
-                format!("failed to spawn {:?}: {error}", cmd.as_std().get_program()),
+                format!("failed to spawn {program:?}: {error}"),
             )
         })?;
 
@@ -623,6 +659,11 @@ impl AcpClient {
             .ok_or_else(|| AcpError::Protocol("failed to open agent stdout".into()))?;
 
         Ok(Self {
+            termination: terminate::TerminationState::default(),
+            #[cfg(test)]
+            background_child_snapshots: std::collections::VecDeque::new(),
+            #[cfg(test)]
+            process_tree_snapshots: std::collections::VecDeque::new(),
             child,
             stdin: Some(stdin),
             reader: FramedRead::new(stdout, LinesCodec::new_with_max_length(MAX_LINE_SIZE)),
@@ -636,12 +677,17 @@ impl AcpClient {
             observer_context: ObserverContext::default(),
             active_run_id: None,
             steering_supported: false,
+            resume_supported: false,
             steer_rx: None,
             goose_usage: UsageTracker::default(),
             standard_usage: StandardUsageTracker::default(),
+            claude_context: HashMap::new(),
             standard_adapter,
             claude_thinking_summaries,
             resident_pids: HashSet::new(),
+            session_status: HashMap::new(),
+            status_capture: None,
+            compactions: compaction::CompactionTracker::default(),
         })
     }
 
@@ -650,28 +696,43 @@ impl AcpClient {
         self.child.id()
     }
 
+    fn process_tree_snapshot(&mut self) -> Option<crate::process_tree::ProcessTree> {
+        #[cfg(test)]
+        if let Some(snapshot) = self.process_tree_snapshots.pop_front() {
+            return snapshot;
+        }
+        crate::process_tree::snapshot()
+    }
+
     /// Remember processes created before the first turn, including providers'
     /// own startup children. Call only during the initial protocol handshake.
     pub fn capture_startup_children(&mut self) {
-        if let (Some(pid), Some(tree)) = (self.process_id(), crate::process_tree::snapshot()) {
-            self.resident_pids.extend(tree.descendant_pids(pid));
+        if let (Some(pid), Some(tree)) = (self.process_id(), self.process_tree_snapshot()) {
+            self.resident_pids.extend(tree.startup_resident_pids(pid));
         }
     }
 
     /// Background work under the worker or any resident provider/helper.
     ///
-    /// `None` means enumeration is uncertain and the worker must remain awake.
+    /// Nonempty results retain definite work even when another candidate is uncertain.
+    /// `None` means no definite work was found but discovery remains uncertain;
+    /// only a known empty result permits releasing an uncertainty-only hold.
     /// Each poll traverses current residents so newly created work is visible.
     pub fn background_child_pids(&mut self) -> Option<HashSet<u32>> {
+        #[cfg(test)]
+        if let Some(snapshot) = self.background_child_snapshots.pop_front() {
+            return snapshot;
+        }
         let Some(pid) = self.process_id() else {
             return Some(HashSet::new());
         };
-        let tree = crate::process_tree::snapshot()?;
+        let tree = self.process_tree_snapshot()?;
         let live = tree.descendant_pids(pid);
         self.resident_pids.retain(|pid| live.contains(pid));
         let mut pending = vec![pid];
         let mut visited = HashSet::new();
         let mut blocking = HashSet::new();
+        let mut uncertain = false;
         while let Some(parent) = pending.pop() {
             if !visited.insert(parent) {
                 continue;
@@ -679,13 +740,24 @@ impl AcpClient {
             let children = tree.children(parent);
             blocking.extend(tree.blocking_pids(parent, &self.resident_pids));
             for child in children {
+                if tree.is_uncertain_snapshot(child.pid) {
+                    uncertain = true;
+                    pending.push(child.pid);
+                    continue;
+                }
                 if self.resident_pids.contains(&child.pid) || tree.is_resident_helper(child) {
-                    self.resident_pids.insert(child.pid);
+                    if !tree.is_snapshot_helper(child.pid) {
+                        self.resident_pids.insert(child.pid);
+                    }
                     pending.push(child.pid);
                 }
             }
         }
-        Some(blocking)
+        if blocking.is_empty() && uncertain {
+            None
+        } else {
+            Some(blocking)
+        }
     }
 
     /// Adopt processes born during successful session setup, traversing only
@@ -695,7 +767,7 @@ impl AcpClient {
         let Some(before) = before else {
             return; // Unknown baseline must never authorize adopting turn work.
         };
-        let (Some(pid), Some(tree)) = (self.process_id(), crate::process_tree::snapshot()) else {
+        let (Some(pid), Some(tree)) = (self.process_id(), self.process_tree_snapshot()) else {
             return;
         };
         let mut pending = vec![pid];
@@ -705,6 +777,9 @@ impl AcpClient {
                 continue;
             }
             for child in tree.children(parent) {
+                if tree.is_snapshot_candidate(child.pid) {
+                    continue;
+                }
                 if self.resident_pids.contains(&child.pid) || !before.contains(&child.pid) {
                     self.resident_pids.insert(child.pid);
                     pending.push(child.pid);
@@ -764,6 +839,9 @@ impl AcpClient {
             .pointer("/_meta/steering/supported")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        self.resume_supported = result
+            .pointer("/agentCapabilities/sessionCapabilities/resume")
+            .is_some_and(serde_json::Value::is_object);
         self.capture_startup_children();
         tracing::debug!(target: "acp::init", "initialize response: {result}");
         Ok(result)
@@ -806,6 +884,41 @@ impl AcpClient {
         system_prompt: Option<SystemPromptTransport<'_>>,
         session_title: Option<&str>,
     ) -> Result<SessionNewResponse, AcpError> {
+        let params = self.build_session_params(cwd, mcp_servers, system_prompt, session_title);
+        let before = self.process_id().and_then(|pid| {
+            self.process_tree_snapshot()
+                .map(|tree| tree.descendant_pids(pid))
+        });
+        let generation = self.compactions.prepare_new();
+        let response = self.send_request("session/new", params).await;
+        let returned_session = response
+            .as_ref()
+            .ok()
+            .and_then(|result| result["sessionId"].as_str());
+        self.compactions.complete_new(generation, returned_session);
+        let result = response?;
+        let session_id = result["sessionId"]
+            .as_str()
+            .ok_or_else(|| AcpError::Protocol("session/new response missing sessionId".into()))?
+            .to_owned();
+        self.capture_session_children(before);
+        tracing::info!(target: "acp::session", "session created: {session_id}");
+        Ok(SessionNewResponse {
+            session_id,
+            raw: result,
+        })
+    }
+
+    /// Parameters shared by `session/new` and `session/resume`: working
+    /// directory, MCP servers, and the `_meta` members (system prompt, title,
+    /// Claude CLI options), merged into one object.
+    fn build_session_params(
+        &self,
+        cwd: &str,
+        mcp_servers: Vec<McpServer>,
+        system_prompt: Option<SystemPromptTransport<'_>>,
+        session_title: Option<&str>,
+    ) -> serde_json::Value {
         let mut params = serde_json::json!({
             "cwd": cwd,
             "mcpServers": mcp_servers,
@@ -827,23 +940,44 @@ impl AcpClient {
             // Merge — _meta may already carry a system prompt from an adapter extension.
             params["_meta"]["sessionTitle"] = serde_json::Value::String(title.to_owned());
         }
+        if self.standard_adapter == Some(StandardAdapterKind::Claude) {
+            params["_meta"]["claudeCode"]["emitRawSDKMessages"] =
+                serde_json::json!([{ "type": "result" }]);
+        }
         if self.claude_thinking_summaries {
             // Merge — claude-agent-acp spreads these into the CLI's argv.
             params["_meta"]["claudeCode"]["options"]["extraArgs"]["thinking-display"] =
                 serde_json::Value::String("summarized".to_owned());
         }
+        params
+    }
+
+    /// Send `session/resume` for a session this agent created earlier, with
+    /// the same parameters `session/new` would send. Call only when
+    /// [`resume_supported`](Self::resume_supported) is true. Any error means
+    /// the session cannot be continued; see [`resume_failure_code`].
+    pub async fn session_resume(
+        &mut self,
+        session_id: &str,
+        cwd: &str,
+        mcp_servers: Vec<McpServer>,
+        system_prompt: Option<SystemPromptTransport<'_>>,
+        session_title: Option<&str>,
+    ) -> Result<SessionNewResponse, AcpError> {
+        let mut params = self.build_session_params(cwd, mcp_servers, system_prompt, session_title);
+        params["sessionId"] = serde_json::Value::String(session_id.to_owned());
         let before = self
             .process_id()
             .and_then(|pid| crate::process_tree::snapshot().map(|tree| tree.descendant_pids(pid)));
-        let result = self.send_request("session/new", params).await?;
-        let session_id = result["sessionId"]
-            .as_str()
-            .ok_or_else(|| AcpError::Protocol("session/new response missing sessionId".into()))?
-            .to_owned();
+        let generation = self.compactions.prepare_resume(session_id);
+        let response = self.send_request("session/resume", params).await;
+        self.compactions
+            .complete_resume(session_id, generation, response.is_ok());
+        let result = response?;
         self.capture_session_children(before);
-        tracing::info!(target: "acp::session", "session created: {session_id}");
+        tracing::info!(target: "acp::session", "session resumed: {session_id}");
         Ok(SessionNewResponse {
-            session_id,
+            session_id: session_id.to_owned(),
             raw: result,
         })
     }
@@ -944,6 +1078,7 @@ impl AcpClient {
         idle_timeout: std::time::Duration,
         max_duration: std::time::Duration,
     ) -> Result<StopReason, AcpError> {
+        self.begin_claude_context_turn(session_id);
         let params = build_prompt_params(session_id, prompt_blocks);
         let hard_deadline = tokio::time::Instant::now() + max_duration;
         self.current_hard_deadline = Some(hard_deadline);
@@ -998,7 +1133,11 @@ impl AcpClient {
                 self.current_hard_deadline = None;
             }
         }
-        self.parse_prompt_response(session_id, &result?)
+        let parsed = result.and_then(|result| self.parse_prompt_response(session_id, &result));
+        if !matches!(parsed, Ok(StopReason::EndTurn)) {
+            self.reset_claude_context(session_id, Some(false));
+        }
+        parsed
     }
 
     /// Send a `session/cancel` **notification** (no `id` field, no response expected).
@@ -1010,6 +1149,7 @@ impl AcpClient {
     ///
     /// Note: async because writing to stdin requires async I/O.
     pub async fn session_cancel(&mut self, session_id: &str) -> Result<(), AcpError> {
+        self.reset_claude_context(session_id, Some(false));
         let params = serde_json::json!({
             "sessionId": session_id,
         });
@@ -1044,6 +1184,11 @@ impl AcpClient {
         self.steering_supported
     }
 
+    /// Whether the agent advertised `sessionCapabilities.resume`.
+    pub fn resume_supported(&self) -> bool {
+        self.resume_supported
+    }
+
     /// Consume per-turn usage for NIP-AM publishing. Goose/buzz-agent is an
     /// exclusive cumulative path; standard ACP prompt usage is used only when
     /// goose emitted nothing for this turn.
@@ -1062,6 +1207,85 @@ impl AcpClient {
     pub(crate) fn notify_session_spawned(&mut self, session_id: &str) {
         self.goose_usage.seed_zero_baseline(session_id);
         self.standard_usage.seed_zero_baseline(session_id);
+    }
+
+    /// Route context-occupancy notifications of `session_id` to `binding`.
+    pub(crate) fn bind_session_status(
+        &mut self,
+        session_id: &str,
+        binding: crate::session_status::StatusBinding,
+    ) {
+        self.session_status.retain(|_, bound| bound.is_live());
+        self.claude_context
+            .retain(|session, _| self.session_status.contains_key(session));
+        if self.standard_adapter == Some(StandardAdapterKind::Claude) {
+            self.claude_context.insert(
+                session_id.to_owned(),
+                claude_context::State::new(binding.generation_id()),
+            );
+        }
+        self.compactions.bind(session_id, binding.generation_id());
+        self.session_status.insert(session_id.to_owned(), binding);
+    }
+
+    /// Stop routing context-occupancy notifications of `session_id`.
+    pub(crate) fn clear_session_status(&mut self, session_id: &str) {
+        self.session_status.remove(session_id);
+        self.claude_context.remove(session_id);
+        self.compactions.clear(session_id);
+    }
+
+    /// Whether `session_id` still routes to a live status generation.
+    pub(crate) fn has_session_status(&self, session_id: &str) -> bool {
+        self.session_status
+            .get(session_id)
+            .is_some_and(crate::session_status::StatusBinding::is_live)
+    }
+
+    pub(crate) fn retain_compaction_sessions(
+        &mut self,
+        sessions: &std::collections::HashSet<String>,
+    ) {
+        self.compactions.retain_sessions(sessions);
+        self.session_status
+            .retain(|session, binding| sessions.contains(session) && binding.is_live());
+        self.claude_context
+            .retain(|session, _| self.session_status.contains_key(session));
+    }
+
+    pub(crate) fn ensure_compaction_route(&mut self, session: &str) {
+        self.compactions.ensure_route(session);
+    }
+    #[cfg(all(test, unix))]
+    pub(crate) fn advertise_compaction(&mut self, session: &str) {
+        self.compactions.set_advertised(session);
+    }
+
+    #[cfg(all(test, unix))]
+    pub(crate) fn route_compaction(&mut self, session: &str, generation: uuid::Uuid) {
+        self.compactions.route(session, generation);
+    }
+
+    pub(crate) fn compact_supported(&self, session: &str) -> bool {
+        matches!(
+            self.standard_adapter,
+            Some(StandardAdapterKind::Claude | StandardAdapterKind::Codex)
+        ) || self.compactions.supported(session)
+    }
+
+    pub(crate) fn begin_compaction(
+        &mut self,
+        session: &str,
+        origin: buzz_core::session_control::ControlOrigin,
+    ) -> Result<(), buzz_core::session_control::ControlFailure> {
+        self.compactions.begin(session, origin)
+    }
+
+    pub(crate) fn finish_compaction(
+        &mut self,
+        session: &str,
+    ) -> buzz_core::session_control::ControlOutcome {
+        self.compactions.finish(session)
     }
 
     /// Install a per-turn steer request channel for goose-native
@@ -1375,9 +1599,6 @@ impl AcpClient {
                 continue;
             }
 
-            // Only log and reset idle after we have a valid non-empty line.
-            tracing::debug!(target: "acp::wire", "← {trimmed}");
-
             let msg: serde_json::Value = match serde_json::from_str(trimmed) {
                 Ok(v) => v,
                 Err(e) => {
@@ -1395,6 +1616,10 @@ impl AcpClient {
                     continue;
                 }
             };
+            if self.consume_claude_context_frame(&msg) {
+                continue;
+            }
+            tracing::debug!(target: "acp::wire", "← {trimmed}");
             self.observe("acp_read", msg.clone());
 
             // Check if this is a response to our expected request (has matching id
@@ -1699,8 +1924,6 @@ impl AcpClient {
                         continue;
                     }
 
-                    tracing::debug!(target: "acp::wire", "← {trimmed}");
-
                     let msg: serde_json::Value = match serde_json::from_str(trimmed) {
                         Ok(v) => v,
                         Err(e) => {
@@ -1718,6 +1941,10 @@ impl AcpClient {
                             continue;
                         }
                     };
+                    if self.consume_claude_context_frame(&msg) {
+                        continue;
+                    }
+                    tracing::debug!(target: "acp::wire", "← {trimmed}");
                     self.observe("acp_read", msg.clone());
 
                     let activity_now = Instant::now();
@@ -1862,6 +2089,12 @@ impl AcpClient {
                                     last_activity_at = activity_now;
                                     tracing::debug!("idle clock reset: tool call started");
                                 }
+                                if self.status_capture_invalid() {
+                                    return Err(AcpError::Protocol(
+                                        "status turn attempted a tool or exceeded its output limit"
+                                            .into(),
+                                    ));
+                                }
                             }
                             "_goose/unstable/session/update" => {
                                 self.handle_goose_usage_update(&msg);
@@ -1907,12 +2140,34 @@ impl AcpClient {
     /// leave it `None` and are steered via `_session/steering` instead, which
     /// needs no run id.
     fn handle_session_update(&mut self, msg: &serde_json::Value) -> bool {
+        self.capture_status_update(msg);
         let update = &msg["params"]["update"];
         let update_type = update
             .get("sessionUpdate")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
 
+        let session_id = msg["params"]["sessionId"].as_str();
+        if matches!(update_type, "config_option_update" | "current_model_update") {
+            if let Some(session) = session_id {
+                self.reset_claude_context(session, None);
+            }
+        }
+        if update_type == "compaction_update" {
+            if let Some(session) = session_id {
+                if let Some(origin) = self.compactions.update(session, update) {
+                    if let Some(binding) = self.session_status.get(session) {
+                        binding.compacted(origin);
+                    }
+                }
+            }
+            return false;
+        }
+        if update_type == "available_commands_update" {
+            if let Some(session) = session_id {
+                self.compactions.advertise(session, update);
+            }
+        }
         match update_type {
             "agent_message_chunk" => {
                 if let Some(text) = update["content"]["text"].as_str() {
@@ -2018,6 +2273,13 @@ impl AcpClient {
     /// Claude. Unlike Goose's payload, `used`/`size` are context occupancy and
     /// are intentionally not mapped to token accounting.
     fn handle_standard_usage_update(&mut self, msg: &serde_json::Value) {
+        // Context occupancy is display status, routed by the notification's
+        // own session ID before (and independently of) cost accounting.
+        if self.standard_adapter == Some(StandardAdapterKind::Claude) {
+            self.record_claude_context_usage(msg);
+        } else {
+            crate::session_status::record_usage_update(&self.session_status, msg);
+        }
         if self.standard_adapter != Some(StandardAdapterKind::Claude) {
             return;
         }
@@ -2098,6 +2360,19 @@ impl AcpClient {
             .get("id")
             .cloned()
             .ok_or_else(|| AcpError::Protocol("permission request missing id".into()))?;
+
+        if self.status_capture.as_ref().is_some_and(|capture| {
+            msg["params"]["sessionId"].as_str() == Some(capture.session.as_str())
+        }) {
+            if let Some(capture) = &mut self.status_capture {
+                capture.invalid = true;
+            }
+            let response = permission_response_cancelled(&id);
+            self.write_ndjson(&response).await?;
+            return Err(AcpError::Protocol(
+                "tools are forbidden during restart status".into(),
+            ));
+        }
 
         // Store pending permission id so cancel_with_cleanup can respond to it.
         self.pending_permission_id = Some(id.clone());
@@ -2455,10 +2730,12 @@ pub fn model_in_catalog(
         })
 }
 
-// ─── Drop: kill child process ─────────────────────────────────────────────────
-
 impl Drop for AcpClient {
     fn drop(&mut self) {
+        if self.termination.checked {
+            let _ = self.child.try_wait();
+            return;
+        }
         // Best-effort SIGKILL + reap. We cannot `await` in Drop (sync context).
         // Kill the process group when possible so subprocesses don't leak.
         // Callers SHOULD still call `shutdown().await` for guaranteed reaping.
@@ -2602,6 +2879,19 @@ fn configure_no_window(cmd: &mut tokio::process::Command) {
     }
     #[cfg(not(windows))]
     let _ = cmd;
+}
+
+/// Stable code for a failed `session/resume`, reported to the agent as
+/// `resume_failed:<code>`.
+pub fn resume_failure_code(err: &AcpError) -> String {
+    /// JSON-RPC "resource not found", sent for an unknown session/transcript.
+    const RESOURCE_NOT_FOUND: i64 = -32002;
+    match err {
+        AcpError::AgentError { code, .. } if *code == RESOURCE_NOT_FOUND => "not_found".into(),
+        AcpError::AgentError { code, .. } => format!("rpc_{code}"),
+        AcpError::Timeout(_) => "timeout".into(),
+        _ => "protocol".into(),
+    }
 }
 
 #[cfg(test)]
@@ -4004,6 +4294,10 @@ sleep 1"#,
             serde_json::json!({ "append": "be brief" })
         );
         assert_eq!(meta["sessionTitle"], "Fizz");
+        assert_eq!(
+            meta["claudeCode"]["emitRawSDKMessages"],
+            serde_json::json!([{ "type": "result" }])
+        );
 
         for (case, cli) in [
             ("old CLI", "echo '2.1.93 (Claude Code)'"),
@@ -4011,7 +4305,15 @@ sleep 1"#,
             ("unclean version", "echo '2.1.284.garbage'"),
         ] {
             let meta = claude_session_meta_with_cli(cli).await;
-            assert!(meta.get("claudeCode").is_none(), "{case}: {meta}");
+            assert!(
+                meta["claudeCode"].get("options").is_none(),
+                "{case}: {meta}"
+            );
+            assert_eq!(
+                meta["claudeCode"]["emitRawSDKMessages"],
+                serde_json::json!([{ "type": "result" }]),
+                "{case}: result metadata does not depend on thinking-display support"
+            );
             assert_eq!(meta["sessionTitle"], "Fizz", "{case}");
         }
     }
@@ -4019,6 +4321,7 @@ sleep 1"#,
     // ── claude-agent-acp _meta.systemPrompt transport ─────────────────────
 
     include!("acp/system_prompt_tests.rs");
+    include!("acp/session_resume_tests.rs");
 
     #[tokio::test]
     async fn active_run_id_sets_on_string() {
@@ -5302,3 +5605,15 @@ sleep 1"#,
 
 #[cfg(all(test, unix))]
 mod process_tracking_tests;
+
+#[cfg(all(test, unix))]
+mod terminate_tests;
+
+#[cfg(all(test, windows))]
+mod windows_retirement_tests;
+
+mod terminate;
+pub use terminate::TerminationReport;
+
+#[cfg(windows)]
+mod windows_job;

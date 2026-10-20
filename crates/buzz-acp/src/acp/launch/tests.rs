@@ -231,10 +231,15 @@ async fn spawn_child() {
                         .raw["meta"]
                         .clone();
                     let expected = match std::env::var_os(PREFIX_ENV) {
-                        Some(_) => Value::Null,
-                        None => json!({"claudeCode": {"options": {"extraArgs": {
-                            "thinking-display": "summarized"
-                        }}}}),
+                        Some(_) => json!({"claudeCode": {
+                            "emitRawSDKMessages": [{"type": "result"}]
+                        }}),
+                        None => json!({"claudeCode": {
+                            "emitRawSDKMessages": [{"type": "result"}],
+                            "options": {"extraArgs": {
+                                "thinking-display": "summarized"
+                            }}
+                        }}),
                     };
                     assert_eq!(meta, expected, "prefix leaves summaries off");
                 }

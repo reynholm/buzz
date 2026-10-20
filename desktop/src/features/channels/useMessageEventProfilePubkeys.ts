@@ -4,6 +4,7 @@ import {
   collectMessageAuthorPubkeys,
   collectMessageMentionPubkeys,
   collectReactionActorPubkeys,
+  collectSessionActorPubkeys,
 } from "@/features/messages/lib/formatTimelineMessages";
 import type { RelayEvent } from "@/shared/api/types";
 
@@ -18,6 +19,7 @@ export function useMessageEventProfilePubkeys(
       ...new Set([
         ...collectMessageAuthorPubkeys(events, relaySelfPubkey),
         ...collectMessageMentionPubkeys(events),
+        ...collectSessionActorPubkeys(events),
         ...collectReactionActorPubkeys(events, relaySelfPubkey),
       ]),
     ];

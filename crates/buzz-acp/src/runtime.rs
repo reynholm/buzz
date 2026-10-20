@@ -1,5 +1,6 @@
 //! Shared agent capabilities. Intake and scheduling belong to each entry point;
 //! environment, credentials, adapter settings and prompt equipment belong here.
+use crate::session_status::{self, SessionStatusRuntime};
 use crate::{
     build_mcp_servers, config::Config, current_working_directory, git, observer, pool, relay,
     resolve_agent_owner, PromptContext,
@@ -17,6 +18,7 @@ pub(crate) enum SessionMode {
 /// Add new runtime capabilities here, not separately to the CLI entry points.
 pub(crate) struct AgentRuntime {
     config: Config,
+    session_status: Option<SessionStatusRuntime>,
     _git_environment: git::GitEnvironment,
 }
 
@@ -25,8 +27,21 @@ impl AgentRuntime {
         let git_environment = git::GitEnvironment::for_config(&mut config)?;
         Ok(Self {
             config,
+            session_status: None,
             _git_environment: git_environment,
         })
+    }
+
+    /// Open this instance's session status directory and route every adapter
+    /// spawn and managed MCP server to it. Call before any worker starts.
+    pub(crate) fn enable_session_status(&mut self) -> Option<SessionStatusRuntime> {
+        let runtime = session_status::open_for_config(&self.config)?;
+        let dir = runtime.dir().to_str()?.to_owned();
+        let env = &mut self.config.persona_env_vars;
+        env.retain(|(name, _)| name != session_status::SESSION_STATUS_DIR_ENV);
+        env.push((session_status::SESSION_STATUS_DIR_ENV.to_owned(), dir));
+        self.session_status = Some(runtime.clone());
+        Some(runtime)
     }
 
     pub(crate) fn config(&self) -> &Config {
@@ -43,7 +58,9 @@ impl AgentRuntime {
         channels: HashMap<Uuid, relay::ChannelInfo>,
         mode: SessionMode,
     ) -> Result<PromptContext> {
-        make_prompt_context(&self.config, rest, channels, mode)
+        let mut ctx = make_prompt_context(&self.config, rest, channels, mode)?;
+        ctx.session_status = self.session_status.clone();
+        Ok(ctx)
     }
 }
 
@@ -121,5 +138,8 @@ fn make_prompt_context(
         memory_enabled: config.memory_enabled,
         harness_name: crate::config::normalize_agent_command_identity(&config.agent_command),
         relay_url: config.relay_url.clone(),
+        session_policy: config.session_policy,
+        session_status: None,
+        session_controls: Default::default(),
     })
 }

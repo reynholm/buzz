@@ -58,9 +58,6 @@ const RECENT_ACTIVITY_WINDOW: Duration = Duration::from_secs(60);
 /// behavior is preferable to an ever-growing channel-policy session ledger.
 const MAX_HYDRATED_THREAD_ROOTS_PER_SCOPE: usize = 1024;
 
-// FlushBatch and BatchEvent derive Clone (added in queue.rs) so we can store
-// a recoverable copy in TaskMeta for panic recovery in Queue mode.
-
 /// Metadata stored per in-flight task for panic recovery.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct SuccessfulSteerDelivery {
@@ -92,6 +89,7 @@ pub struct TaskMeta {
     /// Successful non-cancelling steers acknowledged while this task owned the
     /// live session. The session ID prevents a late ack from contaminating a
     /// replacement session after task return.
+    pub(crate) control_dispatch: Option<crate::session_controls::ControlDispatch>,
     pub successful_steer_deliveries: HashSet<SuccessfulSteerDelivery>,
 }
 
@@ -132,6 +130,8 @@ pub struct ChannelDeliveryState {
 /// spawning a real agent subprocess.
 #[derive(Default)]
 pub struct SessionState {
+    /// Task-captured restart generation and token; independent of live lease.
+    pub(crate) control_dispatch: Option<crate::session_controls::ControlDispatch>,
     /// session scope → session_id
     pub sessions: HashMap<SessionScope, String>,
     pub heartbeat_session: Option<String>,
@@ -161,6 +161,12 @@ pub struct SessionState {
     /// worker becomes claimable again.
     scope_owner_generations: HashMap<SessionScope, u64>,
     background_rotation_pending: HashSet<SessionScope>,
+    /// Durable session records; `None` disables resume.
+    pub(crate) store: Option<Arc<crate::session_store::SessionStore>>,
+    /// Lease of every durable record this state owns, by scope.
+    leases: HashMap<SessionScope, Uuid>,
+    /// Status generation of every session this worker acquired, by scope.
+    pub(crate) status: HashMap<SessionScope, crate::session_status::StatusBinding>,
 }
 
 impl SessionState {
@@ -185,6 +191,7 @@ impl SessionState {
     /// Invalidate a single session scope's session and turn counter.
     /// Returns `true` if the scope had an active session.
     pub fn invalidate_scope(&mut self, scope: &SessionScope) -> bool {
+        self.discard_durable(scope);
         self.background_rotation_pending.remove(scope);
         self.turn_counts.remove(scope);
         self.core_sections.remove(scope);
@@ -206,6 +213,7 @@ impl SessionState {
             .chain(self.canvas_sections.keys())
             .chain(self.deliveries.keys())
             .chain(self.scope_owner_generations.keys())
+            .chain(self.status.keys())
             .filter(|s| s.channel_id() == *channel_id)
             .cloned()
             .collect::<HashSet<_>>()
@@ -221,7 +229,12 @@ impl SessionState {
     }
 
     /// Invalidate all sessions and turn counters (e.g. after agent exit).
+    ///
+    /// Every caller handles a dead or unrecoverable worker process, so the
+    /// provider sessions themselves stay resumable: their durable records are
+    /// marked departed rather than discarded.
     pub fn invalidate_all(&mut self) {
+        self.depart_durable_all(crate::session_store::Departure::WorkerCrash);
         self.sessions.clear();
         self.background_rotation_pending.clear();
         self.turn_counts.clear();
@@ -241,6 +254,14 @@ impl SessionState {
         event_ids: impl IntoIterator<Item = String>,
         hydrated_thread_roots: impl IntoIterator<Item = String>,
     ) {
+        let event_ids: Vec<String> = event_ids.into_iter().collect();
+        let hydrated_thread_roots: Vec<String> = hydrated_thread_roots.into_iter().collect();
+        self.persist_delivery(
+            &scope,
+            standing_context_sent,
+            &event_ids,
+            &hydrated_thread_roots,
+        );
         let delivery = self.deliveries.entry(scope).or_default();
         delivery.standing_context_sent |= standing_context_sent;
         delivery.delivered_event_ids.extend(event_ids);
@@ -316,6 +337,12 @@ pub struct OwnedAgent {
 
 mod background_work;
 pub(crate) use background_work::{ContinuationState, RuntimeHold};
+pub(crate) mod compaction;
+mod first_mention;
+mod session_continuity;
+mod session_history;
+pub(crate) use session_continuity::{open_session_store, SessionStart};
+pub(crate) mod session_visibility;
 
 /// Package name reported by `claude-agent-acp` in its `initialize` response.
 /// Any adapter reporting this name supports `_meta.systemPrompt: {append: ...}`
@@ -385,6 +412,8 @@ pub struct AgentPool {
     /// Best-effort: stale entries (rotation, crash/respawn) self-heal on the
     /// next dispatch and are pruned on channel-wide session invalidation.
     session_owners: HashMap<SessionScope, SessionOwner>,
+    scope_workers: HashMap<SessionScope, HashSet<usize>>,
+    retire_on_return: HashSet<usize>,
     /// Monotonic validity fence assigned whenever a scope is dispatched. The
     /// generation distinguishes a newly forked owner from every older copy of
     /// that scope's provider session.
@@ -399,6 +428,8 @@ pub struct AgentPool {
     /// children. Keyed by slot index. Cleared when the slot is checked out
     /// for a real prompt or when the children exit and a follow-up is sent.
     runtime_holds: HashMap<usize, RuntimeHold>,
+    /// Durable session records, independent of the slots (empty after sleep).
+    store: Option<Arc<crate::session_store::SessionStore>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -747,6 +778,31 @@ pub enum PromptOutcome {
     CancelDrainTimeout(Duration),
 }
 
+impl PromptOutcome {
+    /// Remove obsolete task output without erasing worker-health evidence needed
+    /// by the main loop's existing crash/transport recovery paths.
+    pub(crate) fn discard_retired_output(self) -> Self {
+        match self {
+            Self::Error(AcpError::AgentExited) => Self::AgentExited,
+            Self::Error(AcpError::IdleTimeout(_)) => Self::Timeout(TimeoutKind::Idle),
+            Self::Error(AcpError::HardTimeout { silence }) => Self::Timeout(TimeoutKind::Hard {
+                recently_active: silence < RECENT_ACTIVITY_WINDOW,
+            }),
+            Self::Error(AcpError::CancelDrainTimeout(grace)) => Self::CancelDrainTimeout(grace),
+            Self::AgentExited
+            | Self::Timeout(_)
+            | Self::CancelDrainTimeout(_)
+            | Self::Error(
+                AcpError::Io(_)
+                | AcpError::WriteTimeout(_)
+                | AcpError::Timeout(_)
+                | AcpError::Protocol(_),
+            ) => self,
+            _ => Self::Cancelled,
+        }
+    }
+}
+
 /// Immutable config subset shared (via `Arc`) by all spawned prompt tasks.
 ///
 /// Built once from `Config` at startup. Avoids cloning the full config
@@ -952,6 +1008,11 @@ pub struct PromptContext {
     /// the desktop keys per (agent, relay) pair, e.g. `session_config_captured`,
     /// mirroring the `managed_agent_runtime_lifecycle` frames.
     pub relay_url: String,
+    /// Configured execution policy, also used to validate display-scope provenance.
+    pub session_policy: crate::scope::SessionPolicy,
+    /// Per-scope session status snapshots; `None` disables status publication.
+    pub(crate) session_status: Option<crate::session_status::SessionStatusRuntime>,
+    pub(crate) session_controls: crate::session_controls::SessionControlRuntime,
 }
 
 impl AgentPool {
@@ -970,9 +1031,12 @@ impl AgentPool {
             join_set: JoinSet::new(),
             task_map: HashMap::new(),
             session_owners: HashMap::new(),
+            scope_workers: HashMap::new(),
+            retire_on_return: HashSet::new(),
             next_scope_owner_generation: 1,
             held_since: HashMap::new(),
             runtime_holds: HashMap::new(),
+            store: None,
         }
     }
 
@@ -990,6 +1054,10 @@ impl AgentPool {
             self.next_scope_owner_generation = 1;
             self.session_owners.clear();
         }
+        self.scope_workers
+            .entry(scope.clone())
+            .or_default()
+            .insert(agent_index);
         self.session_owners.insert(
             scope,
             SessionOwner {
@@ -1098,8 +1166,10 @@ impl AgentPool {
         // Pass 2: first idle agent that is not waiting on background children.
         // Stealing that worker would kill the process group under it.
         let idx = self.agents.iter().position(|slot| {
-            slot.as_ref()
-                .is_some_and(|agent| !self.runtime_holds.contains_key(&agent.index))
+            slot.as_ref().is_some_and(|agent| {
+                !self.runtime_holds.contains_key(&agent.index)
+                    && !self.retire_on_return.contains(&agent.index)
+            })
         });
         idx.map(|i| self.agents[i].take().unwrap())
     }
@@ -1120,7 +1190,11 @@ impl AgentPool {
                 "discarding stale session after ownership changed"
             );
             agent.state.invalidate_scope(&scope);
+            if let Some(workers) = self.scope_workers.get_mut(&scope) {
+                workers.remove(&agent.index);
+            }
         }
+        self.scope_workers.retain(|_, workers| !workers.is_empty());
         let live_scopes: HashSet<SessionScope> = agent.state.sessions.keys().cloned().collect();
         agent
             .state
@@ -1137,6 +1211,9 @@ impl AgentPool {
                 "BUG: return_agent called for slot {idx} which is already occupied — overwriting"
             );
         }
+        agent
+            .acp
+            .retain_compaction_sessions(&agent.state.sessions.values().cloned().collect());
         self.refresh_runtime_hold(&mut agent);
         self.agents[idx] = Some(agent);
     }
@@ -1370,12 +1447,17 @@ impl AgentPool {
             if let Some(agent) = slot.as_mut() {
                 // Channel-wide: clears every child thread scope for the channel.
                 count += agent.state.invalidate_channel(&channel_id);
+                agent
+                    .acp
+                    .retain_compaction_sessions(&agent.state.sessions.values().cloned().collect());
             }
         }
         // Drop every scope-owner entry for this channel so the directory does
         // not grow without bound and cannot strand a held batch behind a stale
         // owner after the channel's sessions are gone.
         self.session_owners
+            .retain(|scope, _| scope.channel_id() != channel_id);
+        self.scope_workers
             .retain(|scope, _| scope.channel_id() != channel_id);
         // Prune held-since stamps for the same channel so an expiring hold cannot
         // reference a scope whose sessions are gone.
@@ -1399,9 +1481,13 @@ impl AgentPool {
                 if agent.state.invalidate_scope(scope) {
                     count += 1;
                 }
+                agent
+                    .acp
+                    .retain_compaction_sessions(&agent.state.sessions.values().cloned().collect());
             }
         }
         self.session_owners.remove(scope);
+        self.scope_workers.remove(scope);
         self.held_since.remove(scope);
         count
     }
@@ -1605,6 +1691,7 @@ async fn resolve_new_session_channel_context(
 /// On error from `session_new_full()`, returns the `AcpError` — caller handles
 /// error reporting. Model-switch failures are logged and gracefully ignored
 /// (the agent proceeds with its default model).
+#[derive(Clone, Copy)]
 struct NewSessionChannelContext<'a> {
     huddle_instructions: Option<&'a str>,
     canvas: Option<&'a str>,
@@ -1618,6 +1705,19 @@ async fn create_session_and_apply_model(
     ctx: &PromptContext,
     agent_core: Option<&str>,
     channel: NewSessionChannelContext<'_>,
+) -> Result<String, AcpError> {
+    create_or_resume_session_and_apply_model(agent, ctx, agent_core, channel, None).await
+}
+
+/// [`create_session_and_apply_model`], or with `resume` set, `session/resume`
+/// of that earlier session with the same request parameters; model, effort,
+/// and permission mode are applied to the result either way.
+async fn create_or_resume_session_and_apply_model(
+    agent: &mut OwnedAgent,
+    ctx: &PromptContext,
+    agent_core: Option<&str>,
+    channel: NewSessionChannelContext<'_>,
+    resume: Option<&str>,
 ) -> Result<String, AcpError> {
     // Build base_prompt + system_prompt + agent core + canvas metadata into a
     // single prompt. Standard protocol-v2 agents receive it in `session/new`;
@@ -1658,20 +1758,37 @@ async fn create_session_and_apply_model(
         ctx.session_title.as_deref(),
     );
 
-    let resp = agent
-        .acp
-        .session_new_full(
-            &ctx.cwd,
-            mcp_servers,
-            session_new_system_prompt(
-                is_goose,
-                agent.protocol_version,
-                &agent.agent_name,
-                combined_system_prompt.as_deref(),
-            ),
-            session_title.as_deref(),
-        )
-        .await?;
+    let system_prompt = session_new_system_prompt(
+        is_goose,
+        agent.protocol_version,
+        &agent.agent_name,
+        combined_system_prompt.as_deref(),
+    );
+    let resp = match resume {
+        Some(session_id) => {
+            agent
+                .acp
+                .session_resume(
+                    session_id,
+                    &ctx.cwd,
+                    mcp_servers,
+                    system_prompt,
+                    session_title.as_deref(),
+                )
+                .await?
+        }
+        None => {
+            agent
+                .acp
+                .session_new_full(
+                    &ctx.cwd,
+                    mcp_servers,
+                    system_prompt,
+                    session_title.as_deref(),
+                )
+                .await?
+        }
+    };
 
     if is_goose && agent.goose_system_prompt_supported != Some(false) {
         if let Some(prompt) = combined_system_prompt.as_deref() {
@@ -2424,6 +2541,18 @@ fn send_prompt_result(
     outcome: PromptOutcome,
     batch: Option<FlushBatch>,
 ) {
+    let stale = agent
+        .state
+        .control_dispatch
+        .as_ref()
+        .is_some_and(|dispatch| !dispatch.current());
+    let (outcome, batch) = if stale {
+        agent.state.invalidate(&source);
+        agent.background_context = None;
+        (outcome.discard_retired_output(), None)
+    } else {
+        (outcome, batch)
+    };
     agent.acp.clear_steer_rx();
     if !matches!(outcome, PromptOutcome::Ok(_)) && !agent.has_background_collection() {
         if let Some(context) = &mut agent.background_context {
@@ -2464,6 +2593,11 @@ pub async fn run_prompt_task(
         Some(batch) => PromptSource::Channel(batch.scope.clone()),
         None => PromptSource::Heartbeat,
     };
+    if let Some(scope) = source.scope() {
+        if agent.state.control_dispatch.is_none() {
+            agent.state.control_dispatch = Some(ctx.session_controls.capture(scope));
+        }
+    }
     let prompt_text = batch
         .as_ref()
         .and_then(|batch| {
@@ -2705,16 +2839,35 @@ pub async fn run_prompt_task(
         PromptSource::Heartbeat => None,
     };
 
+    // Reuse this turn's resolved metadata; display eligibility must not change
+    // admission or the canonical provider scope, nor issue another REST lookup.
+    let status_runtime = match &source {
+        PromptSource::Channel(scope)
+            if agent.reconcile_session_status_scope(
+                ctx.session_status.as_ref(),
+                scope,
+                ctx.session_policy,
+                resolved_channel_info.as_ref(),
+            ) =>
+        {
+            ctx.session_status.as_ref()
+        }
+        _ => None,
+    };
+
+    // How this turn's session came to be, when this turn created or resumed it.
+    let mut session_start: Option<SessionStart> = None;
     let (session_id, is_new_session) = match &source {
         PromptSource::Channel(scope) => {
             let cid = &scope.channel_id();
-            if let Some(sid) = agent.state.sessions.get(scope) {
-                (sid.clone(), false)
+            if let Some(sid) = agent.state.sessions.get(scope).cloned() {
+                agent.rebind_session_status(status_runtime, scope, &sid);
+                (sid, false)
             } else {
                 // The title includes channel and, for thread sessions, the
                 // canonical root prefix so sibling sessions are distinguishable.
                 // DMs, unresolved, and unnamed channels omit the channel name.
-                match create_session_and_apply_model(
+                match session_continuity::acquire_session(
                     &mut agent,
                     &ctx,
                     agent_core.as_deref(),
@@ -2725,28 +2878,56 @@ pub async fn run_prompt_task(
                         scope: Some(scope),
                         channel_type: origin_channel_type.as_deref(),
                     },
+                    scope,
                 )
                 .await
                 {
-                    Ok(sid) => {
+                    Ok((sid, start)) => {
+                        if agent
+                            .state
+                            .control_dispatch
+                            .as_ref()
+                            .is_some_and(|dispatch| !dispatch.current())
+                        {
+                            send_prompt_result(
+                                &result_tx,
+                                &turn_id,
+                                agent,
+                                source,
+                                PromptOutcome::Cancelled,
+                                None,
+                            );
+                            return;
+                        }
                         tracing::info!(
                             target: "pool::session",
-                            "created session {sid} for channel {cid} (scope {})",
-                            scope.telemetry_label()
+                            "{} session {sid} for channel {cid} (scope {}, {})",
+                            if start.is_resumed() { "resumed" } else { "created" },
+                            scope.telemetry_label(),
+                            match &start {
+                                SessionStart::New { reason } | SessionStart::Resumed { reason } =>
+                                    reason.as_wire(),
+                            }
                         );
                         agent.state.sessions.insert(scope.clone(), sid.clone());
-                        agent
-                            .state
-                            .deliveries
-                            .insert(scope.clone(), ChannelDeliveryState::default());
-                        // Seed a zero usage baseline: buzz-acp spawned this session
-                        // so prior usage is zero by definition — first turn is reliable.
-                        agent.acp.notify_session_spawned(&sid);
+                        agent.publish_session_start(status_runtime, scope, &sid, &start);
+                        let resumed = start.is_resumed();
+                        session_start = Some(start);
+                        if !resumed {
+                            agent
+                                .state
+                                .deliveries
+                                .insert(scope.clone(), ChannelDeliveryState::default());
+                            // Seed a zero usage baseline: buzz-acp spawned this session
+                            // so prior usage is zero by definition — first turn is reliable.
+                            agent.acp.notify_session_spawned(&sid);
+                        }
                         // Commit canvas only after session creation succeeds (I3).
                         if let Some((pending_scope, section)) = pending_canvas.take() {
                             agent.state.canvas_sections.insert(pending_scope, section);
                         }
-                        (sid, true)
+                        // A resumed session already received its initial message.
+                        (sid, !resumed)
                     }
                     Err(AcpError::AgentExited) => {
                         agent.state.invalidate_all();
@@ -2983,7 +3164,7 @@ pub async fn run_prompt_task(
                                 target: "pool::session",
                                 "cancel_with_cleanup failed during initial_message timeout: {e}"
                             );
-                            agent.state.invalidate(&source);
+                            agent.state.invalidate_after_error(&source, &e);
                         }
                     }
                     send_prompt_result(
@@ -3019,7 +3200,7 @@ pub async fn run_prompt_task(
                         target: "pool::session",
                         "initial_message failed for channel {cid}: {e} — invalidating session"
                     );
-                    agent.state.invalidate(&source);
+                    agent.state.invalidate_after_error(&source, &e);
                     send_prompt_result(
                         &result_tx,
                         &turn_id,
@@ -3079,7 +3260,19 @@ pub async fn run_prompt_task(
             .as_ref()
             .map(|info| info.channel_type == "dm")
             .unwrap_or(false);
-        let context_target = resolve_context_target(b, is_dm);
+        let selected_depth = agent
+            .state
+            .control_dispatch
+            .as_ref()
+            .and_then(|dispatch| dispatch.intent.as_ref())
+            .map(|intent| intent.depth);
+        let context_target = if selected_depth
+            .is_some_and(|depth| depth != buzz_core::session_control::RestartDepth::Recent)
+        {
+            session_history::target(b, is_dm)
+        } else {
+            resolve_context_target(b, is_dm)
+        };
         let hydrated_thread_root = match &context_target {
             ContextTarget::Thread(root) => Some(root),
             ContextTarget::Dm | ContextTarget::None => None,
@@ -3104,18 +3297,57 @@ pub async fn run_prompt_task(
             .map(|delivery| &delivery.delivered_event_ids)
             .cloned()
             .unwrap_or_default();
-        let conversation_context = if ctx.context_message_limit > 0 {
-            fetch_conversation_context_for_target(
-                b.channel_id,
-                &context_target,
-                &ctx,
-                thread_context_is_hydrated,
-                &delivered_ids,
-            )
-            .await
+        let (conversation_context, mut first_mention) = if let Some(
+            depth @ (buzz_core::session_control::RestartDepth::None
+            | buzz_core::session_control::RestartDepth::All),
+        ) = selected_depth
+        {
+            session_history::selected(&context_target, b.channel_id, depth, &ctx).await
         } else {
-            None
+            let mut context = if ctx.context_message_limit > 0 {
+                fetch_conversation_context_for_target(
+                    b.channel_id,
+                    &context_target,
+                    &ctx,
+                    thread_context_is_hydrated,
+                    &delivered_ids,
+                )
+                .await
+            } else {
+                None
+            };
+            let mention = match (&context_target, context.as_mut()) {
+                (ContextTarget::Thread(root), Some(context)) if !thread_context_is_hydrated => {
+                    Some(first_mention::cold_start_pin(root, b.channel_id, context, &ctx).await)
+                }
+                _ => None,
+            };
+            (context, mention)
         };
+        if selected_depth.is_some() {
+            if let ContextTarget::Thread(root) = &context_target {
+                if b.events.iter().any(|event| {
+                    event.event.id.to_hex() == *root
+                        && event.event.tags.iter().any(|tag| {
+                            let parts = tag.as_slice();
+                            parts.first().is_some_and(|part| part == "p")
+                                && parts.get(1).is_some_and(|part| {
+                                    *part == ctx.agent_keys.public_key().to_hex()
+                                })
+                        })
+                }) {
+                    first_mention = Some(first_mention::FirstMention::InRoot);
+                }
+            }
+        }
+        // A new session's first prompt reports what it was given.
+        let fetched_history = matches!(session_start, Some(SessionStart::New { .. })).then(|| {
+            session_visibility::FetchedHistory::capture(
+                (selected_depth.is_some() || ctx.context_message_limit > 0)
+                    && context_target != ContextTarget::None,
+                conversation_context.as_ref(),
+            )
+        });
         if let Some(root) =
             fetched_thread_root_to_hydrate(&context_target, conversation_context.as_ref(), is_dm)
         {
@@ -3127,15 +3359,49 @@ pub async fn run_prompt_task(
                     .iter()
                     .any(|event_id| delivered_ids.contains(event_id))
             });
-        let conversation_context =
+        let mut conversation_context =
             conversation_context_delta(conversation_context, &delivered_ids, &rendered_batch_ids);
+        let profile_lookup =
+            fetch_prompt_profile_lookup(b, conversation_context.as_ref(), &ctx.rest_client).await;
+        if selected_depth
+            .is_some_and(|depth| depth != buzz_core::session_control::RestartDepth::Recent)
+        {
+            let mut pins = HashSet::new();
+            if let ContextTarget::Thread(root) = &context_target {
+                pins.insert(root.clone());
+            }
+            if let Some(first_mention::FirstMention::Found(event)) = &first_mention {
+                if let Some(id) = event["id"].as_str() {
+                    pins.insert(id.to_owned());
+                }
+            }
+            session_history::enforce_render_budget(
+                &mut conversation_context,
+                profile_lookup.as_ref(),
+                &pins,
+            );
+            first_mention = session_history::supplied_mention(
+                first_mention,
+                &context_target,
+                conversation_context.as_ref(),
+                &rendered_batch_ids,
+            );
+        }
+        if let (Some(fetched), Some(binding)) = (&fetched_history, agent.state.status.get(&b.scope))
+        {
+            binding.set_history(session_visibility::history_coverage(
+                fetched,
+                conversation_context.as_ref(),
+                &rendered_batch_ids,
+                matches!(first_mention, Some(first_mention::FirstMention::NotFound)),
+                &b.scope,
+                is_dm,
+            ));
+        }
         pending_delivered_event_ids.extend(rendered_batch_ids);
         pending_delivered_event_ids.extend(conversation_context_event_ids(
             conversation_context.as_ref(),
         ));
-
-        let profile_lookup =
-            fetch_prompt_profile_lookup(b, conversation_context.as_ref(), &ctx.rest_client).await;
 
         let known_names: Vec<&str> = profile_lookup
             .iter()
@@ -3153,7 +3419,7 @@ pub async fn run_prompt_task(
             );
         }
 
-        crate::queue::format_prompt(
+        let mut sections = crate::queue::format_prompt(
             b,
             &crate::queue::FormatPromptArgs {
                 agent_core: standing.agent_core,
@@ -3169,7 +3435,14 @@ pub async fn run_prompt_task(
                 agent_canvas: standing.agent_canvas,
                 standing_context_sent,
             },
-        )
+        );
+        if let Some(start) = &session_start {
+            session_continuity::insert_session_marker(
+                &mut sections,
+                session_continuity::format_session_marker(start, first_mention.as_ref()),
+            );
+        }
+        sections
     } else {
         // Should not happen — batch is None only for heartbeats which have prompt_text.
         // Return the agent to the pool to prevent a permanent slot leak.
@@ -3185,6 +3458,22 @@ pub async fn run_prompt_task(
         return;
     };
 
+    if agent
+        .state
+        .control_dispatch
+        .as_ref()
+        .is_some_and(|dispatch| !dispatch.current())
+    {
+        send_prompt_result(
+            &result_tx,
+            &turn_id,
+            agent,
+            source,
+            PromptOutcome::Cancelled,
+            None,
+        );
+        return;
+    }
     // 💬 — fire-and-forget so the prompt fires immediately.
     // The guard's cleanup (spawned on drop) removes 💬 after the turn completes.
     // A brief race where 💬 appears slightly after the agent starts is acceptable.
@@ -3393,6 +3682,9 @@ pub async fn run_prompt_task(
                         log_stop_reason(&source, &StopReason::EndTurn);
                         if let PromptSource::Channel(scope) = &source {
                             let standing_sent = !agent.has_system_prompt_support();
+                            if batch.as_ref().is_some_and(|batch| batch.continuation.is_none()) {
+                                if let Some(dispatch) = &agent.state.control_dispatch { dispatch.foreground_success(); }
+                            }
                             record_scope_delivery_success(
                                 &mut agent,
                                 scope.clone(),
@@ -3431,12 +3723,34 @@ pub async fn run_prompt_task(
         }
     };
 
+    if agent
+        .state
+        .control_dispatch
+        .as_ref()
+        .is_some_and(|dispatch| !dispatch.current())
+    {
+        let outcome = match prompt_result {
+            Ok(reason) => PromptOutcome::Ok(reason),
+            Err(error) => PromptOutcome::Error(error),
+        }
+        .discard_retired_output();
+        send_prompt_result(&result_tx, &turn_id, agent, source, outcome, None);
+        return;
+    }
     match prompt_result {
         Ok(stop_reason) => {
             log_stop_reason(&source, &stop_reason);
 
             if let PromptSource::Channel(scope) = &source {
                 let standing_sent = !agent.has_system_prompt_support();
+                if batch
+                    .as_ref()
+                    .is_some_and(|batch| batch.continuation.is_none())
+                {
+                    if let Some(dispatch) = &agent.state.control_dispatch {
+                        dispatch.foreground_success();
+                    }
+                }
                 record_scope_delivery_success(
                     &mut agent,
                     scope.clone(),
@@ -3470,7 +3784,9 @@ pub async fn run_prompt_task(
                         PromptSource::Channel(scope) => {
                             let count = agent.state.turn_counts.entry(scope.clone()).or_insert(0);
                             *count += 1;
-                            *count >= limit
+                            let rotate = *count >= limit;
+                            agent.state.persist_turns(scope);
+                            rotate
                         }
                         PromptSource::Heartbeat => {
                             agent.state.heartbeat_turn_count += 1;
@@ -3609,7 +3925,7 @@ pub async fn run_prompt_task(
                         target: "pool::prompt",
                         "cancel_with_cleanup error: {e} — invalidating session"
                     );
-                    agent.state.invalidate(&source);
+                    agent.state.invalidate_after_error(&source, &e);
                     let usage = agent.acp.take_turn_usage();
                     publish_agent_turn_metric(
                         &ctx,
@@ -3664,7 +3980,7 @@ pub async fn run_prompt_task(
             // session state (e.g. bad LLM response). The session is healthy —
             // don't invalidate it. Other errors may have corrupted state.
             if !matches!(e, AcpError::AgentError { .. }) {
-                agent.state.invalidate(&source);
+                agent.state.invalidate_after_error(&source, &e);
             }
             let usage = agent.acp.take_turn_usage();
             publish_agent_turn_metric(
@@ -4725,6 +5041,9 @@ fn parse_dm_response(json: serde_json::Value, limit: u32) -> Option<Conversation
 ///
 /// Works with both thread reply objects and channel message objects.
 fn json_to_context_message(obj: &serde_json::Value) -> Option<ContextMessage> {
+    if crate::session_controls::reserved_raw(obj) {
+        return None;
+    }
     let content = obj.get("content").and_then(|v| v.as_str())?;
     let pubkey = obj
         .get("pubkey")
@@ -5097,6 +5416,11 @@ fn record_scope_delivery_success(
     event_ids: &HashSet<String>,
     hydrated_thread_roots: &HashSet<String>,
 ) {
+    if let Some(dispatch) = &agent.state.control_dispatch {
+        if !dispatch.current() {
+            return;
+        }
+    }
     tracing::info!(
         target: "pool::prompt",
         "{}",
@@ -8735,6 +9059,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx: None,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -9947,6 +10272,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
                 recoverable_batch: None,
                 control_tx: None,
                 steer_tx,
+                control_dispatch: None,
                 successful_steer_deliveries: HashSet::new(),
             },
         );
@@ -10557,6 +10883,9 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             memory_enabled: false,
             harness_name: "goose".to_string(),
             relay_url: "ws://127.0.0.1:3000".to_string(),
+            session_policy: crate::scope::SessionPolicy::Channel,
+            session_status: None,
+            session_controls: Default::default(),
         }
     }
 
@@ -12525,4 +12854,19 @@ done"#
 mod pi_prompt_tests;
 
 #[cfg(all(test, unix))]
+#[path = "pool/real_resume_tests.rs"]
+mod real_resume_tests;
+
+#[cfg(all(test, unix))]
 mod delivery_runtime_tests;
+
+#[cfg(test)]
+#[path = "pool/session_control_history_tests.rs"]
+mod session_control_history_regressions;
+
+#[cfg(test)]
+mod portable_retirement_tests;
+mod session_retirement;
+
+pub(crate) mod restart_status;
+mod status_language;

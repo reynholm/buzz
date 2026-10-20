@@ -1,8 +1,36 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -lt 2 ]]; then
-  echo "Usage: $0 <pr-number> <png-dir> [comment-body-file]" >&2
+REPO="block/buzz"
+REMOTE="origin"
+EXPLICIT_REPO=false
+EXPLICIT_REMOTE=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo|--remote)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "error: $1 requires a value" >&2
+        exit 1
+      fi
+      if [[ "$1" == --repo ]]; then
+        REPO="$2"; EXPLICIT_REPO=true
+      else
+        REMOTE="$2"; EXPLICIT_REMOTE=true
+      fi
+      shift 2 ;;
+    *) break ;;
+  esac
+done
+if [[ $# -lt 2 || $# -gt 3 ]]; then
+  echo "Usage: $0 [--repo owner/repo --remote remote-name] <pr-number> <png-dir> [comment-body-file]" >&2
+  exit 1
+fi
+if [[ "$EXPLICIT_REPO" != "$EXPLICIT_REMOTE" ]]; then
+  echo "error: select both --repo and --remote for a fork" >&2
+  exit 1
+fi
+if ! [[ "$REPO" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ && "$REMOTE" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
+  echo "error: invalid repository or remote name" >&2
   exit 1
 fi
 
@@ -10,14 +38,23 @@ PR="$1"
 PNG_DIR="$2"
 BODY_FILE="${3:-}"
 
-if ! [[ "$PR" =~ ^[0-9]+$ ]]; then
+if ! [[ "$PR" =~ ^[1-9][0-9]*$ ]]; then
   echo "error: PR number must be a positive integer" >&2
   exit 1
 fi
 
 GH_USER=$(gh api user --jq .login)
+if ! [[ "$GH_USER" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]*$ ]]; then
+  echo "error: invalid GitHub login" >&2
+  exit 1
+fi
 BRANCH="agent-screenshots/${GH_USER}"
-REPO="block/buzz"
+TRACKING_REF="refs/remotes/${REMOTE}/${BRANCH}"
+git remote get-url "$REMOTE" >/dev/null
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -n "$BODY_FILE" ]]; then
+  "$SCRIPT_DIR/check-pr-image-urls.sh" "$BODY_FILE"
+fi
 
 # macOS ships bash 3.2, which lacks mapfile — build the array with read.
 PNGS=()
@@ -30,8 +67,8 @@ if [[ ${#PNGS[@]} -eq 0 ]]; then
 fi
 
 EXISTING_ENTRIES=""
-if git fetch origin "refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}" 2>/dev/null; then
-  EXISTING_ENTRIES=$(git ls-tree "origin/${BRANCH}" | grep -v $'\t'"\"\\{0,1\\}pr-${PR}--" || true)
+if git fetch "$REMOTE" "refs/heads/${BRANCH}:${TRACKING_REF}" 2>/dev/null; then
+  EXISTING_ENTRIES=$(git ls-tree "$TRACKING_REF" | grep -v $'\t'"\"\\{0,1\\}pr-${PR}--" || true)
 fi
 
 NEW_ENTRIES=""
@@ -52,12 +89,20 @@ COMBINED=$(printf '%s\n' "$EXISTING_ENTRIES" "$NEW_ENTRIES" | grep -v '^$')
 TREE=$(echo "$COMBINED" | git mktree)
 
 PARENT_ARGS=()
-if git rev-parse "origin/${BRANCH}" >/dev/null 2>&1; then
-  PARENT_ARGS=(-p "origin/${BRANCH}")
+if git rev-parse "$TRACKING_REF" >/dev/null 2>&1; then
+  PARENT_ARGS=(-p "$TRACKING_REF")
 fi
 # ${arr[@]+...} guards the empty-array case, which trips set -u on bash 3.2.
-COMMIT=$(git commit-tree "$TREE" ${PARENT_ARGS[@]+"${PARENT_ARGS[@]}"} -m "screenshots: PR #${PR}")
-git push --force-with-lease origin "${COMMIT}:refs/heads/${BRANCH}"
+SIGNING_ARGS=()
+if [[ "$(git config --bool --get commit.gpgsign || true)" == true ]]; then
+  SIGNING_ARGS=(-S)
+fi
+COMMITTER=$(git var GIT_COMMITTER_IDENT)
+SIGNOFF="${COMMITTER%>*}>"
+COMMIT=$(printf 'screenshots: PR #%s\n\nSigned-off-by: %s\n' "$PR" "$SIGNOFF" |
+  git commit-tree "$TREE" ${PARENT_ARGS[@]+"${PARENT_ARGS[@]}"} ${SIGNING_ARGS[@]+"${SIGNING_ARGS[@]}"} -F -)
+# A concurrent publisher must fail safely; never rewrite the screenshot branch.
+git push "$REMOTE" "${COMMIT}:refs/heads/${BRANCH}"
 
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/${COMMIT}"
 
@@ -70,8 +115,6 @@ for i in "${!PNGS[@]}"; do
 done
 
 if [[ -n "$BODY_FILE" ]]; then
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  "$SCRIPT_DIR/check-pr-image-urls.sh" "$BODY_FILE"
   COMMENT_BODY="$(cat "$BODY_FILE")"
   UNREFERENCED=()
   for i in "${!IMAGE_NAMES[@]}"; do

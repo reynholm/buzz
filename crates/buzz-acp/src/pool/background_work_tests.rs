@@ -7,6 +7,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[path = "resident_helper_tests.rs"]
 mod resident_helper_tests;
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[path = "snapshot_helper_tests.rs"]
+mod snapshot_helper_tests;
+
 async fn worker(index: usize) -> OwnedAgent {
     OwnedAgent {
         index,
@@ -89,6 +93,7 @@ async fn background_hold_does_not_arm_an_unserviceable_fork_deadline() {
             recoverable_batch: None,
             control_tx: None,
             steer_tx: None,
+            control_dispatch: None,
             successful_steer_deliveries: HashSet::new(),
         },
     );
@@ -569,6 +574,7 @@ pub(crate) fn apply_result(
         &mut respawn_tasks,
         None,
         rest,
+        &mut tokio::time::Instant::now(),
     );
     assert!(
         respawn_tasks.is_empty(),
@@ -851,7 +857,14 @@ async fn background_collection_completes_under_repeated_ordinary_preemption() {
                     edit: None,
                 },
             }
-            .steer_or_interrupt(mode, None, &mut pool, &mut queue, &ack_tx);
+            .steer_or_interrupt(
+                mode,
+                &Default::default(),
+                None,
+                &mut pool,
+                &mut queue,
+                &ack_tx,
+            );
             assert!(
                 pool.task_map.values().next().unwrap().control_tx.is_some(),
                 "repeated ordinary traffic must give collection an execution opportunity"
@@ -1078,6 +1091,7 @@ async fn background_lost_prompt_task_releases_pool_side_hold_before_respawn() {
         &mut pool,
         &mut queue,
         &config,
+        &Default::default(),
         error,
         &mut false,
         &HashSet::new(),
@@ -1085,6 +1099,7 @@ async fn background_lost_prompt_task_releases_pool_side_hold_before_respawn() {
         &mut crash_history,
         &respawn_tx,
         &mut respawn_tasks,
+        None,
         None,
     );
     assert!(
@@ -1150,3 +1165,6 @@ async fn background_observer_cancel_after_ordinary_control_never_resumes_collect
             .contains_key(&scope));
     }
 }
+
+#[path = "background_uncertainty_tests.rs"]
+mod uncertainty_tests;

@@ -1,0 +1,44 @@
+if [ -z "${BASH_ENV-}" ] && [ -n "${HOME-}" ] && [ -r "$HOME/.bashrc" ]; then
+  . "$HOME/.bashrc"
+fi
+echo '# Snapshot file'
+echo '# Unset all aliases to avoid conflicts with functions'
+echo 'unalias -a 2>/dev/null || true'
+shopt -p || true
+echo '# Functions'
+declare -f
+echo ''
+
+__codex_snapshot_command() {
+  if command -v "$1" >/dev/null 2>&1; then
+    "$@"
+  else
+    command -p "$@"
+  fi
+}
+bash_opts=$(set -o | __codex_snapshot_command awk '$2=="on"{print $1}')
+bash_opt_count=$(printf '%s\n' "$bash_opts" | __codex_snapshot_command sed '/^$/d' | __codex_snapshot_command wc -l | __codex_snapshot_command tr -d ' ')
+echo "# setopts $bash_opt_count"
+if [ -n "$bash_opts" ]; then
+  printf 'set -o %s\n' $bash_opts
+fi
+echo ''
+printf '\0'
+alias_count=$(\alias -p | __codex_snapshot_command wc -l | __codex_snapshot_command tr -d ' ')
+echo "# aliases $alias_count"
+\alias -p
+echo ''
+
+printf '\0'
+(
+  while IFS= read -r __codex_snapshot_export_name; do
+    case "$__codex_snapshot_export_name" in
+      ""|[0-9]*|*[!A-Za-z0-9_]*|PWD|OLDPWD) continue ;;
+    esac
+    printf '%s\0' "$__codex_snapshot_export_name"
+    declare -xp "$__codex_snapshot_export_name" 2>/dev/null || true
+    printf '\0'
+  done < <(compgen -e)
+)
+
+printf '\0'

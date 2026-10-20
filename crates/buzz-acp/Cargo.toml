@@ -25,6 +25,8 @@ buzz-persona = { path = "../buzz-persona" }
 git-credential-nostr = { path = "../git-credential-nostr" }
 git-sign-nostr = { path = "../git-sign-nostr" }
 tempfile = "3"
+# Advisory locks for the durable session store.
+fs2 = "0.4"
 zeroize = { workspace = true }
 
 # Nostr
@@ -81,6 +83,10 @@ evalexpr = { workspace = true }
 # has a #[cfg(not(unix))] fallback in acp.rs.
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", default-features = false, features = ["signal", "user"] }
+
+[target.'cfg(windows)'.dependencies]
+process-wrap = { version = "=10.0.1", default-features = false, features = ["tokio1", "job-object", "creation-flags", "kill-on-drop"] }
+win32job = "=2.0.3"
 
 [dev-dependencies]
 axum = { workspace = true }

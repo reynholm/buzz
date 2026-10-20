@@ -1,3 +1,4 @@
+import type { CompactionActivity } from "./agentSessionCompaction";
 import type { LucideIcon } from "lucide-react";
 
 export type ObserverEvent = {
@@ -109,6 +110,7 @@ export type TranscriptItem =
       text: string;
       /** Resolved outcome for permission items (e.g. "Approved (allow_once)", "Denied (reject_once)", "Cancelled"). */
       outcome?: string;
+      compaction?: CompactionActivity;
       timestamp: string;
       descriptor?: AgentActivityDescriptor;
       acpSource?: TranscriptAcpSource;
@@ -131,6 +133,7 @@ export type TranscriptItem =
       toolName: string;
       buzzToolName: string | null;
       status: ToolStatus;
+      compactionScope?: string;
       args: Record<string, unknown>;
       result: string;
       isError: boolean;

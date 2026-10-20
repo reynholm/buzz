@@ -2,6 +2,7 @@ import { getSentFromThreadRootId } from "@/features/messages/lib/sentFromThread"
 
 type MessageAuthorCandidate = {
   pubkey?: string | null;
+  sessionControl?: unknown;
 };
 
 type MessageGroupingCandidate = {
@@ -31,6 +32,7 @@ export function hasSameMessageAuthor(
   previous: MessageAuthorCandidate | null | undefined,
   current: MessageAuthorCandidate | null | undefined,
 ) {
+  if (previous?.sessionControl || current?.sessionControl) return false;
   const previousPubkey = previous?.pubkey?.trim().toLowerCase();
   const currentPubkey = current?.pubkey?.trim().toLowerCase();
 

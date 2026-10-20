@@ -109,12 +109,21 @@ export function ManagedAgentSessionPanel({
     [scopedLiveEvents, archivedChannelEvents],
   );
 
+  const combinedTranscriptEvents = React.useMemo(
+    () =>
+      mergeObserverEventWindows(
+        scopeByChannel(events, channelId, true),
+        archivedChannelEvents,
+      ),
+    [events, channelId, archivedChannelEvents],
+  );
+
   // Derive transcript once from the combined raw window. When transcriptOverride
   // is set (e.g. E2E snapshot specs), bypass both — the caller supplies the full
   // transcript directly.
   const derivedTranscript = React.useMemo(
-    () => buildTranscriptState(combinedEvents).items,
-    [combinedEvents],
+    () => buildTranscriptState(combinedTranscriptEvents).items,
+    [combinedTranscriptEvents],
   );
   const displayTranscript = transcriptOverride ?? derivedTranscript;
 
