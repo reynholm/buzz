@@ -75,6 +75,31 @@ test("captures exact target and canonical thread routing, publishes once", async
   ]);
   assert.equal(hook.result.current.pending, false);
 });
+test("publishes the audience callback only after a successful current-scope send", async () => {
+  const { hook, resolve, dependencies } = setup();
+  let sent, finish;
+  dependencies.send = () =>
+    new Promise((resolve) => {
+      finish = resolve;
+    });
+  let calls = 0;
+  act(() => {
+    sent = hook.result.current.run(command, () => {
+      calls += 1;
+    });
+  });
+  assert.equal(hook.result.current.pending, true);
+  assert.equal(calls, 0);
+  await act(async () => {
+    resolve(evidence);
+  });
+  assert.equal(calls, 0);
+  await act(async () => {
+    finish();
+    assert.equal(await sent, true);
+  });
+  assert.equal(calls, 1);
+});
 for (const boundary of [
   "revoke",
   "query failure",
@@ -93,8 +118,11 @@ for (const boundary of [
         throw new Error("offline");
       };
     let pending;
+    let commits = 0;
     act(() => {
-      pending = hook.result.current.run(command);
+      pending = hook.result.current.run(command, () => {
+        commits += 1;
+      });
     });
     if (boundary === "unmount") hook.unmount();
     if (["community", "signer", "target", "root", "channel"].includes(boundary))
@@ -118,6 +146,7 @@ for (const boundary of [
       assert.equal(await pending, false);
     });
     assert.equal(sends.length, 0);
+    assert.equal(commits, 0);
     if (["revoke", "query failure", "publication failure"].includes(boundary))
       assert.match(hook.result.current.error, /Could not send/);
   });
@@ -137,6 +166,68 @@ test("switching away and back cannot revive an old action", async () => {
   });
   assert.equal(sends.length, 0);
 });
+test("a scope change during native publication retires its audience callback", async () => {
+  const { hook, resolve, dependencies } = setup();
+  let finish, pending;
+  let calls = 0;
+  dependencies.send = () =>
+    new Promise((resolve) => {
+      finish = resolve;
+    });
+  act(() => {
+    pending = hook.result.current.run(command, () => {
+      calls += 1;
+    });
+  });
+  await act(async () => {
+    resolve(evidence);
+  });
+  hook.rerender({ ...scope, rootEventId: "other" });
+  hook.rerender(scope);
+  await act(async () => {
+    finish();
+    assert.equal(await pending, false);
+  });
+  assert.equal(calls, 0);
+});
+for (const roundTrip of [false, true])
+  test(`retired flights cannot block or release a newer flight (round trip ${roundTrip})`, async () => {
+    const finishes = [];
+    const dependencies = {
+      fetchEvidence: async (target) => ({
+        ...evidence,
+        targetPubkey: target.targetPubkey,
+        agent: { ...evidence.agent, pubkey: target.targetPubkey },
+      }),
+      send: () => new Promise((resolve) => finishes.push(resolve)),
+    };
+    const hook = renderHook(
+      (value) => useSessionControlAction(value, dependencies),
+      { initialProps: scope },
+    );
+    let first, second;
+    await act(async () => {
+      first = hook.result.current.run(command);
+    });
+    hook.rerender({ ...scope, targetPubkey: "e".repeat(64) });
+    if (roundTrip) hook.rerender(scope);
+    assert.equal(hook.result.current.pending, false);
+    await act(async () => {
+      second = hook.result.current.run(command);
+    });
+    assert.equal(finishes.length, 2);
+    await act(async () => {
+      finishes[0]();
+      assert.equal(await first, false);
+    });
+    assert.equal(hook.result.current.pending, true);
+    assert.equal(await hook.result.current.run(command), false);
+    await act(async () => {
+      finishes[1]();
+      assert.equal(await second, true);
+    });
+    assert.equal(hook.result.current.pending, false);
+  });
 
 test("manual actor joins the actual channel surface batch without a per-row fetch", async () => {
   const { useMessageEventProfilePubkeys } = await import(

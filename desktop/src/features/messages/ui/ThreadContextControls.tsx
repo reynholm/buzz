@@ -1,5 +1,5 @@
 import * as React from "react";
-import { BrainCog } from "lucide-react";
+import { BrainCog, LoaderCircle } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRelayAgentsQuery } from "@/features/agents/hooks";
 import { useChannelDetailsQuery } from "@/features/channels/hooks";
@@ -11,6 +11,7 @@ import type { Channel, RelayEvent } from "@/shared/api/types";
 import type { TimelineMessage } from "@/features/messages/types";
 import { loadThreadReplies } from "@/features/messages/useThreadReplies";
 import { threadRepliesKey } from "@/features/messages/lib/messageQueryKeys";
+import { useSessionControlAction } from "@/features/messages/lib/useSessionControlAction";
 import {
   hasPersistedThread,
   projectThreadContextAgents,
@@ -29,9 +30,13 @@ import { MessageSessionControls } from "./MessageSessionControls";
 export function ThreadContextControls({
   channel,
   threadHead,
+  prepareAgentPin,
+  composerRef,
 }: {
   channel: Channel | null;
   threadHead: TimelineMessage | null;
+  prepareAgentPin?: (pubkey: string) => () => void;
+  composerRef?: React.RefObject<HTMLFormElement | null>;
 }) {
   const { activeCommunity } = useCommunities();
   const identity = useIdentityQuery();
@@ -47,6 +52,8 @@ export function ThreadContextControls({
       rootId={rootId}
       relayUrl={relayUrl}
       signerPubkey={signerPubkey}
+      prepareAgentPin={prepareAgentPin}
+      composerRef={composerRef}
     />
   );
 }
@@ -57,15 +64,30 @@ function ThreadContextPicker({
   rootId,
   relayUrl,
   signerPubkey,
+  prepareAgentPin,
+  composerRef,
 }: {
   channel: Channel;
   head: TimelineMessage;
   rootId: string;
   relayUrl: string;
   signerPubkey: string;
+  prepareAgentPin?: (pubkey: string) => () => void;
+  composerRef?: React.RefObject<HTMLFormElement | null>;
 }) {
   const [open, setOpen] = React.useState(false);
   const [selected, setSelected] = React.useState<string | null>(null);
+  const { triggerRef, menuPosition } = useContextMenuPosition(
+    open,
+    composerRef,
+  );
+  const action = useSessionControlAction({
+    targetPubkey: selected ?? "",
+    channelId: channel.id,
+    rootEventId: rootId,
+    relayUrl,
+    signerPubkey,
+  });
   const queryClient = useQueryClient();
   const directory = useRelayAgentsQuery();
   const currentChannel = useChannelDetailsQuery(channel.id);
@@ -143,13 +165,13 @@ function ThreadContextPicker({
   );
   const target = agents.find((agent) => agent.pubkey === selected);
   React.useEffect(() => {
-    if (selected && !target) setSelected(null);
-  }, [selected, target]);
+    if (selected && !target && !loading && !error) setSelected(null);
+  }, [error, loading, selected, target]);
   return (
     <DropdownMenu
       open={open}
       onOpenChange={(value) => {
-        if (value) setSelected(null);
+        if (value && !action.pending) setSelected(null);
         setOpen(value);
       }}
     >
@@ -158,12 +180,24 @@ function ThreadContextPicker({
           <DropdownMenuTrigger asChild>
             <button
               type="button"
+              ref={triggerRef}
               aria-label="Manage context"
+              aria-busy={action.pending}
+              aria-description={
+                action.pending ? "Sending session control…" : undefined
+              }
               data-testid="manage-thread-context"
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
               onMouseDown={(event) => event.preventDefault()}
             >
-              <BrainCog aria-hidden="true" className="h-4 w-4 shrink-0" />
+              {action.pending ? (
+                <LoaderCircle
+                  aria-hidden="true"
+                  className="h-4 w-4 shrink-0 animate-spin motion-reduce:animate-none"
+                />
+              ) : (
+                <BrainCog aria-hidden="true" className="h-4 w-4 shrink-0" />
+              )}
             </button>
           </DropdownMenuTrigger>
         </TooltipTrigger>
@@ -171,19 +205,20 @@ function ThreadContextPicker({
       </Tooltip>
       {target ? (
         <MessageSessionControls
-          scope={{
-            targetPubkey: target.pubkey,
-            channelId: channel.id,
-            rootEventId: rootId,
-            relayUrl,
-            signerPubkey,
-          }}
+          action={action}
           label={target.label}
           shared={target.shared}
           onBack={() => setSelected(null)}
+          prepareAudience={() => prepareAgentPin?.(target.pubkey)}
+          menuPosition={menuPosition}
         />
       ) : (
-        <DropdownMenuContent align="start" className="max-w-80" key="agents">
+        <DropdownMenuContent
+          {...menuPosition}
+          align="start"
+          className="max-w-80"
+          key="agents"
+        >
           {!replies ? (
             <p
               role="status"
@@ -262,4 +297,48 @@ function ThreadContextPicker({
       )}
     </DropdownMenu>
   );
+}
+
+/** Match the mention overlay's gap above the entire composer, including uploads. */
+function useContextMenuPosition(
+  open: boolean,
+  composerRef?: React.RefObject<HTMLFormElement | null>,
+) {
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const [offsets, setOffsets] = React.useState({
+    sideOffset: 4,
+    alignOffset: 0,
+  });
+  React.useLayoutEffect(() => {
+    const composer = composerRef?.current;
+    const trigger = triggerRef.current;
+    if (!open || !composer || !trigger) return;
+    const update = () => {
+      const form = composer.getBoundingClientRect();
+      const button = trigger.getBoundingClientRect();
+      const gap =
+        Number.parseFloat(getComputedStyle(document.documentElement).fontSize) /
+          4 || 4;
+      const next = {
+        sideOffset: button.top - form.top + gap,
+        alignOffset: form.left - button.left,
+      };
+      setOffsets((previous) =>
+        previous.sideOffset === next.sideOffset &&
+        previous.alignOffset === next.alignOffset
+          ? previous
+          : next,
+      );
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(composer);
+    observer.observe(trigger);
+    window.addEventListener("resize", update);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, [composerRef, open]);
+  return { triggerRef, menuPosition: { side: "top" as const, ...offsets } };
 }

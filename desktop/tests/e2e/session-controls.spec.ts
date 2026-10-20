@@ -109,8 +109,25 @@ async function selectAgent(page: Page, name = "ControlBot") {
       agent.getByTestId("thread-context-agent-avatar-fallback"),
     ).toBeVisible();
   }
+  await expectContextAboveComposer(page);
   await agent.click();
   return trigger;
+}
+async function expectContextAboveComposer(page: Page) {
+  const form = page
+    .getByTestId("thread-composer-overlay")
+    .getByTestId("message-composer");
+  const menu = page.getByRole("menu").first();
+  await expect(menu).toHaveAttribute("data-side", "top");
+  await expect
+    .poll(async () => {
+      const [field, popup] = await Promise.all([
+        form.boundingBox(),
+        menu.boundingBox(),
+      ]);
+      return field && popup ? field.y - popup.y - popup.height : -1;
+    })
+    .toBeGreaterThanOrEqual(3);
 }
 async function captureMenu(page: Page, trigger: Locator, name: string) {
   await waitForAnimations(page);
@@ -267,6 +284,7 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
       .getByTestId("thread-context-agent-avatar-image"),
   ).toBeVisible();
   await captureMenu(page, trigger, "agent-list-avatar-v1");
+  await expectContextAboveComposer(page);
   expect(await sends(page)).toHaveLength(0);
   await page.getByRole("menuitem", { name: "ControlBot", exact: true }).click();
   await expect(
@@ -324,7 +342,7 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
     "Start over from scratch",
   );
   await expect(page.getByTestId("message-session-control")).toContainText(
-    "Result not confirmed",
+    "Waiting for agent…",
   );
   const log = await page.evaluate(() => window.__BUZZ_E2E_COMMANDS__ ?? []);
   for (const command of [
@@ -338,6 +356,9 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
   await page
     .getByTestId("message-session-control")
     .screenshot({ path: `${SHOT}/request-row.png` });
+  await page
+    .getByTestId("message-thread-panel")
+    .screenshot({ path: `${SHOT}/request-with-mentions.png` });
   const commandRow = page
     .getByTestId("message-row")
     .filter({ has: page.getByTestId("message-session-control") });
@@ -391,6 +412,36 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
   );
   await waitForAnimations(page);
   await commandRow.screenshot({ path: `${SHOT}/confirmed-row.png` });
+  await draft.fill("Continue the task");
+  await page
+    .getByTestId("thread-composer-overlay")
+    .getByTestId("send-message")
+    .click();
+  await page
+    .getByRole("alertdialog", { name: "Mention people outside this channel?" })
+    .getByRole("button", { name: "Invite", exact: true })
+    .click();
+  const sentRow = page
+    .getByTestId("message-thread-panel")
+    .getByTestId("message-row")
+    .filter({ hasText: "Continue the task" });
+  await expect(sentRow).toHaveCount(1);
+  await expect(sentRow).toHaveAttribute("data-message-id", /^[0-9a-f]{64}$/);
+  const sentId = await sentRow.getAttribute("data-message-id");
+  const sentEvent = await page.evaluate(
+    async (eventId) =>
+      JSON.parse(
+        String(
+          await window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__?.("get_event", {
+            eventId,
+          }),
+        ),
+      ),
+    sentId,
+  );
+  expect(sentEvent.tags.filter((tag: string[]) => tag[0] === "p")).toEqual([
+    ["p", AGENT],
+  ]);
 });
 test("revoked send-time permission preserves draft and publishes nothing", async ({
   page,
@@ -445,6 +496,16 @@ for (const [label, body] of [
     expect(payload.parentEventId).toBe(root);
     expect(payload.rootEventId).toBe(root);
     expect(payload.mentionPubkeys).toEqual([AGENT]);
+    await expect(
+      page
+        .getByTestId("thread-composer-overlay")
+        .getByTestId(`composer-address-lock-${AGENT}`),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByTestId("message-session-control")
+        .getByTestId("session-control-progress"),
+    ).toBeVisible();
     if (body === "!compact") {
       const control = page.getByTestId("message-session-control");
       const commandId = await page
@@ -472,6 +533,9 @@ for (const [label, body] of [
             ? "Waiting for current work to finish · Compaction will start automatically"
             : "Completed",
         );
+        await expect(
+          control.getByTestId("session-control-progress"),
+        ).toHaveCount(outcome === "pending" ? 1 : 0);
       }
     }
   });
@@ -549,15 +613,30 @@ test("context controls remain available while sending disables the thread editor
   });
   await expect(compact).toBeEnabled();
   await compact.click();
+  const trigger = page.getByTestId("manage-thread-context");
+  await expect(trigger).toHaveAttribute("aria-busy", "true");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await trigger.focus();
+  await trigger.press("Enter");
+  await expect(
+    page.getByRole("menuitem", { name: "Compact context", exact: true }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
   await expect.poll(async () => (await sends(page)).length).toBe(2);
   const payload = (await sends(page))[1].payload as Record<string, unknown>;
   expect(payload.content).toBe("!compact");
   expect(payload.mentionPubkeys).toEqual([AGENT]);
   expect(payload.rootEventId).toBe(root);
   expect(payload.parentEventId).toBe(root);
+  await expect(trigger).toHaveAttribute("aria-busy", "false", {
+    timeout: 10_000,
+  });
+  await expect(
+    composer.getByTestId(`composer-address-lock-${AGENT}`),
+  ).toBeVisible();
 });
 
-test("context selection and Compact preserve an unpinned draft, attachment, selection and caret", async ({
+test("context action pins its agent while preserving the draft, attachment, selection and caret", async ({
   page,
 }) => {
   const root = await setup(page, false, false, 0, 0, {
@@ -628,7 +707,10 @@ test("context selection and Compact preserve an unpinned draft, attachment, sele
   await page.keyboard.press("Escape");
   await input.focus();
   await expect.poll(() => composerSelection(input)).toEqual(selection);
-  await input.press("ArrowRight");
+  await input.evaluate(() => {
+    window.getSelection()?.collapseToEnd();
+    document.dispatchEvent(new Event("selectionchange"));
+  });
   const caret = { anchor: 9, focus: 9, text: "" };
   await expect.poll(() => composerSelection(input)).toEqual(caret);
   await selectAgent(page);
@@ -644,8 +726,8 @@ test("context selection and Compact preserve an unpinned draft, attachment, sele
   await expect(composer).toContainText("context-draft.pdf");
   await expect(
     composer.getByTestId(`composer-address-lock-${AGENT}`),
-  ).toHaveCount(0);
-  await expect(mention).toHaveAccessibleName("Mention someone");
+  ).toBeVisible();
+  await expect(mention).toHaveAccessibleName("Manage mentions");
   await input.focus();
   await expect.poll(() => composerSelection(input)).toEqual(caret);
 });
@@ -672,6 +754,7 @@ test("context stays before mentions across formatting, focus and narrow thread l
   await page.keyboard.press("Space");
   const agent = page.getByRole("menuitem", { name: "ControlBot", exact: true });
   await expect(agent).toBeVisible();
+  await expectContextAboveComposer(page);
   await page.keyboard.press("ArrowDown");
   await expect(agent).toBeFocused();
   await page.keyboard.press("Enter");
@@ -686,6 +769,10 @@ test("context stays before mentions across formatting, focus and narrow thread l
     .click();
   await expect(page.getByTestId("focus-thread-drawer")).toBeVisible();
   await expectContextBeforeMentions(page);
+  await selectAgent(page);
+  await expectContextAboveComposer(page);
+  await composer.getByTestId("manage-thread-context").click();
+  await expect(page.getByRole("menu")).toHaveCount(0);
   await expect(input).toHaveText("Keep my layout draft");
   await page
     .getByRole("button", { name: "Show thread beside channel", exact: true })
@@ -1067,7 +1154,7 @@ for (const [name, response, eventId] of [
     await expect(command).toHaveCount(1);
     const commandId = await command.getAttribute("data-message-id");
     if (!commandId) throw new Error("Missing restart event identity");
-    await expect(control).toContainText("Result not confirmed");
+    await expect(control).toContainText("Waiting for agent…");
     await page.evaluate(
       ({ channelName, pubkey, commandId }) =>
         window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({

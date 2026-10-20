@@ -44,6 +44,16 @@ const rows = (events) =>
   formatTimelineMessages(events, null, H, null, profiles);
 const control = (events) =>
   rows(events).find((row) => row.id === ID)?.sessionControl;
+test("fresh requests wait for the agent without claiming execution or confirmation", () => {
+  const command = request();
+  assert.deepEqual(control([command]).targets[0], {
+    pubkey: A,
+    name: "Agent A",
+    state: "awaiting",
+    detail: "Waiting for agent…",
+    expiresAt: command.created_at + 901,
+  });
+});
 test("shared exact grammar matches the actual core parser whitespace corpus", () => {
   const fixture = JSON.parse(
     fs.readFileSync(
@@ -247,7 +257,7 @@ test("delegated relay reaction pills cannot confirm a target-signed session resu
     relay,
   );
   assert.equal(row.reactions[0].users[0].pubkey, A);
-  assert.equal(row.sessionControl.targets[0].state, "unconfirmed");
+  assert.equal(row.sessionControl.targets[0].state, "awaiting");
 });
 test("deleting an outcome removes confirmation and malformed conflicting enrichment stays unconfirmed", () => {
   const result = reaction();
@@ -259,7 +269,7 @@ test("deleting an outcome removes confirmation and malformed conflicting enrichm
   });
   assert.equal(
     control([request(), result, deleted]).targets[0].state,
-    "unconfirmed",
+    "awaiting",
   );
   const malformed = reaction("ok", "", {
     id: "2".repeat(64),

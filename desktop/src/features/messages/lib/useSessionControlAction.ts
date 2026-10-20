@@ -48,12 +48,15 @@ export function useSessionControlAction(
   if (currentKey.current.key !== key)
     currentKey.current = { key, generation: currentKey.current.generation + 1 };
   const mounted = React.useRef(false);
-  const inFlight = React.useRef(false);
+  const inFlight = React.useRef<{ key: string; generation: number } | null>(
+    null,
+  );
   const [state, setState] = React.useState<{
     key: string;
+    generation: number;
     pending: boolean;
     error: string | null;
-  }>({ key, pending: false, error: null });
+  }>({ key, generation: 0, pending: false, error: null });
   React.useEffect(() => {
     mounted.current = true;
     return () => {
@@ -62,8 +65,13 @@ export function useSessionControlAction(
     };
   }, []);
   const run = React.useCallback(
-    async (command: SessionCommand) => {
-      if (inFlight.current || !mounted.current) return false;
+    async (command: SessionCommand, onSent?: () => void) => {
+      if (
+        !mounted.current ||
+        (inFlight.current?.key === key &&
+          inFlight.current.generation === currentKey.current.generation)
+      )
+        return false;
       const captured = { ...scope };
       const capturedKey = key;
       const capturedGeneration = currentKey.current.generation;
@@ -80,8 +88,14 @@ export function useSessionControlAction(
         !captured.rootEventId
       )
         return false;
-      inFlight.current = true;
-      setState({ key, pending: true, error: null });
+      const flight = { key, generation: capturedGeneration };
+      inFlight.current = flight;
+      setState({
+        key,
+        generation: capturedGeneration,
+        pending: true,
+        error: null,
+      });
       try {
         const evidence = await dependencies.fetchEvidence(captured);
         if (!isCurrent()) return false;
@@ -104,26 +118,31 @@ export function useSessionControlAction(
           captured.signerPubkey,
           captured.rootEventId,
         );
-        return isCurrent();
+        if (!isCurrent()) return false;
+        onSent?.();
+        return true;
       } catch {
         if (isCurrent())
           setState({
             key,
+            generation: capturedGeneration,
             pending: false,
             error:
               "Could not send session control. Check access and connection, then retry.",
           });
         return false;
       } finally {
-        inFlight.current = false;
+        if (inFlight.current === flight) inFlight.current = null;
         if (isCurrent()) setState((value) => ({ ...value, pending: false }));
       }
     },
     [dependencies, key, scope],
   );
+  const ownsState =
+    state.key === key && state.generation === currentKey.current.generation;
   return {
     run,
-    pending: state.key === key && state.pending,
-    error: state.key === key ? state.error : null,
+    pending: ownsState && state.pending,
+    error: ownsState ? state.error : null,
   };
 }

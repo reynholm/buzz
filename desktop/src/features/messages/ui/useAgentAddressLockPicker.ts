@@ -3,6 +3,10 @@ import * as React from "react";
 import { mentionOccurrences } from "@/shared/lib/mentionOccurrences";
 import { stripImplicitAgentMentionPrefix } from "@/features/messages/lib/stripImplicitAgentMentions";
 import type { usePersistentAgentAudience } from "@/features/messages/lib/persistentAgentAudience";
+import {
+  getPersistentAgentAudienceRevision,
+  promotePersistentAgentAudienceIfUnchanged,
+} from "@/features/messages/lib/persistentAgentAudience";
 import type { UseMentionsResult } from "@/features/messages/lib/useMentions";
 import type {
   AutocompleteEdit,
@@ -51,10 +55,15 @@ export function useAgentAddressLockPicker({
     [audience.pubkeys],
   );
   const unpinnedAgentPubkeysRef = React.useRef(new Set<string>());
+  // Context actions may address an agent without editing the current draft.
+  const deferredMentionPubkeysRef = React.useRef(new Set<string>());
+  const audienceGenerationRef = React.useRef(0);
   const unpinnedAudienceScopeRef = React.useRef(audienceScope);
   if (unpinnedAudienceScopeRef.current !== audienceScope) {
     unpinnedAudienceScopeRef.current = audienceScope;
+    audienceGenerationRef.current += 1;
     unpinnedAgentPubkeysRef.current.clear();
+    deferredMentionPubkeysRef.current.clear();
   }
   React.useEffect(() => {
     for (const pubkey of lockedAgentPubkeys) {
@@ -69,6 +78,39 @@ export function useAgentAddressLockPicker({
     visibleAgentMentionPubkeysRef.current.clear();
   }
   const [announcement, setAnnouncement] = React.useState("");
+  const prepareAgentPin = React.useCallback(
+    (pubkey: string) => {
+      const normalized = normalizePubkey(pubkey);
+      const generation = audienceGenerationRef.current;
+      const expectedRevision = audienceScope
+        ? getPersistentAgentAudienceRevision(audienceScope)
+        : 0;
+      return () => {
+        if (
+          !audienceScope ||
+          !normalized ||
+          audienceGenerationRef.current !== generation ||
+          lockedAgentPubkeys.has(normalized)
+        )
+          return;
+        const deferred = deferredMentionPubkeysRef.current;
+        const alreadyDeferred = deferred.has(normalized);
+        deferred.add(normalized);
+        const promotion = promotePersistentAgentAudienceIfUnchanged({
+          scope: audienceScope,
+          expectedRevision,
+          pubkeys: [normalized],
+          reinstateExcluded: true,
+        });
+        if (promotion) {
+          onPulseAddressLock(normalized);
+        } else if (!alreadyDeferred) {
+          deferred.delete(normalized);
+        }
+      };
+    },
+    [audienceScope, lockedAgentPubkeys, onPulseAddressLock],
+  );
   const lockedAgents = React.useMemo<ComposerAddressAgent[]>(
     () =>
       audience.pubkeys.map((pubkey) => {
@@ -143,6 +185,7 @@ export function useAgentAddressLockPicker({
       const normalized = normalizePubkey(pubkey);
       if (!audienceScope || !normalized) return;
       unpinnedAgentPubkeysRef.current.add(normalized);
+      deferredMentionPubkeysRef.current.delete(normalized);
       const excludePubkey = audience.excludePubkey ?? audience.removePubkey;
       excludePubkey(normalized);
     },
@@ -209,6 +252,7 @@ export function useAgentAddressLockPicker({
         );
       } else {
         unpinnedAgentPubkeysRef.current.delete(pubkey);
+        deferredMentionPubkeysRef.current.delete(pubkey);
         const label =
           mentions.registerMentionPubkey(suggestion.displayName, pubkey, {
             isAgent: true,
@@ -356,7 +400,12 @@ export function useAgentAddressLockPicker({
       const currentAudiencePubkeys = new Set(
         audience.pubkeys.map(normalizePubkey),
       );
+      if (restorePubkeys) {
+        for (const pubkey of restorePubkeys)
+          deferredMentionPubkeysRef.current.delete(pubkey);
+      }
       const targetAgents = [...(restorePubkeys ?? currentAudiencePubkeys)]
+        .filter((pubkey) => !deferredMentionPubkeysRef.current.has(pubkey))
         .filter(
           (pubkey) =>
             currentAudiencePubkeys.has(pubkey) || allowedUnpinned.has(pubkey),
@@ -445,6 +494,7 @@ export function useAgentAddressLockPicker({
     announcement,
     lockedAgents,
     lockedAgentPubkeys,
+    prepareAgentPin,
     removeAddressedAgent,
     restoreAddressedAgentMentions,
     selectMentionSuggestion,

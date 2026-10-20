@@ -11131,14 +11131,22 @@
     },
     {
       "path": "desktop/src/features/messages/lib/useSessionControlAction.ts",
-      "responsibility": "Capture exact target, thread, relay and signer, refresh verified permission, fence stale async actions and publish one exact kind-9 control without composer or lifecycle mutations.",
+      "responsibility": "Capture exact target, thread, relay and signer, refresh verified permission, fence stale async actions and publish one exact kind-9 control without composer or lifecycle mutations. Commit a prepared composer audience callback only after successful current-scope publication.",
       "is_new": true,
       "required_symbols": [
         "export function useSessionControlAction(",
         "if (!isCurrent()) return false;",
         "currentKey.current.generation === capturedGeneration"
       ],
-      "invocation_seams": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/messages/lib/useSessionControlAction.ts",
+          "callee_symbol": "onSent",
+          "invocation": "onSent?.();",
+          "behavior_test": "publishes the audience callback only after a successful current-scope send",
+          "verification_command": "cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/lib/useSessionControlAction.jsdom-test.mjs"
+        }
+      ],
       "verification_commands": [
         "cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/lib/useSessionControlAction.jsdom-test.mjs src/features/messages/ui/MessageSessionControlRow.jsdom-test.mjs"
       ]
@@ -11242,7 +11250,7 @@
         "correct-clock viewer sees expired old request and validated manual actor",
         "context controls remain available while sending disables the thread editor",
         "touch selection and Back retain the first agent-list step without sending",
-        "context selection and Compact preserve an unpinned draft, attachment, selection and caret",
+        "context action pins its agent while preserving the draft, attachment, selection and caret",
         "context stays before mentions across formatting, focus and narrow thread layouts",
         "restart_acknowledgment_is_distinct_from_generated_status",
         "restart_success_and_followup_failure_remain_independent"
@@ -11927,19 +11935,20 @@
     },
     {
       "path": "desktop/src/features/messages/ui/ThreadContextControls.tsx",
-      "responsibility": "Thread-scoped accessible agent roster from bounded canonical raw history, verified directory and current authority; agent-first picker, scope reset, independent context toolbar trigger and selected action lifetime. Passively subscribe to the active owning validated thread query without replacing query/retry options; ownerless read-only forum previews retain an isolated bounded fallback, while other absent/disabled owners are explicitly unavailable. Resolve eligible-agent profile avatars with decorative shared squircle rendering and initials fallback, preserving accessible collision labels.",
+      "responsibility": "Thread-scoped accessible agent roster from bounded canonical raw history, verified directory and current authority; agent-first picker, scope reset, independent context toolbar trigger and selected action lifetime. Passively subscribe to the active owning validated thread query without replacing query/retry options; ownerless read-only forum previews retain an isolated bounded fallback, while other absent/disabled owners are explicitly unavailable. Resolve eligible-agent profile avatars with decorative shared squircle rendering and initials fallback, preserving accessible collision labels. Own publication progress across menu closure and preserve the selected action while authoritative history refreshes. Position roster and selected actions above the complete composer with a rem-scaled gap, tracking composer and pane resizing.",
       "is_new": true,
       "required_symbols": [
         "export function ThreadContextControls(",
         "key={JSON.stringify([relayUrl, signerPubkey, channel.id, rootId])}",
         "aria-label=\"Manage context\"",
-        "return query?.isActive() ? query.state : undefined;"
+        "return query?.isActive() ? query.state : undefined;",
+        "function useContextMenuPosition("
       ],
       "invocation_seams": [
         {
           "caller_path": "desktop/src/features/messages/ui/MessageThreadPanel.tsx",
           "callee_symbol": "ThreadContextControls",
-          "invocation": "<ThreadContextControls\n                  channel={channel}\n                  threadHead={threadHead}\n                />",
+          "invocation": "<ThreadContextControls\n                  channel={channel}\n                  threadHead={threadHead}\n                  prepareAgentPin={prepareAgentPin}\n                  composerRef={composerRef}\n                />",
           "behavior_test": "known_agent_without_telemetry_still_has_current_scope_controls",
           "verification_command": "CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts"
         },
@@ -11977,6 +11986,13 @@
           "invocation": "<UserAvatar\n                    avatarUrl={",
           "behavior_test": "production roster resolves profile images and falls back without duplicating accessible labels",
           "verification_command": "cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs"
+        },
+        {
+          "caller_path": "desktop/src/features/messages/ui/ThreadContextControls.tsx",
+          "callee_symbol": "useContextMenuPosition",
+          "invocation": "useContextMenuPosition(\n    open,\n    composerRef,\n  )",
+          "behavior_test": "context stays before mentions across formatting, focus and narrow thread layouts",
+          "verification_command": "CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts"
         }
       ],
       "verification_commands": [
@@ -12044,7 +12060,7 @@
       "responsibility": "Expose a narrow thread-only context control slot without extending general composer authority.",
       "is_new": false,
       "required_symbols": [
-        "threadContextControl?: ReactNode;"
+        "threadContextControl?:"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -12056,13 +12072,13 @@
       "responsibility": "Forward the independent thread context slot through the composer dock without editor disabled/sending gates or draft mutations.",
       "is_new": false,
       "required_symbols": [
-        "threadContextControl={threadContextControl}"
+        "threadContextControl(prepareAgentPin, formRef)"
       ],
       "invocation_seams": [
         {
           "caller_path": "desktop/src/features/messages/ui/MessageComposer.tsx",
           "callee_symbol": "ComposerDockToolbar",
-          "invocation": "<ComposerDockToolbar\n              addressedAgents={\n                editTarget == null && !composerDisabled ? lockedAgents : []\n              }\n              autoPinConfirmationTitle={autoPinConfirmationTitle}\n              layoutMode={layoutMode}\n              composerDisabled={composerDisabled}\n              editor={richText.editor}\n              extraActions={toolbarExtraActions}\n              threadContextControl={threadContextControl}",
+          "invocation": "<ComposerDockToolbar\n              addressedAgents={\n                editTarget == null && !composerDisabled ? lockedAgents : []\n              }\n              autoPinConfirmationTitle={autoPinConfirmationTitle}\n              layoutMode={layoutMode}\n              composerDisabled={composerDisabled}\n              editor={richText.editor}\n              extraActions={toolbarExtraActions}\n              threadContextControl={\n                typeof threadContextControl === \"function\"\n                  ? threadContextControl(prepareAgentPin, formRef)\n                  : threadContextControl\n              }",
           "behavior_test": "known_agent_without_telemetry_still_has_current_scope_controls",
           "verification_command": "CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts"
         }
@@ -12361,6 +12377,38 @@
       "invocation_seams": [],
       "verification_commands": [
         "cargo test -p buzz-acp --lib first_signed_status_carries_selected_history_actor_and_current_or_unknown_occupancy -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/useAgentAddressLockPicker.ts",
+      "responsibility": "Prepare revision- and editor-generation-fenced context audience promotion without draft edits or mention rebinding; resume ordinary literal restoration after a normal send.",
+      "is_new": false,
+      "required_symbols": [
+        "const prepareAgentPin = React.useCallback(",
+        "audienceGenerationRef.current !== generation",
+        ".filter((pubkey) => !deferredMentionPubkeysRef.current.has(pubkey))"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/messages/ui/useAgentAddressLockPicker.ts",
+          "callee_symbol": "promotePersistentAgentAudienceIfUnchanged",
+          "invocation": "const promotion = promotePersistentAgentAudienceIfUnchanged({",
+          "behavior_test": "a context action pins only its target without editing, binding or excluding it on the next keystroke",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/contextActionAudience.test.mjs"
+        }
+      ],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/contextActionAudience.test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/contextActionAudience.test.mjs",
+      "responsibility": "Exercise the production picker with the actual persistent audience store for toolbar-only context pins, post-send restoration, intervening audience edits and editor-scope round trips.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/contextActionAudience.test.mjs"
       ]
     }
   ]

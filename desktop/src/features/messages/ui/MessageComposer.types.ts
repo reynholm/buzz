@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 
 import type { DraftMentionRef } from "@/features/messages/lib/useDrafts";
 import type { ImetaMedia } from "@/features/messages/lib/imetaMediaMarkdown";
@@ -112,7 +112,12 @@ export type MessageComposerProps = {
   showBackgroundUploadProgress?: boolean;
   toolbarExtraActions?: ReactNode;
   /** Thread-only control directly before mention management. */
-  threadContextControl?: ReactNode;
+  threadContextControl?:
+    | ReactNode
+    | ((
+        prepareAgentPin: (pubkey: string) => () => void,
+        composerRef: RefObject<HTMLFormElement | null>,
+      ) => ReactNode);
   typingParentEventId?: string | null;
   typingRootEventId?: string | null;
 };

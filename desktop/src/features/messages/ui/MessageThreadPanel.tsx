@@ -837,12 +837,14 @@ export function MessageThreadPanel({
                 type: "thread",
                 rootTags: threadHead.tags,
               }}
-              threadContextControl={
+              threadContextControl={(prepareAgentPin, composerRef) => (
                 <ThreadContextControls
                   channel={channel}
                   threadHead={threadHead}
+                  prepareAgentPin={prepareAgentPin}
+                  composerRef={composerRef}
                 />
-              }
+              )}
               channelId={channelId}
               channelName={channelName}
               channelType={channel?.channelType ?? null}

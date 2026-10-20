@@ -16,6 +16,42 @@ const control = {
     },
   ],
 };
+test("request progress stops on a signed outcome or its deadline without another event", (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000_000 });
+  const waiting = {
+    ...control,
+    targets: [
+      {
+        ...control.targets[0],
+        state: "awaiting",
+        detail: "Waiting for agent…",
+        expiresAt: 1001,
+      },
+    ],
+  };
+  const props = { actor: "Human", control: waiting, createdAt: 1000 };
+  const view = render(createElement(MessageSessionControlRow, props));
+  assert.equal(view.getAllByTestId("session-control-progress").length, 1);
+  assert.match(view.container.textContent, /Waiting for agent/);
+  act(() => t.mock.timers.tick(1000));
+  assert.ok(
+    !view.queryByTestId("session-control-progress"),
+    "Expired requests stop animating",
+  );
+  assert.match(view.container.textContent, /Request expired/);
+  for (const state of ["success", "failure", "unconfirmed"]) {
+    view.rerender(
+      createElement(MessageSessionControlRow, {
+        ...props,
+        control: { ...control, targets: [{ ...control.targets[0], state }] },
+      }),
+    );
+    assert.ok(
+      !view.queryByTestId("session-control-progress"),
+      `${state} stops animating`,
+    );
+  }
+});
 test("compact row renders actor, action, target and independent outcome without raw command text", () => {
   const view = render(
     createElement(MessageSessionControlRow, {
