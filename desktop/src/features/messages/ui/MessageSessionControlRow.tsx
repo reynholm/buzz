@@ -1,4 +1,5 @@
 import * as React from "react";
+import { LoaderCircle } from "lucide-react";
 import type { MessageSessionControl } from "@/features/messages/lib/sessionControl";
 /** Compact request presentation; raw emoji pills never confer confirmation. */
 export function MessageSessionControlRow({
@@ -16,7 +17,8 @@ export function MessageSessionControlRow({
     const deadlines = control.targets.flatMap((target) =>
       target.state === "unconfirmed"
         ? [createdAt + 901]
-        : target.state === "pending" && target.expiresAt !== undefined
+        : (target.state === "pending" || target.state === "awaiting") &&
+            target.expiresAt !== undefined
           ? [target.expiresAt]
           : [],
     );
@@ -40,7 +42,7 @@ export function MessageSessionControlRow({
       {control.targets.map((target) => {
         const expired =
           (target.state === "unconfirmed" && now >= createdAt + 901) ||
-          (target.state === "pending" &&
+          ((target.state === "pending" || target.state === "awaiting") &&
             target.expiresAt !== undefined &&
             now >= target.expiresAt);
         return (
@@ -48,6 +50,14 @@ export function MessageSessionControlRow({
             key={target.pubkey}
             data-state={expired ? "expired" : target.state}
           >
+            {!expired &&
+            ["publishing", "awaiting", "pending"].includes(target.state) ? (
+              <LoaderCircle
+                aria-hidden="true"
+                data-testid="session-control-progress"
+                className="mr-1 inline-block h-3 w-3 animate-spin motion-reduce:animate-none"
+              />
+            ) : null}
             <span className="font-medium text-foreground">{actor}</span>
             {": "}
             {control.action}

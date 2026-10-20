@@ -452,6 +452,7 @@ function MessageComposerImpl({
     announcement: addressLockAnnouncement,
     lockedAgents,
     lockedAgentPubkeys,
+    prepareAgentPin,
     removeAddressedAgent,
     restoreAddressedAgentMentions,
     selectMentionSuggestion,
@@ -962,7 +963,11 @@ function MessageComposerImpl({
               composerDisabled={composerDisabled}
               editor={richText.editor}
               extraActions={toolbarExtraActions}
-              threadContextControl={threadContextControl}
+              threadContextControl={
+                typeof threadContextControl === "function"
+                  ? threadContextControl(prepareAgentPin)
+                  : threadContextControl
+              }
               formattingDisabled={composerDisabled}
               gifMediaController={media}
               isEmojiPickerOpen={isEmojiPickerOpen}

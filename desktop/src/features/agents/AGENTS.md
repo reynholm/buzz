@@ -479,8 +479,11 @@ channel type and membership authorize publication; local inventory and status
 tags never grant access. Preserve owner/sibling-only DMs and independently
 operated cross-owner relay agents in marked builds. Managed runtime access
 remains governed by rule 11. The action captures relay and signer before reads,
-revalidates at click, and leaves the composer draft, selection, attachments and
-mentions untouched on every outcome. Thread, relay and requester changes reset
+revalidates at click, and leaves the composer draft, selection and attachments
+untouched on every outcome. A successful current-scope action adds its target to
+the thread's automatic-mention toolbar without inserting a literal mention,
+changing the global preference, or overriding a newer audience edit. Normal
+post-send restoration resumes literal mentions. Thread, relay and requester changes reset
 the picker and retire selected actions before any awaited result can publish.
 
 Start over stops current work, including subagents, while keeping file changes.
@@ -490,6 +493,9 @@ Only raw target-signed kind-7 results with matching request metadata confirm it;
 ordinary reaction pills, publication acknowledgments and delegated authors do
 not. Conflicts are unconfirmed. Manual transition actors use validated matching
 supporting tags and existing batched profile reads; absent metadata stays neutral.
+The context trigger shows publication progress, including fresh permission reads.
+Published requests show bounded waiting progress until a signed outcome; waiting
+does not claim that an agent has started executing the command.
 
 `messages/lib/sessionControl*.test.mjs`,
 `messages/lib/threadContextAgents.test.mjs`,

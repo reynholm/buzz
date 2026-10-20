@@ -1,8 +1,6 @@
 import { useId } from "react";
-import {
-  useSessionControlAction,
-  type SessionControlScope,
-} from "@/features/messages/lib/useSessionControlAction";
+import type { useSessionControlAction } from "@/features/messages/lib/useSessionControlAction";
+import type { SessionCommand } from "@/features/messages/lib/sessionControl";
 import {
   DropdownMenuContent,
   DropdownMenuItem,
@@ -13,24 +11,29 @@ import {
   DropdownMenuPortal,
 } from "@/shared/ui/dropdown-menu";
 
-/** One selected agent owns the action hook even after its menu closes. */
+/** The thread picker owns the action lifetime while this menu closes. */
 export function MessageSessionControls({
-  scope,
+  action,
   label,
   shared,
   onBack,
+  prepareAudience,
 }: {
-  scope: SessionControlScope;
+  action: ReturnType<typeof useSessionControlAction>;
   label: string;
   shared: boolean;
   onBack: () => void;
+  prepareAudience?: () => (() => void) | undefined;
 }) {
   const descriptionId = useId();
-  const action = useSessionControlAction(scope);
+  const run = (command: SessionCommand) => {
+    void action.run(command, prepareAudience?.());
+  };
   return (
     <>
       <DropdownMenuContent align="start" className="max-w-80">
         <DropdownMenuItem
+          disabled={action.pending}
           onSelect={(event) => {
             event.preventDefault();
             onBack();
@@ -68,7 +71,7 @@ export function MessageSessionControls({
                 aria-describedby={`${descriptionId}-none`}
                 className="flex-col items-start gap-0.5"
                 onSelect={() => {
-                  void action.run({
+                  run({
                     type: "restart",
                     depth: "none",
                     content: "!restart none",
@@ -89,7 +92,7 @@ export function MessageSessionControls({
                 aria-describedby={`${descriptionId}-recent`}
                 className="flex-col items-start gap-0.5"
                 onSelect={() => {
-                  void action.run({
+                  run({
                     type: "restart",
                     depth: "recent",
                     content: "!restart",
@@ -110,7 +113,7 @@ export function MessageSessionControls({
                 aria-describedby={`${descriptionId}-all`}
                 className="flex-col items-start gap-0.5"
                 onSelect={() => {
-                  void action.run({
+                  run({
                     type: "restart",
                     depth: "all",
                     content: "!restart all",
@@ -131,7 +134,7 @@ export function MessageSessionControls({
         <DropdownMenuItem
           disabled={action.pending}
           onSelect={() => {
-            void action.run({ type: "compact", content: "!compact" });
+            run({ type: "compact", content: "!compact" });
           }}
         >
           Compact context

@@ -7279,13 +7279,14 @@ New module: `true`.
 
 ## `desktop/src/features/messages/lib/useSessionControlAction.ts`
 
-Capture exact target, thread, relay and signer, refresh verified permission, fence stale async actions and publish one exact kind-9 control without composer or lifecycle mutations.
+Capture exact target, thread, relay and signer, refresh verified permission, fence stale async actions and publish one exact kind-9 control without composer or lifecycle mutations. Commit a prepared composer audience callback only after successful current-scope publication.
 
 New module: `true`.
 
 - Required symbol: `export function useSessionControlAction(`
 - Required symbol: `if (!isCurrent()) return false;`
 - Required symbol: `currentKey.current.generation === capturedGeneration`
+- Invocation: `desktop/src/features/messages/lib/useSessionControlAction.ts` → `onSent`; exact call `onSent?.();`; behavior test `publishes the audience callback only after a successful current-scope send`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/lib/useSessionControlAction.jsdom-test.mjs`
 - Verify: `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/lib/useSessionControlAction.jsdom-test.mjs src/features/messages/ui/MessageSessionControlRow.jsdom-test.mjs`
 
 ## `desktop/src/features/messages/lib/sessionControl.test.mjs`
@@ -7363,7 +7364,7 @@ New module: `true`.
 - Required symbol: `correct-clock viewer sees expired old request and validated manual actor`
 - Required symbol: `context controls remain available while sending disables the thread editor`
 - Required symbol: `touch selection and Back retain the first agent-list step without sending`
-- Required symbol: `context selection and Compact preserve an unpinned draft, attachment, selection and caret`
+- Required symbol: `context action pins its agent while preserving the draft, attachment, selection and caret`
 - Required symbol: `context stays before mentions across formatting, focus and narrow thread layouts`
 - Required symbol: `restart_acknowledgment_is_distinct_from_generated_status`
 - Required symbol: `restart_success_and_followup_failure_remain_independent`
@@ -7839,7 +7840,7 @@ New module: `false`.
 
 ## `desktop/src/features/messages/ui/ThreadContextControls.tsx`
 
-Thread-scoped accessible agent roster from bounded canonical raw history, verified directory and current authority; agent-first picker, scope reset, independent context toolbar trigger and selected action lifetime. Passively subscribe to the active owning validated thread query without replacing query/retry options; ownerless read-only forum previews retain an isolated bounded fallback, while other absent/disabled owners are explicitly unavailable. Resolve eligible-agent profile avatars with decorative shared squircle rendering and initials fallback, preserving accessible collision labels.
+Thread-scoped accessible agent roster from bounded canonical raw history, verified directory and current authority; agent-first picker, scope reset, independent context toolbar trigger and selected action lifetime. Passively subscribe to the active owning validated thread query without replacing query/retry options; ownerless read-only forum previews retain an isolated bounded fallback, while other absent/disabled owners are explicitly unavailable. Resolve eligible-agent profile avatars with decorative shared squircle rendering and initials fallback, preserving accessible collision labels. Own publication progress across menu closure and preserve the selected action while authoritative history refreshes.
 
 New module: `true`.
 
@@ -7850,6 +7851,7 @@ New module: `true`.
 - Invocation: `desktop/src/features/messages/ui/MessageThreadPanel.tsx` → `ThreadContextControls`; exact call `<ThreadContextControls
                   channel={channel}
                   threadHead={threadHead}
+                  prepareAgentPin={prepareAgentPin}
                 />`; behavior test `known_agent_without_telemetry_still_has_current_scope_controls`; verify `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 - Invocation: `desktop/src/features/messages/ui/ThreadContextControls.tsx` → `useSyncExternalStore`; exact call `const ownedReplies = React.useSyncExternalStore(`; behavior test `opening the picker preserves the owning notification query validation across gated retries (stream)`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs`
 - Invocation: `desktop/src/features/messages/ui/ThreadContextControls.tsx` → `projectThreadContextAgents`; exact call `projectThreadContextAgents({`; behavior test `same-name agents remain distinct and a relay switch closes selected actions`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/messages/ui/ThreadContextControls.jsdom-test.mjs`
@@ -7909,7 +7911,7 @@ Expose a narrow thread-only context control slot without extending general compo
 
 New module: `false`.
 
-- Required symbol: `threadContextControl?: ReactNode;`
+- Required symbol: `threadContextControl?:`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 
 ## `desktop/src/features/messages/ui/MessageComposer.tsx`
@@ -7918,7 +7920,7 @@ Forward the independent thread context slot through the composer dock without ed
 
 New module: `false`.
 
-- Required symbol: `threadContextControl={threadContextControl}`
+- Required symbol: `threadContextControl(prepareAgentPin)`
 - Invocation: `desktop/src/features/messages/ui/MessageComposer.tsx` → `ComposerDockToolbar`; exact call `<ComposerDockToolbar
               addressedAgents={
                 editTarget == null && !composerDisabled ? lockedAgents : []
@@ -7928,7 +7930,11 @@ New module: `false`.
               composerDisabled={composerDisabled}
               editor={richText.editor}
               extraActions={toolbarExtraActions}
-              threadContextControl={threadContextControl}`; behavior test `known_agent_without_telemetry_still_has_current_scope_controls`; verify `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
+              threadContextControl={
+                typeof threadContextControl === "function"
+                  ? threadContextControl(prepareAgentPin)
+                  : threadContextControl
+              }`; behavior test `known_agent_without_telemetry_still_has_current_scope_controls`; verify `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 
 ## `desktop/src/features/messages/ui/MessageComposerToolbar.tsx`
@@ -8101,3 +8107,23 @@ New module: `true`.
 
 - Required symbol: `fn first_signed_status_carries_selected_history_actor_and_current_or_unknown_occupancy`
 - Verify: `cargo test -p buzz-acp --lib first_signed_status_carries_selected_history_actor_and_current_or_unknown_occupancy -- --test-threads=1`
+
+## `desktop/src/features/messages/ui/useAgentAddressLockPicker.ts`
+
+Prepare revision- and editor-generation-fenced context audience promotion without draft edits or mention rebinding; resume ordinary literal restoration after a normal send.
+
+New module: `false`.
+
+- Required symbol: `const prepareAgentPin = React.useCallback(`
+- Required symbol: `audienceGenerationRef.current !== generation`
+- Required symbol: `.filter((pubkey) => !deferredMentionPubkeysRef.current.has(pubkey))`
+- Invocation: `desktop/src/features/messages/ui/useAgentAddressLockPicker.ts` → `promotePersistentAgentAudienceIfUnchanged`; exact call `const promotion = promotePersistentAgentAudienceIfUnchanged({`; behavior test `a context action pins only its target without editing, binding or excluding it on the next keystroke`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/contextActionAudience.test.mjs`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/contextActionAudience.test.mjs`
+
+## `desktop/src/features/messages/ui/contextActionAudience.test.mjs`
+
+Exercise the production picker with the actual persistent audience store for toolbar-only context pins, post-send restoration, intervening audience edits and editor-scope round trips.
+
+New module: `true`.
+
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/contextActionAudience.test.mjs`

@@ -8,6 +8,8 @@ code style, PR process, architecture), see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Fork: public text is in English
 
+Use this repository's native contributor workflow; do not configure or run Tempo here.
+
 This repository is a fork of `block/buzz`. Everything public in it is written
 in English. Public means anything that leaves a contributor's machine:
 

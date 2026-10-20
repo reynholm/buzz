@@ -112,7 +112,9 @@ export type MessageComposerProps = {
   showBackgroundUploadProgress?: boolean;
   toolbarExtraActions?: ReactNode;
   /** Thread-only control directly before mention management. */
-  threadContextControl?: ReactNode;
+  threadContextControl?:
+    | ReactNode
+    | ((prepareAgentPin: (pubkey: string) => () => void) => ReactNode);
   typingParentEventId?: string | null;
   typingRootEventId?: string | null;
 };

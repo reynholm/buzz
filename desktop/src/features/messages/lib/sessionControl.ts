@@ -31,6 +31,7 @@ export type SessionControlTarget = {
   name: string;
   state:
     | "publishing"
+    | "awaiting"
     | "pending"
     | "expired"
     | "unconfirmed"
@@ -144,7 +145,11 @@ function targetResult(
   }
   return now - command.created_at > 900
     ? { state: "expired", detail: "Request expired · Result not confirmed" }
-    : { state: "unconfirmed", detail: "Result not confirmed" };
+    : {
+        state: "awaiting",
+        detail: "Waiting for agent…",
+        expiresAt: command.created_at + 901,
+      };
 }
 /** Derive command rows from original signed requests and raw signed reactions. */
 export function attachSessionControls(
