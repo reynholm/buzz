@@ -263,6 +263,7 @@ async fn restart_status_completion_clears_only_its_own_activity() {
         };
         let (mut ctx, _relay) = setup(vec![], channel).await;
         admitted(&fixture, &mut ctx, &human, &scope, "!restart").await;
+        ctx.session_controls.plan_retirement(&scope, []);
         let ctx = Arc::new(ctx);
         let result = dispatch(&fixture, ctx.clone(), &env).await;
         let mut pool = AgentPool::from_slots(vec![None]);

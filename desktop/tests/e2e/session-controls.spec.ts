@@ -419,10 +419,6 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
     .getByTestId("thread-composer-overlay")
     .getByTestId("send-message")
     .click();
-  await page
-    .getByRole("alertdialog", { name: "Mention people outside this channel?" })
-    .getByRole("button", { name: "Invite", exact: true })
-    .click();
   const sentRow = page
     .getByTestId("message-thread-panel")
     .getByTestId("message-row")
@@ -444,6 +440,9 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
   expect(sentEvent.tags.filter((tag: string[]) => tag[0] === "p")).toEqual([
     ["p", AGENT],
   ]);
+  expect(
+    await page.evaluate(() => window.__BUZZ_E2E_COMMANDS__ ?? []),
+  ).not.toContain("add_channel_members");
 });
 test("revoked send-time permission preserves draft and publishes nothing", async ({
   page,
@@ -522,6 +521,8 @@ test("restart keeps ordinary activity below the composer until the status reply"
   ]);
   if (!form || !rail) throw new Error("Missing composer activity geometry");
   expect(rail.y).toBeGreaterThanOrEqual(form.y + form.height);
+  await page.mouse.move(0, 0);
+  await input.focus();
   await waitForAnimations(page);
   await composer.screenshot({ path: `${SHOT}/restart-awaiting-status.png` });
   await page.evaluate(
