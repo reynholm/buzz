@@ -8,7 +8,11 @@
 
 mod claude_context;
 mod launch;
+mod provider_failure;
 mod restart_status;
+
+#[cfg(all(test, unix))]
+pub(crate) mod provider_failure_tests;
 
 use std::collections::{HashMap, HashSet};
 
@@ -452,7 +456,12 @@ fn build_client_capabilities() -> serde_json::Value {
             // Non-standard extension used by claude-agent-acp to advertise the
             // exact terminal login argv for subscription auth. Unknown `_meta`
             // keys are ignored by other adapters.
-            "terminal-auth": true
+            "terminal-auth": true,
+            // Request structured terminal failures rather than ordinary text
+            // followed by end_turn, which would suppress queue retries.
+            "jetbrains": {
+                "air": {"version": 1, "capabilities": ["sessionFailure"]}
+            }
         }
     })
 }
@@ -2462,6 +2471,9 @@ impl AcpClient {
                 ),
                 Err(_) => {}
             }
+        }
+        if stop_reason == StopReason::EndTurn {
+            provider_failure::check_response(result)?;
         }
         Ok(stop_reason)
     }

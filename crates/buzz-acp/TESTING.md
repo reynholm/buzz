@@ -21,6 +21,28 @@ Make sure `pi` and `buzz-pi-acp` are on PATH, then restart Buzz.
 cargo test -p buzz-acp
 ```
 
+### Provider failures and retries
+
+The ACP client negotiates the Air v1 `sessionFailure` extension. A terminal
+failure in a prompt response must become an application error even when the
+adapter also returns `stopReason: "end_turn"`. This preserves the existing
+bounded queue retries and prevents failed events from being recorded as delivered.
+Warnings, successful recovery, legacy responses and explicit cancellation retain
+their ordinary behavior. Authentication failures use the existing non-retryable
+authentication path.
+
+```sh
+cargo test -p buzz-acp --lib provider_failure -- --test-threads=1
+```
+
+Metadata and error-classification checks run on every platform. On Unix, the
+integration checks use real ACP subprocess pipes and the production dispatch/result
+queue. They require no provider credentials or external relay. The queue check
+fails once, waits for its actual retry deadline, redelivers the same event in
+the same session, and commits delivery only after recovery. Real provider
+availability remains a separate check: a successful short request does not
+establish the reliability of a long response stream.
+
 Managed agent sessions may already export harness options. Clear them when
 running the package suite: CLI parsing tests assert the unset defaults,
 and inherited values would change the inputs those tests exercise. Running the

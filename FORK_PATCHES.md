@@ -2718,7 +2718,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/acp.rs`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Route standard usage_update occupancy to the status binding of its own session ID; the harness owns BUZZ_SESSION_STATUS_DIR in adapter spawns.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Route standard usage_update occupancy to the status binding of its own session ID; the harness owns BUZZ_SESSION_STATUS_DIR in adapter spawns. Negotiate structured terminal provider failures and propagate them through the existing queue retry and authentication paths.
 
 New module: `false`.
 
@@ -2729,6 +2729,7 @@ New module: `false`.
 - Required symbol: `DispatchRetired,`
 - Required symbol: `"session": {"compaction": {}}`
 - Required symbol: `if update_type == "compaction_update"`
+- Required symbol: `provider_failure::check_response(result)?;`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `record_usage_update`; exact call `crate::session_status::record_usage_update(&self.session_status, msg);`; behavior test `claude_usage_updates_route_by_their_own_session_id`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `apply_status_dir_env`; exact call `crate::session_status::apply_status_dir_env(&mut cmd, extra_env);`; behavior test `status_dir_env_is_owned_by_the_harness`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `update`; exact call `self.compactions.update(session, update)`; behavior test `compaction_standard_dispatch_terminal_only_duplicate_and_next_request`; verify `cargo test --locked -p buzz-acp --lib compaction_standard_dispatch_terminal_only_duplicate_and_next_request -- --test-threads=1`
@@ -2738,6 +2739,7 @@ New module: `false`.
 - Invocation: `crates/buzz-acp/src/acp.rs` → `bind`; exact call `self.compactions.bind(session_id, binding.generation_id());`; behavior test `resumed_pre_ack_compaction_cannot_become_a_manual_completion_or_actor`; verify `cargo test --locked -p buzz-acp --lib resumed_pre_ack_compaction_cannot_become_a_manual_completion_or_actor -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `prepare_new`; exact call `self.compactions.prepare_new();`; behavior test `compact_uses_pre_ack_new_session_advertisement_after_ordinary_completion`; verify `cargo test --locked -p buzz-acp --lib compact_uses_pre_ack_new_session_advertisement_after_ordinary_completion -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `complete_new`; exact call `self.compactions.complete_new(generation, returned_session);`; behavior test `failed_or_malformed_new_response_cannot_adopt_pre_ack_advertisement`; verify `cargo test --locked -p buzz-acp --lib failed_or_malformed_new_response_cannot_adopt_pre_ack_advertisement -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `check_response`; exact call `provider_failure::check_response(result)?;`; behavior test `provider_failure_is_an_application_error_and_same_pipe_can_retry`; verify `cargo test -p buzz-acp --lib provider_failure -- --test-threads=1`
 - Verify: `just ci`
 
 ## `crates/buzz-acp/src/acp/launch.rs`
@@ -8167,3 +8169,30 @@ New module: `true`.
 - Required symbol: `message_commands_preserve_stdin_bytes_in_signed_events`
 - Required symbol: `attachment_only_message_still_uploads_and_publishes`
 - Verify: `cargo test -p buzz-cli --test message_content`
+
+## `crates/buzz-acp/src/acp/provider_failure.rs`
+
+Translate negotiated Air v1 terminal provider failures into bounded, classified ACP application errors
+
+New module: `true`.
+
+- Required symbol: `pub(super) fn check_response(`
+- Verify: `cargo test -p buzz-acp --lib provider_failure -- --test-threads=1`
+
+## `crates/buzz-acp/src/acp/provider_failure_tests.rs`
+
+Exercise provider failure negotiation, error propagation, recovery, cancellation and authentication over real ACP subprocess pipes
+
+New module: `true`.
+
+- Required symbol: `async fn provider_failure_is_an_application_error_and_same_pipe_can_retry(`
+- Verify: `cargo test -p buzz-acp --lib provider_failure -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/provider_failure_tests.rs`
+
+Bind provider failure recovery to production dispatch, backoff, queue redelivery and successful delivery accounting
+
+New module: `true`.
+
+- Required symbol: `async fn provider_failure_requeues_original_event_and_commits_only_after_recovery(`
+- Verify: `cargo test -p buzz-acp --lib provider_failure -- --test-threads=1`

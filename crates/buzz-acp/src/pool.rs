@@ -47,6 +47,9 @@ use crate::scope::SessionScope;
 #[cfg(all(test, unix))]
 pub(crate) mod background_work_tests;
 
+#[cfg(all(test, unix))]
+mod provider_failure_tests;
+
 /// Window within which agent activity before a hard-cap death qualifies
 /// the turn as "recently active" (eligible for requeue instead of dead-letter).
 const RECENT_ACTIVITY_WINDOW: Duration = Duration::from_secs(60);

@@ -4538,7 +4538,7 @@
     },
     {
       "path": "crates/buzz-acp/src/acp.rs",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Route standard usage_update occupancy to the status binding of its own session ID; the harness owns BUZZ_SESSION_STATUS_DIR in adapter spawns.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Route standard usage_update occupancy to the status binding of its own session ID; the harness owns BUZZ_SESSION_STATUS_DIR in adapter spawns. Negotiate structured terminal provider failures and propagate them through the existing queue retry and authentication paths.",
       "is_new": false,
       "required_symbols": [
         "pub async fn session_resume(",
@@ -4547,7 +4547,8 @@
         "pub(crate) fn clear_session_status(",
         "DispatchRetired,",
         "\"session\": {\"compaction\": {}}",
-        "if update_type == \"compaction_update\""
+        "if update_type == \"compaction_update\"",
+        "provider_failure::check_response(result)?;"
       ],
       "invocation_seams": [
         {
@@ -4613,6 +4614,13 @@
           "invocation": "self.compactions.complete_new(generation, returned_session);",
           "behavior_test": "failed_or_malformed_new_response_cannot_adopt_pre_ack_advertisement",
           "verification_command": "cargo test --locked -p buzz-acp --lib failed_or_malformed_new_response_cannot_adopt_pre_ack_advertisement -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/acp.rs",
+          "callee_symbol": "check_response",
+          "invocation": "provider_failure::check_response(result)?;",
+          "behavior_test": "provider_failure_is_an_application_error_and_same_pipe_can_retry",
+          "verification_command": "cargo test -p buzz-acp --lib provider_failure -- --test-threads=1"
         }
       ],
       "verification_commands": [
@@ -12479,6 +12487,42 @@
       "invocation_seams": [],
       "verification_commands": [
         "cargo test -p buzz-cli --test message_content"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/acp/provider_failure.rs",
+      "responsibility": "Translate negotiated Air v1 terminal provider failures into bounded, classified ACP application errors",
+      "is_new": true,
+      "required_symbols": [
+        "pub(super) fn check_response("
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp --lib provider_failure -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/acp/provider_failure_tests.rs",
+      "responsibility": "Exercise provider failure negotiation, error propagation, recovery, cancellation and authentication over real ACP subprocess pipes",
+      "is_new": true,
+      "required_symbols": [
+        "async fn provider_failure_is_an_application_error_and_same_pipe_can_retry("
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp --lib provider_failure -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/provider_failure_tests.rs",
+      "responsibility": "Bind provider failure recovery to production dispatch, backoff, queue redelivery and successful delivery accounting",
+      "is_new": true,
+      "required_symbols": [
+        "async fn provider_failure_requeues_original_event_and_commits_only_after_recovery("
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp --lib provider_failure -- --test-threads=1"
       ]
     }
   ]
