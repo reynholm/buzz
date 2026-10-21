@@ -328,7 +328,7 @@ fn context_target(job: &StatusJob, is_dm: bool) -> ContextTarget {
         ContextTarget::Thread(crate::queue::reply_thread(&job.saved.command, None))
     }
 }
-fn reply_tags(job: &StatusJob, is_dm: bool) -> ThreadTags {
+pub(crate) fn reply_tags(job: &StatusJob, is_dm: bool) -> ThreadTags {
     if is_dm {
         return ThreadTags::default();
     }

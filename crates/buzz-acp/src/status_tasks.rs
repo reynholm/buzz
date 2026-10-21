@@ -6,6 +6,7 @@ pub(crate) fn dispatch(
     pool: &mut AgentPool,
     ctx: &Arc<PromptContext>,
     tx: &mpsc::UnboundedSender<StatusTaskResult>,
+    typing_channels: &mut HashMap<scope::SessionScope, ThreadTags>,
 ) {
     for mut job in ctx.session_controls.pending_statuses() {
         job.deadline = job
@@ -43,6 +44,15 @@ pub(crate) fn dispatch(
         agent.state.control_dispatch = Some(dispatch.clone());
         let index = agent.index;
         let turn_id = job.saved.origin.command_event_id.clone();
+        // Operational status turns use the same scoped activity heartbeat as
+        // ordinary prompts, through preparation and final reply publication.
+        typing_channels.insert(
+            scope.clone(),
+            pool::restart_status::reply_tags(
+                &job,
+                ctx.channel_info.is_known_dm(scope.channel_id()),
+            ),
+        );
         let (control_tx, control_rx) = tokio::sync::oneshot::channel();
         let ctx = ctx.clone();
         let tx = tx.clone();
@@ -77,6 +87,7 @@ pub(crate) fn finish(
     pool: &mut AgentPool,
     ctx: &PromptContext,
     mut result: StatusTaskResult,
+    typing_channels: &mut HashMap<scope::SessionScope, ThreadTags>,
     removed: &HashSet<Uuid>,
     config: &Config,
     circuits: &mut [SlotCircuit],
@@ -85,6 +96,7 @@ pub(crate) fn finish(
     observer: Option<observer::ObserverHandle>,
     last_activity: &mut tokio::time::Instant,
 ) {
+    typing_channels.remove(&result.job.saved.scope);
     let index = result.agent.index;
     pool.task_map_mut()
         .retain(|_, meta| meta.agent_index != index);

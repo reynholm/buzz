@@ -61,7 +61,7 @@ async function setup() {
   return { ...hook, edits, bindings, pulses };
 }
 
-test("a context action pins only its target without editing, binding or excluding it on the next keystroke", async () => {
+test("a context action pins its target and immediately restores its literal mention", async () => {
   const { act } = await import("@testing-library/react");
   const hook = await setup();
   const commit = hook.result.current.picker.prepareAgentPin(agent);
@@ -70,15 +70,10 @@ test("a context action pins only its target without editing, binding or excludin
   assert.deepEqual(hook.result.current.audience.pubkeys, [agent]);
   assert.deepEqual(hook.pulses, [agent]);
   act(() => hook.result.current.picker.restoreAddressedAgentMentions());
-  act(() =>
-    hook.result.current.picker.syncAddressedAgentsFromText("Keep my draft!"),
-  );
   assert.deepEqual(hook.result.current.audience.pubkeys, [agent]);
-  assert.deepEqual(hook.edits, []);
-  assert.deepEqual(hook.bindings, []);
-  // A normal send clears the authored draft and explicitly restores its audience.
-  act(() => hook.result.current.picker.restoreAddressedAgentMentions([agent]));
   assert.equal(hook.edits[0].insertText, "@Agent A ");
+  assert.equal(hook.edits[0].preserveSelection, true);
+  assert.deepEqual(hook.bindings[0], ["Agent A", agent, { isAgent: true }]);
 });
 
 for (const change of ["audience", "scope round trip"]) {

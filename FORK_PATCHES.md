@@ -2851,11 +2851,12 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/pool.rs`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Expose already-known DM metadata for display-only restart activity routing.
 
 New module: `false`.
 
 - Required symbol: `pub(crate) fn discard_retired_output(self) -> Self`
+- Required symbol: `pub(crate) fn is_known_dm(`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `discard_durable`; exact call `self.discard_durable(scope);`; behavior test `invalidate_scope_writes_tombstone`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `depart_durable_all`; exact call `self.depart_durable_all(crate::session_store::Departure::WorkerCrash);`; behavior test `invalidate_all_marks_worker_crash_without_tombstone`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `persist_delivery`; exact call `self.persist_delivery(`; behavior test `delivery_success_persists_ids`; verify `cargo test -p buzz-acp -- --test-threads=1`
@@ -7972,13 +7973,21 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/status_tasks.rs`
 
-Typed finite-priority restart-status scheduling without human queue mutation or unrelated-scope blocking.
+Typed finite-priority restart-status scheduling without human queue mutation or unrelated-scope blocking. Maintain ordinary scoped typing activity through the status turn and clear only its scope on completion.
 
 New module: `true`.
 
 - Required symbol: `fn dispatch(`
 - Required symbol: `fn finish(`
-- Invocation: `crates/buzz-acp/src/lib.rs` → `status_tasks::dispatch`; exact call `status_tasks::dispatch(&mut pool, &ctx, &status_tx);`; behavior test `checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap`; verify `cargo test -p buzz-acp --lib checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/lib.rs` → `status_tasks::dispatch`; exact call `status_tasks::dispatch(&mut pool, &ctx, &status_tx, &mut typing_channels);`; behavior test `checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap`; verify `cargo test -p buzz-acp --lib checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/status_tasks.rs` → `typing_channels.insert`; exact call `typing_channels.insert(
+            scope.clone(),
+            pool::restart_status::reply_tags(
+                &job,
+                ctx.channel_info.is_known_dm(scope.channel_id()),
+            ),
+        );`; behavior test `checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap`; verify `cargo test -p buzz-acp --lib checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/status_tasks.rs` → `typing_channels.remove`; exact call `typing_channels.remove(&result.job.saved.scope);`; behavior test `restart_status_completion_clears_only_its_own_activity`; verify `cargo test -p buzz-acp --lib restart_status_completion_clears_only_its_own_activity -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/restart_status.rs`
@@ -8038,7 +8047,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/pool/restart_status_runtime_tests.rs`
 
-Production-bound authorized Restart, scheduler, fake ACP, signed HTTP, language, failure, cancellation and reconstruction regressions.
+Production-bound authorized Restart, scheduler, fake ACP, signed HTTP, language, failure, cancellation and reconstruction regressions. Assert real scheduler activity registration and scoped cleanup on successful or failed status completion.
 
 New module: `true`.
 
@@ -8120,19 +8129,19 @@ New module: `true`.
 
 ## `desktop/src/features/messages/ui/useAgentAddressLockPicker.ts`
 
-Prepare revision- and editor-generation-fenced context audience promotion without draft edits or mention rebinding; resume ordinary literal restoration after a normal send.
+Prepare revision- and editor-generation-fenced context audience promotion with immediate exact-identity literal restoration while preserving authored text and selection.
 
 New module: `false`.
 
 - Required symbol: `const prepareAgentPin = React.useCallback(`
 - Required symbol: `audienceGenerationRef.current !== generation`
-- Required symbol: `.filter((pubkey) => !deferredMentionPubkeysRef.current.has(pubkey))`
-- Invocation: `desktop/src/features/messages/ui/useAgentAddressLockPicker.ts` → `promotePersistentAgentAudienceIfUnchanged`; exact call `const promotion = promotePersistentAgentAudienceIfUnchanged({`; behavior test `a context action pins only its target without editing, binding or excluding it on the next keystroke`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/contextActionAudience.test.mjs`
+- Required symbol: `unpinnedAgentPubkeysRef.current.delete(normalized);`
+- Invocation: `desktop/src/features/messages/ui/useAgentAddressLockPicker.ts` → `promotePersistentAgentAudienceIfUnchanged`; exact call `const promotion = promotePersistentAgentAudienceIfUnchanged({`; behavior test `a context action pins its target and immediately restores its literal mention`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/contextActionAudience.test.mjs`
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/contextActionAudience.test.mjs`
 
 ## `desktop/src/features/messages/ui/contextActionAudience.test.mjs`
 
-Exercise the production picker with the actual persistent audience store for toolbar-only context pins, post-send restoration, intervening audience edits and editor-scope round trips.
+Exercise the production picker with the actual persistent audience store for immediate context mention restoration, preserved selection, intervening audience edits and editor-scope round trips.
 
 New module: `true`.
 

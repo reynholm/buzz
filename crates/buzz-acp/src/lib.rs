@@ -3166,7 +3166,7 @@ async fn run_harness(
 
     let (status_tx, mut status_rx) = mpsc::unbounded_channel();
     loop {
-        status_tasks::dispatch(&mut pool, &ctx, &status_tx);
+        status_tasks::dispatch(&mut pool, &ctx, &status_tx, &mut typing_channels);
         control_tasks::dispatch(&mut pool, &ctx, &control_tx);
         while let Some(Some(result)) = result_publications.join_next().now_or_never() {
             if let Err(error) = result {
@@ -3981,6 +3981,7 @@ async fn run_harness(
                     &mut pool,
                     &ctx,
                     *result,
+                    &mut typing_channels,
                     &removed_channels,
                     config,
                     &mut crash_history,
