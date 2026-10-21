@@ -419,6 +419,10 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
     .getByTestId("thread-composer-overlay")
     .getByTestId("send-message")
     .click();
+  await page
+    .getByRole("alertdialog", { name: "Mention people outside this channel?" })
+    .getByRole("button", { name: "Invite", exact: true })
+    .click();
   const sentRow = page
     .getByTestId("message-thread-panel")
     .getByTestId("message-row")
@@ -440,9 +444,6 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
   expect(sentEvent.tags.filter((tag: string[]) => tag[0] === "p")).toEqual([
     ["p", AGENT],
   ]);
-  expect(
-    await page.evaluate(() => window.__BUZZ_E2E_COMMANDS__ ?? []),
-  ).not.toContain("add_channel_members");
 });
 test("revoked send-time permission preserves draft and publishes nothing", async ({
   page,
