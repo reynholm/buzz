@@ -1,6 +1,7 @@
 //! Tests bind authorized admission, checked retirement, the scheduler, real ACP
 //! framing, durable ownership and signature-checking HTTP publication.
 use super::*;
+use crate::queue::ThreadTags;
 use crate::session_store::RestartStatusPhase;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -220,13 +221,81 @@ async fn dispatch(
     let agent = fixture.agent(env).await;
     let mut pool = AgentPool::from_slots(vec![Some(agent)]);
     let (tx, mut rx) = mpsc::unbounded_channel();
-    crate::status_tasks::dispatch(&mut pool, &ctx, &tx);
+    let mut typing = HashMap::new();
+    let jobs = ctx.session_controls.pending_statuses();
+    let scope = jobs[0].saved.scope.clone();
+    let expected_root = match (&scope, ctx.session_policy) {
+        (SessionScope::Conversation { .. }, crate::scope::SessionPolicy::Thread) => None,
+        _ => Some(crate::queue::reply_thread(&jobs[0].saved.command, None)),
+    };
+    crate::status_tasks::dispatch(&mut pool, &ctx, &tx, &mut typing);
+    assert_eq!(typing.len(), 1);
+    assert_eq!(
+        typing[&scope].root_event_id.as_deref(),
+        expected_root.as_deref()
+    );
+    assert_eq!(
+        typing[&scope].parent_event_id.as_deref(),
+        expected_root.as_deref()
+    );
     let result = timeout(Duration::from_secs(12), rx.recv())
         .await
         .unwrap()
         .unwrap();
     pool.join_set.join_next().await;
     result
+}
+
+#[tokio::test]
+async fn restart_status_completion_clears_only_its_own_activity() {
+    for env in [vec![], vec![("STATUS_STOP", "refusal")]] {
+        let fixture = Fixture::new();
+        let human = Keys::generate();
+        let channel = Uuid::new_v4();
+        let root = "a".repeat(64);
+        let scope = SessionScope::Thread {
+            channel_id: channel,
+            root_event_id: root,
+        };
+        let sibling = SessionScope::Thread {
+            channel_id: channel,
+            root_event_id: "b".repeat(64),
+        };
+        let (mut ctx, _relay) = setup(vec![], channel).await;
+        admitted(&fixture, &mut ctx, &human, &scope, "!restart").await;
+        ctx.session_controls.plan_retirement(&scope, []);
+        let ctx = Arc::new(ctx);
+        let result = dispatch(&fixture, ctx.clone(), &env).await;
+        let mut pool = AgentPool::from_slots(vec![None]);
+        let mut typing = HashMap::from([
+            (scope.clone(), ThreadTags::default()),
+            (sibling.clone(), ThreadTags::default()),
+        ]);
+        let config = crate::error_outcome_emission_tests::test_config();
+        let mut circuits = vec![crate::SlotCircuit {
+            crash_times: vec![],
+            open_until: None,
+            respawn_in_flight: false,
+        }];
+        let (tx, _rx) = mpsc::channel(8);
+        let mut tasks = tokio::task::JoinSet::new();
+        let mut last_activity = tokio::time::Instant::now();
+        crate::status_tasks::finish(
+            &mut pool,
+            &ctx,
+            result,
+            &mut typing,
+            &HashSet::new(),
+            &config,
+            &mut circuits,
+            &tx,
+            &mut tasks,
+            None,
+            &mut last_activity,
+        );
+        assert!(!typing.contains_key(&scope));
+        assert!(typing.contains_key(&sibling));
+    }
 }
 
 #[tokio::test]
@@ -799,7 +868,12 @@ async fn pending_observer_cancel_and_expiry_do_not_require_a_worker_or_drop_huma
     let (tx, _rx) = mpsc::unbounded_channel();
     tokio::time::pause();
     tokio::time::advance(Duration::from_secs(121)).await;
-    crate::status_tasks::dispatch(&mut pool, &ctx, &tx);
+    let mut typing = HashMap::new();
+    crate::status_tasks::dispatch(&mut pool, &ctx, &tx, &mut typing);
+    assert!(
+        typing.is_empty(),
+        "expired feedback must not claim model activity"
+    );
     assert!(!ctx.session_controls.status_pending(&scope));
     tokio::time::resume();
     timeout(Duration::from_secs(8), pool.join_set.join_next())

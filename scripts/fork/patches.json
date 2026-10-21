@@ -4933,10 +4933,11 @@
     },
     {
       "path": "crates/buzz-acp/src/pool.rs",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Expose already-known DM metadata for display-only restart activity routing.",
       "is_new": false,
       "required_symbols": [
-        "pub(crate) fn discard_retired_output(self) -> Self"
+        "pub(crate) fn discard_retired_output(self) -> Self",
+        "pub(crate) fn is_known_dm("
       ],
       "invocation_seams": [
         {
@@ -11267,7 +11268,7 @@
     },
     {
       "path": "desktop/tests/e2e/session-controls.spec.ts",
-      "responsibility": "Registered thread-composer Manage context \u2192 agent \u2192 action workflow: canonical target routing, signed outcomes, draft preservation, toolbar order, keyboard/click/touch navigation, disabled-editor Compact, sibling isolation, denied/revoked access and unchanged owned activity projection. Scope the open-thread root capture/status assertion to its actual thread-head row, independently of the timeline copy. Cover context-only publication preserving a deliberately unpinned composer draft/attachment/native selection/caret, plus formatting/focus/narrow toolbar order and Space/arrow selection. Exercise reset acknowledgment separately from a generated reply or independent follow-up failure, preserving draft, signer, canonical thread and ordinary event deduplication.",
+      "responsibility": "Registered thread-composer Manage context → agent → action workflow: canonical target routing, signed outcomes, draft preservation, toolbar order, keyboard/click/touch navigation, disabled-editor Compact, sibling isolation, denied/revoked access and unchanged owned activity projection. Scope the open-thread root capture/status assertion to its actual thread-head row, independently of the timeline copy. Cover context-only publication preserving a deliberately unpinned composer draft/attachment/native selection/caret, plus formatting/focus/narrow toolbar order and Space/arrow selection. Exercise reset acknowledgment separately from a generated reply or independent follow-up failure, preserving draft, signer, canonical thread and ordinary event deduplication.",
       "is_new": true,
       "required_symbols": [
         "known_agent_without_telemetry_still_has_current_scope_controls",
@@ -12160,7 +12161,7 @@
     },
     {
       "path": "crates/buzz-acp/src/status_tasks.rs",
-      "responsibility": "Typed finite-priority restart-status scheduling without human queue mutation or unrelated-scope blocking.",
+      "responsibility": "Typed finite-priority restart-status scheduling without human queue mutation or unrelated-scope blocking. Maintain ordinary scoped typing activity through the status turn and clear only its scope on completion.",
       "is_new": true,
       "required_symbols": [
         "fn dispatch(",
@@ -12170,9 +12171,23 @@
         {
           "caller_path": "crates/buzz-acp/src/lib.rs",
           "callee_symbol": "status_tasks::dispatch",
-          "invocation": "status_tasks::dispatch(&mut pool, &ctx, &status_tx);",
+          "invocation": "status_tasks::dispatch(&mut pool, &ctx, &status_tx, &mut typing_channels);",
           "behavior_test": "checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap",
           "verification_command": "cargo test -p buzz-acp --lib checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/status_tasks.rs",
+          "callee_symbol": "typing_channels.insert",
+          "invocation": "typing_channels.insert(\n            scope.clone(),\n            pool::restart_status::reply_tags(\n                &job,\n                ctx.channel_info.is_known_dm(scope.channel_id()),\n            ),\n        );",
+          "behavior_test": "checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap",
+          "verification_command": "cargo test -p buzz-acp --lib checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/status_tasks.rs",
+          "callee_symbol": "typing_channels.remove",
+          "invocation": "typing_channels.remove(&result.job.saved.scope);",
+          "behavior_test": "restart_status_completion_clears_only_its_own_activity",
+          "verification_command": "cargo test -p buzz-acp --lib restart_status_completion_clears_only_its_own_activity -- --test-threads=1"
         }
       ],
       "verification_commands": [
@@ -12303,7 +12318,7 @@
     },
     {
       "path": "crates/buzz-acp/src/pool/restart_status_runtime_tests.rs",
-      "responsibility": "Production-bound authorized Restart, scheduler, fake ACP, signed HTTP, language, failure, cancellation and reconstruction regressions.",
+      "responsibility": "Production-bound authorized Restart, scheduler, fake ACP, signed HTTP, language, failure, cancellation and reconstruction regressions. Assert real scheduler activity registration and scoped cleanup on successful or failed status completion.",
       "is_new": true,
       "required_symbols": [
         "fn checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap",
@@ -12409,19 +12424,19 @@
     },
     {
       "path": "desktop/src/features/messages/ui/useAgentAddressLockPicker.ts",
-      "responsibility": "Prepare revision- and editor-generation-fenced context audience promotion without draft edits or mention rebinding; resume ordinary literal restoration after a normal send.",
+      "responsibility": "Prepare revision- and editor-generation-fenced context audience promotion with immediate exact-identity literal restoration while preserving authored text and selection.",
       "is_new": false,
       "required_symbols": [
         "const prepareAgentPin = React.useCallback(",
         "audienceGenerationRef.current !== generation",
-        ".filter((pubkey) => !deferredMentionPubkeysRef.current.has(pubkey))"
+        "unpinnedAgentPubkeysRef.current.delete(normalized);"
       ],
       "invocation_seams": [
         {
           "caller_path": "desktop/src/features/messages/ui/useAgentAddressLockPicker.ts",
           "callee_symbol": "promotePersistentAgentAudienceIfUnchanged",
           "invocation": "const promotion = promotePersistentAgentAudienceIfUnchanged({",
-          "behavior_test": "a context action pins only its target without editing, binding or excluding it on the next keystroke",
+          "behavior_test": "a context action pins its target and immediately restores its literal mention",
           "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/contextActionAudience.test.mjs"
         }
       ],
@@ -12431,7 +12446,7 @@
     },
     {
       "path": "desktop/src/features/messages/ui/contextActionAudience.test.mjs",
-      "responsibility": "Exercise the production picker with the actual persistent audience store for toolbar-only context pins, post-send restoration, intervening audience edits and editor-scope round trips.",
+      "responsibility": "Exercise the production picker with the actual persistent audience store for immediate context mention restoration, preserved selection, intervening audience edits and editor-scope round trips.",
       "is_new": true,
       "required_symbols": [],
       "invocation_seams": [],

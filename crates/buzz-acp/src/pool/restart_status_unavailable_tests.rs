@@ -124,7 +124,7 @@ async fn assert_no_status_and_keep_human(
     assert!(ctx.session_controls.pending_statuses().is_empty());
     pool.return_agent(held_worker);
     let (tx, mut rx) = mpsc::unbounded_channel();
-    crate::status_tasks::dispatch(pool, ctx, &tx);
+    crate::status_tasks::dispatch(pool, ctx, &tx, &mut HashMap::new());
     assert!(pool.join_set.is_empty());
     assert!(rx.try_recv().is_err());
     let mut worker = pool.try_claim(Some(scope)).unwrap();
@@ -166,7 +166,7 @@ async fn unavailable_pending_record_cancel_retires_local_fence_before_a_worker_i
                 let mut pool = AgentPool::from_slots(vec![None]);
                 let (mut queue, queued) = queue_human(&ctx, &human, &scope);
                 let (tx, _rx) = mpsc::unbounded_channel();
-                crate::status_tasks::dispatch(&mut pool, &ctx, &tx);
+                crate::status_tasks::dispatch(&mut pool, &ctx, &tx, &mut HashMap::new());
                 assert!(pool.join_set.is_empty());
                 let unavailable = UnavailableRecord::hide(&fixture, &scope, fault);
                 cancel_unconfirmed(&ctx, &mut pool, &mut queue, &scope, source);
@@ -293,7 +293,7 @@ async fn unavailable_record_cancel_fences_already_scheduled_workerless_expiry_fe
                 let (tx, _rx) = mpsc::unbounded_channel();
                 tokio::time::pause();
                 tokio::time::advance(Duration::from_secs(121)).await;
-                crate::status_tasks::dispatch(&mut pool, &ctx, &tx);
+                crate::status_tasks::dispatch(&mut pool, &ctx, &tx, &mut HashMap::new());
                 assert_eq!(pool.join_set.len(), 1);
                 let unavailable = UnavailableRecord::hide(&fixture, &scope, fault);
                 // No await since spawn: the feedback future is still held.

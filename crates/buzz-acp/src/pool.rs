@@ -833,6 +833,15 @@ pub struct ChannelInfoResolver {
 }
 
 impl ChannelInfoResolver {
+    /// Display-only DM routing from metadata already resolved during admission.
+    pub(crate) fn is_known_dm(&self, channel_id: Uuid) -> bool {
+        self.cache.read().ok().is_some_and(|cache| {
+            cache
+                .get(&channel_id)
+                .is_some_and(|info| info.channel_type == "dm")
+        })
+    }
+
     pub fn new(
         startup: std::collections::HashMap<Uuid, ChannelInfo>,
         rest_client: RestClient,

@@ -167,7 +167,7 @@ async fn scheduler_keeps_its_original_fence_before_the_first_status_poll() {
         let mut pool = AgentPool::from_slots(vec![Some(agent)]);
         let ctx = Arc::new(ctx);
         let (tx, mut rx) = mpsc::unbounded_channel();
-        crate::status_tasks::dispatch(&mut pool, &ctx, &tx);
+        crate::status_tasks::dispatch(&mut pool, &ctx, &tx, &mut HashMap::new());
         // No await: the actual scheduled future cannot have been polled yet.
         match action {
             "failed_cancel" => {
@@ -233,7 +233,7 @@ async fn expiry_scheduler_keeps_its_fence_when_cancellation_persistence_recovers
     let (tx, _rx) = mpsc::unbounded_channel();
     tokio::time::pause();
     tokio::time::advance(Duration::from_secs(121)).await;
-    crate::status_tasks::dispatch(&mut pool, &ctx, &tx);
+    crate::status_tasks::dispatch(&mut pool, &ctx, &tx, &mut HashMap::new());
     fixture.store.fail_writes(true);
     assert_eq!(
         ctx.session_controls.cancel_status_outcome(&scope),

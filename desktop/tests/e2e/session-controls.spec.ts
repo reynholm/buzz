@@ -337,7 +337,9 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
   expect(call.rootEventId).toBe(root);
   expect(call.expectedSignerPubkey).toBe(VIEWER);
   expect(call.expectedRelayUrl).toBeTruthy();
-  await expect(draft).toHaveText("Preserve this unfinished request");
+  await expect(draft).toHaveText(
+    "@ControlBot Preserve this unfinished request",
+  );
   await expect(page.getByTestId("message-session-control")).toContainText(
     "Start over from scratch",
   );
@@ -412,7 +414,7 @@ test("known_agent_without_telemetry_still_has_current_scope_controls", async ({
   );
   await waitForAnimations(page);
   await commandRow.screenshot({ path: `${SHOT}/confirmed-row.png` });
-  await draft.fill("Continue the task");
+  await draft.fill("@ControlBot Continue the task");
   await page
     .getByTestId("thread-composer-overlay")
     .getByTestId("send-message")
@@ -461,6 +463,83 @@ test("revoked send-time permission preserves draft and publishes nothing", async
   ).toContainText("Could not send session control");
   expect(await sends(page)).toHaveLength(0);
   await expect(draft).toHaveText("Keep my draft");
+});
+
+test("restart keeps ordinary activity below the composer until the status reply", async ({
+  page,
+}) => {
+  const root = await setup(page);
+  await openThread(page, root);
+  const composer = page.getByTestId("thread-composer-overlay");
+  const input = composer.getByTestId("message-input");
+  await selectAgent(page);
+  await page.getByRole("menuitem", { name: "Restart", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Recent history", exact: true })
+    .click();
+  const control = page.getByTestId("message-session-control");
+  await expect(control).toBeVisible();
+  await expect(input).toHaveText("@ControlBot ");
+  const commandId = await page
+    .getByTestId("message-row")
+    .filter({ has: control })
+    .getAttribute("data-message-id");
+  if (!commandId) throw new Error("Missing restart event identity");
+  const heartbeat = await page.evaluate(
+    ({ root, commandId, channelName, pubkey }) => {
+      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+        channelName,
+        pubkey,
+        kind: 7,
+        content: "✅",
+        extraTags: [
+          ["e", commandId],
+          ["buzz-session-result", "1", commandId, "ok", ""],
+        ],
+      });
+      const emit = () =>
+        window.__BUZZ_E2E_EMIT_MOCK_TYPING__?.({
+          channelName,
+          pubkey,
+          threadHeadId: root,
+        });
+      emit();
+      return window.setInterval(emit, 3000);
+    },
+    { root, commandId, channelName: CHANNEL, pubkey: AGENT },
+  );
+  await expect(control).toContainText("Completed");
+  const activity = composer.getByTestId("bot-activity-composer-trigger");
+  await expect(activity).toHaveAccessibleName(
+    "ControlBot is working. View activity.",
+  );
+  // Keep the normal heartbeat beyond one client typing TTL (eight seconds).
+  await page.waitForTimeout(9000);
+  await expect(activity).toBeVisible();
+  const [form, rail] = await Promise.all([
+    composer.getByTestId("message-composer").boundingBox(),
+    activity.boundingBox(),
+  ]);
+  if (!form || !rail) throw new Error("Missing composer activity geometry");
+  expect(rail.y).toBeGreaterThanOrEqual(form.y + form.height);
+  await page.mouse.move(0, 0);
+  await input.focus();
+  await waitForAnimations(page);
+  await composer.screenshot({ path: `${SHOT}/restart-awaiting-status.png` });
+  await page.evaluate(
+    ({ heartbeat, root, channelName, pubkey }) => {
+      window.clearInterval(heartbeat);
+      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+        channelName,
+        pubkey,
+        parentEventId: root,
+        content: "The session restarted. Validation is the next step.",
+      });
+    },
+    { heartbeat, root, channelName: CHANNEL, pubkey: AGENT },
+  );
+  await expect(activity).toHaveCount(0);
+  await expect(input).toHaveText("@ControlBot ");
 });
 
 for (const [label, body] of [
@@ -722,14 +801,20 @@ test("context action pins its agent while preserving the draft, attachment, sele
   expect(payload.content).toBe("!compact");
   expect(payload.mentionPubkeys).toEqual([AGENT]);
   expect(payload.mediaTags ?? []).toEqual([]);
-  await expect(input).toHaveText("Keep this draft");
+  await expect(input).toHaveText("@ControlBot Keep this draft");
   await expect(composer).toContainText("context-draft.pdf");
   await expect(
     composer.getByTestId(`composer-address-lock-${AGENT}`),
   ).toBeVisible();
   await expect(mention).toHaveAccessibleName("Manage mentions");
   await input.focus();
-  await expect.poll(() => composerSelection(input)).toEqual(caret);
+  await expect
+    .poll(() => composerSelection(input))
+    .toEqual({
+      anchor: caret.anchor + "@ControlBot ".length,
+      focus: caret.focus + "@ControlBot ".length,
+      text: "",
+    });
 });
 
 test("context stays before mentions across formatting, focus and narrow thread layouts", async ({
@@ -1175,7 +1260,9 @@ for (const [name, response, eventId] of [
     await expect(
       panel.getByText(/session is ready|ready to continue/i),
     ).toHaveCount(0);
-    await expect(draft).toHaveText("Preserve the next real task instruction");
+    await expect(draft).toHaveText(
+      "@ControlBot Preserve the next real task instruction",
+    );
     const createdAt = Math.floor(Date.now() / 1000);
     const input = {
       channelName: CHANNEL,
@@ -1200,7 +1287,9 @@ for (const [name, response, eventId] of [
     await expect(row(panel, eventId)).toHaveCount(1);
     await expect(control).toContainText("Completed");
     await expect(control).not.toContainText("Failed");
-    await expect(draft).toHaveText("Preserve the next real task instruction");
+    await expect(draft).toHaveText(
+      "@ControlBot Preserve the next real task instruction",
+    );
     const raw = await page.evaluate(
       async (eventId) =>
         JSON.parse(

@@ -55,15 +55,12 @@ export function useAgentAddressLockPicker({
     [audience.pubkeys],
   );
   const unpinnedAgentPubkeysRef = React.useRef(new Set<string>());
-  // Context actions may address an agent without editing the current draft.
-  const deferredMentionPubkeysRef = React.useRef(new Set<string>());
   const audienceGenerationRef = React.useRef(0);
   const unpinnedAudienceScopeRef = React.useRef(audienceScope);
   if (unpinnedAudienceScopeRef.current !== audienceScope) {
     unpinnedAudienceScopeRef.current = audienceScope;
     audienceGenerationRef.current += 1;
     unpinnedAgentPubkeysRef.current.clear();
-    deferredMentionPubkeysRef.current.clear();
   }
   React.useEffect(() => {
     for (const pubkey of lockedAgentPubkeys) {
@@ -93,9 +90,6 @@ export function useAgentAddressLockPicker({
           lockedAgentPubkeys.has(normalized)
         )
           return;
-        const deferred = deferredMentionPubkeysRef.current;
-        const alreadyDeferred = deferred.has(normalized);
-        deferred.add(normalized);
         const promotion = promotePersistentAgentAudienceIfUnchanged({
           scope: audienceScope,
           expectedRevision,
@@ -103,9 +97,8 @@ export function useAgentAddressLockPicker({
           reinstateExcluded: true,
         });
         if (promotion) {
+          unpinnedAgentPubkeysRef.current.delete(normalized);
           onPulseAddressLock(normalized);
-        } else if (!alreadyDeferred) {
-          deferred.delete(normalized);
         }
       };
     },
@@ -185,7 +178,6 @@ export function useAgentAddressLockPicker({
       const normalized = normalizePubkey(pubkey);
       if (!audienceScope || !normalized) return;
       unpinnedAgentPubkeysRef.current.add(normalized);
-      deferredMentionPubkeysRef.current.delete(normalized);
       const excludePubkey = audience.excludePubkey ?? audience.removePubkey;
       excludePubkey(normalized);
     },
@@ -252,7 +244,6 @@ export function useAgentAddressLockPicker({
         );
       } else {
         unpinnedAgentPubkeysRef.current.delete(pubkey);
-        deferredMentionPubkeysRef.current.delete(pubkey);
         const label =
           mentions.registerMentionPubkey(suggestion.displayName, pubkey, {
             isAgent: true,
@@ -400,12 +391,7 @@ export function useAgentAddressLockPicker({
       const currentAudiencePubkeys = new Set(
         audience.pubkeys.map(normalizePubkey),
       );
-      if (restorePubkeys) {
-        for (const pubkey of restorePubkeys)
-          deferredMentionPubkeysRef.current.delete(pubkey);
-      }
       const targetAgents = [...(restorePubkeys ?? currentAudiencePubkeys)]
-        .filter((pubkey) => !deferredMentionPubkeysRef.current.has(pubkey))
         .filter(
           (pubkey) =>
             currentAudiencePubkeys.has(pubkey) || allowedUnpinned.has(pubkey),
