@@ -172,7 +172,12 @@ async fn configured_worker(
 ) -> OwnedAgent {
     use std::os::unix::fs::PermissionsExt;
     let python = std::process::Command::new("python3")
-        .args(["-c", "import sys; print(sys.executable)"])
+        // A macOS framework launcher execs the framework's Python binary,
+        // losing the copied codex name. Copy the running executable instead.
+        .args([
+            "-c",
+            "import os, subprocess, sys; print(subprocess.check_output(['/bin/ps', '-p', str(os.getpid()), '-o', 'comm='], text=True).strip() if sys.platform == 'darwin' else sys.executable)",
+        ])
         .output()
         .unwrap();
     assert!(python.status.success());

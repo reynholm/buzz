@@ -9179,7 +9179,7 @@
     },
     {
       "path": "crates/buzz-acp/src/process_tree/codex_helpers.rs",
-      "responsibility": "Confirm Codex code-mode host and exact Bash snapshot shell/parent identities with one bounded ps call; uncertain identities remain work.",
+      "responsibility": "Confirm Codex code-mode host and exact Bash snapshot shell/parent identities with bounded ps probes; uncertain identities remain work. Use macOS ucomm for short snapshot shell/server kernel names while preserving the full-path service probe.",
       "is_new": true,
       "required_symbols": [
         "pub(super) fn classify(",
@@ -11680,13 +11680,14 @@
     },
     {
       "path": "crates/buzz-acp/src/process_tree/codex_snapshots.rs",
-      "responsibility": "Recognize the complete normalized default Bash capture only under a direct executable-confirmed Codex app-server; transient identity never promotes ordinary ancestors. Missing shell/parent identity is uncertainty; any positive executable mismatch remains work.",
+      "responsibility": "Recognize the complete normalized default Bash capture only under a direct executable-confirmed Codex app-server; transient identity never promotes ordinary ancestors. Missing shell/parent identity is uncertainty; any positive executable mismatch remains work. Match the exact macOS ps octal-newline rendering without accepting modified captures.",
       "is_new": true,
       "required_symbols": [
         "pub(super) fn candidates(",
         "pub(super) fn classify_identities(",
         "snapshot_identity_does_not_promote_ordinary_ancestors",
-        "missing_identity_is_uncertain_but_positive_mismatch_is_work"
+        "missing_identity_is_uncertain_but_positive_mismatch_is_work",
+        "snapshot_matches_macos_ps_escaped_newlines_without_accepting_changed_work"
       ],
       "invocation_seams": [
         {
@@ -11717,7 +11718,7 @@
     },
     {
       "path": "crates/buzz-acp/src/pool/snapshot_helper_tests.rs",
-      "responsibility": "Real ACP late snapshot/exit/return/poll regressions, ordinary shell lookalikes, wrong executable parent, transient exec and actual descendant work across setup capture.",
+      "responsibility": "Real ACP late snapshot/exit/return/poll regressions, ordinary shell lookalikes, wrong executable parent, transient exec and actual descendant work across setup capture. Copy the running macOS interpreter executable rather than a framework launcher to preserve the real fixture identity.",
       "is_new": true,
       "required_symbols": [
         "late_codex_snapshot_exit_does_not_enqueue_background_collection",
@@ -12523,6 +12524,18 @@
       "invocation_seams": [],
       "verification_commands": [
         "cargo test -p buzz-acp --lib provider_failure -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/git-sign-nostr/src/lib.rs",
+      "responsibility": "Validate NIP-OA owner BIP-340 curve points at signing, verification and envelope parsing boundaries instead of accepting hex length alone.",
+      "is_new": false,
+      "required_symbols": [
+        "fn test_parse_envelope_rejects_invalid_oa_pubkey()"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p git-sign-nostr"
       ]
     }
   ]

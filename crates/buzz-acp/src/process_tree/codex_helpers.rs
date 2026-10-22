@@ -41,6 +41,17 @@ pub(super) fn classify(mut tree: ProcessTree) -> ProcessTree {
     command.args(["-ww", "-p", &pids, "-o", "pid=,exe="]);
     let output = bounded_output(command, std::time::Duration::from_millis(250), 256 * 1024);
     tree.resident_helpers = confirmed_hosts(output.as_deref(), &candidates);
+    // macOS comm retains argv aliases and invoked symlinks. Probe the short
+    // snapshot shell/server kernel names separately so names with spaces are
+    // never split into a false codex/bash match. Keep the full-path host probe.
+    #[cfg(target_os = "macos")]
+    let output = if snapshots.is_empty() {
+        None
+    } else {
+        let mut command = tokio::process::Command::new("/bin/ps");
+        command.args(["-p", &pids, "-o", "pid=,ucomm="]);
+        bounded_output(command, std::time::Duration::from_millis(250), 256 * 1024)
+    };
     apply_snapshot_identities(&mut tree, &snapshots, output.as_deref());
     tree
 }
