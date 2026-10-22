@@ -25,7 +25,7 @@ use buzz_core::tenant::TenantContext;
 use buzz_db::relay_members::RemoveResult;
 
 use crate::handlers::side_effects::{
-    publish_nip43_member_added, publish_nip43_member_removed, publish_nip43_membership_list,
+    fan_out_nip43_membership_list, publish_nip43_member_added, publish_nip43_member_removed,
 };
 use crate::state::AppState;
 
@@ -333,11 +333,18 @@ async fn execute_relay_admin_command(
             // Note: idempotent — if target already exists at any role, this is a
             // silent no-op. The existing role is NOT overwritten. Use kind:9032
             // to change an existing member's role.
-            let was_inserted = state
+            let write = state
                 .db
-                .add_relay_member(tenant.community(), &target_hex, &role, Some(&sender_hex))
+                .add_relay_member(
+                    tenant.community(),
+                    &target_hex,
+                    &role,
+                    Some(&sender_hex),
+                    &state.relay_keypair,
+                )
                 .await
                 .map_err(|e| format!("database error: {e}"))?;
+            let was_inserted = write.outcome;
 
             info!(
                 sender = %sender_hex,
@@ -353,10 +360,8 @@ async fn execute_relay_admin_command(
                 if let Err(e) = publish_nip43_member_added(tenant, state, &target_hex).await {
                     warn!(error = %e, "failed to publish NIP-43 member added event");
                 }
-                if let Err(e) = publish_nip43_membership_list(tenant, state).await {
-                    warn!(error = %e, "failed to publish NIP-43 membership list");
-                }
             }
+            fan_out_nip43_membership_list(tenant, state, write.snapshot).await;
         }
 
         // kind:9031 — Remove relay member
@@ -376,22 +381,27 @@ async fn execute_relay_admin_command(
             //   This eliminates the TOCTOU race where the target could be promoted
             //   between a prior role read and the delete.
             // - Owners: can remove admins and members, not other owners.
-            let remove_result = if sender_role == "admin" {
+            let write = if sender_role == "admin" {
                 state
                     .db
-                    .remove_relay_member_if_role(tenant.community(), &target_hex, "member")
+                    .remove_relay_member_if_role(
+                        tenant.community(),
+                        &target_hex,
+                        "member",
+                        &state.relay_keypair,
+                    )
                     .await
                     .map_err(|e| format!("database error: {e}"))?
             } else {
                 // Owner path — atomic delete that refuses to remove other owners.
                 state
                     .db
-                    .remove_relay_member(tenant.community(), &target_hex)
+                    .remove_relay_member(tenant.community(), &target_hex, &state.relay_keypair)
                     .await
                     .map_err(|e| format!("database error: {e}"))?
             };
 
-            match remove_result {
+            match write.outcome {
                 RemoveResult::Removed => {}
                 RemoveResult::IsOwner => {
                     return Err("cannot remove the relay owner".to_string());
@@ -428,9 +438,7 @@ async fn execute_relay_admin_command(
             if let Err(e) = publish_nip43_member_removed(tenant, state, &target_hex).await {
                 warn!(error = %e, "failed to publish NIP-43 member removed event");
             }
-            if let Err(e) = publish_nip43_membership_list(tenant, state).await {
-                warn!(error = %e, "failed to publish NIP-43 membership list");
-            }
+            fan_out_nip43_membership_list(tenant, state, write.snapshot).await;
             revoked
                 .map_err(|e| format!("error: member removed but live revoke incomplete: {e}"))?;
         }
@@ -460,13 +468,18 @@ async fn execute_relay_admin_command(
                 return Err(format!("invalid role: {new_role}"));
             }
 
-            let updated = state
+            let write = state
                 .db
-                .update_relay_member_role(tenant.community(), &target_hex, &new_role)
+                .update_relay_member_role(
+                    tenant.community(),
+                    &target_hex,
+                    &new_role,
+                    &state.relay_keypair,
+                )
                 .await
                 .map_err(|e| format!("database error: {e}"))?;
 
-            if !updated {
+            if !write.outcome {
                 // Distinguish "owner (protected)" from "doesn't exist"
                 let exists = state
                     .db
@@ -487,9 +500,7 @@ async fn execute_relay_admin_command(
                 "relay member role changed"
             );
 
-            if let Err(e) = publish_nip43_membership_list(tenant, state).await {
-                warn!(error = %e, "failed to publish NIP-43 membership list");
-            }
+            fan_out_nip43_membership_list(tenant, state, write.snapshot).await;
         }
 
         other => {
@@ -828,8 +839,10 @@ mod postgres_tests {
                 &owner.public_key().to_hex(),
                 "owner",
                 None,
+                &nostr::Keys::generate(),
             )
             .await
+            .map(|write| write.outcome)
             .expect("seed owner");
         let refused = submit_9033(&state, &tenant, &roleless, "https://evil.example/pwn.png").await;
         assert_eq!(
@@ -875,8 +888,10 @@ mod postgres_tests {
                 &member.public_key().to_hex(),
                 "member",
                 None,
+                &nostr::Keys::generate(),
             )
             .await
+            .map(|write| write.outcome)
             .expect("seed member");
         state
             .db
@@ -885,8 +900,10 @@ mod postgres_tests {
                 &admin.public_key().to_hex(),
                 "admin",
                 None,
+                &nostr::Keys::generate(),
             )
             .await
+            .map(|write| write.outcome)
             .expect("seed admin");
 
         for (keys, label) in [(&roleless, "roleless"), (&member, "member")] {
@@ -933,8 +950,15 @@ mod postgres_tests {
         ] {
             state
                 .db
-                .add_relay_member(tenant.community(), &keys.public_key().to_hex(), role, None)
+                .add_relay_member(
+                    tenant.community(),
+                    &keys.public_key().to_hex(),
+                    role,
+                    None,
+                    &nostr::Keys::generate(),
+                )
                 .await
+                .map(|write| write.outcome)
                 .expect("seed member");
         }
         let bound = |keys: &Keys| {
@@ -1024,8 +1048,10 @@ mod postgres_tests {
                 &member.public_key().to_hex(),
                 "member",
                 None,
+                &nostr::Keys::generate(),
             )
             .await
+            .map(|write| write.outcome)
             .expect("seed member");
         for keys in [&member, &agent] {
             state
@@ -1172,8 +1198,15 @@ mod postgres_tests {
         ] {
             state
                 .db
-                .add_relay_member(tenant.community(), &keys.public_key().to_hex(), role, None)
+                .add_relay_member(
+                    tenant.community(),
+                    &keys.public_key().to_hex(),
+                    role,
+                    None,
+                    &nostr::Keys::generate(),
+                )
                 .await
+                .map(|write| write.outcome)
                 .expect("seed member");
         }
         let target_socket = bound_root_socket(&state, tenant.community(), &target);
@@ -1227,5 +1260,69 @@ mod postgres_tests {
         );
         assert!(target_socket.is_cancelled(), "the banned socket closes");
         assert!(!bystander_socket.is_cancelled(), "the bystander stays");
+    }
+
+    /// A timeout and an untimeout each drop the target's cached restriction
+    /// row on the pod that handles them, so typing and observer frames see
+    /// the change at once instead of after the cache TTL.
+    /// Mutation: remove `invalidate_restriction_cache` from either → RED.
+    #[tokio::test]
+    #[ignore = "requires Postgres — runs in postgres-ci nextest lane"]
+    async fn timeout_commands_drop_the_cached_restriction_row() {
+        let host = format!("timeout-cache-{}.example", uuid::Uuid::new_v4().simple());
+        let (state, tenant) = workspace_profile_test_state(&host, true).await;
+        let (owner, target) = (Keys::generate(), Keys::generate());
+        for (keys, role) in [(&owner, "owner"), (&target, "member")] {
+            state
+                .db
+                .add_relay_member(
+                    tenant.community(),
+                    &keys.public_key().to_hex(),
+                    role,
+                    None,
+                    &nostr::Keys::generate(),
+                )
+                .await
+                .map(|write| write.outcome)
+                .expect("seed member");
+        }
+        let key = (tenant.community(), target.public_key().to_bytes().to_vec());
+        let until = (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp();
+        let command = |kind: u32, tags: Vec<Tag>| {
+            EventBuilder::new(Kind::Custom(kind as u16), "")
+                .tags(tags)
+                .sign_with_keys(&owner)
+                .expect("sign moderation command")
+        };
+
+        for event in [
+            command(
+                buzz_core::kind::KIND_MODERATION_TIMEOUT,
+                vec![
+                    Tag::public_key(target.public_key()),
+                    Tag::parse(["expiration", &until.to_string()]).expect("expiration tag"),
+                ],
+            ),
+            command(
+                buzz_core::kind::KIND_MODERATION_UNTIMEOUT,
+                vec![Tag::public_key(target.public_key())],
+            ),
+        ] {
+            state.restriction_cache.insert(
+                key.clone(),
+                buzz_db::moderation::RestrictionState::default(),
+            );
+            crate::handlers::moderation_commands::handle_moderation_command(
+                &tenant, &state, &event,
+            )
+            .await
+            .unwrap_or_else(|e| panic!("kind {} must apply: {e}", event.kind.as_u16()));
+            assert_eq!(
+                state.restriction_cache.get(&key),
+                None,
+                "kind {} must drop the cached row",
+                event.kind.as_u16()
+            );
+        }
     }
 }

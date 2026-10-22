@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'package:buzz/features/channels/me/me_messages_provider.dart';
 import 'dart:collection';
 import 'dart:convert';
 
-import 'package:flutter_test/flutter_test.dart';
+import 'package:fake_async/fake_async.dart';
+import 'package:flutter_test/flutter_test.dart' hide test;
+import 'package:flutter_test/flutter_test.dart' as flutter_test show test;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:buzz/features/channels/channel_messages_provider.dart';
 import 'package:buzz/features/channels/pending_local_messages_provider.dart';
@@ -10,7 +13,97 @@ import 'package:buzz/features/channels/thread_replies_provider.dart';
 import 'package:buzz/features/channels/timeline_message.dart';
 import 'package:buzz/shared/relay/relay.dart';
 
+import '../../helpers/thread_ids.dart';
+
+/// Every test in this file runs on virtual time, so retry backoff and refresh
+/// timers fire in their real order without waiting on the wall clock. Work
+/// outside the fake zone, such as an isolate, fails the test instead of hanging.
+void test(String description, Future<void> Function() body) {
+  flutter_test.test(description, () {
+    fakeAsync((clock) {
+      var done = false;
+      Object? error;
+      StackTrace? stack;
+      body().then(
+        (_) => done = true,
+        onError: (Object e, StackTrace s) {
+          error = e;
+          stack = s;
+          done = true;
+        },
+      );
+      clock.flushMicrotasks();
+      while (!done) {
+        if (clock.pendingTimers.isEmpty) {
+          throw StateError('Test is waiting on work outside fake time');
+        }
+        clock.elapse(const Duration(milliseconds: 1));
+      }
+      if (error != null) Error.throwWithStackTrace(error!, stack!);
+    });
+  });
+}
+
 void main() {
+  test(
+    'Solo notification target does not skip the intervening history',
+    () async {
+      final relay = _CursorRelay();
+      final container = _buildContainer(relay);
+      addTearDown(container.dispose);
+      container.read(meMessagesProvider(_channelId));
+      await relay.subscribed;
+      await _pumpEventQueue();
+      final notifier = container.read(meMessagesProvider(_channelId).notifier);
+      await notifier.loadEventsById(['older']);
+      expect(
+        container.read(meMessagesProvider(_channelId)).value!.first.id,
+        'older',
+      );
+      expect(await notifier.fetchOlder(), isTrue);
+      expect(await notifier.fetchOlder(), isTrue);
+      expect(await notifier.fetchOlder(), isFalse);
+      expect(container.read(meMessagesProvider(_channelId)).value!.length, 351);
+    },
+  );
+  test('Solo paginates through more than 100 equal-second events', () async {
+    final relay = _CursorRelay();
+    final container = _buildContainer(relay);
+    addTearDown(container.dispose);
+    container.read(meMessagesProvider(_channelId));
+    await relay.subscribed;
+    await _pumpEventQueue();
+    final notifier = container.read(meMessagesProvider(_channelId).notifier);
+    expect(await notifier.fetchOlder(), isTrue);
+    expect(await notifier.fetchOlder(), isTrue);
+    expect(await notifier.fetchOlder(), isFalse);
+    final events = container.read(meMessagesProvider(_channelId)).value!;
+    expect(events.length, 351);
+    expect(events.first.id, 'older');
+    expect(events.map((e) => e.id).toSet().length, 351);
+  });
+  test(
+    'Me reads channel replies without the top-level window filter',
+    () async {
+      final relay = _RecordingRelaySessionNotifier(
+        historyResults: [
+          [_event(id: 'history', createdAt: 10)],
+        ],
+      );
+      final container = _buildContainer(relay);
+      addTearDown(container.dispose);
+      container.read(meMessagesProvider(_channelId));
+      await relay.subscribed;
+      await _pumpEventQueue();
+      expect(relay.queryFilters, isEmpty);
+      expect(relay.historyFilters.single.extensions['top_level'], isNot(true));
+      expect(
+        container.read(meMessagesProvider(_channelId)).value!.map((e) => e.id),
+        ['history'],
+      );
+    },
+  );
+
   test('live window without deep links does not rescan flattened ids', () async {
     var historyIdReads = 0;
     final history = _IdReadTrackingEvent(
@@ -236,7 +329,7 @@ void main() {
         channelMessagesProvider(_channelId).notifier,
       );
 
-      relaySession.emit(_summary(rootId: 'root', replyCount: 2));
+      relaySession.emit(_summary(rootId: threadIdRoot, replyCount: 2));
       await _pumpEventQueue();
       expect(
         container.read(channelMessagesProvider(_channelId)).isLoading,
@@ -244,19 +337,19 @@ void main() {
       );
 
       window.complete([
-        _event(id: 'root', createdAt: 10),
-        _summary(rootId: 'root', replyCount: 1, createdAt: 10),
+        _event(id: threadIdRoot, createdAt: 10),
+        _summary(rootId: threadIdRoot, replyCount: 1, createdAt: 10),
         _bounds(),
       ]);
       await _pumpEventQueue();
 
-      expect(notifier.threadSummaries['root']?.replyCount, 2);
+      expect(notifier.threadSummaries[threadIdRoot]?.replyCount, 2);
       expect(
         container
             .read(channelMessagesProvider(_channelId))
             .value
             ?.map((event) => event.id),
-        ['root'],
+        [threadIdRoot],
       );
     },
   );
@@ -320,10 +413,10 @@ void main() {
         .where((filter) => filter.extensions.containsKey('depth_limit'))
         .length;
     NostrEvent reply(int i) => _event(
-      id: 'reply-$i',
+      id: indexedThreadId('reply-$i'),
       createdAt: 20 + i,
       extraTags: const [
-        ['e', 'root', '', 'reply'],
+        ['e', threadIdRoot, '', 'reply'],
       ],
     );
 
@@ -346,7 +439,7 @@ void main() {
     test('a recount deadline ends its retry backoff', () async {
       final session = _RecordingRelaySessionNotifier(
         queryResults: [
-          [_event(id: 'root', createdAt: 10), _bounds()],
+          [_event(id: threadIdRoot, createdAt: 10), _bounds()],
           deadline(),
           deadline(),
         ],
@@ -558,8 +651,8 @@ void main() {
       final relaySession = _RecordingRelaySessionNotifier(
         queryResults: [
           [
-            _event(id: 'root', createdAt: 10),
-            _summary(rootId: 'root', replyCount: 1),
+            _event(id: threadIdRoot, createdAt: 10),
+            _summary(rootId: threadIdRoot, replyCount: 1),
             _bounds(),
           ],
         ],
@@ -575,19 +668,19 @@ void main() {
       );
       notifier.addLocalMessage(_event(id: 'local', createdAt: 20));
 
-      relaySession.emit(_summary(rootId: 'root', replyCount: 2));
+      relaySession.emit(_summary(rootId: threadIdRoot, replyCount: 2));
       await _pumpEventQueue();
-      expect(notifier.threadSummaries['root']?.replyCount, 2);
+      expect(notifier.threadSummaries[threadIdRoot]?.replyCount, 2);
 
       notifier.removeLocalMessage('local');
 
-      expect(notifier.threadSummaries['root']?.replyCount, 2);
+      expect(notifier.threadSummaries[threadIdRoot]?.replyCount, 2);
       expect(
         container
             .read(channelMessagesProvider(_channelId))
             .value
             ?.map((event) => event.id),
-        ['root'],
+        [threadIdRoot],
       );
     },
   );
@@ -641,13 +734,13 @@ void main() {
             [
               if (nested)
                 _event(
-                  id: 'parent',
+                  id: threadIdParent,
                   createdAt: 15,
                   extraTags: const [
-                    ['e', 'root', '', 'reply'],
+                    ['e', threadIdRoot, '', 'reply'],
                   ],
                 ),
-              _event(id: 'root', createdAt: 10),
+              _event(id: threadIdRoot, createdAt: 10),
               _bounds(),
             ],
           ],
@@ -660,13 +753,16 @@ void main() {
         final notifier = container.read(
           channelMessagesProvider(_channelId).notifier,
         );
-        const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
+        const args = ThreadRepliesArgs(
+          channelId: _channelId,
+          rootId: threadIdRoot,
+        );
         final reply = _event(
           id: 'reply',
           createdAt: 20,
           extraTags: [
-            if (nested) ['e', 'root', '', 'root'],
-            ['e', nested ? 'parent' : 'root', '', 'reply'],
+            if (nested) ['e', threadIdRoot, '', 'root'],
+            ['e', nested ? threadIdParent : threadIdRoot, '', 'reply'],
           ],
         );
         notifier.addLocalMessage(reply);
@@ -700,7 +796,7 @@ void main() {
               id: 'reply',
               createdAt: 20,
               extraTags: const [
-                ['e', 'root', '', 'reply'],
+                ['e', threadIdRoot, '', 'reply'],
               ],
             ),
           ],
@@ -712,7 +808,10 @@ void main() {
       container.read(channelMessagesProvider(_channelId));
       await relaySession.subscribed;
       await _pumpEventQueue();
-      const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
+      const args = ThreadRepliesArgs(
+        channelId: _channelId,
+        rootId: threadIdRoot,
+      );
       final threadSubscription = container.listen(
         threadRepliesWithLocalProvider(args),
         (_, _) {},
@@ -726,7 +825,7 @@ void main() {
         id: 'reply',
         createdAt: 20,
         extraTags: const [
-          ['e', 'root', '', 'reply'],
+          ['e', threadIdRoot, '', 'reply'],
         ],
       );
 
@@ -763,7 +862,7 @@ void main() {
         id: 'rejected',
         createdAt: 21,
         extraTags: const [
-          ['e', 'root', '', 'reply'],
+          ['e', threadIdRoot, '', 'reply'],
         ],
       );
       notifier.addLocalMessage(rejected);
@@ -794,7 +893,10 @@ void main() {
       container.read(channelMessagesProvider(_channelId));
       await relaySession.subscribed;
       await _pumpEventQueue();
-      const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
+      const args = ThreadRepliesArgs(
+        channelId: _channelId,
+        rootId: threadIdRoot,
+      );
       final threadSubscription = container.listen(
         threadRepliesWithLocalProvider(args),
         (_, _) {},
@@ -808,7 +910,7 @@ void main() {
         id: 'reply',
         createdAt: 20,
         extraTags: const [
-          ['e', 'root', '', 'reply'],
+          ['e', threadIdRoot, '', 'reply'],
         ],
       );
       notifier.addLocalMessage(reply);
@@ -840,7 +942,7 @@ void main() {
               id: 'reply',
               createdAt: 20,
               extraTags: const [
-                ['e', 'root', '', 'reply'],
+                ['e', threadIdRoot, '', 'reply'],
               ],
             ),
           ],
@@ -855,7 +957,10 @@ void main() {
       await _pumpEventQueue();
       expect(relaySession.operations, ['subscribe', 'query', 'fetch']);
 
-      const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
+      const args = ThreadRepliesArgs(
+        channelId: _channelId,
+        rootId: threadIdRoot,
+      );
       final subscription = container.listen(
         threadRepliesProvider(args),
         (_, _) {},
@@ -868,7 +973,7 @@ void main() {
           id: 'reply',
           createdAt: 20,
           extraTags: const [
-            ['e', 'root', '', 'reply'],
+            ['e', threadIdRoot, '', 'reply'],
           ],
         ),
       );
@@ -961,7 +1066,7 @@ void main() {
     () async {
       final relaySession = _RecordingRelaySessionNotifier(
         queryResults: [
-          [_event(id: 'root', createdAt: 10), _bounds()],
+          [_event(id: threadIdRoot, createdAt: 10), _bounds()],
         ],
       );
       final container = _buildContainer(relaySession);
@@ -976,7 +1081,7 @@ void main() {
           id: 'reply',
           createdAt: 20,
           extraTags: const [
-            ['e', 'root', '', 'reply'],
+            ['e', threadIdRoot, '', 'reply'],
           ],
         ),
       );
@@ -990,7 +1095,7 @@ void main() {
             .read(channelMessagesProvider(_channelId))
             .value
             ?.map((event) => event.id),
-        ['root', 'reply'],
+        [threadIdRoot, 'reply'],
       );
       expect(
         buildMainTimelineEntries(
@@ -1001,7 +1106,7 @@ void main() {
               .read(channelMessagesProvider(_channelId).notifier)
               .threadSummaries,
         ).map((entry) => entry.message.id),
-        ['root'],
+        [threadIdRoot],
       );
     },
   );
@@ -1010,12 +1115,12 @@ void main() {
     test(
       'confirmed reply evidence survives stale reconnect (deleted: $deleted)',
       () async {
-        final root = _event(id: 'root', createdAt: 10);
+        final root = _event(id: threadIdRoot, createdAt: 10);
         final reply = _event(
           id: 'reply',
           createdAt: 20,
           extraTags: const [
-            ['e', 'root', '', 'reply'],
+            ['e', threadIdRoot, '', 'reply'],
           ],
         );
         final relaySession = _RecordingRelaySessionNotifier(
@@ -1062,7 +1167,7 @@ void main() {
         relaySession.setConnected(true);
         await _pumpEventQueue();
         // A subsequent live event rebuilds state from the window store.
-        relaySession.emit(_event(id: 'unrelated', createdAt: 40));
+        relaySession.emit(_event(id: threadIdUnrelated, createdAt: 40));
         await _pumpEventQueue();
         final entries = buildMainTimelineEntries(
           formatTimeline(
@@ -1071,7 +1176,7 @@ void main() {
           relaySummaries: notifier.threadSummaries,
         );
         final rootEntry = entries.singleWhere(
-          (entry) => entry.message.id == 'root',
+          (entry) => entry.message.id == threadIdRoot,
         );
         if (deleted) {
           expect(rootEntry.summary, isNull);
@@ -1088,7 +1193,7 @@ void main() {
       final scan = Completer<List<NostrEvent>>();
       final session = _RecordingRelaySessionNotifier(
         queryResults: [
-          [_event(id: 'root', createdAt: 10), _bounds()],
+          [_event(id: threadIdRoot, createdAt: 10), _bounds()],
           scan.future,
           <NostrEvent>[],
         ],
@@ -1105,18 +1210,24 @@ void main() {
           id: 'accepted-late',
           createdAt: 20,
           extraTags: const [
-            ['e', 'root', '', 'reply'],
+            ['e', threadIdRoot, '', 'reply'],
           ],
         ),
       );
-      const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
+      const args = ThreadRepliesArgs(
+        channelId: _channelId,
+        rootId: threadIdRoot,
+      );
       container.listen(threadRepliesProvider(args), (_, _) {});
       final result = container.read(threadRepliesProvider(args).future);
       await _pumpEventQueue();
       notifier.completeLocalMessage('accepted-late');
       scan.complete([]);
       await result;
-      expect(notifier.cachedThreadReplyIds('root'), contains('accepted-late'));
+      expect(
+        notifier.cachedThreadReplyIds(threadIdRoot),
+        contains('accepted-late'),
+      );
       final entries = buildMainTimelineEntries(
         formatTimeline(
           container.read(channelMessagesProvider(_channelId)).value!,
@@ -1144,7 +1255,7 @@ void main() {
       );
       final session = _RecordingRelaySessionNotifier(
         queryResults: [
-          [_event(id: 'root', createdAt: 10), _bounds()],
+          [_event(id: threadIdRoot, createdAt: 10), _bounds()],
           <NostrEvent>[],
           [for (var i = 0; i < 20; i++) marker(i)],
           <NostrEvent>[],
@@ -1164,26 +1275,29 @@ void main() {
             id: 'pending-$i',
             createdAt: 20 + i,
             extraTags: const [
-              ['e', 'root', '', 'reply'],
+              ['e', threadIdRoot, '', 'reply'],
             ],
           ),
         );
       }
-      const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
+      const args = ThreadRepliesArgs(
+        channelId: _channelId,
+        rootId: threadIdRoot,
+      );
       container.listen(threadRepliesProvider(args), (_, _) {});
       await container.read(threadRepliesProvider(args).future);
       int proofs() => session.queryFilters
           .where((f) => f.kinds.contains(EventKind.deletion))
           .length;
       expect(proofs(), 20);
-      expect(notifier.unconfirmedThreadReplyIds('root'), {
+      expect(notifier.unconfirmedThreadReplyIds(threadIdRoot), {
         for (var i = 20; i < 25; i++) 'pending-$i',
       });
       expect(container.read(threadLocalRepliesProvider(args)), hasLength(5));
       container.invalidate(threadRepliesProvider(args));
       await container.read(threadRepliesProvider(args).future);
       expect(proofs(), 25);
-      expect(notifier.unconfirmedThreadReplyIds('root'), isEmpty);
+      expect(notifier.unconfirmedThreadReplyIds(threadIdRoot), isEmpty);
       expect(container.read(threadLocalRepliesProvider(args)), isEmpty);
     },
   );
@@ -1204,7 +1318,7 @@ void main() {
       );
       final session = _RecordingRelaySessionNotifier(
         queryResults: [
-          [_event(id: 'root', createdAt: 10), _bounds()],
+          [_event(id: threadIdRoot, createdAt: 10), _bounds()],
           <NostrEvent>[],
           <NostrEvent>[],
           <NostrEvent>[],
@@ -1226,18 +1340,21 @@ void main() {
             id: 'pending-$i',
             createdAt: 20 + i,
             extraTags: const [
-              ['e', 'root', '', 'reply'],
+              ['e', threadIdRoot, '', 'reply'],
             ],
           ),
         );
       }
-      const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
+      const args = ThreadRepliesArgs(
+        channelId: _channelId,
+        rootId: threadIdRoot,
+      );
       final subscription = container.listen(
         threadRepliesProvider(args),
         (_, _) {},
       );
       await container.read(threadRepliesProvider(args).future);
-      expect(notifier.unconfirmedThreadReplyIds('root'), hasLength(25));
+      expect(notifier.unconfirmedThreadReplyIds(threadIdRoot), hasLength(25));
       subscription.close();
       await _pumpEventQueue();
       container.listen(threadRepliesProvider(args), (_, _) {});
@@ -1249,9 +1366,9 @@ void main() {
       expect(targets, hasLength(40));
       expect(targets.take(20), isNot(contains('pending-24')));
       expect(targets.skip(20), contains('pending-24'));
-      expect(notifier.unconfirmedThreadReplyIds('root'), hasLength(24));
+      expect(notifier.unconfirmedThreadReplyIds(threadIdRoot), hasLength(24));
       expect(
-        notifier.cachedThreadReplyIds('root'),
+        notifier.cachedThreadReplyIds(threadIdRoot),
         isNot(contains('pending-24')),
       );
       container.invalidate(threadRepliesProvider(args));
@@ -1279,13 +1396,13 @@ void main() {
                 id: 'survivor-$i',
                 createdAt: 30 + i,
                 extraTags: const [
-                  ['e', 'root', '', 'reply'],
+                  ['e', threadIdRoot, '', 'reply'],
                 ],
               ),
           ];
           final session = _RecordingRelaySessionNotifier(
             queryResults: [
-              [_event(id: 'root', createdAt: 10), _bounds()],
+              [_event(id: threadIdRoot, createdAt: 10), _bounds()],
               scan.future,
               if (count >= 200) survivors.skip(200).toList(),
               [
@@ -1316,11 +1433,14 @@ void main() {
               id: 'deleted-local',
               createdAt: 20,
               extraTags: const [
-                ['e', 'root', '', 'reply'],
+                ['e', threadIdRoot, '', 'reply'],
               ],
             ),
           );
-          const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
+          const args = ThreadRepliesArgs(
+            channelId: _channelId,
+            rootId: threadIdRoot,
+          );
           container.listen(threadRepliesProvider(args), (_, _) {});
           final result = container.read(threadRepliesProvider(args).future);
           await _pumpEventQueue();
@@ -1329,8 +1449,11 @@ void main() {
           }
           scan.complete(survivors.take(200).toList());
           expect(await result, survivors);
-          expect(notifier.threadSummaries['root']!.descendantCount, count);
-          expect(notifier.unconfirmedThreadReplyIds('root'), isEmpty);
+          expect(
+            notifier.threadSummaries[threadIdRoot]!.descendantCount,
+            count,
+          );
+          expect(notifier.unconfirmedThreadReplyIds(threadIdRoot), isEmpty);
           final entries = buildMainTimelineEntries(
             formatTimeline(
               container.read(channelMessagesProvider(_channelId)).value!,
@@ -1349,7 +1472,7 @@ void main() {
       () async {
         final session = _RecordingRelaySessionNotifier(
           queryResults: [
-            [_event(id: 'root', createdAt: 10), _bounds()],
+            [_event(id: threadIdRoot, createdAt: 10), _bounds()],
             Exception('recount unavailable'),
             Exception('recount unavailable'),
             Exception('recount unavailable'),
@@ -1367,23 +1490,23 @@ void main() {
             id: 'deleted',
             createdAt: 20,
             extraTags: const [
-              ['e', 'root', '', 'reply'],
+              ['e', threadIdRoot, '', 'reply'],
             ],
           ),
         ]);
-        final snapshot = notifier.cachedThreadReplyIds('root');
+        final snapshot = notifier.cachedThreadReplyIds(threadIdRoot);
         expect(snapshot, contains('deleted'));
-        notifier.cacheCompleteThreadQuery('root', snapshot, [
+        notifier.cacheCompleteThreadQuery(threadIdRoot, snapshot, [
           for (var i = 0; i < 300; i++)
             _event(
               id: 'survivor-$i',
               createdAt: 30 + i,
               extraTags: const [
-                ['e', 'root', '', 'reply'],
+                ['e', threadIdRoot, '', 'reply'],
               ],
             ),
         ]);
-        expect(notifier.threadSummaries['root']!.descendantCount, 300);
+        expect(notifier.threadSummaries[threadIdRoot]!.descendantCount, 300);
         session.emit(
           NostrEvent(
             id: 'late-deletion',
@@ -1398,8 +1521,8 @@ void main() {
             sig: '',
           ),
         );
-        expect(notifier.threadSummaries['root']!.descendantCount, 300);
-        expect(notifier.threadSummaries['root']!.isLowerBound, isFalse);
+        expect(notifier.threadSummaries[threadIdRoot]!.descendantCount, 300);
+        expect(notifier.threadSummaries[threadIdRoot]!.isLowerBound, isFalse);
         await Future<void>.delayed(const Duration(milliseconds: 300));
         expect(
           session.queryFilters.where(
@@ -1424,7 +1547,7 @@ void main() {
         'complete thread scan removes absent replies (marker: $deletionMarkerAvailable, late arrival: $lateArrival)',
         () async {
           final query = Completer<List<NostrEvent>>();
-          final root = _event(id: 'root', createdAt: 10);
+          final root = _event(id: threadIdRoot, createdAt: 10);
           final relaySession = _RecordingRelaySessionNotifier(
             queryResults: [
               [root, _bounds()],
@@ -1464,7 +1587,7 @@ void main() {
               id: 'deleted-offline',
               createdAt: 20,
               extraTags: const [
-                ['e', 'root', '', 'reply'],
+                ['e', threadIdRoot, '', 'reply'],
               ],
             ),
           ]);
@@ -1472,7 +1595,10 @@ void main() {
           await _pumpEventQueue();
           relaySession.setConnected(true);
           await _pumpEventQueue();
-          const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
+          const args = ThreadRepliesArgs(
+            channelId: _channelId,
+            rootId: threadIdRoot,
+          );
           final threadSubscription = container.listen(
             threadRepliesProvider(args),
             (_, _) {},
@@ -1487,7 +1613,7 @@ void main() {
                 id: 'new-arrival',
                 createdAt: 30,
                 extraTags: const [
-                  ['e', 'root', '', 'reply'],
+                  ['e', threadIdRoot, '', 'reply'],
                 ],
               ),
             ]);
@@ -1495,15 +1621,15 @@ void main() {
           query.complete([]);
           await container.read(threadRepliesProvider(args).future);
           await _pumpEventQueue();
-          relaySession.emit(_event(id: 'unrelated', createdAt: 40));
+          relaySession.emit(_event(id: threadIdUnrelated, createdAt: 40));
           await _pumpEventQueue();
           final events = container
               .read(channelMessagesProvider(_channelId))
               .value!;
           expect(formatTimeline(events).map((event) => event.id), [
-            'root',
+            threadIdRoot,
             if (lateArrival) 'new-arrival',
-            'unrelated',
+            threadIdUnrelated,
           ]);
           final merged = mergeThreadEvents(
             container.read(threadRepliesProvider(args)).value!,
@@ -1518,7 +1644,7 @@ void main() {
           final rootEntry = buildMainTimelineEntries(
             formatTimeline(events),
             relaySummaries: notifier.threadSummaries,
-          ).singleWhere((entry) => entry.message.id == 'root');
+          ).singleWhere((entry) => entry.message.id == threadIdRoot);
           final expectedCount = lateArrival ? 1 : 0;
           expect(
             rootEntry.summary?.replyCount,
@@ -1535,12 +1661,12 @@ void main() {
         id: 'discovered',
         createdAt: 20,
         extraTags: const [
-          ['e', 'root', '', 'reply'],
+          ['e', threadIdRoot, '', 'reply'],
         ],
       );
       final session = _RecordingRelaySessionNotifier(
         queryResults: [
-          [_event(id: 'root', createdAt: 10), _bounds()],
+          [_event(id: threadIdRoot, createdAt: 10), _bounds()],
           [reply],
         ],
       );
@@ -1548,7 +1674,10 @@ void main() {
       addTearDown(container.dispose);
       container.listen(channelMessagesProvider(_channelId), (_, _) {});
       await _pumpEventQueue();
-      const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
+      const args = ThreadRepliesArgs(
+        channelId: _channelId,
+        rootId: threadIdRoot,
+      );
       final thread = container.listen(threadRepliesProvider(args), (_, _) {});
       await container.read(threadRepliesProvider(args).future);
       thread.close();
@@ -1570,9 +1699,9 @@ void main() {
   test('reconnect evicts reply evidence outside the newest window', () async {
     final session = _RecordingRelaySessionNotifier(
       queryResults: [
-        [_event(id: 'old-root', createdAt: 10), _bounds()],
-        [_event(id: 'new-root', createdAt: 30), _bounds()],
-        [_event(id: 'new-root', createdAt: 30), _bounds()],
+        [_event(id: threadIdOldDashRoot, createdAt: 10), _bounds()],
+        [_event(id: threadIdNewDashRoot, createdAt: 30), _bounds()],
+        [_event(id: threadIdNewDashRoot, createdAt: 30), _bounds()],
       ],
     );
     final container = _buildContainer(session);
@@ -1587,7 +1716,7 @@ void main() {
         id: 'old-reply',
         createdAt: 20,
         extraTags: const [
-          ['e', 'old-root', '', 'reply'],
+          ['e', threadIdOldDashRoot, '', 'reply'],
         ],
       ),
     ]);
@@ -1596,7 +1725,7 @@ void main() {
       await _pumpEventQueue();
       session.setConnected(true);
       await _pumpEventQueue();
-      expect(notifier.cachedThreadReplyIds('old-root'), isEmpty);
+      expect(notifier.cachedThreadReplyIds(threadIdOldDashRoot), isEmpty);
       session.emit(
         _event(id: 'window-publication-$cycle', createdAt: 50 + cycle),
       );
@@ -1613,12 +1742,12 @@ void main() {
           id: 'new-reply',
           createdAt: 40,
           extraTags: const [
-            ['e', 'new-root', '', 'reply'],
+            ['e', threadIdNewDashRoot, '', 'reply'],
           ],
         ),
       ]);
     }
-    expect(notifier.cachedThreadReplyIds('new-root'), {'new-reply'});
+    expect(notifier.cachedThreadReplyIds(threadIdNewDashRoot), {'new-reply'});
   });
 
   for (final nested in [false, true]) {
@@ -1640,7 +1769,7 @@ void main() {
           );
           final session = _RecordingRelaySessionNotifier(
             queryResults: [
-              [_event(id: 'root', createdAt: 10), _bounds()],
+              [_event(id: threadIdRoot, createdAt: 10), _bounds()],
               <NostrEvent>[],
               [deletion],
             ],
@@ -1657,13 +1786,16 @@ void main() {
               id: 'local',
               createdAt: 20,
               extraTags: [
-                if (nested) ['e', 'root', '', 'root'],
-                ['e', nested ? 'parent' : 'root', '', 'reply'],
+                if (nested) ['e', threadIdRoot, '', 'root'],
+                ['e', nested ? threadIdParent : threadIdRoot, '', 'reply'],
               ],
             ),
           );
           notifier.completeLocalMessage('local');
-          const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
+          const args = ThreadRepliesArgs(
+            channelId: _channelId,
+            rootId: threadIdRoot,
+          );
           if (fetched) {
             container.listen(threadRepliesProvider(args), (_, _) {});
             await container.read(threadRepliesProvider(args).future);
@@ -1672,7 +1804,7 @@ void main() {
           }
           await _pumpEventQueue();
           expect(container.exists(threadLocalRepliesProvider(args)), isFalse);
-          expect(notifier.cachedThreadReplyIds('root'), isEmpty);
+          expect(notifier.cachedThreadReplyIds(threadIdRoot), isEmpty);
           final entries = buildMainTimelineEntries(
             formatTimeline(
               container.read(channelMessagesProvider(_channelId)).value!,
@@ -1691,16 +1823,16 @@ void main() {
       final replies = [
         for (var i = 0; i < 600; i++)
           _event(
-            id: 'reply-$i',
+            id: indexedThreadId('reply-$i'),
             createdAt: 20 + i,
             extraTags: const [
-              ['e', 'root', '', 'reply'],
+              ['e', threadIdRoot, '', 'reply'],
             ],
           ),
       ];
       final session = _RecordingRelaySessionNotifier(
         queryResults: [
-          [_event(id: 'root', createdAt: 10), _bounds()],
+          [_event(id: threadIdRoot, createdAt: 10), _bounds()],
           replies.take(200).toList(),
           replies.skip(200).take(200).toList(),
           replies.skip(400).toList(),
@@ -1712,7 +1844,10 @@ void main() {
       addTearDown(container.dispose);
       container.listen(channelMessagesProvider(_channelId), (_, _) {});
       await _pumpEventQueue();
-      const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
+      const args = ThreadRepliesArgs(
+        channelId: _channelId,
+        rootId: threadIdRoot,
+      );
       container.listen(threadRepliesProvider(args), (_, _) {});
       expect(
         await container.read(threadRepliesProvider(args).future),
@@ -1721,7 +1856,7 @@ void main() {
       final notifier = container.read(
         channelMessagesProvider(_channelId).notifier,
       );
-      expect(notifier.cachedThreadReplyIds('root'), hasLength(256));
+      expect(notifier.cachedThreadReplyIds(threadIdRoot), hasLength(256));
       expect(
         container.read(channelMessagesProvider(_channelId)).value,
         hasLength(257),
@@ -1732,12 +1867,12 @@ void main() {
           .where((filter) => filter.kinds.contains(EventKind.deletion))
           .toList();
       expect(deletionFilters, isEmpty);
-      expect(notifier.threadSummaries['root']?.descendantCount, 0);
+      expect(notifier.threadSummaries[threadIdRoot]?.descendantCount, 0);
       expect(
         formatTimeline(
           container.read(channelMessagesProvider(_channelId)).value!,
         ).map((event) => event.id),
-        ['root'],
+        [threadIdRoot],
       );
     },
   );
@@ -1747,7 +1882,7 @@ void main() {
     () async {
       final session = _RecordingRelaySessionNotifier(
         queryResults: [
-          [_event(id: 'root', createdAt: 10), _bounds()],
+          [_event(id: threadIdRoot, createdAt: 10), _bounds()],
         ],
       );
       final container = _buildContainer(session);
@@ -1764,7 +1899,7 @@ void main() {
               id: '$root-$i',
               createdAt: 20 + root * 300 + i,
               extraTags: [
-                ['e', 'root-$root', '', 'reply'],
+                ['e', indexedThreadId('root-$root'), '', 'reply'],
               ],
             ),
       ]);
@@ -1775,7 +1910,7 @@ void main() {
       );
       for (var root = 0; root < 12; root++) {
         expect(
-          notifier.cachedThreadReplyIds('root-$root').length,
+          notifier.cachedThreadReplyIds(indexedThreadId('root-$root')).length,
           lessThanOrEqualTo(256),
         );
       }
@@ -1793,7 +1928,7 @@ void main() {
               id: 'old-reply',
               createdAt: 20,
               extraTags: const [
-                ['e', 'old-root', '', 'reply'],
+                ['e', threadIdOldDashRoot, '', 'reply'],
               ],
             ),
           ],
@@ -1806,10 +1941,15 @@ void main() {
       final notifier = container.read(
         channelMessagesProvider(_channelId).notifier,
       );
-      final load = notifier.loadEventsById(['old-root']);
-      session.completeTargetHistory([_event(id: 'old-root', createdAt: 10)]);
+      final load = notifier.loadEventsById([threadIdOldDashRoot]);
+      session.completeTargetHistory([
+        _event(id: threadIdOldDashRoot, createdAt: 10),
+      ]);
       await load;
-      const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'old-root');
+      const args = ThreadRepliesArgs(
+        channelId: _channelId,
+        rootId: threadIdOldDashRoot,
+      );
       final thread = container.listen(threadRepliesProvider(args), (_, _) {});
       await container.read(threadRepliesProvider(args).future);
       thread.close();
@@ -1823,7 +1963,7 @@ void main() {
       );
       expect(
         entries
-            .singleWhere((entry) => entry.message.id == 'old-root')
+            .singleWhere((entry) => entry.message.id == threadIdOldDashRoot)
             .summary
             ?.replyCount,
         1,
@@ -1837,7 +1977,7 @@ void main() {
       () async {
         final session = _RecordingRelaySessionNotifier(
           queryResults: [
-            [_event(id: 'root', createdAt: 10), _bounds()],
+            [_event(id: threadIdRoot, createdAt: 10), _bounds()],
           ],
         );
         final container = _buildContainer(session);
@@ -1853,7 +1993,7 @@ void main() {
               id: '$root-$i',
               createdAt: 20 + root * 300 + i,
               extraTags: [
-                ['e', 'root-$root', '', 'reply'],
+                ['e', indexedThreadId('root-$root'), '', 'reply'],
               ],
             );
             if (source == 'ack') {
@@ -1864,7 +2004,7 @@ void main() {
             }
           }
           expect(
-            notifier.cachedThreadReplyIds('root-$root').length,
+            notifier.cachedThreadReplyIds(indexedThreadId('root-$root')).length,
             lessThanOrEqualTo(256),
           );
         }
@@ -1884,7 +2024,10 @@ void main() {
           expect(
             container.exists(
               threadLocalRepliesProvider(
-                ThreadRepliesArgs(channelId: _channelId, rootId: 'root-$root'),
+                ThreadRepliesArgs(
+                  channelId: _channelId,
+                  rootId: indexedThreadId('root-$root'),
+                ),
               ),
             ),
             isFalse,
@@ -1901,11 +2044,16 @@ void main() {
         final replies = [
           for (var i = 0; i < count; i++)
             _event(
-              id: 'reply-$i',
+              id: indexedThreadId('reply-$i'),
               createdAt: 20 + i,
               extraTags: [
-                if (count == 600 && i > 0) ['e', 'root', '', 'root'],
-                ['e', count == 600 && i > 0 ? 'reply-0' : 'root', '', 'reply'],
+                if (count == 600 && i > 0) ['e', threadIdRoot, '', 'root'],
+                [
+                  'e',
+                  count == 600 && i > 0 ? threadIdReplyZero : threadIdRoot,
+                  '',
+                  'reply',
+                ],
               ],
             ),
         ];
@@ -1914,7 +2062,7 @@ void main() {
           pages.add(replies.skip(start).take(200).toList());
         }
         if (count % 200 == 0) pages.add([]);
-        final window = [_event(id: 'root', createdAt: 10), _bounds()];
+        final window = [_event(id: threadIdRoot, createdAt: 10), _bounds()];
         final session = _RecordingRelaySessionNotifier(
           queryResults: [window, ...pages, window, ...pages, ...pages],
         );
@@ -1922,7 +2070,10 @@ void main() {
         addTearDown(container.dispose);
         container.listen(channelMessagesProvider(_channelId), (_, _) {});
         await _pumpEventQueue();
-        const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
+        const args = ThreadRepliesArgs(
+          channelId: _channelId,
+          rootId: threadIdRoot,
+        );
         final thread = container.listen(threadRepliesProvider(args), (_, _) {});
         expect(
           await container.read(threadRepliesProvider(args).future),
@@ -1942,14 +2093,17 @@ void main() {
           );
           expect(
             entries
-                .singleWhere((entry) => entry.message.id == 'root')
+                .singleWhere((entry) => entry.message.id == threadIdRoot)
                 .summary
                 ?.replyCount,
             count,
           );
-          expect(notifier.cachedThreadReplyIds('root'), hasLength(256));
-          expect(notifier.threadSummaries['root']?.lastReplyAt, 19 + count);
-          expect(notifier.threadSummaries['root']?.participantPubkeys, [
+          expect(notifier.cachedThreadReplyIds(threadIdRoot), hasLength(256));
+          expect(
+            notifier.threadSummaries[threadIdRoot]?.lastReplyAt,
+            19 + count,
+          );
+          expect(notifier.threadSummaries[threadIdRoot]?.participantPubkeys, [
             'alice',
           ]);
         }
@@ -1957,7 +2111,9 @@ void main() {
         checkSummary();
         if (count == 600) {
           expect(
-            notifier.cachedThreadReplyIds('root').contains('reply-0'),
+            notifier
+                .cachedThreadReplyIds(threadIdRoot)
+                .contains(threadIdReplyZero),
             isFalse,
           );
         }
@@ -1966,7 +2122,7 @@ void main() {
         session.setConnected(true);
         await _pumpEventQueue();
         await Future<void>.delayed(const Duration(milliseconds: 300));
-        session.emit(_event(id: 'unrelated', createdAt: 1000));
+        session.emit(_event(id: threadIdUnrelated, createdAt: 1000));
         checkSummary();
         final reopened = container.listen(
           threadRepliesProvider(args),
@@ -1991,10 +2147,10 @@ void main() {
     final session = _RecordingRelaySessionNotifier(
       queryResults: [
         [
-          _event(id: 'root', createdAt: 10),
-          _event(id: 'other-root', createdAt: 9),
-          _event(id: 'unrelated', createdAt: 8),
-          _summary(rootId: 'unrelated', replyCount: 2),
+          _event(id: threadIdRoot, createdAt: 10),
+          _event(id: threadIdOtherRoot, createdAt: 9),
+          _event(id: threadIdUnrelated, createdAt: 8),
+          _summary(rootId: threadIdUnrelated, replyCount: 2),
           _bounds(),
         ],
         <NostrEvent>[],
@@ -2008,7 +2164,7 @@ void main() {
     final notifier = container.read(
       channelMessagesProvider(_channelId).notifier,
     );
-    for (final root in ['root', 'other-root']) {
+    for (final root in [threadIdRoot, threadIdOtherRoot]) {
       notifier.cacheCompleteThreadQuery(root, {}, [
         _event(
           id: '$root-reply',
@@ -2025,20 +2181,26 @@ void main() {
       createdAt: 30,
       kind: EventKind.deletion,
       tags: const [
-        ['e', 'root-reply'],
-        ['e', 'other-root-reply'],
+        ['e', '$threadIdRoot-reply'],
+        ['e', '$threadIdOtherRoot-reply'],
         ['e', 'outside-channel'],
       ],
       content: '',
       sig: 'original-signature',
     );
-    notifier.cacheThreadDeletions([deletion], scopedTargetIds: {'root-reply'});
-    expect(notifier.cachedThreadReplyIds('other-root'), isEmpty);
-    expect(notifier.threadSummaries['other-root']?.descendantCount, 0);
-    expect(notifier.threadSummaries['unrelated']!.isCountPending, isFalse);
+    notifier.cacheThreadDeletions(
+      [deletion],
+      scopedTargetIds: {'$threadIdRoot-reply'},
+    );
+    expect(notifier.cachedThreadReplyIds(threadIdOtherRoot), isEmpty);
+    expect(notifier.threadSummaries[threadIdOtherRoot]?.descendantCount, 0);
+    expect(
+      notifier.threadSummaries[threadIdUnrelated]!.isCountPending,
+      isFalse,
+    );
     await Future<void>.delayed(const Duration(milliseconds: 350));
-    expect(notifier.threadSummaries['other-root']?.descendantCount, 0);
-    expect(notifier.threadSummaries['other-root']?.isLowerBound, isFalse);
+    expect(notifier.threadSummaries[threadIdOtherRoot]?.descendantCount, 0);
+    expect(notifier.threadSummaries[threadIdOtherRoot]?.isLowerBound, isFalse);
     expect(
       session.queryFilters.where(
         (filter) => filter.extensions['resolve_thread_roots'] == true,
@@ -2071,9 +2233,9 @@ void main() {
         final session = _RecordingRelaySessionNotifier(
           queryResults: [
             [
-              _event(id: 'root', createdAt: 10),
-              _event(id: 'unrelated', createdAt: 9),
-              _summary(rootId: 'unrelated', replyCount: 2),
+              _event(id: threadIdRoot, createdAt: 10),
+              _event(id: threadIdUnrelated, createdAt: 9),
+              _summary(rootId: threadIdUnrelated, replyCount: 2),
               _bounds(),
             ],
             <NostrEvent>[],
@@ -2094,11 +2256,14 @@ void main() {
             id: 'pending',
             createdAt: 20,
             extraTags: const [
-              ['e', 'root', '', 'reply'],
+              ['e', threadIdRoot, '', 'reply'],
             ],
           ),
         );
-        const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
+        const args = ThreadRepliesArgs(
+          channelId: _channelId,
+          rootId: threadIdRoot,
+        );
         container.listen(threadRepliesProvider(args), (_, _) {});
         await container.read(threadRepliesProvider(args).future);
         expect(
@@ -2113,7 +2278,10 @@ void main() {
           container.read(pendingLocalMessagesProvider(_channelId)),
           isEmpty,
         );
-        expect(notifier.threadSummaries['unrelated']!.isCountPending, isFalse);
+        expect(
+          notifier.threadSummaries[threadIdUnrelated]!.isCountPending,
+          isFalse,
+        );
         expect(
           session.queryFilters.where(
             (filter) => filter.extensions['resolve_thread_roots'] == true,
@@ -2144,7 +2312,7 @@ void main() {
             id: 'live-$i',
             createdAt: 20 + i,
             extraTags: const [
-              ['e', 'root', '', 'reply'],
+              ['e', threadIdRoot, '', 'reply'],
             ],
           ),
       ];
@@ -2154,7 +2322,7 @@ void main() {
         replies.skip(400).toList(),
         <NostrEvent>[],
       ];
-      final window = [_event(id: 'root', createdAt: 10), _bounds()];
+      final window = [_event(id: threadIdRoot, createdAt: 10), _bounds()];
       final session = _RecordingRelaySessionNotifier(
         queryResults: [window, ...pages, window, ...pages, ...pages],
       );
@@ -2168,7 +2336,7 @@ void main() {
       for (final reply in replies) {
         session.emit(reply);
       }
-      expect(notifier.threadSummaries['root']?.isLowerBound, isTrue);
+      expect(notifier.threadSummaries[threadIdRoot]?.isLowerBound, isTrue);
       expect(
         session.queryFilters.where(
           (filter) => filter.extensions.containsKey('depth_limit'),
@@ -2176,23 +2344,26 @@ void main() {
         isEmpty,
       );
       await Future<void>.delayed(const Duration(milliseconds: 300));
-      expect(notifier.threadSummaries['root']?.descendantCount, 600);
-      expect(notifier.threadSummaries['root']?.isLowerBound, isFalse);
-      expect(notifier.cachedThreadReplyIds('root'), hasLength(256));
+      expect(notifier.threadSummaries[threadIdRoot]?.descendantCount, 600);
+      expect(notifier.threadSummaries[threadIdRoot]?.isLowerBound, isFalse);
+      expect(notifier.cachedThreadReplyIds(threadIdRoot), hasLength(256));
       expect(
         session.queryFilters.where(
           (filter) => filter.extensions.containsKey('depth_limit'),
         ),
         hasLength(4),
       );
-      const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
+      const args = ThreadRepliesArgs(
+        channelId: _channelId,
+        rootId: threadIdRoot,
+      );
       expect(container.exists(threadRepliesProvider(args)), isFalse);
       session.setConnected(false);
       await _pumpEventQueue();
       session.setConnected(true);
       await _pumpEventQueue();
       await Future<void>.delayed(const Duration(milliseconds: 300));
-      session.emit(_event(id: 'unrelated', createdAt: 1000));
+      session.emit(_event(id: threadIdUnrelated, createdAt: 1000));
       final entries = buildMainTimelineEntries(
         formatTimeline(
           container.read(channelMessagesProvider(_channelId)).value!,
@@ -2201,7 +2372,7 @@ void main() {
       );
       expect(
         entries
-            .singleWhere((entry) => entry.message.id == 'root')
+            .singleWhere((entry) => entry.message.id == threadIdRoot)
             .summary
             ?.replyCount,
         600,
@@ -2211,7 +2382,7 @@ void main() {
         await container.read(threadRepliesProvider(args).future),
         hasLength(600),
       );
-      expect(notifier.threadSummaries['root']?.isLowerBound, isFalse);
+      expect(notifier.threadSummaries[threadIdRoot]?.isLowerBound, isFalse);
       reopened.close();
     },
   );
@@ -2224,7 +2395,7 @@ void main() {
         queryResults: [
           [
             for (var root = 2; root >= 0; root--)
-              _event(id: 'root-$root', createdAt: 10 + root),
+              _event(id: indexedThreadId('root-$root'), createdAt: 10 + root),
             _bounds(),
           ],
           ...gates.map((gate) => gate.future),
@@ -2240,7 +2411,7 @@ void main() {
               id: '$root-$i',
               createdAt: 20 + i,
               extraTags: [
-                ['e', 'root-$root', '', 'reply'],
+                ['e', indexedThreadId('root-$root'), '', 'reply'],
               ],
             ),
           );
@@ -2281,14 +2452,14 @@ void main() {
       final replies = [
         for (var i = 0; i < 300; i++)
           _event(
-            id: 'reply-$i',
+            id: indexedThreadId('reply-$i'),
             createdAt: 20 + i,
             extraTags: const [
-              ['e', 'root', '', 'reply'],
+              ['e', threadIdRoot, '', 'reply'],
             ],
           ),
       ];
-      final window = [_event(id: 'root', createdAt: 10), _bounds()];
+      final window = [_event(id: threadIdRoot, createdAt: 10), _bounds()];
       final session = _RecordingRelaySessionNotifier(
         queryResults: [
           window,
@@ -2315,8 +2486,8 @@ void main() {
       await _pumpEventQueue();
       oldScan.complete(replies.take(200).toList());
       await Future<void>.delayed(const Duration(milliseconds: 300));
-      expect(notifier.threadSummaries['root']?.descendantCount, 300);
-      expect(notifier.threadSummaries['root']?.isLowerBound, isFalse);
+      expect(notifier.threadSummaries[threadIdRoot]?.descendantCount, 300);
+      expect(notifier.threadSummaries[threadIdRoot]?.isLowerBound, isFalse);
       expect(
         session.queryFilters.where(
           (filter) => filter.extensions.containsKey('depth_limit'),
@@ -2330,16 +2501,16 @@ void main() {
     final replies = [
       for (var i = 0; i < 301; i++)
         _event(
-          id: 'reply-$i',
+          id: indexedThreadId('reply-$i'),
           createdAt: 20 + i,
           extraTags: const [
-            ['e', 'root', '', 'reply'],
+            ['e', threadIdRoot, '', 'reply'],
           ],
         ),
     ];
     final session = _RecordingRelaySessionNotifier(
       queryResults: [
-        [_event(id: 'root', createdAt: 10), _bounds()],
+        [_event(id: threadIdRoot, createdAt: 10), _bounds()],
         for (var i = 0; i < 3; i++) Exception('recount unavailable'),
         replies.take(200).toList(),
         replies.skip(200).toList(),
@@ -2362,17 +2533,17 @@ void main() {
       ),
       hasLength(3),
     );
-    expect(notifier.threadSummaries['root']?.isLowerBound, isTrue);
+    expect(notifier.threadSummaries[threadIdRoot]?.isLowerBound, isTrue);
     session.emit(replies.last);
     await Future<void>.delayed(const Duration(milliseconds: 300));
-    expect(notifier.threadSummaries['root']?.descendantCount, 301);
-    expect(notifier.threadSummaries['root']?.isLowerBound, isFalse);
+    expect(notifier.threadSummaries[threadIdRoot]?.descendantCount, 301);
+    expect(notifier.threadSummaries[threadIdRoot]?.isLowerBound, isFalse);
   });
 
   test('a fresh relay summary cancels the queued overflow scan', () async {
     final session = _RecordingRelaySessionNotifier(
       queryResults: [
-        [_event(id: 'root', createdAt: 10), _bounds()],
+        [_event(id: threadIdRoot, createdAt: 10), _bounds()],
       ],
     );
     final container = _buildContainer(session);
@@ -2382,19 +2553,21 @@ void main() {
     for (var i = 0; i < 300; i++) {
       session.emit(
         _event(
-          id: 'reply-$i',
+          id: indexedThreadId('reply-$i'),
           createdAt: 20 + i,
           extraTags: const [
-            ['e', 'root', '', 'reply'],
+            ['e', threadIdRoot, '', 'reply'],
           ],
         ),
       );
     }
-    session.emit(_summary(rootId: 'root', replyCount: 300, createdAt: 400));
+    session.emit(
+      _summary(rootId: threadIdRoot, replyCount: 300, createdAt: 400),
+    );
     await Future<void>.delayed(const Duration(milliseconds: 300));
     final summary = container
         .read(channelMessagesProvider(_channelId).notifier)
-        .threadSummaries['root'];
+        .threadSummaries[threadIdRoot];
     expect(summary?.descendantCount, 300);
     expect(summary?.isLowerBound, isFalse);
     expect(
@@ -2409,16 +2582,16 @@ void main() {
     final replies = [
       for (var i = 0; i < 300; i++)
         _event(
-          id: 'reply-$i',
+          id: indexedThreadId('reply-$i'),
           createdAt: 20 + i,
           extraTags: const [
-            ['e', 'root', '', 'reply'],
+            ['e', threadIdRoot, '', 'reply'],
           ],
         ),
     ];
     final session = _RecordingRelaySessionNotifier(
       queryResults: [
-        [_event(id: 'root', createdAt: 10), _bounds()],
+        [_event(id: threadIdRoot, createdAt: 10), _bounds()],
         replies.take(200).toList(),
         replies.skip(200).toList(),
       ],
@@ -2448,7 +2621,7 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 300));
     final summary = container
         .read(channelMessagesProvider(_channelId).notifier)
-        .threadSummaries['root'];
+        .threadSummaries[threadIdRoot];
     expect(summary?.descendantCount, 300);
     expect(summary?.isLowerBound, isFalse);
     resumed.close();
@@ -2459,16 +2632,16 @@ void main() {
     final replies = [
       for (var i = 0; i < 400; i++)
         _event(
-          id: 'reply-$i',
+          id: indexedThreadId('reply-$i'),
           createdAt: 20 + i,
           extraTags: const [
-            ['e', 'root', '', 'reply'],
+            ['e', threadIdRoot, '', 'reply'],
           ],
         ),
     ];
     final session = _RecordingRelaySessionNotifier(
       queryResults: [
-        [_event(id: 'root', createdAt: 10), _bounds()],
+        [_event(id: threadIdRoot, createdAt: 10), _bounds()],
         oldScan.future,
         replies.take(200).toList(),
         replies.skip(200).toList(),
@@ -2483,7 +2656,7 @@ void main() {
       session.emit(reply);
     }
     await Future<void>.delayed(const Duration(milliseconds: 300));
-    const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
+    const args = ThreadRepliesArgs(channelId: _channelId, rootId: threadIdRoot);
     container.listen(threadRepliesProvider(args), (_, _) {});
     expect(
       await container.read(threadRepliesProvider(args).future),
@@ -2493,7 +2666,7 @@ void main() {
     await _pumpEventQueue();
     final summary = container
         .read(channelMessagesProvider(_channelId).notifier)
-        .threadSummaries['root'];
+        .threadSummaries[threadIdRoot];
     expect(summary?.descendantCount, 400);
     expect(summary?.isLowerBound, isFalse);
   });
@@ -2506,17 +2679,17 @@ void main() {
           final replies = [
             for (var i = 0; i < count; i++)
               _event(
-                id: 'reply-$i',
+                id: indexedThreadId('reply-$i'),
                 createdAt: 20 + i,
                 extraTags: const [
-                  ['e', 'root', '', 'reply'],
+                  ['e', threadIdRoot, '', 'reply'],
                 ],
               ),
           ];
           final remaining = replies.skip(1).toList();
           final session = _RecordingRelaySessionNotifier(
             queryResults: [
-              [_event(id: 'root', createdAt: 10), _bounds()],
+              [_event(id: threadIdRoot, createdAt: 10), _bounds()],
               for (var i = 0; i < remaining.length; i += 200)
                 remaining.skip(i).take(200).toList(),
               if (remaining.length % 200 == 0) <NostrEvent>[],
@@ -2529,12 +2702,15 @@ void main() {
           final notifier = container.read(
             channelMessagesProvider(_channelId).notifier,
           );
-          notifier.cacheCompleteThreadQuery('root', {}, replies);
-          expect(notifier.threadSummaries['root']?.descendantCount, count);
+          notifier.cacheCompleteThreadQuery(threadIdRoot, {}, replies);
+          expect(
+            notifier.threadSummaries[threadIdRoot]?.descendantCount,
+            count,
+          );
           if (count == 600) {
             expect(
-              notifier.cachedThreadReplyIds('root'),
-              isNot(contains('reply-0')),
+              notifier.cachedThreadReplyIds(threadIdRoot),
+              isNot(contains(threadIdReplyZero)),
             );
           }
           final deletion = NostrEvent(
@@ -2544,7 +2720,7 @@ void main() {
             kind: EventKind.deletion,
             tags: const [
               ['h', _channelId],
-              ['e', 'reply-0'],
+              ['e', threadIdReplyZero],
             ],
             content: '',
             sig: '',
@@ -2554,12 +2730,21 @@ void main() {
           } else {
             session.emit(deletion);
           }
-          expect(notifier.threadSummaries['root']?.descendantCount, count - 1);
-          expect(notifier.threadSummaries['root']?.isCountPending, isFalse);
-          expect(notifier.threadSummaries['root']?.isLowerBound, isTrue);
+          expect(
+            notifier.threadSummaries[threadIdRoot]?.descendantCount,
+            count - 1,
+          );
+          expect(
+            notifier.threadSummaries[threadIdRoot]?.isCountPending,
+            isFalse,
+          );
+          expect(notifier.threadSummaries[threadIdRoot]?.isLowerBound, isTrue);
           await Future<void>.delayed(const Duration(milliseconds: 300));
-          expect(notifier.threadSummaries['root']?.descendantCount, count - 1);
-          expect(notifier.threadSummaries['root']?.isLowerBound, isFalse);
+          expect(
+            notifier.threadSummaries[threadIdRoot]?.descendantCount,
+            count - 1,
+          );
+          expect(notifier.threadSummaries[threadIdRoot]?.isLowerBound, isFalse);
           final entries = buildMainTimelineEntries(
             formatTimeline(
               container.read(channelMessagesProvider(_channelId)).value!,
@@ -2568,7 +2753,7 @@ void main() {
           );
           expect(
             entries
-                .singleWhere((entry) => entry.message.id == 'root')
+                .singleWhere((entry) => entry.message.id == threadIdRoot)
                 .summary
                 ?.replyCount,
             count == 1 ? null : count - 1,
@@ -2582,7 +2767,7 @@ void main() {
     test(
       'reconnect summary replaces queried count with $refreshedCount',
       () async {
-        final root = _event(id: 'root', createdAt: 10);
+        final root = _event(id: threadIdRoot, createdAt: 10);
         final session = _RecordingRelaySessionNotifier(
           queryResults: [
             [root, _bounds()],
@@ -2590,7 +2775,7 @@ void main() {
               root,
               if (refreshedCount >= 0)
                 _summary(
-                  rootId: 'root',
+                  rootId: threadIdRoot,
                   replyCount: refreshedCount,
                   createdAt: 1000,
                 ),
@@ -2606,13 +2791,13 @@ void main() {
         final notifier = container.read(
           channelMessagesProvider(_channelId).notifier,
         );
-        notifier.cacheCompleteThreadQuery('root', {}, [
+        notifier.cacheCompleteThreadQuery(threadIdRoot, {}, [
           for (var i = 0; i < 600; i++)
             _event(
-              id: 'reply-$i',
+              id: indexedThreadId('reply-$i'),
               createdAt: 20 + i,
               extraTags: const [
-                ['e', 'root', '', 'reply'],
+                ['e', threadIdRoot, '', 'reply'],
               ],
             ),
         ]);
@@ -2622,10 +2807,10 @@ void main() {
         await _pumpEventQueue();
         await Future<void>.delayed(const Duration(milliseconds: 300));
         expect(
-          notifier.threadSummaries['root']?.descendantCount,
+          notifier.threadSummaries[threadIdRoot]?.descendantCount,
           refreshedCount < 0 ? 0 : refreshedCount,
         );
-        expect(notifier.threadSummaries['root']?.isLowerBound, isFalse);
+        expect(notifier.threadSummaries[threadIdRoot]?.isLowerBound, isFalse);
         final entries = buildMainTimelineEntries(
           formatTimeline(
             container.read(channelMessagesProvider(_channelId)).value!,
@@ -2634,7 +2819,7 @@ void main() {
         );
         expect(
           entries
-              .singleWhere((entry) => entry.message.id == 'root')
+              .singleWhere((entry) => entry.message.id == threadIdRoot)
               .summary
               ?.replyCount,
           refreshedCount <= 0 ? null : refreshedCount,
@@ -2649,8 +2834,8 @@ void main() {
       final session = _RecordingRelaySessionNotifier(
         queryResults: [
           [
-            _event(id: 'unrelated', createdAt: 10),
-            _summary(rootId: 'unrelated', replyCount: 1),
+            _event(id: threadIdUnrelated, createdAt: 10),
+            _summary(rootId: threadIdUnrelated, replyCount: 1),
             _bounds(),
           ],
           Exception('recount unavailable'),
@@ -2678,7 +2863,7 @@ void main() {
       final notifier = container.read(
         channelMessagesProvider(_channelId).notifier,
       );
-      final summary = notifier.threadSummaries['unrelated'];
+      final summary = notifier.threadSummaries[threadIdUnrelated];
       expect(summary?.descendantCount, 1);
       expect(summary?.isCountPending, isTrue);
       final entries = buildMainTimelineEntries(
@@ -2703,9 +2888,9 @@ void main() {
               _bounds(hasMore: true, cursorCreatedAt: 100, cursorId: 'newest'),
             ],
             [
-              _event(id: 'old-root', createdAt: 10),
+              _event(id: threadIdOldDashRoot, createdAt: 10),
               if (olderCount > 0)
-                _summary(rootId: 'old-root', replyCount: olderCount),
+                _summary(rootId: threadIdOldDashRoot, replyCount: olderCount),
               _bounds(dTag: '${_channelId.toLowerCase()}:100:newest'),
             ],
             if (olderCount == 0) <NostrEvent>[],
@@ -2718,23 +2903,28 @@ void main() {
         final notifier = container.read(
           channelMessagesProvider(_channelId).notifier,
         );
-        final load = notifier.loadEventsById(['old-root']);
-        session.completeTargetHistory([_event(id: 'old-root', createdAt: 10)]);
+        final load = notifier.loadEventsById([threadIdOldDashRoot]);
+        session.completeTargetHistory([
+          _event(id: threadIdOldDashRoot, createdAt: 10),
+        ]);
         await load;
-        notifier.cacheCompleteThreadQuery('old-root', {}, [
+        notifier.cacheCompleteThreadQuery(threadIdOldDashRoot, {}, [
           _event(
             id: 'old-reply',
             createdAt: 20,
             extraTags: const [
-              ['e', 'old-root', '', 'reply'],
+              ['e', threadIdOldDashRoot, '', 'reply'],
             ],
           ),
         ]);
-        expect(notifier.threadSummaries['old-root']?.descendantCount, 1);
+        expect(
+          notifier.threadSummaries[threadIdOldDashRoot]?.descendantCount,
+          1,
+        );
         expect(await notifier.fetchOlder(), isTrue);
         await Future<void>.delayed(const Duration(milliseconds: 300));
         expect(
-          notifier.threadSummaries['old-root']?.descendantCount,
+          notifier.threadSummaries[threadIdOldDashRoot]?.descendantCount,
           olderCount,
         );
         final entries = buildMainTimelineEntries(
@@ -2745,7 +2935,7 @@ void main() {
         );
         expect(
           entries
-              .singleWhere((entry) => entry.message.id == 'old-root')
+              .singleWhere((entry) => entry.message.id == threadIdOldDashRoot)
               .summary
               ?.replyCount,
           olderCount == 0 ? null : olderCount,
@@ -2760,17 +2950,17 @@ void main() {
       final replies = [
         for (var i = 0; i < 603; i++)
           _event(
-            id: 'reply-$i',
+            id: indexedThreadId('reply-$i'),
             createdAt: 20 + i,
             extraTags: const [
-              ['e', 'root', '', 'reply'],
+              ['e', threadIdRoot, '', 'reply'],
             ],
           ),
       ];
       final gates = [for (var i = 0; i < 4; i++) Completer<List<NostrEvent>>()];
       final session = _RecordingRelaySessionNotifier(
         queryResults: [
-          [_event(id: 'root', createdAt: 10), _bounds()],
+          [_event(id: threadIdRoot, createdAt: 10), _bounds()],
           for (final gate in gates) gate.future,
           for (var i = 0; i < 603; i += 200) replies.skip(i).take(200).toList(),
         ],
@@ -2801,11 +2991,11 @@ void main() {
       final notifier = container.read(
         channelMessagesProvider(_channelId).notifier,
       );
-      expect(notifier.threadSummaries['root']?.descendantCount, 603);
-      expect(notifier.threadSummaries['root']?.isLowerBound, isTrue);
+      expect(notifier.threadSummaries[threadIdRoot]?.descendantCount, 603);
+      expect(notifier.threadSummaries[threadIdRoot]?.isLowerBound, isTrue);
       await Future<void>.delayed(const Duration(milliseconds: 300));
-      expect(notifier.threadSummaries['root']?.descendantCount, 603);
-      expect(notifier.threadSummaries['root']?.isLowerBound, isFalse);
+      expect(notifier.threadSummaries[threadIdRoot]?.descendantCount, 603);
+      expect(notifier.threadSummaries[threadIdRoot]?.isLowerBound, isFalse);
       expect(
         session.queryFilters.where(
           (filter) => filter.extensions.containsKey('depth_limit'),
@@ -2838,8 +3028,10 @@ void main() {
         final notifier = container.read(
           channelMessagesProvider(_channelId).notifier,
         );
-        final load = notifier.loadEventsById(['old-root']);
-        session.completeTargetHistory([_event(id: 'old-root', createdAt: 10)]);
+        final load = notifier.loadEventsById([threadIdOldDashRoot]);
+        session.completeTargetHistory([
+          _event(id: threadIdOldDashRoot, createdAt: 10),
+        ]);
         await load;
         Future<bool>? older;
         if (newest) {
@@ -2852,13 +3044,13 @@ void main() {
         }
         const args = ThreadRepliesArgs(
           channelId: _channelId,
-          rootId: 'old-root',
+          rootId: threadIdOldDashRoot,
         );
         container.listen(threadRepliesProvider(args), (_, _) {});
         final thread = container.read(threadRepliesProvider(args).future);
         await _pumpEventQueue();
         page.complete([
-          _event(id: 'old-root', createdAt: 10),
+          _event(id: threadIdOldDashRoot, createdAt: 10),
           _bounds(
             dTag: newest
                 ? '${_channelId.toLowerCase()}:head'
@@ -2872,7 +3064,7 @@ void main() {
             id: 'reply',
             createdAt: 20,
             extraTags: const [
-              ['e', 'old-root', '', 'reply'],
+              ['e', threadIdOldDashRoot, '', 'reply'],
             ],
           ),
         ]);
@@ -2881,7 +3073,10 @@ void main() {
           session.historyFilters.where((filter) => filter.ids == null),
           isEmpty,
         );
-        expect(notifier.threadSummaries['old-root']?.descendantCount, 1);
+        expect(
+          notifier.threadSummaries[threadIdOldDashRoot]?.descendantCount,
+          1,
+        );
       },
     );
   }
@@ -2893,8 +3088,8 @@ void main() {
         queryResults: [
           [
             for (var i = 39; i >= 0; i--) ...[
-              _event(id: 'root-$i', createdAt: 10 + i),
-              _summary(rootId: 'root-$i', replyCount: 1),
+              _event(id: indexedThreadId('root-$i'), createdAt: 10 + i),
+              _summary(rootId: indexedThreadId('root-$i'), replyCount: 1),
             ],
             _bounds(),
           ],
@@ -2953,7 +3148,7 @@ void main() {
       final ownership = Completer<List<NostrEvent>>();
       final session = _RecordingRelaySessionNotifier(
         queryResults: [
-          [_event(id: 'root', createdAt: 10), _bounds()],
+          [_event(id: threadIdRoot, createdAt: 10), _bounds()],
           ownership.future,
           <NostrEvent>[],
         ],
@@ -2965,12 +3160,12 @@ void main() {
       final notifier = container.read(
         channelMessagesProvider(_channelId).notifier,
       );
-      notifier.cacheCompleteThreadQuery('root', {}, [
+      notifier.cacheCompleteThreadQuery(threadIdRoot, {}, [
         _event(
           id: 'known',
           createdAt: 20,
           extraTags: const [
-            ['e', 'root', '', 'reply'],
+            ['e', threadIdRoot, '', 'reply'],
           ],
         ),
       ]);
@@ -2990,9 +3185,9 @@ void main() {
           ),
         );
       }
-      ownership.complete([_summary(rootId: 'root', replyCount: 1)]);
+      ownership.complete([_summary(rootId: threadIdRoot, replyCount: 1)]);
       await _pumpEventQueue();
-      expect(notifier.threadSummaries['root']!.descendantCount, 0);
+      expect(notifier.threadSummaries[threadIdRoot]!.descendantCount, 0);
       await Future<void>.delayed(const Duration(milliseconds: 300));
       expect(
         session.queryFilters.where(
@@ -3007,7 +3202,7 @@ void main() {
         relaySummaries: notifier.threadSummaries,
       );
       expect(
-        entries.singleWhere((e) => e.message.id == 'root').summary,
+        entries.singleWhere((e) => e.message.id == threadIdRoot).summary,
         isNull,
       );
     },
@@ -3019,16 +3214,16 @@ void main() {
         final replies = [
           for (var i = 0; i < (source == 'overflow' ? 257 : 1); i++)
             _event(
-              id: 'reply-$i',
+              id: indexedThreadId('reply-$i'),
               createdAt: 20 + i,
               extraTags: const [
-                ['e', 'root', '', 'reply'],
+                ['e', threadIdRoot, '', 'reply'],
               ],
             ),
         ];
         final session = _RecordingRelaySessionNotifier(
           queryResults: [
-            [_event(id: 'root', createdAt: 10), _bounds()],
+            [_event(id: threadIdRoot, createdAt: 10), _bounds()],
             if (source == 'fallback') Exception('NIP-CW unavailable'),
             Exception('temporary recount outage'),
             if (outcome == 'recovered') ...[
@@ -3043,7 +3238,7 @@ void main() {
             ],
           ],
           historyResults: [
-            [_event(id: 'root', createdAt: 10)],
+            [_event(id: threadIdRoot, createdAt: 10)],
           ],
         );
         final container = _buildContainer(session);
@@ -3079,7 +3274,7 @@ void main() {
               : 2,
         );
         if (outcome == 'disposed') return;
-        final summary = notifier.threadSummaries['root']!;
+        final summary = notifier.threadSummaries[threadIdRoot]!;
         if (outcome == 'exhausted') {
           expect(summary.isLowerBound, isTrue);
         } else {
@@ -3108,7 +3303,7 @@ void main() {
         final route = Completer<List<NostrEvent>>();
         final session = _RecordingRelaySessionNotifier(
           queryResults: [
-            [_event(id: 'root', createdAt: 10), _bounds()],
+            [_event(id: threadIdRoot, createdAt: 10), _bounds()],
             page.future,
             route.future,
             <NostrEvent>[],
@@ -3124,12 +3319,12 @@ void main() {
         final notifier = container.read(
           channelMessagesProvider(_channelId).notifier,
         );
-        notifier.cacheCompleteThreadQuery('root', {}, [
+        notifier.cacheCompleteThreadQuery(threadIdRoot, {}, [
           _event(
             id: 'deleted-offline',
             createdAt: 20,
             extraTags: const [
-              ['e', 'root', '', 'reply'],
+              ['e', threadIdRoot, '', 'reply'],
             ],
           ),
         ]);
@@ -3137,7 +3332,10 @@ void main() {
         await _pumpEventQueue();
         session.setConnected(true);
         await _pumpEventQueue();
-        const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
+        const args = ThreadRepliesArgs(
+          channelId: _channelId,
+          rootId: threadIdRoot,
+        );
         container.listen(threadRepliesProvider(args), (_, _) {});
         final failure = expectLater(
           container.read(threadRepliesProvider(args).future),
@@ -3148,7 +3346,7 @@ void main() {
           route.completeError(Exception('route query failed'));
           await failure;
         }
-        page.complete([_event(id: 'root', createdAt: 10), _bounds()]);
+        page.complete([_event(id: threadIdRoot, createdAt: 10), _bounds()]);
         await _pumpEventQueue();
         if (!failureFirst) {
           route.completeError(Exception('route query failed'));
@@ -3162,7 +3360,7 @@ void main() {
           relaySummaries: notifier.threadSummaries,
         );
         expect(entries.single.summary, isNull);
-        expect(notifier.cachedThreadReplyIds('root'), isEmpty);
+        expect(notifier.cachedThreadReplyIds(threadIdRoot), isEmpty);
       },
     );
   }
@@ -3175,12 +3373,12 @@ void main() {
           id: 'old-reply',
           createdAt: 20,
           extraTags: const [
-            ['e', 'retained', '', 'reply'],
+            ['e', threadIdRetained, '', 'reply'],
           ],
         );
         final session = _RecordingRelaySessionNotifier(
           queryResults: [
-            [_event(id: 'retained', createdAt: 10), _bounds()],
+            [_event(id: threadIdRetained, createdAt: 10), _bounds()],
             [_event(id: 'newest', createdAt: 200), _bounds()],
             [if (survives) reply],
           ],
@@ -3192,8 +3390,8 @@ void main() {
         final notifier = container.read(
           channelMessagesProvider(_channelId).notifier,
         );
-        await notifier.loadEventsById(['retained']);
-        notifier.cacheCompleteThreadQuery('retained', {}, [reply]);
+        await notifier.loadEventsById([threadIdRetained]);
+        notifier.cacheCompleteThreadQuery(threadIdRetained, {}, [reply]);
         session.setConnected(false);
         await _pumpEventQueue();
         session.setConnected(true);
@@ -3205,12 +3403,15 @@ void main() {
           hasLength(1),
         );
         expect(
-          notifier.threadSummaries['retained']?.descendantCount,
+          notifier.threadSummaries[threadIdRetained]?.descendantCount,
           survives ? 1 : 0,
         );
-        expect(notifier.threadSummaries['retained']?.isCountPending, isFalse);
         expect(
-          notifier.cachedThreadReplyIds('retained'),
+          notifier.threadSummaries[threadIdRetained]?.isCountPending,
+          isFalse,
+        );
+        expect(
+          notifier.cachedThreadReplyIds(threadIdRetained),
           survives ? {'old-reply'} : isEmpty,
         );
       },
@@ -3224,8 +3425,8 @@ void main() {
       final session = _RecordingRelaySessionNotifier(
         queryResults: [
           [
-            _event(id: 'retained', createdAt: 10),
-            _summary(rootId: 'retained', replyCount: 1),
+            _event(id: threadIdRetained, createdAt: 10),
+            _summary(rootId: threadIdRetained, replyCount: 1),
             _bounds(),
           ],
           if (phase == 'backoff')
@@ -3240,7 +3441,7 @@ void main() {
             Exception('unavailable'),
             Exception('unavailable'),
           ] else
-            [_summary(rootId: 'retained', replyCount: 0)],
+            [_summary(rootId: threadIdRetained, replyCount: 0)],
           if (phase != 'exhausted') <NostrEvent>[],
         ],
       );
@@ -3251,14 +3452,14 @@ void main() {
       final notifier = container.read(
         channelMessagesProvider(_channelId).notifier,
       );
-      await notifier.loadEventsById(['retained']);
-      notifier.cacheCompleteThreadQuery('retained', {}, [
+      await notifier.loadEventsById([threadIdRetained]);
+      notifier.cacheCompleteThreadQuery(threadIdRetained, {}, [
         for (var i = 0; i < 257; i++)
           _event(
             id: 'old-reply-$i',
             createdAt: 20 + i,
             extraTags: const [
-              ['e', 'retained', '', 'reply'],
+              ['e', threadIdRetained, '', 'reply'],
             ],
           ),
       ]);
@@ -3313,7 +3514,9 @@ void main() {
         ),
         relaySummaries: notifier.threadSummaries,
       );
-      final retained = entries.singleWhere((e) => e.message.id == 'retained');
+      final retained = entries.singleWhere(
+        (e) => e.message.id == threadIdRetained,
+      );
       if (phase == 'exhausted') {
         expect(retained.summary!.isCountPending, isTrue);
       } else {
@@ -3335,8 +3538,8 @@ void main() {
         final session = _RecordingRelaySessionNotifier(
           queryResults: [
             [
-              _event(id: 'root', createdAt: 10),
-              _summary(rootId: 'root', replyCount: 1),
+              _event(id: threadIdRoot, createdAt: 10),
+              _summary(rootId: threadIdRoot, replyCount: 1),
               _bounds(),
             ],
             ownership.future,
@@ -3367,13 +3570,16 @@ void main() {
             sig: '',
           ),
         );
-        const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
+        const args = ThreadRepliesArgs(
+          channelId: _channelId,
+          rootId: threadIdRoot,
+        );
         container.listen(threadRepliesProvider(args), (_, _) {});
         final result = container.read(threadRepliesProvider(args).future);
         await _pumpEventQueue();
-        ownership.complete([_summary(rootId: 'root', replyCount: 0)]);
+        ownership.complete([_summary(rootId: threadIdRoot, replyCount: 0)]);
         await _pumpEventQueue();
-        expect(notifier.threadSummaries['root']!.isCountPending, isTrue);
+        expect(notifier.threadSummaries[threadIdRoot]!.isCountPending, isTrue);
         if (querySucceeds) {
           threadQuery.complete([]);
           await result;
@@ -3384,7 +3590,7 @@ void main() {
         }
         await _pumpEventQueue();
         expect(
-          notifier.threadSummaries['root']!.isCountPending,
+          notifier.threadSummaries[threadIdRoot]!.isCountPending,
           !querySucceeds,
         );
         final entries = buildMainTimelineEntries(
@@ -3407,13 +3613,13 @@ void main() {
       final session = _RecordingRelaySessionNotifier(
         queryResults: [
           [
-            _event(id: 'root', createdAt: 10),
-            _summary(rootId: 'root', replyCount: 1),
+            _event(id: threadIdRoot, createdAt: 10),
+            _summary(rootId: threadIdRoot, replyCount: 1),
             _bounds(),
           ],
           Exception('temporary outage'),
           if (outcome == 'recovered')
-            [_summary(rootId: 'root', replyCount: 0)]
+            [_summary(rootId: threadIdRoot, replyCount: 0)]
           else ...[
             Exception('still unavailable'),
             Exception('still unavailable'),
@@ -3445,7 +3651,7 @@ void main() {
           .where((f) => f.extensions['resolve_thread_roots'] == true)
           .length;
       expect(requests(), 1);
-      expect(notifier.threadSummaries['root']!.isCountPending, isTrue);
+      expect(notifier.threadSummaries[threadIdRoot]!.isCountPending, isTrue);
       // A replay is deduplicated, but must not prevent the scheduled recovery.
       session.emit(deletion);
       if (outcome == 'disposed') container.dispose();
@@ -3465,9 +3671,9 @@ void main() {
           relaySummaries: notifier.threadSummaries,
         );
         expect(entries.single.summary, isNull);
-        expect(notifier.threadSummaries['root']!.isCountPending, isFalse);
+        expect(notifier.threadSummaries[threadIdRoot]!.isCountPending, isFalse);
       } else if (outcome == 'exhausted') {
-        expect(notifier.threadSummaries['root']!.isCountPending, isTrue);
+        expect(notifier.threadSummaries[threadIdRoot]!.isCountPending, isTrue);
       }
     });
   }
@@ -3481,15 +3687,15 @@ void main() {
         final session = _RecordingRelaySessionNotifier(
           queryResults: [
             [
-              _event(id: 'root', createdAt: 10),
-              _summary(rootId: 'root', replyCount: 1),
+              _event(id: threadIdRoot, createdAt: 10),
+              _summary(rootId: threadIdRoot, replyCount: 1),
               _bounds(),
             ],
             first.future,
             second.future,
             for (var i = 2; i < count; i++)
               i == count - 1
-                  ? [_summary(rootId: 'root', replyCount: 0)]
+                  ? [_summary(rootId: threadIdRoot, replyCount: 0)]
                   : <NostrEvent>[],
           ],
         );
@@ -3523,7 +3729,7 @@ void main() {
         await _pumpEventQueue();
         expect(requests(), count);
         if (count == 150) {
-          expect(notifier.threadSummaries['root']!.descendantCount, 0);
+          expect(notifier.threadSummaries[threadIdRoot]!.descendantCount, 0);
           final entries = buildMainTimelineEntries(
             formatTimeline(
               container.read(channelMessagesProvider(_channelId)).value!,
@@ -3532,8 +3738,11 @@ void main() {
           );
           expect(entries.single.summary, isNull);
         } else {
-          expect(notifier.threadSummaries['root']!.descendantCount, 0);
-          expect(notifier.threadSummaries['root']!.isCountPending, isFalse);
+          expect(notifier.threadSummaries[threadIdRoot]!.descendantCount, 0);
+          expect(
+            notifier.threadSummaries[threadIdRoot]!.isCountPending,
+            isFalse,
+          );
           session.emit(deletion);
           await _pumpEventQueue();
           expect(
@@ -3552,14 +3761,14 @@ void main() {
     final session = _RecordingRelaySessionNotifier(
       queryResults: [
         [
-          _event(id: 'root', createdAt: 10),
-          _summary(rootId: 'root', replyCount: 1),
+          _event(id: threadIdRoot, createdAt: 10),
+          _summary(rootId: threadIdRoot, replyCount: 1),
           _bounds(),
         ],
         first.future,
         second.future,
         for (var i = 2; i < 258; i++) <NostrEvent>[],
-        [_summary(rootId: 'root', replyCount: 0)],
+        [_summary(rootId: threadIdRoot, replyCount: 0)],
       ],
     );
     final container = _buildContainer(session);
@@ -3580,7 +3789,7 @@ void main() {
         sig: '',
       ),
     );
-    session.emit(_summary(rootId: 'root', replyCount: 1));
+    session.emit(_summary(rootId: threadIdRoot, replyCount: 1));
     first.complete([]);
     second.complete([]);
     await _pumpEventQueue();
@@ -3592,7 +3801,7 @@ void main() {
     );
     final summary = container
         .read(channelMessagesProvider(_channelId).notifier)
-        .threadSummaries['root']!;
+        .threadSummaries[threadIdRoot]!;
     expect(summary.descendantCount, 1);
     expect(summary.isCountPending, isFalse);
   });
@@ -3606,8 +3815,8 @@ void main() {
         final session = _RecordingRelaySessionNotifier(
           queryResults: [
             [
-              _event(id: 'root', createdAt: 10),
-              _summary(rootId: 'root', replyCount: 1),
+              _event(id: threadIdRoot, createdAt: 10),
+              _summary(rootId: threadIdRoot, replyCount: 1),
               _bounds(),
             ],
             first.future,
@@ -3657,9 +3866,15 @@ void main() {
           reason: 'deferred targets drain only while mounted',
         );
         if (!disposeEarly) {
-          expect(notifier.threadSummaries['root']!.isCountPending, isTrue);
-          session.emit(_summary(rootId: 'root', replyCount: 1));
-          expect(notifier.threadSummaries['root']!.isCountPending, isFalse);
+          expect(
+            notifier.threadSummaries[threadIdRoot]!.isCountPending,
+            isTrue,
+          );
+          session.emit(_summary(rootId: threadIdRoot, replyCount: 1));
+          expect(
+            notifier.threadSummaries[threadIdRoot]!.isCountPending,
+            isFalse,
+          );
         }
       },
     );
@@ -3674,7 +3889,7 @@ void main() {
         final session = _RecordingRelaySessionNotifier(
           queryResults: [
             [
-              for (final id in ['owner', 'unrelated']) ...[
+              for (final id in [threadIdOwner, threadIdUnrelated]) ...[
                 _event(id: id, createdAt: 10),
                 _summary(rootId: id, replyCount: 2),
               ],
@@ -3708,25 +3923,40 @@ void main() {
           );
         }
         await _pumpEventQueue();
-        expect(notifier.threadSummaries['unrelated']!.isCountPending, isTrue);
+        expect(
+          notifier.threadSummaries[threadIdUnrelated]!.isCountPending,
+          isTrue,
+        );
         if (newestFirst) {
-          second.complete([_summary(rootId: 'owner', replyCount: 0)]);
+          second.complete([_summary(rootId: threadIdOwner, replyCount: 0)]);
         } else {
-          first.complete([_summary(rootId: 'owner', replyCount: 1)]);
+          first.complete([_summary(rootId: threadIdOwner, replyCount: 1)]);
         }
         await _pumpEventQueue();
-        expect(notifier.threadSummaries['unrelated']!.isCountPending, isTrue);
+        expect(
+          notifier.threadSummaries[threadIdUnrelated]!.isCountPending,
+          isTrue,
+        );
         if (newestFirst) {
-          first.complete([_summary(rootId: 'owner', replyCount: 1)]);
+          first.complete([_summary(rootId: threadIdOwner, replyCount: 1)]);
         } else {
-          second.complete([_summary(rootId: 'owner', replyCount: 0)]);
+          second.complete([_summary(rootId: threadIdOwner, replyCount: 0)]);
         }
         await _pumpEventQueue();
-        expect(notifier.threadSummaries['owner']!.descendantCount, 0);
-        expect(notifier.threadSummaries['unrelated']!.descendantCount, 2);
-        expect(notifier.threadSummaries['unrelated']!.isCountPending, isFalse);
-        expect(notifier.threadSummaries['unrelated']!.isLowerBound, isFalse);
-        expect(notifier.threadSummaries['owner']!.isCountPending, isFalse);
+        expect(notifier.threadSummaries[threadIdOwner]!.descendantCount, 0);
+        expect(notifier.threadSummaries[threadIdUnrelated]!.descendantCount, 2);
+        expect(
+          notifier.threadSummaries[threadIdUnrelated]!.isCountPending,
+          isFalse,
+        );
+        expect(
+          notifier.threadSummaries[threadIdUnrelated]!.isLowerBound,
+          isFalse,
+        );
+        expect(
+          notifier.threadSummaries[threadIdOwner]!.isCountPending,
+          isFalse,
+        );
       },
     );
   }
@@ -3740,7 +3970,7 @@ void main() {
         final session = _RecordingRelaySessionNotifier(
           queryResults: [
             [
-              for (final id in ['owner', 'unrelated']) ...[
+              for (final id in [threadIdOwner, threadIdUnrelated]) ...[
                 _event(id: id, createdAt: 10),
                 _summary(rootId: id, replyCount: 2),
               ],
@@ -3773,25 +4003,27 @@ void main() {
           ),
         );
         await _pumpEventQueue();
-        first.complete([_summary(rootId: 'owner', replyCount: 1)]);
+        first.complete([_summary(rootId: threadIdOwner, replyCount: 1)]);
         await _pumpEventQueue();
         expect(
-          notifier.threadSummaries['unrelated']!.isCountPending,
+          notifier.threadSummaries[threadIdUnrelated]!.isCountPending,
           isTrue,
           reason: 'the queued sibling still has unresolved ownership',
         );
-        expect(notifier.threadSummaries['owner']!.isCountPending, isTrue);
+        expect(notifier.threadSummaries[threadIdOwner]!.isCountPending, isTrue);
         second.complete(
-          secondResolves ? [_summary(rootId: 'owner', replyCount: 0)] : [],
+          secondResolves
+              ? [_summary(rootId: threadIdOwner, replyCount: 0)]
+              : [],
         );
         await _pumpEventQueue();
-        expect(notifier.threadSummaries['unrelated']!.descendantCount, 2);
+        expect(notifier.threadSummaries[threadIdUnrelated]!.descendantCount, 2);
         expect(
-          notifier.threadSummaries['unrelated']!.isCountPending,
+          notifier.threadSummaries[threadIdUnrelated]!.isCountPending,
           !secondResolves,
         );
         expect(
-          notifier.threadSummaries['owner']!.descendantCount,
+          notifier.threadSummaries[threadIdOwner]!.descendantCount,
           secondResolves ? 0 : 1,
         );
         final requests = session.queryFilters.where(
@@ -3808,7 +4040,8 @@ void main() {
           relaySummaries: notifier.threadSummaries,
         );
         expect(
-          entries.singleWhere((e) => e.message.id == 'owner').summary == null,
+          entries.singleWhere((e) => e.message.id == threadIdOwner).summary ==
+              null,
           secondResolves,
         );
       },
@@ -3823,7 +4056,7 @@ void main() {
       final session = _RecordingRelaySessionNotifier(
         queryResults: [
           [
-            for (final id in ['owner', 'unrelated']) ...[
+            for (final id in [threadIdOwner, threadIdUnrelated]) ...[
               _event(id: id, createdAt: 10),
               _summary(rootId: id, replyCount: 2),
             ],
@@ -3858,13 +4091,22 @@ void main() {
       }
       first.completeError(Exception('ownership unavailable'));
       await _pumpEventQueue();
-      second.complete([_summary(rootId: 'owner', replyCount: 0)]);
+      second.complete([_summary(rootId: threadIdOwner, replyCount: 0)]);
       await _pumpEventQueue();
-      expect(notifier.threadSummaries['owner']!.descendantCount, 0);
-      expect(notifier.threadSummaries['unrelated']!.isCountPending, isTrue);
-      session.emit(_summary(rootId: 'unrelated', replyCount: 2));
-      expect(notifier.threadSummaries['unrelated']!.isCountPending, isFalse);
-      expect(notifier.threadSummaries['unrelated']!.isLowerBound, isFalse);
+      expect(notifier.threadSummaries[threadIdOwner]!.descendantCount, 0);
+      expect(
+        notifier.threadSummaries[threadIdUnrelated]!.isCountPending,
+        isTrue,
+      );
+      session.emit(_summary(rootId: threadIdUnrelated, replyCount: 2));
+      expect(
+        notifier.threadSummaries[threadIdUnrelated]!.isCountPending,
+        isFalse,
+      );
+      expect(
+        notifier.threadSummaries[threadIdUnrelated]!.isLowerBound,
+        isFalse,
+      );
     },
   );
 
@@ -3873,7 +4115,7 @@ void main() {
     () async {
       final session = _RecordingRelaySessionNotifier(
         queryResults: [
-          [_event(id: 'root', createdAt: 10), _bounds()],
+          [_event(id: threadIdRoot, createdAt: 10), _bounds()],
         ],
       );
       final container = _buildContainer(session);
@@ -3912,16 +4154,16 @@ void main() {
       () async {
         final page = Completer<List<NostrEvent>>();
         final broadcast = _event(
-          id: 'broadcast',
+          id: threadIdBroadcast,
           createdAt: 20,
           extraTags: const [
-            ['e', 'root', '', 'root'],
-            ['e', 'root', '', 'reply'],
+            ['e', threadIdRoot, '', 'root'],
+            ['e', threadIdRoot, '', 'reply'],
             ['broadcast', '1'],
           ],
         );
         final outer = _summary(
-          rootId: 'root',
+          rootId: threadIdRoot,
           replyCount: 1,
           descendantCount: survives ? 2 : 1,
         );
@@ -3936,8 +4178,8 @@ void main() {
                   id: 'survivor',
                   createdAt: 30,
                   extraTags: const [
-                    ['e', 'root', '', 'root'],
-                    ['e', 'broadcast', '', 'reply'],
+                    ['e', threadIdRoot, '', 'root'],
+                    ['e', threadIdBroadcast, '', 'reply'],
                   ],
                 ),
             ],
@@ -3978,7 +4220,7 @@ void main() {
         page.complete([
           broadcast,
           _summary(
-            rootId: 'broadcast',
+            rootId: threadIdBroadcast,
             replyCount: survives ? 2 : 1,
             descendantCount: 0,
           ),
@@ -3991,14 +4233,14 @@ void main() {
         final events = container
             .read(channelMessagesProvider(_channelId))
             .value!;
-        expect(events.any((e) => e.id == 'root'), isFalse);
+        expect(events.any((e) => e.id == threadIdRoot), isFalse);
         final entries = buildMainTimelineEntries(
           formatTimeline(events),
           relaySummaries: notifier.threadSummaries,
         );
         expect(
           entries
-              .singleWhere((e) => e.message.id == 'broadcast')
+              .singleWhere((e) => e.message.id == threadIdBroadcast)
               .summary
               ?.replyCount,
           survives ? 1 : null,
@@ -4017,11 +4259,11 @@ void main() {
     'unchanged outer evidence does not repeat an exact nested recount',
     () async {
       final broadcast = _event(
-        id: 'broadcast',
+        id: threadIdBroadcast,
         createdAt: 20,
         extraTags: const [
-          ['e', 'root', '', 'root'],
-          ['e', 'root', '', 'reply'],
+          ['e', threadIdRoot, '', 'root'],
+          ['e', threadIdRoot, '', 'reply'],
           ['broadcast', '1'],
         ],
       );
@@ -4029,16 +4271,20 @@ void main() {
         id: 'child',
         createdAt: 30,
         extraTags: const [
-          ['e', 'root', '', 'root'],
-          ['e', 'broadcast', '', 'reply'],
+          ['e', threadIdRoot, '', 'root'],
+          ['e', threadIdBroadcast, '', 'reply'],
         ],
       );
       final session = _RecordingRelaySessionNotifier(
         queryResults: [
           [
             broadcast,
-            _event(id: 'root', createdAt: 10),
-            _summary(rootId: 'broadcast', replyCount: 1, descendantCount: 0),
+            _event(id: threadIdRoot, createdAt: 10),
+            _summary(
+              rootId: threadIdBroadcast,
+              replyCount: 1,
+              descendantCount: 0,
+            ),
             _bounds(),
           ],
           [broadcast, child],
@@ -4051,13 +4297,15 @@ void main() {
       final notifier = container.read(
         channelMessagesProvider(_channelId).notifier,
       );
-      session.emit(_summary(rootId: 'root', replyCount: 1, descendantCount: 2));
+      session.emit(
+        _summary(rootId: threadIdRoot, replyCount: 1, descendantCount: 2),
+      );
       await Future<void>.delayed(const Duration(milliseconds: 350));
-      expect(notifier.threadSummaries['broadcast']?.replyCount, 1);
+      expect(notifier.threadSummaries[threadIdBroadcast]?.replyCount, 1);
       for (var i = 0; i < 3; i++) {
         session.emit(
           _summary(
-            rootId: 'root',
+            rootId: threadIdRoot,
             replyCount: 1,
             descendantCount: 2,
             createdAt: 40 + i,
@@ -4071,7 +4319,10 @@ void main() {
         ),
         hasLength(1),
       );
-      expect(notifier.threadSummaries['broadcast']?.isCountPending, isFalse);
+      expect(
+        notifier.threadSummaries[threadIdBroadcast]?.isCountPending,
+        isFalse,
+      );
     },
   );
 
@@ -4083,15 +4334,19 @@ void main() {
           queryResults: [
             [
               _event(
-                id: 'broadcast',
+                id: threadIdBroadcast,
                 createdAt: 20,
                 extraTags: const [
-                  ['e', 'root', '', 'root'],
-                  ['e', 'root', '', 'reply'],
+                  ['e', threadIdRoot, '', 'root'],
+                  ['e', threadIdRoot, '', 'reply'],
                   ['broadcast', '1'],
                 ],
               ),
-              _summary(rootId: 'broadcast', replyCount: 1, descendantCount: 0),
+              _summary(
+                rootId: threadIdBroadcast,
+                replyCount: 1,
+                descendantCount: 0,
+              ),
               _bounds(),
             ],
             if (lookupFails)
@@ -4121,7 +4376,10 @@ void main() {
             sig: 'sig',
           ),
         );
-        expect(notifier.threadSummaries['broadcast']?.isCountPending, isTrue);
+        expect(
+          notifier.threadSummaries[threadIdBroadcast]?.isCountPending,
+          isTrue,
+        );
         await Future<void>.delayed(
           Duration(milliseconds: lookupFails ? 1800 : 50),
         );
@@ -4156,11 +4414,11 @@ void main() {
           'nested deletion reconciles broadcast summary (root visible: $rootVisible, source: $source, survives: $survives)',
           () async {
             final broadcast = _event(
-              id: 'broadcast',
+              id: threadIdBroadcast,
               createdAt: 20,
               extraTags: const [
-                ['e', 'root', '', 'root'],
-                ['e', 'root', '', 'reply'],
+                ['e', threadIdRoot, '', 'root'],
+                ['e', threadIdRoot, '', 'reply'],
                 ['broadcast', '1'],
               ],
             );
@@ -4168,30 +4426,35 @@ void main() {
               id: id,
               createdAt: 30,
               extraTags: const [
-                ['e', 'root', '', 'root'],
-                ['e', 'broadcast', '', 'reply'],
+                ['e', threadIdRoot, '', 'root'],
+                ['e', threadIdBroadcast, '', 'reply'],
               ],
             );
             final session = _RecordingRelaySessionNotifier(
               queryResults: [
                 [
                   broadcast,
-                  if (rootVisible) _event(id: 'root', createdAt: 10),
+                  if (rootVisible) _event(id: threadIdRoot, createdAt: 10),
                   if (rootVisible)
                     _summary(
-                      rootId: 'root',
+                      rootId: threadIdRoot,
                       replyCount: 1,
                       descendantCount: survives ? 3 : 2,
                     ),
                   _summary(
-                    rootId: 'broadcast',
+                    rootId: threadIdBroadcast,
                     replyCount: survives ? 2 : 1,
                     descendantCount: 0,
                   ),
                   _bounds(),
                 ],
                 if (source == 'owner')
-                  [_summary(rootId: 'root', replyCount: survives ? 2 : 1)],
+                  [
+                    _summary(
+                      rootId: threadIdRoot,
+                      replyCount: survives ? 2 : 1,
+                    ),
+                  ],
                 [broadcast, if (survives) child('survivor')],
               ],
             );
@@ -4209,13 +4472,13 @@ void main() {
               container
                   .read(channelMessagesProvider(_channelId))
                   .value!
-                  .any((e) => e.id == 'root'),
+                  .any((e) => e.id == threadIdRoot),
               rootVisible,
             );
             session.emit(
               source == 'live'
                   ? _summary(
-                      rootId: 'root',
+                      rootId: threadIdRoot,
                       replyCount: 1,
                       descendantCount: survives ? 2 : 1,
                     )
@@ -4247,7 +4510,7 @@ void main() {
             );
             expect(
               entries
-                  .singleWhere((e) => e.message.id == 'broadcast')
+                  .singleWhere((e) => e.message.id == threadIdBroadcast)
                   .summary
                   ?.replyCount,
               survives ? 1 : null,
@@ -4262,11 +4525,11 @@ void main() {
     test('nested broadcast recount remains honest (fails: $fails)', () async {
       final recount = Completer<List<NostrEvent>>();
       final broadcast = _event(
-        id: 'broadcast',
+        id: threadIdBroadcast,
         createdAt: 20,
         extraTags: const [
-          ['e', 'root', '', 'root'],
-          ['e', 'root', '', 'reply'],
+          ['e', threadIdRoot, '', 'root'],
+          ['e', threadIdRoot, '', 'reply'],
           ['broadcast', '1'],
         ],
       );
@@ -4274,9 +4537,13 @@ void main() {
         queryResults: [
           [
             broadcast,
-            _event(id: 'root', createdAt: 10),
-            _summary(rootId: 'root', replyCount: 1, descendantCount: 2),
-            _summary(rootId: 'broadcast', replyCount: 1, descendantCount: 0),
+            _event(id: threadIdRoot, createdAt: 10),
+            _summary(rootId: threadIdRoot, replyCount: 1, descendantCount: 2),
+            _summary(
+              rootId: threadIdBroadcast,
+              replyCount: 1,
+              descendantCount: 0,
+            ),
             _bounds(),
           ],
           recount.future,
@@ -4291,9 +4558,14 @@ void main() {
         channelMessagesProvider(_channelId).notifier,
       );
       // The deleted child was evicted. Only the outer-root update is delivered.
-      session.emit(_summary(rootId: 'root', replyCount: 1, descendantCount: 1));
-      expect(notifier.threadSummaries['broadcast']!.isCountPending, isTrue);
-      expect(notifier.threadSummaries['broadcast']!.isLowerBound, isTrue);
+      session.emit(
+        _summary(rootId: threadIdRoot, replyCount: 1, descendantCount: 1),
+      );
+      expect(
+        notifier.threadSummaries[threadIdBroadcast]!.isCountPending,
+        isTrue,
+      );
+      expect(notifier.threadSummaries[threadIdBroadcast]!.isLowerBound, isTrue);
       await Future<void>.delayed(const Duration(milliseconds: 300));
       if (fails) {
         recount.completeError(Exception('offline'));
@@ -4308,14 +4580,17 @@ void main() {
         relaySummaries: notifier.threadSummaries,
       );
       final summary = entries
-          .singleWhere((e) => e.message.id == 'broadcast')
+          .singleWhere((e) => e.message.id == threadIdBroadcast)
           .summary;
       if (fails) {
         expect(summary!.isCountPending, isTrue);
         expect(summary.isLowerBound, isTrue);
       } else {
         expect(summary, isNull);
-        expect(notifier.threadSummaries['broadcast']!.isCountPending, isFalse);
+        expect(
+          notifier.threadSummaries[threadIdBroadcast]!.isCountPending,
+          isFalse,
+        );
       }
       expect(
         session.queryFilters.where(
@@ -4330,13 +4605,15 @@ void main() {
     final session = _RecordingRelaySessionNotifier(
       queryResults: [
         [
-          for (final id in ['owner', 'unrelated']) ...[
+          for (final id in [threadIdOwner, threadIdUnrelated]) ...[
             _event(id: id, createdAt: 10),
             _summary(rootId: id, replyCount: 1),
           ],
           _bounds(),
         ],
-        _DeletedTargetSummaryResponse(_summary(rootId: 'owner', replyCount: 0)),
+        _DeletedTargetSummaryResponse(
+          _summary(rootId: threadIdOwner, replyCount: 0),
+        ),
       ],
     );
     final container = _buildContainer(session);
@@ -4365,10 +4642,10 @@ void main() {
     final summaries = container
         .read(channelMessagesProvider(_channelId).notifier)
         .threadSummaries;
-    expect(summaries['owner']?.descendantCount, 0);
-    expect(summaries['unrelated']?.descendantCount, 1);
-    expect(summaries['unrelated']?.isCountPending, isFalse);
-    expect(summaries['unrelated']?.isLowerBound, isFalse);
+    expect(summaries[threadIdOwner]?.descendantCount, 0);
+    expect(summaries[threadIdUnrelated]?.descendantCount, 1);
+    expect(summaries[threadIdUnrelated]?.isCountPending, isFalse);
+    expect(summaries[threadIdUnrelated]?.isLowerBound, isFalse);
     final entries = buildMainTimelineEntries(
       formatTimeline(
         container.read(channelMessagesProvider(_channelId)).value!,
@@ -4376,12 +4653,12 @@ void main() {
       relaySummaries: summaries,
     );
     expect(
-      entries.singleWhere((entry) => entry.message.id == 'owner').summary,
+      entries.singleWhere((entry) => entry.message.id == threadIdOwner).summary,
       isNull,
     );
     expect(
       entries
-          .singleWhere((entry) => entry.message.id == 'unrelated')
+          .singleWhere((entry) => entry.message.id == threadIdUnrelated)
           .summary
           ?.replyCount,
       1,
@@ -4400,7 +4677,7 @@ void main() {
             ],
             if (recountFirst) <NostrEvent>[],
             [
-              _event(id: 'old-root', createdAt: 10),
+              _event(id: threadIdOldDashRoot, createdAt: 10),
               _bounds(dTag: '${_channelId.toLowerCase()}:100:newest'),
             ],
           ],
@@ -4412,12 +4689,17 @@ void main() {
         final notifier = container.read(
           channelMessagesProvider(_channelId).notifier,
         );
-        final load = notifier.loadEventsById(['old-root']);
-        session.completeTargetHistory([_event(id: 'old-root', createdAt: 10)]);
+        final load = notifier.loadEventsById([threadIdOldDashRoot]);
+        session.completeTargetHistory([
+          _event(id: threadIdOldDashRoot, createdAt: 10),
+        ]);
         await load;
-        notifier.cacheCompleteThreadQuery('old-root', {}, []);
-        session.emit(_summary(rootId: 'old-root', replyCount: 1));
-        expect(notifier.threadSummaries['old-root']!.descendantCount, 0);
+        notifier.cacheCompleteThreadQuery(threadIdOldDashRoot, {}, []);
+        session.emit(_summary(rootId: threadIdOldDashRoot, replyCount: 1));
+        expect(
+          notifier.threadSummaries[threadIdOldDashRoot]!.descendantCount,
+          0,
+        );
         if (recountFirst) {
           await Future<void>.delayed(const Duration(milliseconds: 300));
           expect(
@@ -4426,7 +4708,10 @@ void main() {
             ),
             hasLength(1),
           );
-          expect(notifier.threadSummaries['old-root']!.descendantCount, 0);
+          expect(
+            notifier.threadSummaries[threadIdOldDashRoot]!.descendantCount,
+            0,
+          );
         }
         expect(await notifier.fetchOlder(), isTrue);
         final entries = buildMainTimelineEntries(
@@ -4436,7 +4721,9 @@ void main() {
           relaySummaries: notifier.threadSummaries,
         );
         expect(
-          entries.singleWhere((e) => e.message.id == 'old-root').summary,
+          entries
+              .singleWhere((e) => e.message.id == threadIdOldDashRoot)
+              .summary,
           isNull,
         );
       },
@@ -4455,7 +4742,7 @@ void main() {
               _bounds(hasMore: true, cursorCreatedAt: 100, cursorId: 'newest'),
             ],
             [
-              _event(id: 'root', createdAt: 10),
+              _event(id: threadIdRoot, createdAt: 10),
               _bounds(dTag: '${_channelId.toLowerCase()}:100:newest'),
             ],
             recount.future,
@@ -4469,8 +4756,8 @@ void main() {
           channelMessagesProvider(_channelId).notifier,
         );
         expect(await notifier.fetchOlder(), isTrue);
-        session.emit(_summary(rootId: 'root', replyCount: 1));
-        expect(notifier.threadSummaries['root']!.descendantCount, 0);
+        session.emit(_summary(rootId: threadIdRoot, replyCount: 1));
+        expect(notifier.threadSummaries[threadIdRoot]!.descendantCount, 0);
         await Future<void>.delayed(const Duration(milliseconds: 300));
         expect(
           session.queryFilters.where(
@@ -4484,7 +4771,7 @@ void main() {
               id: 'new-reply',
               createdAt: 30,
               extraTags: const [
-                ['e', 'root', '', 'reply'],
+                ['e', threadIdRoot, '', 'reply'],
               ],
             ),
         ]);
@@ -4497,7 +4784,7 @@ void main() {
         );
         expect(
           entries
-              .singleWhere((e) => e.message.id == 'root')
+              .singleWhere((e) => e.message.id == threadIdRoot)
               .summary
               ?.replyCount,
           newReplyExists ? 1 : null,
@@ -4513,7 +4800,7 @@ void main() {
         final recount = Completer<List<NostrEvent>>();
         final session = _RecordingRelaySessionNotifier(
           queryResults: [
-            [_event(id: 'root', createdAt: 10), _bounds()],
+            [_event(id: threadIdRoot, createdAt: 10), _bounds()],
             recount.future,
           ],
         );
@@ -4524,9 +4811,9 @@ void main() {
         final notifier = container.read(
           channelMessagesProvider(_channelId).notifier,
         );
-        notifier.cacheCompleteThreadQuery('root', {}, []);
-        session.emit(_summary(rootId: 'root', replyCount: 1));
-        expect(notifier.threadSummaries['root']!.descendantCount, 0);
+        notifier.cacheCompleteThreadQuery(threadIdRoot, {}, []);
+        session.emit(_summary(rootId: threadIdRoot, replyCount: 1));
+        expect(notifier.threadSummaries[threadIdRoot]!.descendantCount, 0);
         await Future<void>.delayed(const Duration(milliseconds: 300));
         expect(
           session.queryFilters.where(
@@ -4540,7 +4827,7 @@ void main() {
               id: 'new-reply',
               createdAt: 30,
               extraTags: const [
-                ['e', 'root', '', 'reply'],
+                ['e', threadIdRoot, '', 'reply'],
               ],
             ),
         ]);
@@ -4564,12 +4851,12 @@ void main() {
           id: 'cached-reply',
           createdAt: 20,
           extraTags: const [
-            ['e', 'root', '', 'reply'],
+            ['e', threadIdRoot, '', 'reply'],
           ],
         );
         final session = _RecordingRelaySessionNotifier(
           queryResults: [
-            [_event(id: 'root', createdAt: 10), _bounds()],
+            [_event(id: threadIdRoot, createdAt: 10), _bounds()],
             stillExists ? [reply] : <NostrEvent>[],
           ],
         );
@@ -4580,8 +4867,8 @@ void main() {
         final notifier = container.read(
           channelMessagesProvider(_channelId).notifier,
         );
-        notifier.cacheCompleteThreadQuery('root', {}, [reply]);
-        session.emit(_summary(rootId: 'root', replyCount: 0));
+        notifier.cacheCompleteThreadQuery(threadIdRoot, {}, [reply]);
+        session.emit(_summary(rootId: threadIdRoot, replyCount: 0));
         await Future<void>.delayed(const Duration(milliseconds: 300));
         final entries = buildMainTimelineEntries(
           formatTimeline(
@@ -4590,14 +4877,15 @@ void main() {
           relaySummaries: notifier.threadSummaries,
         );
         expect(
-          entries.singleWhere((e) => e.message.id == 'root').summary == null,
+          entries.singleWhere((e) => e.message.id == threadIdRoot).summary ==
+              null,
           !stillExists,
         );
         expect(
-          notifier.cachedThreadReplyIds('root').contains('cached-reply'),
+          notifier.cachedThreadReplyIds(threadIdRoot).contains('cached-reply'),
           stillExists,
         );
-        expect(notifier.threadSummaries['root']!.isCountPending, isFalse);
+        expect(notifier.threadSummaries[threadIdRoot]!.isCountPending, isFalse);
         expect(
           session.queryFilters.where(
             (f) => f.extensions.containsKey('depth_limit'),
@@ -4616,17 +4904,17 @@ void main() {
           id: 'live-reply',
           createdAt: 20,
           extraTags: const [
-            ['e', 'root', '', 'reply'],
+            ['e', threadIdRoot, '', 'reply'],
           ],
         );
         final session = _RecordingRelaySessionNotifier(
           queryResults: [
-            [_event(id: 'root', createdAt: 10), _bounds()],
+            [_event(id: threadIdRoot, createdAt: 10), _bounds()],
             Exception('NIP-CW unavailable'),
             stillExists ? [reply] : <NostrEvent>[],
           ],
           historyResults: [
-            [_event(id: 'root', createdAt: 10)],
+            [_event(id: threadIdRoot, createdAt: 10)],
           ],
         );
         final container = _buildContainer(session);
@@ -4653,11 +4941,12 @@ void main() {
           relaySummaries: notifier.threadSummaries,
         );
         expect(
-          entries.singleWhere((e) => e.message.id == 'root').summary == null,
+          entries.singleWhere((e) => e.message.id == threadIdRoot).summary ==
+              null,
           !stillExists,
         );
         expect(
-          notifier.cachedThreadReplyIds('root').contains('live-reply'),
+          notifier.cachedThreadReplyIds(threadIdRoot).contains('live-reply'),
           stillExists,
         );
         expect(
@@ -4675,7 +4964,7 @@ void main() {
       id: 'old-reply',
       createdAt: 20,
       extraTags: const [
-        ['e', 'old-root', '', 'reply'],
+        ['e', threadIdOldDashRoot, '', 'reply'],
       ],
     );
     final recount = Completer<List<NostrEvent>>();
@@ -4683,9 +4972,10 @@ void main() {
       queryResults: [Exception('NIP-CW unavailable'), recount.future],
       historyResults: [
         [
-          _event(id: 'old-root', createdAt: 10),
+          _event(id: threadIdOldDashRoot, createdAt: 10),
           reply,
-          for (var i = 0; i < 16; i++) _event(id: 'other-$i', createdAt: 10),
+          for (var i = 0; i < 16; i++)
+            _event(id: indexedThreadId('other-$i'), createdAt: 10),
         ],
       ],
     );
@@ -4702,12 +4992,12 @@ void main() {
           id: 'new-$i',
           createdAt: 100 + i,
           extraTags: [
-            ['e', 'other-${i ~/ 128}', '', 'reply'],
+            ['e', indexedThreadId('other-${i ~/ 128}'), '', 'reply'],
           ],
         ),
       );
     }
-    expect(notifier.cachedThreadReplyIds('old-root'), isEmpty);
+    expect(notifier.cachedThreadReplyIds(threadIdOldDashRoot), isEmpty);
     final entries = buildMainTimelineEntries(
       formatTimeline(
         container.read(channelMessagesProvider(_channelId)).value!,
@@ -4716,7 +5006,7 @@ void main() {
     );
     expect(
       entries
-          .singleWhere((e) => e.message.id == 'old-root')
+          .singleWhere((e) => e.message.id == threadIdOldDashRoot)
           .summary
           ?.replyCount,
       1,
@@ -4726,11 +5016,14 @@ void main() {
       (f) => f.extensions.containsKey('depth_limit'),
     );
     expect(scans, hasLength(1));
-    expect(scans.single.tags['#e'], ['old-root']);
+    expect(scans.single.tags['#e'], [threadIdOldDashRoot]);
     recount.complete([reply]);
     await _pumpEventQueue();
-    expect(notifier.threadSummaries['old-root']?.descendantCount, 1);
-    expect(notifier.threadSummaries['old-root']?.isLowerBound, isFalse);
+    expect(notifier.threadSummaries[threadIdOldDashRoot]?.descendantCount, 1);
+    expect(
+      notifier.threadSummaries[threadIdOldDashRoot]?.isLowerBound,
+      isFalse,
+    );
   });
 
   for (final fromHistory in [false, true]) {
@@ -4742,14 +5035,14 @@ void main() {
             id: 'fallback-reply',
             createdAt: 20,
             extraTags: const [
-              ['e', 'root', '', 'reply'],
+              ['e', threadIdRoot, '', 'reply'],
             ],
           );
           final scan = Completer<List<NostrEvent>>();
           final session = _RecordingRelaySessionNotifier(
             queryResults: [Exception('NIP-CW unavailable'), scan.future],
             historyResults: [
-              [_event(id: 'root', createdAt: 10), if (fromHistory) reply],
+              [_event(id: threadIdRoot, createdAt: 10), if (fromHistory) reply],
             ],
           );
           final container = _buildContainer(session);
@@ -4760,7 +5053,10 @@ void main() {
           final notifier = container.read(
             channelMessagesProvider(_channelId).notifier,
           );
-          const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
+          const args = ThreadRepliesArgs(
+            channelId: _channelId,
+            rootId: threadIdRoot,
+          );
           container.listen(threadRepliesProvider(args), (_, _) {});
           final result = container.read(threadRepliesProvider(args).future);
           scan.complete([if (survives) reply]);
@@ -4775,13 +5071,13 @@ void main() {
           );
           expect(
             entries
-                .singleWhere((e) => e.message.id == 'root')
+                .singleWhere((e) => e.message.id == threadIdRoot)
                 .summary
                 ?.replyCount,
             survives ? 1 : null,
           );
           expect(
-            notifier.cachedThreadReplyIds('root').contains(reply.id),
+            notifier.cachedThreadReplyIds(threadIdRoot).contains(reply.id),
             survives,
           );
         },
@@ -4797,18 +5093,18 @@ void main() {
           id: 'cached-reply',
           createdAt: 20,
           extraTags: const [
-            ['e', 'root', '', 'reply'],
+            ['e', threadIdRoot, '', 'reply'],
           ],
         );
         final recount = Completer<List<NostrEvent>>();
         final session = _RecordingRelaySessionNotifier(
           queryResults: [
-            [_event(id: 'root', createdAt: 10), _bounds()],
+            [_event(id: threadIdRoot, createdAt: 10), _bounds()],
             Exception('NIP-CW unavailable'),
             recount.future,
           ],
           historyResults: [
-            [_event(id: 'root', createdAt: 10)],
+            [_event(id: threadIdRoot, createdAt: 10)],
           ],
         );
         final container = _buildContainer(session);
@@ -4818,13 +5114,16 @@ void main() {
         final notifier = container.read(
           channelMessagesProvider(_channelId).notifier,
         );
-        notifier.cacheCompleteThreadQuery('root', {}, [reply]);
+        notifier.cacheCompleteThreadQuery(threadIdRoot, {}, [reply]);
         session.setConnected(false);
         await _pumpEventQueue();
         session.setConnected(true);
         await _pumpEventQueue();
         if (outcome != 'deleted') {
-          expect(notifier.threadSummaries['root']!.isCountPending, isTrue);
+          expect(
+            notifier.threadSummaries[threadIdRoot]!.isCountPending,
+            isTrue,
+          );
         }
         await Future<void>.delayed(const Duration(milliseconds: 250));
         if (outcome == 'unavailable') {
@@ -4840,16 +5139,16 @@ void main() {
           relaySummaries: notifier.threadSummaries,
         );
         final summary = entries
-            .singleWhere((entry) => entry.message.id == 'root')
+            .singleWhere((entry) => entry.message.id == threadIdRoot)
             .summary;
         if (outcome == 'deleted') {
           expect(summary, isNull);
-          expect(notifier.cachedThreadReplyIds('root'), isEmpty);
+          expect(notifier.cachedThreadReplyIds(threadIdRoot), isEmpty);
         } else {
           expect(summary, isNotNull);
           expect(summary!.replyCount, 1);
           expect(
-            notifier.threadSummaries['root']!.isCountPending,
+            notifier.threadSummaries[threadIdRoot]!.isCountPending,
             outcome == 'unavailable',
           );
         }
@@ -4871,12 +5170,12 @@ void main() {
         id: 'cached-reply',
         createdAt: 20,
         extraTags: const [
-          ['e', 'root', '', 'reply'],
+          ['e', threadIdRoot, '', 'reply'],
         ],
       );
       final session = _RecordingRelaySessionNotifier(
         queryResults: [
-          [_event(id: 'root', createdAt: 10), _bounds()],
+          [_event(id: threadIdRoot, createdAt: 10), _bounds()],
           Exception('NIP-CW unavailable'),
         ],
       );
@@ -4887,23 +5186,23 @@ void main() {
       final notifier = container.read(
         channelMessagesProvider(_channelId).notifier,
       );
-      notifier.cacheCompleteThreadQuery('root', {}, [reply]);
+      notifier.cacheCompleteThreadQuery(threadIdRoot, {}, [reply]);
       session.setConnected(false);
       await _pumpEventQueue();
       session.setConnected(true);
       await _pumpEventQueue();
-      final snapshot = notifier.cachedThreadReplyIds('root');
-      final version = notifier.beginThreadQuery('root');
+      final snapshot = notifier.cachedThreadReplyIds(threadIdRoot);
+      final version = notifier.beginThreadQuery(threadIdRoot);
       notifier.cacheCompleteThreadQuery(
-        'root',
+        threadIdRoot,
         snapshot,
         [],
         queryVersion: version,
       );
-      session.completeHistory([_event(id: 'root', createdAt: 10)]);
+      session.completeHistory([_event(id: threadIdRoot, createdAt: 10)]);
       await Future<void>.delayed(const Duration(milliseconds: 300));
-      expect(notifier.threadSummaries['root']!.descendantCount, 0);
-      expect(notifier.threadSummaries['root']!.isCountPending, isFalse);
+      expect(notifier.threadSummaries[threadIdRoot]!.descendantCount, 0);
+      expect(notifier.threadSummaries[threadIdRoot]!.isCountPending, isFalse);
       expect(
         session.queryFilters.where(
           (f) => f.extensions.containsKey('depth_limit'),
@@ -4918,21 +5217,21 @@ void main() {
       id: 'survivor',
       createdAt: 21,
       extraTags: const [
-        ['e', 'root', '', 'reply'],
+        ['e', threadIdRoot, '', 'reply'],
       ],
     );
     final session = _RecordingRelaySessionNotifier(
       queryResults: [
         [
-          _event(id: 'root', createdAt: 10),
-          _summary(rootId: 'root', replyCount: 2),
+          _event(id: threadIdRoot, createdAt: 10),
+          _summary(rootId: threadIdRoot, replyCount: 2),
           _bounds(),
         ],
         [survivor],
         [
-          _event(id: 'root', createdAt: 10),
+          _event(id: threadIdRoot, createdAt: 10),
           // A new reply arrived while disconnected; its payload is not cached.
-          _summary(rootId: 'root', replyCount: 2),
+          _summary(rootId: threadIdRoot, replyCount: 2),
           _bounds(),
         ],
         Exception('recount unavailable'),
@@ -4950,7 +5249,7 @@ void main() {
         id: 'target',
         createdAt: 20,
         extraTags: const [
-          ['e', 'root', '', 'reply'],
+          ['e', threadIdRoot, '', 'reply'],
         ],
       ),
     ]);
@@ -4966,14 +5265,17 @@ void main() {
       content: '',
       sig: '',
     );
-    final snapshot = notifier.cachedThreadReplyIds('root');
+    final snapshot = notifier.cachedThreadReplyIds(threadIdRoot);
     session.emit(deletion(EventKind.deletion));
-    final queryVersion = notifier.beginThreadQuery('root');
-    notifier.cacheCompleteThreadQuery('root', snapshot, [
+    final queryVersion = notifier.beginThreadQuery(threadIdRoot);
+    notifier.cacheCompleteThreadQuery(threadIdRoot, snapshot, [
       survivor,
     ], queryVersion: queryVersion);
     await Future<void>.delayed(const Duration(milliseconds: 300));
-    expect(notifier.cachedThreadReplyIds('root'), isNot(contains('target')));
+    expect(
+      notifier.cachedThreadReplyIds(threadIdRoot),
+      isNot(contains('target')),
+    );
     session.setConnected(false);
     await _pumpEventQueue();
     session.setConnected(true);
@@ -4987,11 +5289,11 @@ void main() {
       isFalse,
       reason: 'the marker payload was pruned on reconnect',
     );
-    expect(notifier.threadSummaries['root']!.descendantCount, 2);
+    expect(notifier.threadSummaries[threadIdRoot]!.descendantCount, 2);
     session.emit(deletion(EventKind.nip29DeleteEvent));
     await Future<void>.delayed(const Duration(milliseconds: 300));
-    expect(notifier.threadSummaries['root']!.descendantCount, 2);
-    expect(notifier.threadSummaries['root']!.isLowerBound, isFalse);
+    expect(notifier.threadSummaries[threadIdRoot]!.descendantCount, 2);
+    expect(notifier.threadSummaries[threadIdRoot]!.isLowerBound, isFalse);
     expect(
       session.queryFilters.where(
         (filter) => filter.extensions.containsKey('depth_limit'),
@@ -5007,8 +5309,8 @@ void main() {
         final session = _RecordingRelaySessionNotifier(
           queryResults: [
             [
-              _event(id: 'root', createdAt: 10),
-              _summary(rootId: 'root', replyCount: 2),
+              _event(id: threadIdRoot, createdAt: 10),
+              _summary(rootId: threadIdRoot, replyCount: 2),
               _bounds(),
             ],
             Exception('recount unavailable'),
@@ -5026,7 +5328,7 @@ void main() {
             id: 'target',
             createdAt: 20,
             extraTags: const [
-              ['e', 'root', '', 'reply'],
+              ['e', threadIdRoot, '', 'reply'],
             ],
           ),
         ]);
@@ -5054,7 +5356,7 @@ void main() {
           }
         }
         await Future<void>.delayed(const Duration(milliseconds: 300));
-        expect(notifier.threadSummaries['root']?.descendantCount, 1);
+        expect(notifier.threadSummaries[threadIdRoot]?.descendantCount, 1);
         expect(
           session.queryFilters.where(
             (filter) => filter.extensions.containsKey('depth_limit'),
@@ -5068,7 +5370,7 @@ void main() {
   test('a reply newer than the relay recount raises the badge', () async {
     final relaySession = _RecordingRelaySessionNotifier(
       queryResults: [
-        [_event(id: 'root', createdAt: 10), _bounds()],
+        [_event(id: threadIdRoot, createdAt: 10), _bounds()],
       ],
     );
     final container = _buildContainer(relaySession);
@@ -5083,18 +5385,20 @@ void main() {
         id: 'reply-1',
         createdAt: 20,
         extraTags: const [
-          ['e', 'root', '', 'reply'],
+          ['e', threadIdRoot, '', 'reply'],
         ],
       ),
     );
-    relaySession.emit(_summary(rootId: 'root', replyCount: 1, createdAt: 20));
+    relaySession.emit(
+      _summary(rootId: threadIdRoot, replyCount: 1, createdAt: 20),
+    );
     // A second reply lands, and its recount is lost or still in flight.
     relaySession.emit(
       _event(
         id: 'reply-2',
         createdAt: 21,
         extraTags: const [
-          ['e', 'root', '', 'reply'],
+          ['e', threadIdRoot, '', 'reply'],
         ],
       ),
     );
@@ -5103,14 +5407,14 @@ void main() {
     final notifier = container.read(
       channelMessagesProvider(_channelId).notifier,
     );
-    expect(notifier.threadSummaries['root']?.replyCount, 1);
+    expect(notifier.threadSummaries[threadIdRoot]?.replyCount, 1);
     final entries = buildMainTimelineEntries(
       formatTimeline(
         container.read(channelMessagesProvider(_channelId)).value!,
       ),
       relaySummaries: notifier.threadSummaries,
     );
-    expect(entries.single.message.id, 'root');
+    expect(entries.single.message.id, threadIdRoot);
     expect(entries.single.summary!.replyCount, 2);
     expect(entries.single.summary!.lastReplyAt, 21);
   });
@@ -5463,5 +5767,33 @@ class _RecordingRelaySessionNotifier extends RelaySessionNotifier {
     if (!_history.isCompleted) {
       _history.completeError(error);
     }
+  }
+}
+
+class _CursorRelay extends _RecordingRelaySessionNotifier {
+  final events = [
+    for (var i = 0; i < 350; i++)
+      _event(id: i.toString().padLeft(64, '0'), createdAt: 20),
+    _event(id: 'older', createdAt: 19),
+  ];
+  @override
+  Future<List<NostrEvent>> fetchHistory(
+    NostrFilter filter, {
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    if (filter.ids != null) {
+      return events.where((e) => filter.ids!.contains(e.id)).toList();
+    }
+    final before = filter.extensions['before_id'] as String?;
+    return events
+        .where(
+          (e) =>
+              filter.until == null ||
+              e.createdAt < filter.until! ||
+              (e.createdAt == filter.until &&
+                  (before == null || e.id.compareTo(before) > 0)),
+        )
+        .take(filter.limit)
+        .toList();
   }
 }

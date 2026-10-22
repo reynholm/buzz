@@ -1085,6 +1085,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "buzz-audio-client"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "neteq",
+ "opus",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite 0.29.0",
+]
+
+[[package]]
 name = "buzz-core"
 version = "0.1.0"
 dependencies = [
@@ -1107,7 +1119,7 @@ dependencies = [
 
 [[package]]
 name = "buzz-desktop"
-version = "0.5.26"
+version = "0.5.28"
 dependencies = [
  "anyhow",
  "arboard",
@@ -1117,6 +1129,7 @@ dependencies = [
  "base64 0.22.1",
  "block2",
  "buzz-agent",
+ "buzz-audio-client",
  "buzz-core",
  "buzz-media",
  "buzz-persona",
@@ -1147,14 +1160,12 @@ dependencies = [
  "mesh-llm-node",
  "mesh-llm-sdk",
  "mesh-llm-system",
- "neteq",
  "nostr 0.44.7",
  "notify-rust",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
  "objc2-user-notifications",
- "opus",
  "percent-encoding",
  "plist",
  "png 0.18.1",

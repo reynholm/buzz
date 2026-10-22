@@ -308,6 +308,7 @@ async fn run_turn(agent: OwnedAgent, ctx: &Arc<PromptContext>, batch: FlushBatch
         result_tx,
         None,
         "turn".into(),
+        crate::queue::PromptRouting::default(),
     )
     .await;
     let result = result_rx.recv().await.expect("prompt result");
@@ -546,6 +547,7 @@ async fn heartbeat_turn_never_touches_scope_status() {
         tx,
         None,
         "heartbeat".into(),
+        crate::queue::PromptRouting::default(),
     )
     .await;
     let result = rx.recv().await.unwrap();
@@ -579,6 +581,7 @@ async fn rotate_during_a_delayed_turn_retires_before_late_usage() {
         tx,
         None,
         "turn".into(),
+        crate::queue::PromptRouting::default(),
     ));
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     while !h.methods().contains(&"session/prompt".to_owned()) {

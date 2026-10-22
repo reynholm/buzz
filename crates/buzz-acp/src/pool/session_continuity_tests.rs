@@ -758,6 +758,7 @@ async fn run_turn(agent: OwnedAgent, ctx: &Arc<PromptContext>, batch: FlushBatch
         result_tx,
         None,
         "turn".into(),
+        crate::queue::PromptRouting::default(),
     )
     .await;
     let result = result_rx.recv().await.expect("prompt result");
@@ -829,6 +830,7 @@ async fn idle_worker_transport_death_keeps_session_resumable() {
         tx,
         None,
         "dead-worker".into(),
+        crate::queue::PromptRouting::default(),
     )
     .await;
     let result = rx.recv().await.unwrap();

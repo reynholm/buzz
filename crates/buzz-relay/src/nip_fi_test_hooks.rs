@@ -57,7 +57,7 @@
 //! | **CW5** (AutoAddRequired joint-tx rollback) | `audio/handler.rs` — `before_participant_commit` fires after BOTH membership insert AND 48101 insert are in the uncommitted tx | Delete `before_participant_commit(...)` call | `arrived_rx` times out — test panics |
 //! | **CW5** (AutoAddRequired joint-tx rollback) | same | Remove `acquire_effect()` from `commit_participant_join` | both rows committed — membership row-count assertion panics |
 //! | **CW5** (AutoAddRequired joint-tx rollback) | same | Change `membership_admission` to `Existing` | auto-add path never entered; membership seam not covered — test fails at isolation |
-//! | **CW5-variant** (concurrent external membership add) | `audio/handler.rs` — `before_membership_lock` fires inside the `AutoAddRequired` branch immediately before the channel membership lock | Delete `before_membership_lock(...)` call | `arrived_rx` times out — test panics |
+//! | **CW5-variant** (concurrent external membership add) | `audio/handler.rs` — `before_membership_lock` fires in `commit_participant_join` immediately before the channel membership locks | Delete `before_membership_lock(...)` call | `arrived_rx` times out — test panics |
 //! | **CW5-variant** (concurrent external membership add) | same | Remove the `still_absent` re-read and always insert | external membership may be double-written (ON CONFLICT behaviour) — re-read path is the contract seam; removing it bypasses the contract |
 //! | **CW5-variant** (concurrent external membership add) | same | Remove the `if still_absent { insert }` guard | same as above — auto-add fires unconditionally alongside the external row |
 //! | **CW8** (post-add_peer cancel → cleanup) | `audio/handler.rs` — `after_add_peer` fires immediately after `room.add_peer` succeeds and before `check_cancel!(cleanup:...)` | Delete `after_add_peer(...)` call | `arrived_rx` times out — test panics |
@@ -172,9 +172,8 @@ make_hook!(audio_auth_verify_hook, before_auth_verify);
 // DB read inside `check_membership_for_admission`. Arms expiry here → proves
 // that a cancellation before membership check produces zero DB side effects.
 //
-// `before_membership_lock`: fires inside the AutoAddRequired branch of
-// `commit_participant_join`, immediately before
-// `acquire_channel_membership_lock_in_transaction`. Arms an external
+// `before_membership_lock`: fires in `commit_participant_join` (all paths),
+// immediately before the membership locks of the huddle and its parent. Arms an external
 // membership insert here → proves that a concurrent add is observed by the
 // re-read and the auto-add insert is skipped, leaving membership preserved.
 //
@@ -210,6 +209,19 @@ make_hook!(audio_refusal_frames_hook, before_audio_refusal_frames);
 make_hook!(join_refusal_rollback_hook, before_join_refusal_rollback);
 make_hook!(audio_participant_fanout_hook, after_participant_fanout);
 make_hook!(audio_add_peer_hook, after_add_peer);
+// `before_audio_teardown_cleanup`: fires in `run_active_audio_connection` once
+// the writer has sent its Close and the socket is handed off, before the
+// teardown that writes to Postgres and Redis. Holding it stands in for a
+// stalled cleanup that must not hold the socket open.
+make_hook!(audio_teardown_cleanup_hook, before_audio_teardown_cleanup);
+// `before_room_archive_recheck`: fires in `run_active_audio_connection` after the
+// membership check, just before the archive re-check, so a test can archive
+// the channel between the two and drive the archived-channel exit.
+make_hook!(room_archive_recheck_hook, before_room_archive_recheck);
+// `before_archived_exit_cleanup`: fires on the archived-channel exit once the
+// socket is handed off, before the lease release. Holding it stands in for a
+// stalled Redis release that must not hold the socket open.
+make_hook!(archived_exit_cleanup_hook, before_archived_exit_cleanup);
 // `before_lease_permit`: fires in `handle_active_audio_connection` immediately
 // before the effect permit that covers join-owner resolution. Cancelling here
 // proves the resolver (and its lease CAS) never runs without a permit.
@@ -226,8 +238,8 @@ make_hook!(directory_cas_hook, after_directory_cas);
 // test can stall that release after the CAS has landed.
 make_hook!(directory_acquire_hook, after_directory_acquire);
 // `before_archive_recheck`: fires in `commit_participant_join` immediately
-// after the `SELECT archived_at ... FOR UPDATE` row lock is acquired and the
-// snapshot value is read, but before the archived check / any write. At this
+// after the membership and TTL locks and the `SELECT archived_at ... FOR NO
+// KEY UPDATE` row lock are acquired and the snapshot value is read, but before the archived check / any write. At this
 // point the channels row is locked in the active transaction. A test can
 // attempt a concurrent archive UPDATE here to prove it blocks (55P03) and is
 // serialized against the join commit.

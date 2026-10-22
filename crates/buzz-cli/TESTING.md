@@ -357,7 +357,7 @@ buzz users presence --pubkeys "$MY_PUBKEY" | jq .
 buzz users set-presence --status online | jq .
 buzz users set-presence --status away | jq .
 buzz users set-presence --status offline | jq .
-# Note: set-presence may fail — kind:20001 is ephemeral and rejected by the HTTP bridge
+# Note: set-presence may fail — the HTTP bridge rejects kind:20001; presence is WebSocket-only
 
 # users set-status — NIP-38 kind:30315 on the d:general coordinate
 buzz users set-status --text "reviewing PRs" --emoji "🔍" | jq .
@@ -706,7 +706,8 @@ successful replay. Unjournaled `messages send` retains its existing
 Late recovery requires an updated relay with atomic managed-report election.
 For a report older than 600 seconds, the CLI journals a fresh signed copy that
 preserves the original author, content and exact tags, then submits a signed
-kind-20003 recovery command containing both events. An aged pending candidate
+kind-20004 recovery command containing both events. Updated relays also accept
+legacy kind-20003 JSON recovery envelopes from installed older CLIs. An aged pending candidate
 may be renewed again; the original evidence remains unchanged. The relay uses
 one writer transaction to return a previously accepted report or insert one
 current candidate and bind it to the completion key. The 960-second DB floor

@@ -847,6 +847,7 @@ async fn background_collection_completes_under_repeated_ordinary_preemption() {
             });
             crate::QueuedNormalListenerEvent {
                 accepted,
+                channel_is_dm: false,
                 scope: scope.clone(),
                 effective_author: author,
                 reaction_target_id: id,

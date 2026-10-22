@@ -338,7 +338,8 @@ pub(crate) async fn upload_blob(
         let strict = BlossomStrictness::Strict;
         buzz_media::auth::verify_blossom_auth_event(&event, Some(&tenant_host), strict)
             .map_err(drop)
-    });
+    })
+    .await;
     let headers_clone = headers.clone();
     let admission = match admit_nip_fi_http_on_state(&state, &headers, move || {
         let auth_event = extract_blossom_auth(&headers_clone).map_err(|e| e.into_response())?;
@@ -348,7 +349,9 @@ pub(crate) async fn upload_blob(
             .map_err(|e| e.into_response())?;
         let pubkey = auth_event.pubkey;
         Ok(Nip98Proof::new(pubkey, auth_event))
-    }) {
+    })
+    .await
+    {
         Ok(a) => a,
         Err(resp) => return resp,
     };
@@ -818,11 +821,14 @@ pub(crate) async fn get_blob(
             BlossomStrictness::Strict,
         )
         .map(drop)
-    });
+    })
+    .await;
     let admission = match admit_nip_fi_http_on_state(&state, &req_headers, move || {
         extract_blossom_read_proof(&headers_clone, &sha256, &tenant_host, strictness)
             .map_err(|e| e.into_response())
-    }) {
+    })
+    .await
+    {
         Ok(a) => a,
         Err(resp) => return Ok(resp),
     };
@@ -1112,11 +1118,14 @@ pub(crate) async fn head_blob(
     crate::nip_fi_shadow::observe_strict_proof(&state, &headers, "blossom", || {
         extract_blossom_read_proof(&headers, &sha256, &tenant_host, BlossomStrictness::Strict)
             .map(drop)
-    });
+    })
+    .await;
     let admission = match admit_nip_fi_http_on_state(&state, &headers, move || {
         extract_blossom_read_proof(&headers_clone, &sha256, &tenant_host, strictness)
             .map_err(|e| e.into_response())
-    }) {
+    })
+    .await
+    {
         Ok(a) => a,
         Err(resp) => return Ok(resp),
     };
@@ -1252,7 +1261,6 @@ mod tests {
         http::{header, Request, StatusCode},
     };
     use nostr::{EventBuilder, JsonUtil, Keys, Kind, Tag, Timestamp};
-    use tower::ServiceExt;
     use uuid::Uuid;
 
     const VALID_HASH: &str = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
@@ -1675,6 +1683,7 @@ mod tests {
         let mut config = crate::config::Config::for_test(); // [FI-TRACE-ENV-RACE]
         config.require_relay_membership = false;
         config.redis_url = "redis://127.0.0.1:1".to_string();
+        config.database_url = crate::test_support::database_url();
         config.media_uploads_per_minute = 1;
         config.media_max_concurrent_uploads = 2;
         config.media_max_concurrent_uploads_per_pubkey = 1;
@@ -1759,126 +1768,6 @@ mod tests {
             builder = builder.header(header::AUTHORIZATION, auth);
         }
         builder.body(Body::empty()).expect("request")
-    }
-
-    #[tokio::test]
-    async fn media_reads_reject_unauthenticated_get_and_head_before_sidecar_gate() {
-        for method in ["GET", "HEAD"] {
-            let response = media_get_auth_router()
-                .await
-                .oneshot(media_request(method, None))
-                .await
-                .expect("response");
-
-            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{method}");
-        }
-    }
-
-    #[tokio::test]
-    async fn media_read_with_valid_server_scoped_token_reaches_sidecar_gate() {
-        let keys = Keys::generate();
-        let auth = media_get_auth_header(&keys, media_get_tags_for("relay.example", None));
-        let response = media_get_auth_router()
-            .await
-            .oneshot(media_request("GET", Some(auth)))
-            .await
-            .expect("response");
-
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn media_read_rejects_upload_verb_wrong_server_and_wrong_x() {
-        let keys = Keys::generate();
-        let now = Timestamp::now().as_secs();
-        let expiration = (now + 55).to_string();
-        let cases = [
-            vec![
-                Tag::parse(["t", "upload"]).expect("t tag"),
-                Tag::parse(["expiration", &expiration]).expect("expiration tag"),
-                Tag::parse(["server", "relay.example"]).expect("server tag"),
-            ],
-            vec![
-                Tag::parse(["t", "get"]).expect("t tag"),
-                Tag::parse(["expiration", &expiration]).expect("expiration tag"),
-                Tag::parse(["server", "evil.example"]).expect("server tag"),
-            ],
-            vec![
-                Tag::parse(["t", "get"]).expect("t tag"),
-                Tag::parse(["expiration", &expiration]).expect("expiration tag"),
-                Tag::parse(["x", &"f".repeat(64)]).expect("x tag"),
-            ],
-        ];
-
-        for tags in cases {
-            let auth = media_get_auth_header(&keys, tags);
-            let response = media_get_auth_router()
-                .await
-                .oneshot(media_request("GET", Some(auth)))
-                .await
-                .expect("response");
-
-            assert_ne!(response.status(), StatusCode::NOT_FOUND);
-            assert!(
-                response.status() == StatusCode::UNAUTHORIZED
-                    || response.status() == StatusCode::FORBIDDEN,
-                "unexpected status {}",
-                response.status()
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn media_read_accepts_range_header_only_after_auth() {
-        let keys = Keys::generate();
-        let auth = media_get_auth_header(&keys, media_get_tags_for("relay.example", None));
-        let mut request = media_request("GET", Some(auth));
-        request
-            .headers_mut()
-            .insert(header::RANGE, "bytes=0-0".parse().expect("range header"));
-
-        let response = media_get_auth_router()
-            .await
-            .oneshot(request)
-            .await
-            .expect("response");
-
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn upload_rate_limiter_is_scoped_by_community() {
-        let state = test_state().await;
-        let pubkey = nostr::Keys::generate().public_key();
-        let community_a = buzz_core::CommunityId::from_uuid(Uuid::from_u128(0xAAAA));
-        let community_b = buzz_core::CommunityId::from_uuid(Uuid::from_u128(0xBBBB));
-
-        assert!(!upload_rate_limited(&state, community_a, &pubkey));
-        assert!(upload_rate_limited(&state, community_a, &pubkey));
-        assert!(
-            !upload_rate_limited(&state, community_b, &pubkey),
-            "A's exhausted upload budget must not rate-limit the same key in B"
-        );
-    }
-
-    #[tokio::test]
-    async fn upload_concurrency_limit_is_scoped_by_community() {
-        let state = test_state().await;
-        let pubkey = nostr::Keys::generate().public_key();
-        let community_a = buzz_core::CommunityId::from_uuid(Uuid::from_u128(0xAAAA));
-        let community_b = buzz_core::CommunityId::from_uuid(Uuid::from_u128(0xBBBB));
-
-        let permit_a =
-            acquire_upload_permit(&state, community_a, &pubkey).expect("first A upload allowed");
-        assert!(matches!(
-            acquire_upload_permit(&state, community_a, &pubkey),
-            Err(MediaError::UploadConcurrencyLimitReached)
-        ));
-        let permit_b = acquire_upload_permit(&state, community_b, &pubkey)
-            .expect("A's in-flight upload must not block B");
-
-        drop(permit_b);
-        drop(permit_a);
     }
 
     #[test]
@@ -4298,7 +4187,9 @@ mod tests {
                 &keys.public_key().to_hex(),
                 "member",
                 None,
+                &nostr::Keys::generate(),
             ))
+            .map(|write| write.outcome)
             .expect("add relay member");
             let assertion = signed_assertion(&keys.public_key().to_hex());
             let proof = blossom_get_auth_value(&keys, &host, &"a".repeat(64));
@@ -4381,6 +4272,132 @@ mod tests {
                         .execute(&admin),
                 );
             }
+        }
+
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn media_reads_reject_unauthenticated_get_and_head_before_sidecar_gate() {
+            for method in ["GET", "HEAD"] {
+                let response = media_get_auth_router()
+                    .await
+                    .oneshot(media_request(method, None))
+                    .await
+                    .expect("response");
+
+                assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{method}");
+            }
+        }
+
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn media_read_with_valid_server_scoped_token_reaches_sidecar_gate() {
+            let keys = Keys::generate();
+            let auth = media_get_auth_header(&keys, media_get_tags_for("relay.example", None));
+            let response = media_get_auth_router()
+                .await
+                .oneshot(media_request("GET", Some(auth)))
+                .await
+                .expect("response");
+
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        }
+
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn media_read_rejects_upload_verb_wrong_server_and_wrong_x() {
+            let keys = Keys::generate();
+            let now = Timestamp::now().as_secs();
+            let expiration = (now + 55).to_string();
+            let cases = [
+                vec![
+                    Tag::parse(["t", "upload"]).expect("t tag"),
+                    Tag::parse(["expiration", &expiration]).expect("expiration tag"),
+                    Tag::parse(["server", "relay.example"]).expect("server tag"),
+                ],
+                vec![
+                    Tag::parse(["t", "get"]).expect("t tag"),
+                    Tag::parse(["expiration", &expiration]).expect("expiration tag"),
+                    Tag::parse(["server", "evil.example"]).expect("server tag"),
+                ],
+                vec![
+                    Tag::parse(["t", "get"]).expect("t tag"),
+                    Tag::parse(["expiration", &expiration]).expect("expiration tag"),
+                    Tag::parse(["x", &"f".repeat(64)]).expect("x tag"),
+                ],
+            ];
+
+            for tags in cases {
+                let auth = media_get_auth_header(&keys, tags);
+                let response = media_get_auth_router()
+                    .await
+                    .oneshot(media_request("GET", Some(auth)))
+                    .await
+                    .expect("response");
+
+                assert_ne!(response.status(), StatusCode::NOT_FOUND);
+                assert!(
+                    response.status() == StatusCode::UNAUTHORIZED
+                        || response.status() == StatusCode::FORBIDDEN,
+                    "unexpected status {}",
+                    response.status()
+                );
+            }
+        }
+
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn media_read_accepts_range_header_only_after_auth() {
+            let keys = Keys::generate();
+            let auth = media_get_auth_header(&keys, media_get_tags_for("relay.example", None));
+            let mut request = media_request("GET", Some(auth));
+            request
+                .headers_mut()
+                .insert(header::RANGE, "bytes=0-0".parse().expect("range header"));
+
+            let response = media_get_auth_router()
+                .await
+                .oneshot(request)
+                .await
+                .expect("response");
+
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        }
+
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn upload_concurrency_limit_is_scoped_by_community() {
+            let state = test_state().await;
+            let pubkey = nostr::Keys::generate().public_key();
+            let community_a = buzz_core::CommunityId::from_uuid(Uuid::from_u128(0xAAAA));
+            let community_b = buzz_core::CommunityId::from_uuid(Uuid::from_u128(0xBBBB));
+
+            let permit_a = acquire_upload_permit(&state, community_a, &pubkey)
+                .expect("first A upload allowed");
+            assert!(matches!(
+                acquire_upload_permit(&state, community_a, &pubkey),
+                Err(MediaError::UploadConcurrencyLimitReached)
+            ));
+            let permit_b = acquire_upload_permit(&state, community_b, &pubkey)
+                .expect("A's in-flight upload must not block B");
+
+            drop(permit_b);
+            drop(permit_a);
+        }
+
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn upload_rate_limiter_is_scoped_by_community() {
+            let state = test_state().await;
+            let pubkey = nostr::Keys::generate().public_key();
+            let community_a = buzz_core::CommunityId::from_uuid(Uuid::from_u128(0xAAAA));
+            let community_b = buzz_core::CommunityId::from_uuid(Uuid::from_u128(0xBBBB));
+
+            assert!(!upload_rate_limited(&state, community_a, &pubkey));
+            assert!(upload_rate_limited(&state, community_a, &pubkey));
+            assert!(
+                !upload_rate_limited(&state, community_b, &pubkey),
+                "A's exhausted upload budget must not rate-limit the same key in B"
+            );
         }
     }
 }

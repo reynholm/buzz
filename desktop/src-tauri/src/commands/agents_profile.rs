@@ -418,8 +418,8 @@ pub(super) fn profile_needs_sync(
 /// rather than failing the caller — profile publish is best-effort in the
 /// create and snapshot-import flows that share this helper.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn publish_agent_profile_with_about(
-    app: &AppHandle,
+pub(crate) async fn publish_agent_profile_with_about<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     state: &AppState,
     pubkey: &str,
     fence: &crate::managed_agents::device_runtime::RuntimeFence,
