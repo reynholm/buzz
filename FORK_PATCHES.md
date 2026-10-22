@@ -588,7 +588,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/Cargo.lock`
 
-Lock patched native dependencies, the immutable MeshLLM and NetEq compatibility pins, maintained Opus bindings and updated Tauri utilities; retain target-specific Windows updater constraints explicitly.
+Lock patched native dependencies, including emSign TLS verification and trust stores, the immutable MeshLLM and NetEq compatibility pins, maintained Opus bindings and updated Tauri utilities; retain target-specific Windows updater constraints explicitly.
 
 New module: `false`.
 
@@ -2668,7 +2668,7 @@ New module: `false`.
 
 ## `Cargo.lock`
 
-Preserve the fork dependency graph with patched rustls, Negentropy and ZIP versions and one immutable MeshLLM compatibility source.
+Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source.
 
 New module: `false`.
 
@@ -7782,7 +7782,7 @@ New module: `true`.
 
 ## `docs/fork/DEPENDENCY_SECURITY.md`
 
-Document patched release dependencies, immutable compatibility pins, target scope and temporary transitive maintenance exceptions.
+Document patched release dependencies, independent TLS security updates, shipping-graph release checks, immutable compatibility pins, target scope and temporary transitive maintenance exceptions.
 
 New module: `true`.
 

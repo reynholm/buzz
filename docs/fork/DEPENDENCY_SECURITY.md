@@ -11,6 +11,30 @@ cargo deny --manifest-path desktop/src-tauri/Cargo.toml --target x86_64-unknown-
 
 ## Patched vulnerabilities
 
+The emSign certificate-trust advisories
+[RUSTSEC-2026-0381](https://rustsec.org/advisories/RUSTSEC-2026-0381.html),
+[RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382.html) and
+[RUSTSEC-2026-0383](https://rustsec.org/advisories/RUSTSEC-2026-0383.html)
+share CVE-2026-111943. Both lockfiles select `rustls-webpki` 0.103.16,
+`webpki-root-certs` 1.0.10 and `webpki-roots` 1.0.10. The `webpki-roots`
+0.26.11 compatibility wrapper remains: it contains no independent trust store
+and now resolves to the fixed 1.0.10 parent. These compatible updates reject
+the distrusted intermediate keys and remove the affected bundled root without
+changing the existing immutable compatibility pins or advisory exceptions.
+
+The affected scope is certificate verification by Rust clients when their
+configured trust anchors permit the advisory's certificate chains, including
+native WebSocket connections. Updating these dependencies does not update an
+external proxy that terminates the relay's incoming TLS, and does not establish
+that a deployment was compromised. Existing installations require rebuilt,
+verified binaries and the normal acceptance and release authorization.
+
+Compatible TLS security updates must proceed independently of upstream sync.
+Before release, run the checks above against every actual shipping graph and
+record the exact source commit, target, features and audit time. A passing
+macOS/Linux audit does not certify Windows. No TLS advisory exception is added;
+the existing quick-xml and INFO-only exceptions remain unchanged.
+
 [Negentropy RUSTSEC-2026-0365](https://rustsec.org/advisories/RUSTSEC-2026-0365.html)
 allows a malformed reconciliation message to request a large allocation before
 its ID count is validated. Both lockfiles select the upstream 0.5.2 fix.
