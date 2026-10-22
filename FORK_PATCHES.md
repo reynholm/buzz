@@ -588,7 +588,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/Cargo.lock`
 
-Lock patched native dependencies, the immutable MeshLLM and NetEq compatibility pins, maintained Opus bindings and updated Tauri utilities; retain target-specific Windows updater constraints explicitly.
+Lock patched native dependencies, including emSign TLS verification and trust stores, the immutable MeshLLM and NetEq compatibility pins, maintained Opus bindings and updated Tauri utilities; retain target-specific Windows updater constraints explicitly.
 
 New module: `false`.
 
@@ -2668,7 +2668,7 @@ New module: `false`.
 
 ## `Cargo.lock`
 
-Preserve the fork dependency graph with patched rustls, Negentropy and ZIP versions and one immutable MeshLLM compatibility source.
+Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source.
 
 New module: `false`.
 
@@ -6028,7 +6028,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/process_tree/codex_helpers.rs`
 
-Confirm Codex code-mode host and exact Bash snapshot shell/parent identities with one bounded ps call; uncertain identities remain work.
+Confirm Codex code-mode host and exact Bash snapshot shell/parent identities with bounded ps probes; uncertain identities remain work. Use macOS ucomm for short snapshot shell/server kernel names while preserving the full-path service probe.
 
 New module: `true`.
 
@@ -7637,7 +7637,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/process_tree/codex_snapshots.rs`
 
-Recognize the complete normalized default Bash capture only under a direct executable-confirmed Codex app-server; transient identity never promotes ordinary ancestors. Missing shell/parent identity is uncertainty; any positive executable mismatch remains work.
+Recognize the complete normalized default Bash capture only under a direct executable-confirmed Codex app-server; transient identity never promotes ordinary ancestors. Missing shell/parent identity is uncertainty; any positive executable mismatch remains work. Match the exact macOS ps octal-newline rendering without accepting modified captures.
 
 New module: `true`.
 
@@ -7645,6 +7645,7 @@ New module: `true`.
 - Required symbol: `pub(super) fn classify_identities(`
 - Required symbol: `snapshot_identity_does_not_promote_ordinary_ancestors`
 - Required symbol: `missing_identity_is_uncertain_but_positive_mismatch_is_work`
+- Required symbol: `snapshot_matches_macos_ps_escaped_newlines_without_accepting_changed_work`
 - Invocation: `crates/buzz-acp/src/process_tree/codex_helpers.rs` → `classify_identities`; exact call `super::codex_snapshots::classify_identities(snapshots, output);`; behavior test `partial_snapshot_identity_does_not_invent_collection_but_preserves_observed_work`; verify `cargo test -p buzz-acp --lib snapshot_helper_tests -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp --lib snapshot -- --test-threads=1`
 
@@ -7661,7 +7662,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/pool/snapshot_helper_tests.rs`
 
-Real ACP late snapshot/exit/return/poll regressions, ordinary shell lookalikes, wrong executable parent, transient exec and actual descendant work across setup capture.
+Real ACP late snapshot/exit/return/poll regressions, ordinary shell lookalikes, wrong executable parent, transient exec and actual descendant work across setup capture. Copy the running macOS interpreter executable rather than a framework launcher to preserve the real fixture identity.
 
 New module: `true`.
 
@@ -7782,7 +7783,7 @@ New module: `true`.
 
 ## `docs/fork/DEPENDENCY_SECURITY.md`
 
-Document patched release dependencies, immutable compatibility pins, target scope and temporary transitive maintenance exceptions.
+Document patched release dependencies, independent TLS security updates, shipping-graph release checks, immutable compatibility pins, target scope and temporary transitive maintenance exceptions.
 
 New module: `true`.
 
@@ -8196,3 +8197,12 @@ New module: `true`.
 
 - Required symbol: `async fn provider_failure_requeues_original_event_and_commits_only_after_recovery(`
 - Verify: `cargo test -p buzz-acp --lib provider_failure -- --test-threads=1`
+
+## `crates/git-sign-nostr/src/lib.rs`
+
+Validate NIP-OA owner BIP-340 curve points at signing, verification and envelope parsing boundaries instead of accepting hex length alone.
+
+New module: `false`.
+
+- Required symbol: `fn test_parse_envelope_rejects_invalid_oa_pubkey()`
+- Verify: `cargo test --locked -p git-sign-nostr`

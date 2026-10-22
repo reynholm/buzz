@@ -30,9 +30,19 @@ pub(super) fn candidates(tree: &ProcessTree) -> HashMap<u32, u32> {
 
 fn is_bash_capture(command: &str) -> bool {
     let mut args = command.split_whitespace();
-    args.next().is_some_and(|path| basename(path) == "bash")
-        && args.next() == Some("-lc")
-        && args.eq(BASH_CAPTURE.split_whitespace())
+    if args.next().is_none_or(|path| basename(path) != "bash") || args.next() != Some("-lc") {
+        return false;
+    }
+    // macOS ps renders newlines within argv as literal octal escapes. Match
+    // that exact capture too, without unescaping arbitrary shell commands.
+    #[cfg(target_os = "macos")]
+    if args
+        .clone()
+        .eq(BASH_CAPTURE.replace('\n', "\\012").split_whitespace())
+    {
+        return true;
+    }
+    args.eq(BASH_CAPTURE.split_whitespace())
 }
 
 fn is_app_server(command: &str) -> bool {
@@ -130,6 +140,23 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn snapshot_matches_macos_ps_escaped_newlines_without_accepting_changed_work() {
+        let capture = BASH_CAPTURE.replace('\n', "\\012");
+        let shell = format!("/bin/bash -lc {capture}");
+        assert_eq!(
+            candidates(&tree(&shell, "/opt/codex app-server")),
+            HashMap::from([(30, 20)])
+        );
+        for changed in [
+            format!("{shell}; sleep 60"),
+            shell.replace("declare -f", "declare -f; sleep 60"),
+        ] {
+            assert!(candidates(&tree(&changed, "/opt/codex app-server")).is_empty());
+        }
+    }
+
     #[test]
     fn snapshot_requires_both_kernel_identities_and_known_probe() {
         let candidates = HashMap::from([(30, 20)]);
@@ -141,6 +168,8 @@ mod tests {
             None,
             Some(""),
             Some("20 /bin/python3\n30 /bin/bash\n"),
+            Some("20 codex ordinary\n30 bash\n"),
+            Some("20 codex\n30 bash ordinary\n"),
             Some("20 /opt/codex\n30 /bin/python3\n"),
             Some("20 /opt/codex\n30 -\n"),
             Some("30 /bin/bash\n"),
