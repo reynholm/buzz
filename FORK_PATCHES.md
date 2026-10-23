@@ -8206,3 +8206,24 @@ New module: `false`.
 
 - Required symbol: `fn test_parse_envelope_rejects_invalid_oa_pubkey()`
 - Verify: `cargo test --locked -p git-sign-nostr`
+
+## `desktop/src/features/channels/useObservedUnreadPersistence.ts`
+
+Bound queued native marker snapshots per scope and preserve pending advances across acknowledgements.
+
+New module: `false`.
+
+- Required symbol: `pendingMarkerFlushScopesRef`
+- Required symbol: `pending.get(marker.contextId)?.readAt === marker.readAt`
+- Invocation: `desktop/src/features/channels/useObservedUnreadPersistence.ts` → `flushPendingMarkers`; exact call `else flushPendingMarkers(scopeKey);`; behavior test `desktop/src/features/channels/observedUnreadMarkerBatching.test.mjs`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/channels/observedUnreadMarkerBatching.test.mjs`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/channels/observedUnreadMarkerBatching.test.mjs`
+
+## `desktop/src/features/channels/observedUnreadMarkerBatching.test.mjs`
+
+Regress marker burst batching, duplicate pending advances, newer removals and retired-scope acknowledgements.
+
+New module: `true`.
+
+- Required symbol: `a marker burst writes each context once in bounded native batches`
+- Required symbol: `a retired scope acknowledgement does not strand markers when returning to it`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/channels/observedUnreadMarkerBatching.test.mjs`

@@ -11276,7 +11276,7 @@
     },
     {
       "path": "desktop/tests/e2e/session-controls.spec.ts",
-      "responsibility": "Registered thread-composer Manage context → agent → action workflow: canonical target routing, signed outcomes, draft preservation, toolbar order, keyboard/click/touch navigation, disabled-editor Compact, sibling isolation, denied/revoked access and unchanged owned activity projection. Scope the open-thread root capture/status assertion to its actual thread-head row, independently of the timeline copy. Cover context-only publication preserving a deliberately unpinned composer draft/attachment/native selection/caret, plus formatting/focus/narrow toolbar order and Space/arrow selection. Exercise reset acknowledgment separately from a generated reply or independent follow-up failure, preserving draft, signer, canonical thread and ordinary event deduplication.",
+      "responsibility": "Registered thread-composer Manage context \u2192 agent \u2192 action workflow: canonical target routing, signed outcomes, draft preservation, toolbar order, keyboard/click/touch navigation, disabled-editor Compact, sibling isolation, denied/revoked access and unchanged owned activity projection. Scope the open-thread root capture/status assertion to its actual thread-head row, independently of the timeline copy. Cover context-only publication preserving a deliberately unpinned composer draft/attachment/native selection/caret, plus formatting/focus/narrow toolbar order and Space/arrow selection. Exercise reset acknowledgment separately from a generated reply or independent follow-up failure, preserving draft, signer, canonical thread and ordinary event deduplication.",
       "is_new": true,
       "required_symbols": [
         "known_agent_without_telemetry_still_has_current_scope_controls",
@@ -12536,6 +12536,40 @@
       "invocation_seams": [],
       "verification_commands": [
         "cargo test --locked -p git-sign-nostr"
+      ]
+    },
+    {
+      "path": "desktop/src/features/channels/useObservedUnreadPersistence.ts",
+      "responsibility": "Bound queued native marker snapshots per scope and preserve pending advances across acknowledgements.",
+      "is_new": false,
+      "required_symbols": [
+        "pendingMarkerFlushScopesRef",
+        "pending.get(marker.contextId)?.readAt === marker.readAt"
+      ],
+      "invocation_seams": [
+        {
+          "callee_symbol": "flushPendingMarkers",
+          "invocation": "else flushPendingMarkers(scopeKey);",
+          "behavior_test": "desktop/src/features/channels/observedUnreadMarkerBatching.test.mjs",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/channels/observedUnreadMarkerBatching.test.mjs",
+          "caller_path": "desktop/src/features/channels/useObservedUnreadPersistence.ts"
+        }
+      ],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/channels/observedUnreadMarkerBatching.test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/src/features/channels/observedUnreadMarkerBatching.test.mjs",
+      "responsibility": "Regress marker burst batching, duplicate pending advances, newer removals and retired-scope acknowledgements.",
+      "is_new": true,
+      "required_symbols": [
+        "a marker burst writes each context once in bounded native batches",
+        "a retired scope acknowledgement does not strand markers when returning to it"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/channels/observedUnreadMarkerBatching.test.mjs"
       ]
     }
   ]
