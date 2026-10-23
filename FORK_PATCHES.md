@@ -3591,15 +3591,17 @@ New module: `false`.
 
 ## `desktop/playwright.config.ts`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow. Register long-thread and large-channel virtualization coverage in the smoke suite.
 
 New module: `false`.
 
 - Required symbol: `"**/session-status.spec.ts",`
 - Required symbol: `"**/session-controls.spec.ts",`
+- Required symbol: `"**/thread-virtualization.spec.ts"`
 - Verify: `just ci`
 - Verify: `cd desktop && pnpm test:e2e:smoke`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
 
 ## `desktop/src-tauri/icons/icon.icns`
 
@@ -7912,12 +7914,16 @@ New module: `true`.
 
 ## `desktop/src/features/messages/ui/MessageThreadPanel.tsx`
 
-Provide a real persisted thread scope to composer context management while retaining focus/overlay thread layout and draft ownership.
+Provide a real persisted thread scope to composer context management while retaining focus/overlay thread layout and draft ownership. Bound mounted thread replies while preserving targets, read-state semantics, branch controls and composer clearance.
 
 New module: `false`.
 
 - Required symbol: `threadContextControl={`
+- Required symbol: `<VirtualizedThreadReplies`
+- Required symbol: `virtualizerOwnsPrependAnchoring: useVirtualizer`
+- Invocation: `desktop/src/features/messages/ui/MessageThreadPanel.tsx` → `VirtualizedThreadReplies`; exact call `<VirtualizedThreadReplies`; behavior test `long threads bound mounted replies and preserve navigation and live scroll ownership`; verify `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
 
 ## `desktop/src/features/messages/ui/MessageComposer.types.ts`
 
@@ -8227,3 +8233,71 @@ New module: `true`.
 - Required symbol: `a marker burst writes each context once in bounded native batches`
 - Required symbol: `a retired scope acknowledgement does not strand markers when returning to it`
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/channels/observedUnreadMarkerBatching.test.mjs`
+
+## `desktop/src/features/messages/ui/VirtualizedThreadReplies.tsx`
+
+Virtualize variable-height replies inside the existing thread scroll region with measured head offset and cancellable bottom ownership.
+
+New module: `true`.
+
+- Required symbol: `export function VirtualizedThreadReplies`
+- Required symbol: `startMargin={geometry.margin}`
+- Required symbol: `scrollRef={scrollRef}`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
+
+## `desktop/src/features/messages/ui/useAnchoredScroll.ts`
+
+Wait for visible virtual targets before acknowledging navigation and preserve temporary centered targets through layout reflow.
+
+New module: `false`.
+
+- Required symbol: `const needsRealization`
+- Required symbol: `else if (!virtualizerOwnsPrependAnchoring)`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test "src/features/messages/ui/useAnchoredScroll*.test.mjs"`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
+
+## `desktop/src/features/messages/ui/useAnchoredScroll.lifecycle.test.mjs`
+
+Bind virtual target acknowledgement and initial-position ownership regressions to the production scroll hook.
+
+New module: `false`.
+
+- Required symbol: `function PendingVirtualTargetHarness`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/useAnchoredScroll.lifecycle.test.mjs`
+
+## `desktop/src/features/messages/ui/useVirtualizedBottomSettle.ts`
+
+Support existing externally owned thread scroll nodes without changing channel scroll ownership.
+
+New module: `false`.
+
+- Required symbol: `scrollRef?: React.RefObject<HTMLDivElement | null>`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/useVirtualizedBottomSettle.test.mjs`
+
+## `desktop/src/features/messages/ui/useVirtualizedBottomSettle.test.mjs`
+
+Verify external thread scrollers retain bottom intent and yield to reader input.
+
+New module: `false`.
+
+- Required symbol: `an external thread scroller owns bottom settlement and input cancellation`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/useVirtualizedBottomSettle.test.mjs`
+
+## `desktop/tests/e2e/thread-virtualization.spec.ts`
+
+Exercise bounded mounts, offscreen targets, scroll ownership and composer clearance on 600 replies, and a channel containing 1200 threads.
+
+New module: `true`.
+
+- Required symbol: `long threads bound mounted replies and preserve navigation and live scroll ownership`
+- Required symbol: `a channel with many thread roots keeps its mounted history bounded`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
+
+## `desktop/tests/e2e/thread-focus-mode.spec.ts`
+
+Exercise reading-position preservation with explicit reader wheel ownership before a virtualized layout switch.
+
+New module: `false`.
+
+- Required symbol: `new WheelEvent("wheel", { bubbles: true, deltaY: -120 })`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-focus-mode.spec.ts`

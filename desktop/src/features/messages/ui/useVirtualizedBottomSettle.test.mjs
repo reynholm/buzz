@@ -113,12 +113,17 @@ function flushAnimationFrames() {
   for (const callback of callbacks) callback(performance.now());
 }
 
-function Harness({ apiRef, hostRef, itemsLengthRef, listRef }) {
-  apiRef.current = useVirtualizedBottomSettle(hostRef, listRef, itemsLengthRef);
+function Harness({ apiRef, hostRef, itemsLengthRef, listRef, scrollRef }) {
+  apiRef.current = useVirtualizedBottomSettle(
+    hostRef,
+    listRef,
+    itemsLengthRef,
+    scrollRef,
+  );
   return null;
 }
 
-async function mountHarness() {
+async function mountHarness(external = false) {
   animationFrames.clear();
   resizeObservers.length = 0;
   const content = new ElementShim();
@@ -127,7 +132,8 @@ async function mountHarness() {
   const writes = [];
   const refs = {
     api: { current: null },
-    host: { current: host },
+    host: { current: external ? new ElementShim() : host },
+    scroll: external ? { current: scroller } : undefined,
     itemsLength: { current: 5 },
     list: {
       current: {
@@ -145,6 +151,7 @@ async function mountHarness() {
         hostRef: refs.host,
         itemsLengthRef: refs.itemsLength,
         listRef: refs.list,
+        scrollRef: refs.scroll,
       }),
     );
   });
@@ -274,6 +281,24 @@ test("typing and editable navigation keys preserve bottom intent", async () => {
   resizeObservers
     .find((observer) => observer.targets?.includes(content))
     .callback();
+  flushAnimationFrames();
+  assert.equal(writes.length, 2);
+  await act(async () => root.unmount());
+});
+
+test("an external thread scroller owns bottom settlement and input cancellation", async () => {
+  const { content, refs, root, scroller, writes } = await mountHarness(true);
+  refs.api.current.settle();
+  assert.equal(writes.length, 1);
+  const observer = resizeObservers.find((item) =>
+    item.targets?.includes(content),
+  );
+  assert.ok(observer);
+  observer.callback();
+  flushAnimationFrames();
+  assert.equal(writes.length, 2);
+  scroller.dispatchEvent({ type: "wheel", ctrlKey: false });
+  observer.callback();
   flushAnimationFrames();
   assert.equal(writes.length, 2);
   await act(async () => root.unmount());

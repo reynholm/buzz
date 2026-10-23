@@ -1,0 +1,140 @@
+import * as React from "react";
+import { Virtualizer, type VirtualizerHandle } from "virtua";
+
+import type { TimelineMessage } from "@/features/messages/types";
+import { estimateRowHeight } from "@/features/messages/lib/rowHeightEstimate";
+import type { TimelineVirtualizerApi } from "./TimelineMessageList";
+import { useVirtualizedBottomSettle } from "./useVirtualizedBottomSettle";
+
+type ReplyItem = {
+  entry: { message: TimelineMessage; summary: unknown };
+  isContinuation: boolean;
+};
+
+type Props<T extends ReplyItem> = {
+  items: T[];
+  renderItem: (item: T) => React.ReactElement;
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+  contentRef: React.RefObject<HTMLDivElement | null>;
+  headId: string;
+  onApiChange: (api: TimelineVirtualizerApi | null) => void;
+  onAtBottomChange: (atBottom: boolean) => void;
+  onRangeChange: () => void;
+};
+
+export function VirtualizedThreadReplies<T extends ReplyItem>({
+  items,
+  renderItem,
+  scrollRef,
+  contentRef,
+  headId,
+  onApiChange,
+  onAtBottomChange,
+  onRangeChange,
+}: Props<T>) {
+  const hostRef = React.useRef<HTMLDivElement>(null);
+  const listRef = React.useRef<VirtualizerHandle>(null);
+  const lengthRef = React.useRef(items.length + 1);
+  lengthRef.current = items.length + 1;
+  const indexById = React.useMemo(
+    () => new Map(items.map((item, index) => [item.entry.message.id, index])),
+    [items],
+  );
+  const indexRef = React.useRef(indexById);
+  indexRef.current = indexById;
+  const data = React.useMemo(() => [...items, null], [items]);
+  const [geometry, setGeometry] = React.useState({ margin: 0, buffer: 1_000 });
+  const { cancel, settle } = useVirtualizedBottomSettle(
+    hostRef,
+    listRef,
+    lengthRef,
+    scrollRef,
+  );
+
+  React.useLayoutEffect(() => {
+    const host = hostRef.current;
+    const scroller = scrollRef.current;
+    const content = contentRef.current;
+    if (!host || !scroller || !content) return;
+    const measure = () => {
+      const margin =
+        host.getBoundingClientRect().top -
+        scroller.getBoundingClientRect().top +
+        scroller.scrollTop;
+      const buffer = scroller.clientHeight * 3;
+      setGeometry((previous) =>
+        previous.margin === margin && previous.buffer === buffer
+          ? previous
+          : { margin, buffer },
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(content);
+    observer.observe(scroller);
+    return () => observer.disconnect();
+  }, [contentRef, scrollRef]);
+
+  React.useLayoutEffect(() => {
+    onApiChange({
+      cancelBottomIntent: cancel,
+      scrollToBottom: settle,
+      settleAtBottom: settle,
+      scrollToMessage(id) {
+        cancel();
+        if (id === headId) {
+          scrollRef.current?.scrollTo({ top: 0 });
+          return true;
+        }
+        const index = indexRef.current.get(id);
+        if (index === undefined) return false;
+        listRef.current?.scrollToIndex(index, { align: "center" });
+        return true;
+      },
+    });
+    return () => onApiChange(null);
+  }, [cancel, headId, onApiChange, scrollRef, settle]);
+
+  const handleScroll = React.useCallback(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    onRangeChange();
+    onAtBottomChange(
+      scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 32,
+    );
+  }, [onAtBottomChange, onRangeChange, scrollRef]);
+  const estimate = React.useCallback((item: T | null) => {
+    if (!item) return 96;
+    return (
+      estimateRowHeight(item.entry.message, {
+        isContinuation: item.isContinuation,
+      }) + (item.entry.summary ? 36 : 0)
+    );
+  }, []);
+
+  return (
+    <div ref={hostRef} data-testid="virtualized-thread-replies">
+      <Virtualizer
+        ref={listRef}
+        data={data}
+        itemSize={estimate}
+        scrollRef={scrollRef}
+        startMargin={geometry.margin}
+        bufferSize={geometry.buffer}
+        onScroll={handleScroll}
+      >
+        {(item) =>
+          item ? (
+            renderItem(item)
+          ) : (
+            <div
+              aria-hidden
+              className="h-[var(--composer-overlay-height,6rem)]"
+              key="composer-spacer"
+            />
+          )
+        }
+      </Virtualizer>
+    </div>
+  );
+}

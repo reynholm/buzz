@@ -597,3 +597,74 @@ test("mounted virtual target retires bottom intent before direct centering", asy
   assert.equal(bottomWrites.length, 1, "geometry cannot re-pin to bottom");
   await act(async () => root.unmount());
 });
+
+function PendingVirtualTargetHarness({ refs, targetMessageId, version }) {
+  useAnchoredScroll({
+    channelId: "virtual-thread",
+    contentRef: refs.content,
+    isLoading: false,
+    messages: refs.messages,
+    scrollContainerRef: refs.container,
+    targetMessageId,
+    onTargetReached: refs.onReached,
+    virtualizerOwnsPrependAnchoring: true,
+    virtualScrollToBottom: refs.scrollToBottom,
+    virtualScrollToMessage: refs.scrollToMessage,
+    virtualizerRenderVersion: version,
+  });
+  return null;
+}
+
+for (const initialTarget of [true, false]) {
+  test(`a ${initialTarget ? "mount" : "later"} virtual target waits for visible realization before acknowledgement`, async () => {
+    const nodes = makePinnedCenterNodes();
+    nodes.moveSelectedRowBy(800);
+    const reached = [];
+    const bottomPins = [];
+    const jumps = [];
+    const refs = {
+      content: { current: nodes.content },
+      container: { current: nodes.container },
+      messages: [{ id: "selected" }],
+      onReached: (id) => reached.push(id),
+      scrollToBottom: () => bottomPins.push(true),
+      scrollToMessage: (id) => {
+        jumps.push(id);
+        return true;
+      },
+    };
+    const root = createRoot(document.createElement("div"));
+    const render = (targetMessageId, version) =>
+      act(async () => {
+        root.render(
+          React.createElement(PendingVirtualTargetHarness, {
+            refs,
+            targetMessageId,
+            version,
+          }),
+        );
+      });
+    try {
+      await render(initialTarget ? "selected" : null, 0);
+      const previousPins = bottomPins.length;
+      if (!initialTarget) await render("selected", 0);
+      assert.ok(jumps.length > 0);
+      assert.deepEqual(
+        reached,
+        [],
+        "An offscreen row is not a resolved target",
+      );
+      assert.equal(
+        bottomPins.length,
+        previousPins,
+        "Target navigation must not re-arm the bottom pin",
+      );
+      if (initialTarget) assert.equal(bottomPins.length, 0);
+      nodes.moveSelectedRowBy(-800);
+      await render("selected", 1);
+      assert.deepEqual(reached, ["selected"]);
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+}

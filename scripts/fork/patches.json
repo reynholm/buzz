@@ -5967,17 +5967,19 @@
     },
     {
       "path": "desktop/playwright.config.ts",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow. Register long-thread and large-channel virtualization coverage in the smoke suite.",
       "is_new": false,
       "required_symbols": [
         "\"**/session-status.spec.ts\",",
-        "\"**/session-controls.spec.ts\","
+        "\"**/session-controls.spec.ts\",",
+        "\"**/thread-virtualization.spec.ts\""
       ],
       "invocation_seams": [],
       "verification_commands": [
         "just ci",
         "cd desktop && pnpm test:e2e:smoke",
-        "CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts"
+        "CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts",
+        "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts"
       ]
     },
     {
@@ -12083,14 +12085,25 @@
     },
     {
       "path": "desktop/src/features/messages/ui/MessageThreadPanel.tsx",
-      "responsibility": "Provide a real persisted thread scope to composer context management while retaining focus/overlay thread layout and draft ownership.",
+      "responsibility": "Provide a real persisted thread scope to composer context management while retaining focus/overlay thread layout and draft ownership. Bound mounted thread replies while preserving targets, read-state semantics, branch controls and composer clearance.",
       "is_new": false,
       "required_symbols": [
-        "threadContextControl={"
+        "threadContextControl={",
+        "<VirtualizedThreadReplies",
+        "virtualizerOwnsPrependAnchoring: useVirtualizer"
       ],
-      "invocation_seams": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/messages/ui/MessageThreadPanel.tsx",
+          "callee_symbol": "VirtualizedThreadReplies",
+          "invocation": "<VirtualizedThreadReplies",
+          "behavior_test": "long threads bound mounted replies and preserve navigation and live scroll ownership",
+          "verification_command": "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts"
+        }
+      ],
       "verification_commands": [
-        "CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts"
+        "CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts",
+        "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts"
       ]
     },
     {
@@ -12570,6 +12583,95 @@
       "invocation_seams": [],
       "verification_commands": [
         "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/channels/observedUnreadMarkerBatching.test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/VirtualizedThreadReplies.tsx",
+      "responsibility": "Virtualize variable-height replies inside the existing thread scroll region with measured head offset and cancellable bottom ownership.",
+      "is_new": true,
+      "required_symbols": [
+        "export function VirtualizedThreadReplies",
+        "startMargin={geometry.margin}",
+        "scrollRef={scrollRef}"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/useAnchoredScroll.ts",
+      "responsibility": "Wait for visible virtual targets before acknowledging navigation and preserve temporary centered targets through layout reflow.",
+      "is_new": false,
+      "required_symbols": [
+        "const needsRealization",
+        "else if (!virtualizerOwnsPrependAnchoring)"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test \"src/features/messages/ui/useAnchoredScroll*.test.mjs\"",
+        "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/useAnchoredScroll.lifecycle.test.mjs",
+      "responsibility": "Bind virtual target acknowledgement and initial-position ownership regressions to the production scroll hook.",
+      "is_new": false,
+      "required_symbols": [
+        "function PendingVirtualTargetHarness"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/useAnchoredScroll.lifecycle.test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/useVirtualizedBottomSettle.ts",
+      "responsibility": "Support existing externally owned thread scroll nodes without changing channel scroll ownership.",
+      "is_new": false,
+      "required_symbols": [
+        "scrollRef?: React.RefObject<HTMLDivElement | null>"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/useVirtualizedBottomSettle.test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/useVirtualizedBottomSettle.test.mjs",
+      "responsibility": "Verify external thread scrollers retain bottom intent and yield to reader input.",
+      "is_new": false,
+      "required_symbols": [
+        "an external thread scroller owns bottom settlement and input cancellation"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/useVirtualizedBottomSettle.test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/tests/e2e/thread-virtualization.spec.ts",
+      "responsibility": "Exercise bounded mounts, offscreen targets, scroll ownership and composer clearance on 600 replies, and a channel containing 1200 threads.",
+      "is_new": true,
+      "required_symbols": [
+        "long threads bound mounted replies and preserve navigation and live scroll ownership",
+        "a channel with many thread roots keeps its mounted history bounded"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts"
+      ]
+    },
+    {
+      "path": "desktop/tests/e2e/thread-focus-mode.spec.ts",
+      "responsibility": "Exercise reading-position preservation with explicit reader wheel ownership before a virtualized layout switch.",
+      "is_new": false,
+      "required_symbols": [
+        "new WheelEvent(\"wheel\", { bubbles: true, deltaY: -120 })"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "CI=1 pnpm --dir desktop test:e2e:smoke thread-focus-mode.spec.ts"
       ]
     }
   ]
