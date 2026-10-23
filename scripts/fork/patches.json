@@ -1,6 +1,6 @@
 {
-  "base_tag": "desktop-v0.5.26",
-  "base_sha": "2b4b138dc5cf2d9cc1a0ceb21d9063ff56fe8bf4",
+  "base_tag": "desktop-v0.5.28",
+  "base_sha": "2d289f720de0012fa36b5f6faa0e3bdd845ccfcf",
   "patches": [
     {
       "path": "docs/superpowers/plans/2026-10-03-buzz-fork-maintenance.md",
@@ -137,7 +137,7 @@
         {
           "caller_path": "desktop/src-tauri/src/commands/agents.rs",
           "callee_symbol": "deploy_to_provider_scoped",
-          "invocation": "provider_deploy::deploy_to_provider_scoped(\n                &app,\n                &state,\n                &pubkey,\n                provider_deploy::ProviderStartScope {\n                    relay: Some(&create_scope.relay_url),",
+          "invocation": "provider_deploy::deploy_to_provider_scoped(\n                &app,\n                state,\n                &pubkey,\n                provider_deploy::ProviderStartScope {\n                    relay: Some(&create_scope.relay_url),",
           "behavior_test": "managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await -- --exact",
           "coverage": "Task6 isolated production adapter behavior with injected effects; native Wry caller compiled and exact wiring fingerprint checked; native keychain/process/provider acceptance remains outstanding"
@@ -153,7 +153,7 @@
         {
           "caller_path": "desktop/src-tauri/src/commands/agents.rs",
           "callee_symbol": "start_local_agent_with_preflight",
-          "invocation": "start_local_agent_with_preflight(\n            &app,\n            &state,\n            &pubkey,\n            true,\n            runtime_start::LocalStartScope {\n                relay: Some(&create_scope.relay_url),\n                owner: Some(&create_scope.owner_pubkey),\n                replay_floor: None,\n                fence: Some(&create_fence),\n            },\n        )",
+          "invocation": "start_local_agent_with_preflight(\n            &app,\n            state,\n            &pubkey,\n            true,\n            runtime_start::LocalStartScope {\n                relay: Some(&create_scope.relay_url),\n                owner: Some(&create_scope.owner_pubkey),\n                replay_floor: None,\n                fence: Some(&create_fence),\n            },\n        )",
           "behavior_test": "managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await -- --exact",
           "coverage": "Task6 isolated production adapter behavior with injected effects; native Wry caller compiled and exact wiring fingerprint checked; native keychain/process/provider acceptance remains outstanding"
@@ -161,7 +161,7 @@
         {
           "caller_path": "desktop/src-tauri/src/commands/agents.rs",
           "callee_symbol": "publish_agent_profile_with_about",
-          "invocation": "profile::publish_agent_profile_with_about(\n        &app,\n        &state,\n        &agent.pubkey,\n        &create_fence,",
+          "invocation": "profile::publish_agent_profile_with_about(\n        &app,\n        state,\n        &agent.pubkey,\n        &create_fence,",
           "behavior_test": "create_import_profile_invocation_never_redirects_after_owner_relay_switch",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib create_import_profile_invocation_never_redirects_after_owner_relay_switch",
           "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
@@ -830,12 +830,13 @@
     },
     {
       "path": "desktop/src-tauri/Cargo.lock",
-      "responsibility": "Lock patched native dependencies, including emSign TLS verification and trust stores, the immutable MeshLLM and NetEq compatibility pins, maintained Opus bindings and updated Tauri utilities; retain target-specific Windows updater constraints explicitly.",
+      "responsibility": "Lock patched native dependencies, including emSign TLS verification and trust stores, the immutable MeshLLM and NetEq compatibility pins, maintained Opus bindings and updated Tauri utilities; retain target-specific Windows updater constraints explicitly; include ctutils 0.4.4 for RUSTSEC-2026-0385.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
-        "just desktop-tauri-test desktop-tauri-check"
+        "just desktop-tauri-test desktop-tauri-check",
+        "cargo deny --manifest-path desktop/src-tauri/Cargo.toml --target aarch64-apple-darwin --features mesh-llm check"
       ]
     },
     {
@@ -2263,7 +2264,7 @@
         {
           "caller_path": "desktop/src-tauri/src/commands/agents.rs",
           "callee_symbol": "creation_phase_locked",
-          "invocation": "crate::managed_agents::device_creation::creation_phase_locked(\n            &app,\n            &state,\n            requested_persona_id.as_deref(),\n            Some(&create_scope),\n            crate::managed_agents::persona_device_view::load_device_policy_context,\n            |_| {",
+          "invocation": "crate::managed_agents::device_creation::creation_phase_locked(\n            &app,\n            state,\n            requested_persona_id.as_deref(),\n            Some(&create_scope),\n            crate::managed_agents::persona_device_view::load_device_policy_context,\n            |_| {",
           "behavior_test": "managed_agents::device_creation::tests::remote_create_has_no_mint_publish_or_save",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_creation::tests::remote_create_has_no_mint_publish_or_save -- --exact",
           "coverage": "Wry command phase wiring/compile; generic native adapter runtime; native app acceptance outstanding"
@@ -2271,7 +2272,7 @@
         {
           "caller_path": "desktop/src-tauri/src/commands/agents.rs",
           "callee_symbol": "creation_phase_locked",
-          "invocation": "crate::managed_agents::device_creation::creation_phase_locked(\n            &app,\n            &state,\n            requested_persona_id.as_deref(),\n            Some(&create_scope),\n            crate::managed_agents::persona_device_view::load_device_policy_context,\n            |context| {",
+          "invocation": "crate::managed_agents::device_creation::creation_phase_locked(\n            &app,\n            state,\n            requested_persona_id.as_deref(),\n            Some(&create_scope),\n            crate::managed_agents::persona_device_view::load_device_policy_context,\n            |context| {",
           "behavior_test": "managed_agents::device_creation::tests::native_creation_adapter_rechecks_real_readiness_and_scope_after_await",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_creation::tests::native_creation_adapter_rechecks_real_readiness_and_scope_after_await -- --exact",
           "coverage": "Wry command phase wiring/compile; generic native adapter runtime; native app acceptance outstanding"
@@ -4399,6 +4400,20 @@
       ]
     },
     {
+      "path": ".github/workflows/_ci-clients.yml",
+      "responsibility": "Pin the Android lane to Temurin JDK 17 for Gradle 8.14.5 and explicitly select the same JAVA_HOME in Flutter before APK and JVM unit builds.",
+      "is_new": false,
+      "required_symbols": [
+        "- name: Set up Android JDK\n        if: matrix.lane == 'android'\n        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5\n        with:\n          distribution: temurin\n          java-version: '17'",
+        "- name: Select Android JDK for Flutter\n        if: matrix.lane == 'android'\n        run: flutter config --jdk-dir=\"$JAVA_HOME\""
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "node --test scripts/ci-selection.test.mjs scripts/ci-required-gates.test.mjs scripts/ci-apt-retry.test.mjs",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
       "path": ".github/workflows/_ci-desktop-macos.yml",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
       "is_new": false,
@@ -4410,10 +4425,15 @@
     },
     {
       "path": ".github/workflows/_ci-relay.yml",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane. Preserve the MinIO CI image override in every relay integration consumer. Retain the real CLI build and artifact inventory after the upstream producer matrix split.",
       "is_new": false,
       "required_symbols": [
-        "export BUZZ_TEST_BIN_DIR=\"$PWD/target/ci\""
+        "export BUZZ_TEST_BIN_DIR=\"$PWD/target/ci\"",
+        "desktop-e2e-integration-shard:\n    env:\n      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml",
+        "backend-integration:\n    env:\n      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml",
+        "relay-e2e:\n    env:\n      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml",
+        "run: cargo build --profile ci -p buzz-relay -p git-credential-nostr -p buzz-cli",
+        "- artifact: relay-binaries\n            paths: |\n              target/ci/buzz-relay\n              target/ci/buzz\n              target/ci/git-credential-nostr"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -4422,11 +4442,12 @@
     },
     {
       "path": ".github/workflows/_ci-rust.yml",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Preserve checked ACP retirement and budget cold native Windows compilation plus the full Tauri test suite",
       "is_new": false,
       "required_symbols": [
         "python scripts/check-acp-retirement.py",
-        "python3 scripts/check-acp-retirement.py"
+        "python3 scripts/check-acp-retirement.py",
+        "timeout-minutes: 90"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -4475,12 +4496,13 @@
     },
     {
       "path": "Cargo.lock",
-      "responsibility": "Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source.",
+      "responsibility": "Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils 0.4.4 for RUSTSEC-2026-0385.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
-        "just ci"
+        "just ci",
+        "cargo deny check"
       ]
     },
     {
@@ -4499,7 +4521,7 @@
     {
       "path": "bin/.uv-0.12.21.pkg",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -4509,7 +4531,7 @@
     {
       "path": "bin/uv",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -4519,7 +4541,7 @@
     {
       "path": "bin/uvx",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -4630,7 +4652,7 @@
     {
       "path": "crates/buzz-acp/src/acp/launch.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -4640,7 +4662,7 @@
     {
       "path": "crates/buzz-acp/src/acp/launch/tests.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -4650,7 +4672,7 @@
     {
       "path": "crates/buzz-acp/src/acp_frame_writer.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -4683,7 +4705,7 @@
     {
       "path": "crates/buzz-acp/src/edit_routing.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -5107,7 +5129,7 @@
     {
       "path": "crates/buzz-acp/src/recovery_wake.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -5177,7 +5199,7 @@
     {
       "path": "crates/buzz-auth/src/nip_fi/command.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -5187,7 +5209,7 @@
     {
       "path": "crates/buzz-auth/src/nip_fi/command_replay.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -5197,7 +5219,7 @@
     {
       "path": "crates/buzz-auth/src/nip_fi/community.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -5217,7 +5239,7 @@
     {
       "path": "crates/buzz-auth/src/nip_fi/deny_map.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -5478,7 +5500,7 @@
     {
       "path": "crates/buzz-dev-mcp/tests/lifecycle.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -5518,7 +5540,7 @@
     {
       "path": "crates/buzz-pubsub/src/nip_fi_command_replay.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -5548,7 +5570,7 @@
     {
       "path": "crates/buzz-relay/src/api/admin/direct.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -5648,7 +5670,7 @@
     {
       "path": "crates/buzz-relay/src/api/nip_fi.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -5868,7 +5890,7 @@
     {
       "path": "crates/buzz-relay/src/nip_fi_core.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -5898,7 +5920,7 @@
     {
       "path": "crates/buzz-relay/src/nip_fi_shadow.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -5908,7 +5930,7 @@
     {
       "path": "crates/buzz-relay/src/nip_fi_shadow_session.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -5993,7 +6015,7 @@
     {
       "path": "desktop/src-tauri/src/commands/admin/direct_action_tests.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6073,7 +6095,7 @@
     {
       "path": "desktop/src-tauri/src/commands/agents_admission_tests.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6093,7 +6115,7 @@
     {
       "path": "desktop/src-tauri/src/commands/channels/starter_tests.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6153,7 +6175,7 @@
     {
       "path": "desktop/src-tauri/src/managed_agents/admission_test_support.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6223,7 +6245,7 @@
     {
       "path": "desktop/src-tauri/src/managed_agents/pair_admission.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6243,7 +6265,7 @@
     {
       "path": "desktop/src-tauri/src/managed_agents/restore_admission_tests.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6263,7 +6285,7 @@
     {
       "path": "desktop/src-tauri/src/managed_agents/runtime_commands_admission_tests.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6313,7 +6335,7 @@
     {
       "path": "desktop/src/features/admin-console/AdminConsoleActionsTab.tsx",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6353,7 +6375,7 @@
     {
       "path": "desktop/src/features/admin-console/adminConsolePanelActions.jsdom-test.mjs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6413,7 +6435,7 @@
     {
       "path": "desktop/src/features/agents/lib/useAutoRestartPolicy.relayRemoved.jsdom-test.mjs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6453,7 +6475,7 @@
     {
       "path": "desktop/src/features/agents/managedAgentRelayCleanup.test.mjs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6463,7 +6485,7 @@
     {
       "path": "desktop/src/features/agents/managedAgentRelayCleanup.ts",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6533,7 +6555,7 @@
     {
       "path": "desktop/src/features/agents/ui/PersonaDropdownOptionLabel.tsx",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6553,7 +6575,7 @@
     {
       "path": "desktop/src/features/agents/ui/activityRenderClasses/ThoughtActivity.jsdom-test.mjs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6563,7 +6585,7 @@
     {
       "path": "desktop/src/features/agents/ui/activityRenderClasses/ThoughtActivity.render.test.mjs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6603,7 +6625,7 @@
     {
       "path": "desktop/src/features/agents/ui/modelMenuDescriptions.jsdom-test.mjs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6623,7 +6645,7 @@
     {
       "path": "desktop/src/features/agents/ui/useManagedAgentActions.relayRemoved.jsdom-test.mjs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6633,7 +6655,7 @@
     {
       "path": "desktop/src/features/agents/ui/usePersonaModelDiscovery.jsdom-test.mjs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6663,7 +6685,7 @@
     {
       "path": "desktop/src/features/agents/useManagedAgentRuntimeReconciliation.jsdom-test.mjs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6693,7 +6715,7 @@
     {
       "path": "desktop/src/features/channels/rosterAdminKick.test.mjs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6703,7 +6725,7 @@
     {
       "path": "desktop/src/features/channels/rosterFreshness.test.mjs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6763,7 +6785,7 @@
     {
       "path": "desktop/src/features/communities/legacyCommunityReadmit.jsdom-test.mjs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6793,7 +6815,7 @@
     {
       "path": "desktop/src/features/communities/updateCommunityReadmit.jsdom-test.mjs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -6963,7 +6985,7 @@
     {
       "path": "desktop/src/shared/api/channelMembershipWrites.ts",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7066,7 +7088,7 @@
     {
       "path": "desktop/tests/e2e/thread-follow.spec.ts",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7086,7 +7108,7 @@
     {
       "path": "migrations/0054_owner_deletion_quota_reservation.sql",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7096,7 +7118,7 @@
     {
       "path": "migrations/0055_relay_admin_direct_actions.sql",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7106,7 +7128,7 @@
     {
       "path": "mobile/assets/images/buzz-wordmark.png",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7116,7 +7138,7 @@
     {
       "path": "mobile/assets/images/shell-gradient.png",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7146,7 +7168,7 @@
     {
       "path": "mobile/ios/Runner/NativeMessageMenu.swift",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7156,7 +7178,7 @@
     {
       "path": "mobile/ios/Runner/NativeMessagePresentationCoordinator.swift",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7166,7 +7188,7 @@
     {
       "path": "mobile/ios/Runner/NativeReactionDetails.swift",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7176,7 +7198,7 @@
     {
       "path": "mobile/ios/RunnerTests/NativeMessageImageLoaderTests.swift",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7424,16 +7446,6 @@
       ]
     },
     {
-      "path": "mobile/lib/features/channels/message_actions/native_actions.dart",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
-      "required_symbols": [],
-      "invocation_seams": [],
-      "verification_commands": [
-        "just ci"
-      ]
-    },
-    {
       "path": "mobile/lib/features/channels/message_long_press_region.dart",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
       "is_new": false,
@@ -7486,7 +7498,7 @@
     {
       "path": "mobile/lib/features/pairing/pairing_page/onboarding_colors.dart",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7496,7 +7508,7 @@
     {
       "path": "mobile/lib/features/pairing/pairing_page/onboarding_glass_button.dart",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7506,7 +7518,7 @@
     {
       "path": "mobile/lib/features/pairing/pairing_page/onboarding_wordmark.dart",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7574,46 +7586,6 @@
       ]
     },
     {
-      "path": "mobile/lib/features/pulse/agent_activity_card.dart",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": false,
-      "required_symbols": [],
-      "invocation_seams": [],
-      "verification_commands": [
-        "just ci"
-      ]
-    },
-    {
-      "path": "mobile/lib/features/pulse/compose_note_page.dart",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": false,
-      "required_symbols": [],
-      "invocation_seams": [],
-      "verification_commands": [
-        "just ci"
-      ]
-    },
-    {
-      "path": "mobile/lib/features/pulse/note_card.dart",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": false,
-      "required_symbols": [],
-      "invocation_seams": [],
-      "verification_commands": [
-        "just ci"
-      ]
-    },
-    {
-      "path": "mobile/lib/features/pulse/pulse_page.dart",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": false,
-      "required_symbols": [],
-      "invocation_seams": [],
-      "verification_commands": [
-        "just ci"
-      ]
-    },
-    {
       "path": "mobile/lib/features/search/search_page.dart",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
       "is_new": false,
@@ -7632,17 +7604,6 @@
       "verification_commands": [
         "just ci"
       ]
-    },
-    {
-      "path": "mobile/lib/features/settings/settings_page/community_section.dart",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": false,
-      "required_symbols": [],
-      "invocation_seams": [],
-      "verification_commands": [
-        "just ci"
-      ],
-      "deleted": true
     },
     {
       "path": "mobile/lib/features/settings/settings_page/connection_section.dart",
@@ -7667,7 +7628,7 @@
     {
       "path": "mobile/lib/features/settings/settings_page/profile_section.dart",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7677,7 +7638,7 @@
     {
       "path": "mobile/lib/features/settings/settings_page/status_section.dart",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7717,7 +7678,7 @@
     {
       "path": "mobile/lib/shared/success_haptic.dart",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7727,7 +7688,7 @@
     {
       "path": "mobile/lib/shared/widgets/native_message_presentation.dart",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7747,7 +7708,7 @@
     {
       "path": "mobile/shaders/onboarding_wordmark.frag",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7767,7 +7728,7 @@
     {
       "path": "mobile/test/features/channels/add_members_sheet_names_test.dart",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7787,7 +7748,7 @@
     {
       "path": "mobile/test/features/channels/channel_detail_page_test/presence_tests.dart",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7807,7 +7768,7 @@
     {
       "path": "mobile/test/features/channels/channels_page_test/presence_tests.dart",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7827,7 +7788,7 @@
     {
       "path": "mobile/test/features/channels/compose_bar_test/durable_mention_tests.dart",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7836,11 +7797,10 @@
     },
     {
       "path": "mobile/test/features/channels/message_actions_test.dart",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches; isolate native cross-surface fixture from unrelated membership/connectivity",
+      "responsibility": "Keep message action fixture connectivity isolated using the current upstream mocked channel; native popover fixtures were replaced by grouped action sheets.",
       "is_new": false,
       "required_symbols": [
-        "channelIdentityNamesProvider(_channelId).overrideWith",
-        "const IdentityNameSources().scope(const [])"
+        "const MethodChannel('dev.fluttercommunity.plus/connectivity_status')"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -7861,7 +7821,7 @@
     {
       "path": "mobile/test/features/pairing/onboarding_wordmark_test.dart",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7901,7 +7861,7 @@
     {
       "path": "mobile/test/features/profile/presence_ordering_test.dart",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7911,7 +7871,7 @@
     {
       "path": "mobile/test/features/profile/presence_snapshot_test.dart",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7922,36 +7882,6 @@
       "path": "mobile/test/features/profile/settings_profile_header_test.dart",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
       "is_new": false,
-      "required_symbols": [],
-      "invocation_seams": [],
-      "verification_commands": [
-        "just ci"
-      ]
-    },
-    {
-      "path": "mobile/test/features/pulse/compose_note_page_test.dart",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": false,
-      "required_symbols": [],
-      "invocation_seams": [],
-      "verification_commands": [
-        "just ci"
-      ]
-    },
-    {
-      "path": "mobile/test/features/pulse/note_card_test.dart",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": false,
-      "required_symbols": [],
-      "invocation_seams": [],
-      "verification_commands": [
-        "just ci"
-      ]
-    },
-    {
-      "path": "mobile/test/features/pulse/pulse_page_test.dart",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -7981,7 +7911,7 @@
     {
       "path": "mobile/test/features/settings/notification_recovery_test.dart",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -8051,7 +7981,7 @@
     {
       "path": "scripts/generate-macos-icon.py",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -8061,7 +7991,7 @@
     {
       "path": "scripts/macos-icon.sh",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": true,
+      "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
@@ -8849,13 +8779,13 @@
       "responsibility": "Reserve ephemeral managed recovery kind 20003 for signed canonical election; upgraded relays route it through shared ingest.",
       "is_new": false,
       "required_symbols": [
-        "KIND_MANAGED_DELIVERY_RECOVERY: u32 = 20003"
+        "KIND_MANAGED_DELIVERY_RECOVERY: u32 = 20004"
       ],
       "invocation_seams": [
         {
           "caller_path": "crates/buzz-relay/src/handlers/event.rs",
           "callee_symbol": "is_ephemeral",
-          "invocation": "if is_ephemeral(kind_u32)\n        && kind_u32 != buzz_core::kind::KIND_NIP43_LEAVE_REQUEST\n        && kind_u32 != buzz_core::kind::KIND_MANAGED_DELIVERY_RECOVERY",
+          "invocation": "if is_ephemeral(kind_u32)\n        && kind_u32 != buzz_core::kind::KIND_NIP43_LEAVE_REQUEST\n        && !buzz_core::managed_delivery::is_recovery_envelope(&event)",
           "behavior_test": "managed_ws_original_ack_correlates_after_recovery_wins",
           "verification_command": "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib managed_ws_original_ack_correlates_after_recovery_wins -- --ignored --test-threads=1",
           "coverage": "Real WS handler keeps recovery out of ephemeral fanout and correlates original EVENT acknowledgment after another canonical event wins."
@@ -8998,7 +8928,7 @@
         {
           "caller_path": "crates/buzz-db/src/store/managed_delivery.rs",
           "callee_symbol": "insert_mentions_in_transaction",
-          "invocation": "crate::runtime::insert_mentions_in_transaction(\n            &mut tx,\n            community,\n            &result.0.event,\n            Some(channel),\n        )",
+          "invocation": "crate::runtime::insert_mentions_in_transaction(&mut tx, &result.0.event, Some(channel))",
           "behavior_test": "managed_recovery_mention_history_survives_lost_ack",
           "verification_command": "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib managed_recovery_mention_history_survives_lost_ack -- --ignored --test-threads=1",
           "coverage": "B3_MENTIONS_RED.log and B3_MENTIONS_GREEN.log preserve callback Home Mentions RED/GREEN; mentions commit with elected report."
@@ -12537,6 +12467,519 @@
       "verification_commands": [
         "cargo test --locked -p git-sign-nostr"
       ]
+    },
+    {
+      "path": "crates/buzz-audio-client/Cargo.toml",
+      "responsibility": "Keep the shared Huddle audio graph on the immutable NetEq security fix.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/runtime/follow_up_retirement_tests.rs",
+      "responsibility": "Keep trigger retirement checks aligned with the checksum-preserving fork migration numbering.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/runtime/push_enqueue.rs",
+      "responsibility": "Use the existing durable match queue in the event transaction instead of the transient post-commit producer.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "crates/buzz-db/src/store/event_follow_up.rs",
+      "responsibility": "Persist eligible push work in the existing match queue inside the admitted event transaction, ordered by the lease gate; retain TTL lifecycle.",
+      "is_new": false,
+      "required_symbols": [
+        "INSERT INTO push_match_queue (community_id, event_id)"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-db/src/store/event_follow_up.rs",
+          "callee_symbol": "enqueue_push_match",
+          "invocation": "enqueue_push_match(tx.conn(), tx_community, event_id, kind).await?",
+          "behavior_test": "queue_timeout_rolls_back_normal_and_managed_reports_before_retry",
+          "verification_command": "scripts/postgres-test-run.sh -p buzz-db --lib --tests"
+        }
+      ],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/event_follow_up_postgres_tests.rs",
+      "responsibility": "Verify durable normal/managed enqueue, transaction rollback on queue error, more than256jobs, actual process death and restart claims on both schema paths.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "docker-compose.yml",
+      "responsibility": "Retain bundled MinIO and mc until the separate object-storage migration is accepted.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "docs/fork/UPSTREAM_SYNC_2026_10_22.md",
+      "responsibility": "Record exact snapshot integration, rollout boundaries, preserved behavior, deferred work and acceptance gates.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "docs/push-gateway-deployment.md",
+      "responsibility": "Document durable push handoff and compatible writer/schema rollout instead of upstream best-effort enqueue.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "migrations/0056_personal_read_state.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0057_personal_read_started_at.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0057_personal_read_state.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "migrations/0058_personal_read_started_at.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "migrations/0058_personal_read_through_message.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0059_personal_read_through_message.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "migrations/0059_push_rollback_gate.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0060_push_rollback_gate.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "migrations/0060_push_single_application.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0061_channel_labels.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0061_push_single_application.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "migrations/0062_channel_labels.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "migrations/0062_system_channel_type.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0063_retire_push_match_trigger.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0063_system_channel_type.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "migrations/0064_profile_name_fields.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0064_retire_push_match_trigger.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "migrations/0065_profile_name_fields.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "migrations/0065_retire_channel_ttl_trigger.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0066_community_nip_fi_issuers.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0066_retire_channel_ttl_trigger.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "migrations/0067_channel_join_role.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0067_community_nip_fi_issuers.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "migrations/0068_channel_join_role.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "migrations/0068_entity_deletion_requests.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0069_entity_deletion_requests.sql",
+      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "schema/tables/public/managed_deliveries.sql",
+      "responsibility": "Declare the canonical managed-delivery ledger in desired-state setup.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "schema/triggers/managed_deliveries.sql",
+      "responsibility": "Declare the canonical managed-delivery ledger in desired-state setup.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-agent/tests/anthropic_continuation.rs",
+      "responsibility": "Include the actual session/new response in native Anthropic continuation fixture failures.",
+      "is_new": false,
+      "required_symbols": [
+        "session/new failed: {reply}"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-agent"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/runtime/admitted_tx.rs",
+      "responsibility": "Keep admitted transactions and TTL commit hooks without a transient push handoff.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/channel.rs",
+      "responsibility": "Keep atomic channel creation and metadata edits on admitted transactions without transient producer injection.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/channel_members.rs",
+      "responsibility": "Keep member/channel writer regressions aligned with direct durable enqueue.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/push.rs",
+      "responsibility": "Keep lease ordering and durable matcher claims while exercising the actual admitted enqueue transaction.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/replaceable.rs",
+      "responsibility": "Preserve replaceable event transactional hooks without a transient producer.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/handlers/group_state_postgres_tests.rs",
+      "responsibility": "Use a connected PostgreSQL fixture with bounded realistic acquisition time; preserve short lazy-pool unit fixtures.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "docs/database.md",
+      "responsibility": "Keep relay/gateway migration references aligned with the preserved fork history.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": ".github/workflows/mesh-lifecycle.yml",
+      "responsibility": "Preserve the MinIO CI image override for the relay-driven mesh lifecycle smoke",
+      "is_new": false,
+      "required_symbols": [
+        "lifecycle-smoke:\n    env:\n      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "docker-compose.ci.yml",
+      "responsibility": "Preserve the published MinIO CI image for the server and initialization services",
+      "is_new": false,
+      "required_symbols": [
+        "  minio:\n    image: ${MINIO_CI_IMAGE:-ghcr.io/block/buzz-minio:latest}",
+        "  minio-init:\n    image: ${MINIO_CI_IMAGE:-ghcr.io/block/buzz-minio:latest}"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": ".github/workflows/_ci-desktop.yml",
+      "responsibility": "Keep native Linux CI off the degraded runner Azure apt mirror without changing required checks",
+      "is_new": false,
+      "required_symbols": [
+        "'https://archive.ubuntu.com/ubuntu/'",
+        "'https://security.ubuntu.com/ubuntu/'"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
     }
-  ]
+  ],
+  "base_ref": "upstream-main"
 }

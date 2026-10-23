@@ -614,6 +614,7 @@ async fn bootstrap_success_and_failed_foreground_preserve_restart_policy() {
         tx,
         None,
         "failed-first".into(),
+        crate::queue::PromptRouting::default(),
     )
     .await;
     let failed = rx.recv().await.unwrap();
@@ -913,7 +914,8 @@ async fn restart_during_failed_resume_never_calls_fallback_new() {
             ctx.clone(),
             tx,
             None,
-            "failed-resume".into()
+            "failed-resume".into(),
+            crate::queue::PromptRouting::default(),
         ),
         restart
     );
@@ -1169,6 +1171,7 @@ async fn retired_worker_health_is_preserved(mode: &str) {
             result_tx,
             Some(control_rx),
             "retired-health".into(),
+            crate::queue::PromptRouting::default(),
         ))
         .id();
     pool.task_map_mut().insert(

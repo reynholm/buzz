@@ -1,0 +1,111 @@
+import 'package:flutter/material.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
+
+import '../../shared/profile/user_cache_provider.dart';
+import '../../shared/theme/theme.dart';
+import '../../shared/widgets/avatar_image.dart';
+import 'channel_identity_names_provider.dart';
+import 'channel_typing_provider.dart';
+import 'agent_typing_bubble.dart';
+import '../../shared/mentions/agent_identity_provider.dart';
+
+/// Ephemeral typing message rows, using desktop's three-dot work signal.
+class InlineAgentTyping extends ConsumerWidget {
+  const InlineAgentTyping({
+    super.key,
+    required this.channelId,
+    required this.entries,
+  });
+  final String channelId;
+  final List<TypingEntry> entries;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final keys = entries.map((entry) => entry.pubkey.toLowerCase()).toSet();
+    // Bound layout, profile lookups, live regions, and animation controllers
+    // even when the relay supplies a large burst of concurrent typers.
+    final visibleKeys = keys.take(3).toList();
+    final remaining = keys.length - visibleKeys.length;
+    final profiles = ref.watch(userCacheProvider);
+    final bots = ref.watch(agentMentionPubkeysProvider(channelId));
+    final labels = watchChannelIdentityLabels(ref, channelId, visibleKeys);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final key in visibleKeys)
+          Semantics(
+            key: ValueKey('inline-agent-typing-$key'),
+            liveRegion: true,
+            label: '${labels[key]} is typing',
+            child: ExcludeSemantics(
+              child: Padding(
+                padding: const EdgeInsets.only(top: Grid.xs, bottom: Grid.xxs),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    AvatarImage(
+                      imageUrl:
+                          (profiles[key] ??
+                                  ref.read(userCacheProvider.notifier).get(key))
+                              ?.avatarUrl,
+                      radius: messageAvatarSize / 2,
+                      isAgent:
+                          bots.contains(key) ||
+                          (profiles[key]?.isAgent ?? false),
+                      backgroundColor: context.controlSurface,
+                      fallback: Text(
+                        profiles[key]?.initial ??
+                            key.substring(0, 1).toUpperCase(),
+                      ),
+                    ),
+                    const SizedBox(width: messageAvatarContentGap),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(left: Grid.xs),
+                            child: Text(
+                              labels[key] ?? 'Assistant',
+                              style: messageUsernameTextStyle.copyWith(
+                                color: context.colors.onSurface,
+                                fontSize: 13.1,
+                                height: 17 / 13.1,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: Grid.xxs),
+                          const AgentTypingBubble(),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        if (remaining > 0)
+          Semantics(
+            liveRegion: true,
+            label:
+                '$remaining ${remaining == 1 ? 'other person is' : 'other people are'} typing',
+            child: ExcludeSemantics(
+              child: Padding(
+                padding: const EdgeInsets.only(
+                  left: messageAvatarSize + messageAvatarContentGap + Grid.xs,
+                  top: Grid.xs,
+                  bottom: Grid.xxs,
+                ),
+                child: Text(
+                  'and $remaining ${remaining == 1 ? 'other' : 'others'}',
+                  style: context.textTheme.bodySmall?.copyWith(
+                    color: context.colors.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}

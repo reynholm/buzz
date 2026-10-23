@@ -47,8 +47,8 @@ pub(in crate::commands) struct ProviderStartScope<'a> {
 /// startup watermark replays back past the already-published triggering
 /// message exactly like a local spawn. Per-invocation only — never persisted
 /// on the record, so later redeploys do not carry a stale floor.
-pub(crate) async fn deploy_to_provider_scoped(
-    app: &AppHandle,
+pub(crate) async fn deploy_to_provider_scoped<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     state: &AppState,
     pubkey: &str,
     requested: ProviderStartScope<'_>,

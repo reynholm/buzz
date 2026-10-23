@@ -75,8 +75,16 @@ impl EventQueue {
             .insert(scope.clone(), now + self.in_flight_deadline);
         self.in_flight_batch_sizes.insert(scope.clone(), 0);
         if let Some(root) = &continuation.thread_tags.root_event_id {
-            self.in_flight_reply_threads
-                .insert(scope.clone(), root.clone());
+            self.in_flight_reply_routes.insert(
+                scope.clone(),
+                InFlightReplyRoute {
+                    route: ReplyRoute {
+                        root_event_id: Some(root.to_ascii_lowercase()),
+                        thread: root.to_ascii_lowercase(),
+                    },
+                    prompt: PromptRouting::default(),
+                },
+            );
         }
         Some(FlushBatch {
             channel_id: scope.channel_id(),

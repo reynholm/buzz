@@ -43,6 +43,16 @@ class AddMembersException implements Exception {
   String toString() => 'AddMembersException($message)';
 }
 
+/// The keys in a DM. Current membership is authoritative. The channel
+/// metadata's `p` tags can lag membership changes, so they count only when
+/// the membership snapshot is unavailable or empty.
+Iterable<String> dmParticipantPubkeys(
+  Channel channel,
+  List<ChannelMember>? members,
+) => members != null && members.isNotEmpty
+    ? members.map((member) => member.pubkey)
+    : channel.participantPubkeys;
+
 @immutable
 class ChannelMember {
   final String pubkey;
@@ -302,9 +312,16 @@ List<String> relayMemberPubkeysFromEvents(List<NostrEvent> events) {
   return pubkeys.toList();
 }
 
-/// Converts kind:0 events into a deduplicated, alphabetized people directory.
+/// Converts kind:0 events into a deduplicated people directory.
+///
+/// The directory listing is alphabetized. Search results pass
+/// [alphabetize] false to keep the relay's order, which ranks the best name
+/// match first; each person keeps the place of their first result.
 @visibleForTesting
-List<DirectoryUser> directoryUsersFromProfileEvents(List<NostrEvent> events) {
+List<DirectoryUser> directoryUsersFromProfileEvents(
+  List<NostrEvent> events, {
+  bool alphabetize = true,
+}) {
   final latestByPubkey = <String, NostrEvent>{};
   for (final event in events) {
     if (event.kind != 0) {
@@ -317,7 +334,7 @@ List<DirectoryUser> directoryUsersFromProfileEvents(List<NostrEvent> events) {
     }
   }
 
-  return [
+  final users = [
     for (final event in latestByPubkey.values)
       if (ProfileData.fromEvent(event) case final profile)
         DirectoryUser(
@@ -327,14 +344,18 @@ List<DirectoryUser> directoryUsersFromProfileEvents(List<NostrEvent> events) {
           nip05Handle: profile.nip05,
           isAgent: verifiedOaOwnerPubkey(event.tags, event.pubkey) != null,
         ),
-  ]..sort((a, b) {
-    final labelComparison = a.label.toLowerCase().compareTo(
-      b.label.toLowerCase(),
-    );
-    return labelComparison != 0
-        ? labelComparison
-        : a.pubkey.compareTo(b.pubkey);
-  });
+  ];
+  if (alphabetize) {
+    users.sort((a, b) {
+      final labelComparison = a.label.toLowerCase().compareTo(
+        b.label.toLowerCase(),
+      );
+      return labelComparison != 0
+          ? labelComparison
+          : a.pubkey.compareTo(b.pubkey);
+    });
+  }
+  return users;
 }
 
 /// People and agents discoverable on the active relay.
@@ -445,11 +466,10 @@ final relayDirectorySearchProvider = FutureProvider.autoDispose
       ref.watch(relayConfigProvider);
       final session = ref.watch(relaySessionProvider.notifier);
       final currentPubkey = ref.watch(currentPubkeyProvider)?.toLowerCase();
-      final events = await session.queryRelay([
-        NostrFilters.searchUsers(trimmed, limit: 50),
-      ]);
+      final events = await session.searchProfiles(trimmed, limit: 50);
       return directoryUsersFromProfileEvents(
         events,
+        alphabetize: false,
       ).where((user) => user.pubkey.toLowerCase() != currentPubkey).toList();
     });
 
@@ -470,10 +490,11 @@ ChannelDetails channelDetailsFromEvent(NostrEvent event) {
     id: data.id,
     name: data.name,
     channelType: data.channelType,
+    labels: data.labels,
     visibility: data.visibility,
     description: data.description,
     topic: data.topic,
-    createdBy: event.pubkey,
+    createdBy: data.creator ?? event.pubkey,
     createdAt: eventTime,
     memberCount: 0,
     // Same archival-timestamp convention as `_channelFromMeta` — the event's
@@ -648,6 +669,7 @@ List<List<String>> buildCreateChannelTags({
   required String name,
   required String channelType,
   required String visibility,
+  List<String> labels = const [],
   String? description,
   int? ttlSeconds,
 }) {
@@ -660,6 +682,7 @@ List<List<String>> buildCreateChannelTags({
     ['name', name],
     ['visibility', visibility],
     ['channel_type', channelType],
+    for (final label in labels) ['t', label],
     if (description case final about? when about.trim().isNotEmpty)
       ['about', about.trim()],
     if (ttlSeconds != null) ['ttl', ttlSeconds.toString()],

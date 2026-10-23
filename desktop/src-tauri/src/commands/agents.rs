@@ -143,6 +143,14 @@ pub async fn create_managed_agent(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<CreateManagedAgentResponse, String> {
+    create_managed_agent_in(input, app, &state).await
+}
+
+async fn create_managed_agent_in<R: tauri::Runtime>(
+    input: CreateManagedAgentRequest,
+    app: AppHandle<R>,
+    state: &AppState,
+) -> Result<CreateManagedAgentResponse, String> {
     let name = input.name.trim().to_string();
     let requested_persona_id = input
         .persona_id
@@ -176,7 +184,7 @@ pub async fn create_managed_agent(
     }
 
     // ── Phase 1: generate keys (sync lock) ────────────────────────────────────
-    let create_fence = crate::managed_agents::device_runtime::capture_runtime_fence(&state)?;
+    let create_fence = crate::managed_agents::device_runtime::capture_runtime_fence(state)?;
     let create_scope = create_fence.scope.clone();
     let (agent_keys, private_key_nsec, pubkey, resolved_relay_url, input) = {
         let _store_guard = state
@@ -185,7 +193,7 @@ pub async fn create_managed_agent(
             .map_err(|error| error.to_string())?;
         crate::managed_agents::device_creation::creation_phase_locked(
             &app,
-            &state,
+            state,
             requested_persona_id.as_deref(),
             Some(&create_scope),
             crate::managed_agents::persona_device_view::load_device_policy_context,
@@ -250,7 +258,7 @@ pub async fn create_managed_agent(
             .map_err(|error| error.to_string())?;
         crate::managed_agents::device_creation::creation_phase_locked(
             &app,
-            &state,
+            state,
             requested_persona_id.as_deref(),
             Some(&create_scope),
             crate::managed_agents::persona_device_view::load_device_policy_context,
@@ -494,6 +502,9 @@ pub async fn create_managed_agent(
                     },
                     effort_level: None,
                 };
+                if let Some(level) = input.effort_level.clone() {
+                    super::agent_config::apply_picker_effort_level(&mut record, Some(level));
+                }
 
                 if let Some(context) = context.as_ref() {
                     crate::managed_agents::device_creation::bind_new_instance(
@@ -520,7 +531,7 @@ pub async fn create_managed_agent(
                 // before any .await — owner-authored, every agent (Will's ruling: no
                 // is_builtin/persona-membership gate).
                 if context.is_none() {
-                    retain_managed_agent_pending(&app, &state, record);
+                    retain_managed_agent_pending(&app, state, record);
                 }
                 // Effective owner-authored description for the kind:0 `about`.
                 let profile_about =
@@ -539,7 +550,7 @@ pub async fn create_managed_agent(
     let agent = if input.spawn_after_create && input.backend == BackendKind::Local {
         match start_local_agent_with_preflight(
             &app,
-            &state,
+            state,
             &pubkey,
             true,
             runtime_start::LocalStartScope {
@@ -557,10 +568,10 @@ pub async fn create_managed_agent(
                     .managed_agents_store_lock
                     .lock()
                     .map_err(|e| e.to_string())?;
-                crate::managed_agents::device_runtime::assert_runtime_fence(&state, &create_fence)?;
+                crate::managed_agents::device_runtime::assert_runtime_fence(state, &create_fence)?;
                 crate::managed_agents::device_runtime::runtime_phase_locked_with(
                     &app,
-                    &state,
+                    state,
                     &pubkey,
                     Some(&create_scope),
                     crate::managed_agents::persona_device_view::load_device_policy_context,
@@ -594,7 +605,7 @@ pub async fn create_managed_agent(
     // later reconciliation agree on the same value.
     let mut profile_sync_error = profile::publish_agent_profile_with_about(
         &app,
-        &state,
+        state,
         &agent.pubkey,
         &create_fence,
         &resolved_relay_url,
@@ -606,13 +617,13 @@ pub async fn create_managed_agent(
     )
     .await;
     profile_sync_error =
-        super::agent_models::flush_managed_agent_policy(&app, &state, profile_sync_error).await;
+        super::agent_models::flush_managed_agent_policy(&app, state, profile_sync_error).await;
 
     let spawn_error = if input.spawn_after_create && input.backend != BackendKind::Local {
         if let BackendKind::Provider { .. } = input.backend {
             match provider_deploy::deploy_to_provider_scoped(
                 &app,
-                &state,
+                state,
                 &pubkey,
                 provider_deploy::ProviderStartScope {
                     relay: Some(&create_scope.relay_url),
@@ -639,10 +650,10 @@ pub async fn create_managed_agent(
             .managed_agents_store_lock
             .lock()
             .map_err(|e| e.to_string())?;
-        crate::managed_agents::device_runtime::assert_runtime_fence(&state, &create_fence)?;
+        crate::managed_agents::device_runtime::assert_runtime_fence(state, &create_fence)?;
         let record = crate::managed_agents::device_runtime::runtime_phase_locked_with(
             &app,
-            &state,
+            state,
             &pubkey,
             Some(&create_scope),
             crate::managed_agents::persona_device_view::load_device_policy_context,

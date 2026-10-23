@@ -12,8 +12,14 @@ pub mod command_executor;
 pub mod community_provisioning;
 /// NIP-45 COUNT handler.
 pub mod count;
+#[cfg(test)]
+mod create_with_members_postgres_tests;
+#[cfg(test)]
+mod edit_metadata_postgres_tests;
 /// EVENT handler — WS dispatcher → ingest pipeline → fan-out.
 pub mod event;
+#[cfg(test)]
+pub(crate) mod group_state_postgres_tests;
 /// NIP-IA identity archive request handler (kinds 9035–9036).
 pub mod identity_archive;
 /// imeta tag validation helpers.
@@ -40,6 +46,10 @@ pub mod report_resolution;
 pub mod req;
 /// NIP-29 and NIP-25 side-effect handlers.
 pub mod side_effects;
+#[cfg(test)]
+mod system_channel_postgres_tests;
+/// Per-filter query scope for system channels.
+pub(crate) mod system_channels;
 
 /// Extract an optional TTL (in seconds) from a Nostr event's `ttl` tag,
 /// applying the server-side override when configured.

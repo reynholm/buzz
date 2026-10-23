@@ -212,9 +212,9 @@ class _HuddleParticipantSpotlight extends ConsumerWidget {
                 child: AvatarImage(
                   imageUrl: profile?.avatarUrl,
                   radius: _huddleParticipantSpotlightRadius,
-                  backgroundColor: context.colors.primaryContainer,
+                  backgroundColor: context.controlSurface,
                   fallback: Icon(
-                    LucideIcons.userRound,
+                    BuzzIcons.userRound,
                     size: 56,
                     color: context.colors.onPrimaryContainer,
                   ),
@@ -355,10 +355,9 @@ class _HuddleParticipantRoster extends ConsumerWidget {
                                   AvatarImage(
                                     imageUrl: profile?.avatarUrl,
                                     radius: 22,
-                                    backgroundColor:
-                                        context.colors.primaryContainer,
+                                    backgroundColor: context.controlSurface,
                                     fallback: Icon(
-                                      LucideIcons.userRound,
+                                      BuzzIcons.userRound,
                                       size: 22,
                                       color: context.colors.onPrimaryContainer,
                                     ),

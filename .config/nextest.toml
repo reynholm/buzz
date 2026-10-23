@@ -32,9 +32,9 @@ max-threads = 1
 [[profile.postgres-ci.overrides]]
 filter = "test(/cluster_global_/)"
 test-group = "postgres-cluster-global"
-# Reserve every worker: ordinary tests also create and close backends that
-# cluster-wide activity scans must not race. The group alone excludes only
-# other cluster-global tests.
+# The group only serializes these tests with each other. They read unfiltered,
+# cluster-wide `pg_stat_activity`, so any overlapping test's session can mask
+# activity; claim every worker so they run alone.
 threads-required = "num-test-threads"
 
 [[profile.postgres-ci.scripts]]

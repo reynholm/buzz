@@ -4,6 +4,7 @@ pub mod channels;
 mod delivery;
 pub mod dms;
 pub mod emoji;
+pub(crate) mod event_output;
 pub mod feed;
 pub mod gifs;
 pub mod issues;

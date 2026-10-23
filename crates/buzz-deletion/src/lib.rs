@@ -2,6 +2,9 @@
 #![warn(missing_docs)]
 //! Shared durable whole-community deletion engine and store adapters.
 
+/// Synthetic user-deletion request intake.
+pub mod user;
+
 use std::future::Future;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -546,17 +549,24 @@ fn resolve_submit_host(host: Option<&str>, relay_url: Option<&str>) -> Result<St
 }
 
 async fn connect_store() -> Result<DeletionStore> {
+    Ok(store(&connect_database().await?))
+}
+
+async fn connect_database() -> Result<Db> {
     let database_url = required_env("DATABASE_URL")?;
-    let db = Db::new(
-        &DbConfig {
+    // The scheduled drain starts in a fresh pod whose first connection can
+    // outlast the relay's three-second budget.
+    let db = Db::connect_cold_start(
+        DbConfig {
             database_url,
             max_connections: env_parse("BUZZ_DB_POOL_SIZE", 20),
             ..DbConfig::default()
         }
         .with_session_timeouts_from_env(),
+        "deletion",
     )
     .await?;
-    Ok(store(&db))
+    Ok(db)
 }
 
 fn resolve_s3_region(buzz_region: Option<String>, aws_region: Option<String>) -> String {
@@ -1406,6 +1416,18 @@ where
     Ok(output)
 }
 
+fn validate_approved_schema(
+    live: &buzz_db::deletion::SchemaManifest,
+    frozen: &FrozenInventory,
+) -> Result<()> {
+    if live.scoped_tables != frozen.schema.scoped_tables {
+        return Err(permanent(
+            "approved structural catalog drifted before fencing",
+        ));
+    }
+    Ok(())
+}
+
 async fn execute_stage(
     services: &Services,
     claim: &ClaimedDeletion,
@@ -1464,13 +1486,7 @@ async fn execute_stage(
                 .inventory_schema(request.community_id)
                 .await?;
             let frozen = validate_frozen_inventory(request)?;
-            if live_schema.scoped_tables != frozen.schema.scoped_tables
-                || live_schema.fenced_tables != frozen.schema.fenced_tables
-            {
-                return Err(permanent(
-                    "approved structural catalog drifted before fencing",
-                ));
-            }
+            validate_approved_schema(&live_schema, &frozen)?;
             services.store.begin_quiescing(&token).await?;
             match services.store.fence(&token).await {
                 Ok(_) => {}
@@ -1958,8 +1974,9 @@ mod postgres_tests {
         let host = format!("{prefix}-{}.example", Uuid::new_v4().simple());
         let owner = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let buzz_db::CreateCommunityWithOwnerResult::Created(community) = db
-            .create_community_with_owner(&host, &owner)
+            .create_community_with_owner(&host, &owner, &nostr::Keys::generate())
             .await
+            .map(|write| write.outcome)
             .expect("create owner preparation community")
         else {
             panic!("expected fresh owner preparation community")
@@ -2416,6 +2433,37 @@ mod postgres_tests {
 
     #[tokio::test]
     #[ignore = "requires Postgres"]
+    async fn approved_legacy_fence_inventory_accepts_current_catalog() {
+        let (_, services, mut claim) = claimed_test_deletion("deletion-legacy-fences").await;
+        let mut frozen = validate_frozen_inventory(&claim.request).expect("frozen inventory");
+        frozen.schema.fenced_tables = buzz_db::deletion::EXPECTED_SCOPED_TABLES
+            .iter()
+            .map(|table| (*table).to_owned())
+            .collect();
+        claim.request.inventory_digest = Some(hex::encode(frozen.digest().expect("legacy digest")));
+        claim.request.inventory_manifest =
+            Some(serde_json::to_value(&frozen).expect("encode legacy inventory"));
+
+        let decoded =
+            validate_frozen_inventory(&claim.request).expect("legacy digest remains valid");
+        let mut live = services
+            .store
+            .inventory_schema(claim.request.community_id)
+            .await
+            .expect("live catalog");
+        // Simulate the retired catalog while retaining the legacy digest above.
+        // While the fence objects exist, inventory still reports them so
+        // executors that predate fence-optional catalogs keep validating.
+        live.fenced_tables.clear();
+        validate_approved_schema(&live, &decoded)
+            .expect("legacy fence list is no longer structural");
+
+        live.scoped_tables.push("unknown_tenant_table".to_string());
+        assert!(validate_approved_schema(&live, &decoded).is_err());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
     async fn frozen_inventory_digest_and_storage_ownership_fail_closed() {
         let (_, _, claim) = claimed_test_deletion("deletion-integrity").await;
         assert!(validate_frozen_inventory(&claim.request).is_ok());
@@ -2783,18 +2831,19 @@ mod postgres_tests {
             .begin_quiescing(&claim.lease)
             .await
             .expect("quiesce");
+        let error = services
+            .store
+            .acquire_serving_write_lease(
+                community,
+                "late_external",
+                "late-owner",
+                DEFAULT_LEASE_DURATION,
+            )
+            .await
+            .expect_err("quiescing must reject newly admitted work");
         assert!(
-            services
-                .store
-                .acquire_serving_write_lease(
-                    community,
-                    "late_external",
-                    "late-owner",
-                    DEFAULT_LEASE_DURATION,
-                )
-                .await
-                .is_err(),
-            "quiescing must reject newly admitted work"
+            matches!(error, buzz_db::DbError::AccessDenied(_)),
+            "{error:?}"
         );
 
         let completed = Arc::new(AtomicBool::new(false));

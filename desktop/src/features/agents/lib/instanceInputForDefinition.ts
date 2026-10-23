@@ -113,6 +113,7 @@ export async function buildInstanceInputForDefinition(
   runtime: AcpRuntime,
   upload?: UploadMediaBytes,
   backendIntent?: BackendIntent,
+  effortLevel?: string | null,
 ): Promise<CreateManagedAgentInput> {
   requireDefinitionCapability(persona, "createInstance");
   const avatarUrl = await resolveManagedAgentAvatarUrl(
@@ -159,5 +160,6 @@ export async function buildInstanceInputForDefinition(
     spawnAfterCreate: true,
     startOnAppLaunch: true,
     backend: { type: "local" },
+    ...(effortLevel && { effortLevel }),
   };
 }

@@ -1,3 +1,4 @@
+import '../hosted/hosted_relay_auth.dart';
 import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:math';
@@ -6,6 +7,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:nostr/nostr.dart' as nostr;
 
 import '../auth/auth_provider.dart';
+import '../hosted/community_entry_requirements.dart';
 import '../push/dev_push_lease.dart';
 import '../push/push_bridge.dart';
 import '../push/push_lease_revocation_outbox.dart';
@@ -130,13 +132,11 @@ Future<void> _deactivateCommunityPushLease(
   }
   final decoded = nostr.Nip19.decode(payload: nsec);
   final memberPubkey = community.pubkey ?? nostr.Keys(decoded.data).public;
-  final descriptor = await fetchBuzzPushLeaseDescriptor(community.relayUrl);
+  final descriptor = await fetchBuzzPushLeaseDescriptor(
+    canonicalBuzzPushRelayHttpUrl(community.relayUrl),
+  );
   final matchingGrant = (await readBuzzPushEndpointGrants())
-      .where(
-        (grant) =>
-            grant.relayOrigin == descriptor.origin &&
-            grant.appProfile == buzzDevPushAppProfile,
-      )
+      .where((grant) => grant.relayOrigin == descriptor.origin)
       .firstOrNull;
   if (matchingGrant == null) {
     throw StateError('No endpoint grant exists for push lease tombstone.');
@@ -255,6 +255,10 @@ class CommunityListNotifier extends AsyncNotifier<List<Community>> {
   /// Add a community. If one with the same relay URL already exists, update
   /// its credentials instead. Returns the effective community ID.
   Future<String> addCommunity(Community community) async {
+    await CommunityEntryRequirements.verify(
+      community,
+      ref.read(builderlabAccountProvider),
+    );
     final storage = ref.read(communityStorageProvider);
     final current = state.value ?? [];
 
