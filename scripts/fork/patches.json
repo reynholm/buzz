@@ -830,12 +830,13 @@
     },
     {
       "path": "desktop/src-tauri/Cargo.lock",
-      "responsibility": "Lock patched native dependencies, including emSign TLS verification and trust stores, the immutable MeshLLM and NetEq compatibility pins, maintained Opus bindings and updated Tauri utilities; retain target-specific Windows updater constraints explicitly.",
+      "responsibility": "Lock patched native dependencies, including emSign TLS verification and trust stores, the immutable MeshLLM and NetEq compatibility pins, maintained Opus bindings and updated Tauri utilities; retain target-specific Windows updater constraints explicitly; include ctutils 0.4.4 for RUSTSEC-2026-0385.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
-        "just desktop-tauri-test desktop-tauri-check"
+        "just desktop-tauri-test desktop-tauri-check",
+        "cargo deny --manifest-path desktop/src-tauri/Cargo.toml --target aarch64-apple-darwin --features mesh-llm check"
       ]
     },
     {
@@ -4494,12 +4495,13 @@
     },
     {
       "path": "Cargo.lock",
-      "responsibility": "Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source.",
+      "responsibility": "Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils 0.4.4 for RUSTSEC-2026-0385.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
-        "just ci"
+        "just ci",
+        "cargo deny check"
       ]
     },
     {
