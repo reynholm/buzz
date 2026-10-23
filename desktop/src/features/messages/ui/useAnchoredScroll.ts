@@ -681,6 +681,15 @@ export function useAnchoredScroll({
       return;
     }
 
+    if (
+      virtualizerOwnsPrependAnchoring &&
+      !virtualizerAtBottomRef.current &&
+      messagesArrived > 0 &&
+      !isPrepend
+    ) {
+      setNewMessageCount((current) => current + messagesArrived);
+    }
+
     if (anchor.kind === "pinned-center") {
       repinPinnedCenter();
     } else if (anchor.kind === "at-bottom") {
@@ -697,7 +706,11 @@ export function useAnchoredScroll({
       } else if (!virtualizerOwnsPrependAnchoring) {
         container.scrollTo({ top: container.scrollHeight, behavior: "auto" });
       }
-      if (newLatestArrived) setNewMessageCount(0);
+      if (
+        newLatestArrived &&
+        (!virtualizerOwnsPrependAnchoring || virtualizerAtBottomRef.current)
+      )
+        setNewMessageCount(0);
     } else if (
       messagesArrived > 0 &&
       !targetMessageId &&

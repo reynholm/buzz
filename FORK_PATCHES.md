@@ -8243,6 +8243,7 @@ New module: `true`.
 - Required symbol: `export function VirtualizedThreadReplies`
 - Required symbol: `startMargin={geometry.margin}`
 - Required symbol: `scrollRef={scrollRef}`
+- Invocation: `desktop/src/features/messages/ui/VirtualizedThreadReplies.tsx` → `useVirtualizedThreadAnchor`; exact call `useVirtualizedThreadAnchor(`; behavior test `a live reply in an earlier expanded branch preserves the reading row`; verify `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
 
 ## `desktop/src/features/messages/ui/useAnchoredScroll.ts`
@@ -8263,6 +8264,7 @@ Bind virtual target acknowledgement and initial-position ownership regressions t
 New module: `false`.
 
 - Required symbol: `function PendingVirtualTargetHarness`
+- Required symbol: `virtual arrivals count independently of DOM anchoring and reset at bottom`
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/useAnchoredScroll.lifecycle.test.mjs`
 
 ## `desktop/src/features/messages/ui/useVirtualizedBottomSettle.ts`
@@ -8291,6 +8293,7 @@ New module: `true`.
 
 - Required symbol: `long threads bound mounted replies and preserve navigation and live scroll ownership`
 - Required symbol: `a channel with many thread roots keeps its mounted history bounded`
+- Required symbol: `a live reply in an earlier expanded branch preserves the reading row`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
 
 ## `desktop/tests/e2e/thread-focus-mode.spec.ts`
@@ -8301,3 +8304,14 @@ New module: `false`.
 
 - Required symbol: `new WheelEvent("wheel", { bubbles: true, deltaY: -120 })`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-focus-mode.spec.ts`
+
+## `desktop/src/features/messages/ui/useVirtualizedThreadAnchor.ts`
+
+Preserve a reading message and offset through indexed thread insertions, follow late measurements, and yield to reader navigation with a generation fence.
+
+New module: `true`.
+
+- Required symbol: `export function useVirtualizedThreadAnchor`
+- Required symbol: `snapshot.generation !== generationRef.current`
+- Required symbol: `list.scrollTo(scroller.scrollTop + drift)`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`

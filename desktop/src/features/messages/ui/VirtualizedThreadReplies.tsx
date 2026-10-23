@@ -5,6 +5,7 @@ import type { TimelineMessage } from "@/features/messages/types";
 import { estimateRowHeight } from "@/features/messages/lib/rowHeightEstimate";
 import type { TimelineVirtualizerApi } from "./TimelineMessageList";
 import { useVirtualizedBottomSettle } from "./useVirtualizedBottomSettle";
+import { useVirtualizedThreadAnchor } from "./useVirtualizedThreadAnchor";
 
 type ReplyItem = {
   entry: { message: TimelineMessage; summary: unknown };
@@ -44,12 +45,24 @@ export function VirtualizedThreadReplies<T extends ReplyItem>({
   indexRef.current = indexById;
   const data = React.useMemo(() => [...items, null], [items]);
   const [geometry, setGeometry] = React.useState({ margin: 0, buffer: 1_000 });
-  const { cancel, settle } = useVirtualizedBottomSettle(
-    hostRef,
-    listRef,
-    lengthRef,
-    scrollRef,
-  );
+  const { cancel: cancelReadingAnchor, restore: restoreReadingAnchor } =
+    useVirtualizedThreadAnchor(indexById, hostRef, scrollRef, listRef);
+  const { cancel: cancelBottom, settle: settleBottom } =
+    useVirtualizedBottomSettle(
+      hostRef,
+      listRef,
+      lengthRef,
+      scrollRef,
+      cancelReadingAnchor,
+    );
+  const cancel = React.useCallback(() => {
+    cancelReadingAnchor();
+    cancelBottom();
+  }, [cancelBottom, cancelReadingAnchor]);
+  const settle = React.useCallback(() => {
+    cancelReadingAnchor();
+    settleBottom();
+  }, [cancelReadingAnchor, settleBottom]);
 
   React.useLayoutEffect(() => {
     const host = hostRef.current;
@@ -67,13 +80,14 @@ export function VirtualizedThreadReplies<T extends ReplyItem>({
           ? previous
           : { margin, buffer },
       );
+      restoreReadingAnchor();
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(content);
     observer.observe(scroller);
     return () => observer.disconnect();
-  }, [contentRef, scrollRef]);
+  }, [contentRef, restoreReadingAnchor, scrollRef]);
 
   React.useLayoutEffect(() => {
     onApiChange({

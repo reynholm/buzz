@@ -12594,7 +12594,15 @@
         "startMargin={geometry.margin}",
         "scrollRef={scrollRef}"
       ],
-      "invocation_seams": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/messages/ui/VirtualizedThreadReplies.tsx",
+          "callee_symbol": "useVirtualizedThreadAnchor",
+          "invocation": "useVirtualizedThreadAnchor(",
+          "behavior_test": "a live reply in an earlier expanded branch preserves the reading row",
+          "verification_command": "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts"
+        }
+      ],
       "verification_commands": [
         "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts"
       ]
@@ -12618,7 +12626,8 @@
       "responsibility": "Bind virtual target acknowledgement and initial-position ownership regressions to the production scroll hook.",
       "is_new": false,
       "required_symbols": [
-        "function PendingVirtualTargetHarness"
+        "function PendingVirtualTargetHarness",
+        "virtual arrivals count independently of DOM anchoring and reset at bottom"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -12655,7 +12664,8 @@
       "is_new": true,
       "required_symbols": [
         "long threads bound mounted replies and preserve navigation and live scroll ownership",
-        "a channel with many thread roots keeps its mounted history bounded"
+        "a channel with many thread roots keeps its mounted history bounded",
+        "a live reply in an earlier expanded branch preserves the reading row"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -12672,6 +12682,20 @@
       "invocation_seams": [],
       "verification_commands": [
         "CI=1 pnpm --dir desktop test:e2e:smoke thread-focus-mode.spec.ts"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/useVirtualizedThreadAnchor.ts",
+      "responsibility": "Preserve a reading message and offset through indexed thread insertions, follow late measurements, and yield to reader navigation with a generation fence.",
+      "is_new": true,
+      "required_symbols": [
+        "export function useVirtualizedThreadAnchor",
+        "snapshot.generation !== generationRef.current",
+        "list.scrollTo(scroller.scrollTop + drift)"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts"
       ]
     }
   ]

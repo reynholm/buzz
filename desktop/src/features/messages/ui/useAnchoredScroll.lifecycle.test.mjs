@@ -252,6 +252,7 @@ function BottomStateHarness({
   onState,
   refs,
   targetMessageId = null,
+  virtual = false,
 }) {
   const anchored = useAnchoredScroll({
     channelId: "conversation",
@@ -261,6 +262,8 @@ function BottomStateHarness({
     pinTargetCentered: targetMessageId !== null,
     scrollContainerRef: refs.container,
     targetMessageId,
+    virtualizerOwnsPrependAnchoring: virtual,
+    virtualScrollToBottom: refs.scrollToBottom,
   });
   onState(anchored);
   return null;
@@ -668,3 +671,47 @@ for (const initialTarget of [true, false]) {
     }
   });
 }
+
+test("virtual arrivals count independently of DOM anchoring and reset at bottom", async () => {
+  const nodes = makePinnedCenterNodes();
+  const refs = {
+    container: { current: nodes.container },
+    content: { current: nodes.content },
+    scrollToBottom: () => {},
+  };
+  let state;
+  const root = createRoot(document.createElement("div"));
+  const render = (messages) =>
+    act(async () => {
+      root.render(
+        React.createElement(BottomStateHarness, {
+          refs,
+          messages,
+          virtual: true,
+          onState: (value) => {
+            state = value;
+          },
+        }),
+      );
+    });
+  try {
+    await render([{ id: "first" }]);
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+    await act(async () => state.onVirtualizerAtBottomStateChange(false));
+    await render([{ id: "first" }, { id: "tail" }]);
+    assert.equal(state.newMessageCount, 1);
+    await render([{ id: "first" }, { id: "nested" }, { id: "tail" }]);
+    assert.equal(state.newMessageCount, 2);
+    await act(async () => state.onVirtualizerAtBottomStateChange(true));
+    assert.equal(state.newMessageCount, 0);
+    await render([
+      { id: "first" },
+      { id: "nested" },
+      { id: "tail" },
+      { id: "latest" },
+    ]);
+    assert.equal(state.newMessageCount, 0);
+  } finally {
+    await act(async () => root.unmount());
+  }
+});

@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { installMockBridge } from "../helpers/bridge";
+import { waitForAnimations } from "../helpers/animations";
 
 async function setup(page: Page) {
   await installMockBridge(page);
@@ -85,6 +86,9 @@ test("long threads bound mounted replies and preserve navigation and live scroll
       createdAt: Math.floor(Date.now() / 1_000),
     });
   }, rootId);
+  await expect(page.getByTestId("thread-scroll-to-latest")).toHaveText(
+    "1 new message",
+  );
   await expect
     .poll(async () =>
       Math.abs(
@@ -148,4 +152,138 @@ test("a channel with many thread roots keeps its mounted history bounded", async
   await expect
     .poll(() => timeline.locator("[data-message-id]").count())
     .toBeLessThan(300);
+});
+
+test("a live reply in an earlier expanded branch preserves the reading row", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await setup(page);
+  const { rootId, branchId, flat } = await page.evaluate(() => {
+    const emit = window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__;
+    if (!emit) throw new Error("Mock emitter unavailable");
+    const now = Math.floor(Date.now() / 1_000);
+    const root = emit({
+      channelName: "engineering",
+      content: "Branch insertion thread",
+      createdAt: now - 1_100,
+    });
+    const branch = emit({
+      channelName: "engineering",
+      content: "Earlier expanded branch",
+      parentEventId: root.id,
+      createdAt: now - 1_000,
+    });
+    emit({
+      channelName: "engineering",
+      content: "Initial child",
+      parentEventId: branch.id,
+      createdAt: now - 999,
+    });
+    const flat = Array.from(
+      { length: 400 },
+      (_, index) =>
+        emit({
+          channelName: "engineering",
+          parentEventId: root.id,
+          content: `Reading reply ${index}`,
+          createdAt: now - 900 + index,
+        }).id,
+    );
+    return { rootId: root.id, branchId: branch.id, flat };
+  });
+  await page.getByTestId("channel-engineering").click();
+  await page
+    .locator(
+      `[data-testid="message-thread-summary"][data-thread-head-id="${rootId}"]`,
+    )
+    .click();
+  const body = page.getByTestId("message-thread-body");
+  await expect(
+    body.locator(`[data-message-id="${flat[399]}"]`),
+  ).toBeInViewport();
+  await body.evaluate(async (el) => {
+    let previous = "";
+    let stable = 0;
+    for (let frame = 0; frame < 180; frame += 1) {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => resolve()),
+      );
+      const geometry = `${el.scrollTop}:${el.scrollHeight}:${el.clientHeight}`;
+      const atBottom = el.scrollHeight - el.clientHeight - el.scrollTop < 4;
+      stable = atBottom && geometry === previous ? stable + 1 : 0;
+      if (stable >= 6) return;
+      previous = geometry;
+    }
+    throw new Error("Initial thread measurements did not settle");
+  });
+  await waitForAnimations(page);
+  await body.focus();
+  await page.keyboard.press("Home");
+  await page
+    .locator(
+      `[data-testid="message-thread-summary"][data-thread-head-id="${branchId}"]`,
+    )
+    .click();
+  await expect(body.getByText("Initial child", { exact: true })).toBeVisible();
+  await body.focus();
+  await page.keyboard.press("End");
+  await expect
+    .poll(() =>
+      body.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop),
+    )
+    .toBeLessThan(4);
+  await expect(page.getByTestId("thread-scroll-to-latest")).toHaveCount(0);
+  await body.evaluate((el) => {
+    el.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: 3_000 }));
+    el.scrollTop = el.scrollHeight * 0.55;
+  });
+  const findReadingRow = () =>
+    body.evaluate((el) => {
+      const top = el.getBoundingClientRect().top;
+      const row = Array.from(
+        el.querySelectorAll<HTMLElement>("[data-message-id]"),
+      ).find((row) => {
+        const r = row.getBoundingClientRect();
+        return r.top >= top && r.bottom < top + el.clientHeight - 150;
+      });
+      return row?.dataset.messageId
+        ? { id: row.dataset.messageId, top: row.getBoundingClientRect().top }
+        : null;
+    });
+  await expect.poll(findReadingRow).not.toBeNull();
+  const reading = await findReadingRow();
+  if (!reading) throw new Error("Missing reading row");
+  await page.evaluate(
+    (branchId) =>
+      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+        channelName: "engineering",
+        parentEventId: branchId,
+        content: `Inserted above the reader\n\n${"Long nested details. ".repeat(60)}`,
+        createdAt: Math.floor(Date.now() / 1_000) + 1,
+      }),
+    branchId,
+  );
+  const latest = page.getByTestId("thread-scroll-to-latest");
+  await expect(latest).toHaveText("1 new message");
+  // The arrival count proves the deferred thread list committed the insertion.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await expect
+    .poll(() =>
+      body
+        .locator(`[data-message-id="${reading.id}"]`)
+        .evaluate(
+          (row, top) => Math.abs(row.getBoundingClientRect().top - top),
+          reading.top,
+        ),
+    )
+    .toBeLessThan(4);
+  await body.focus();
+  await page.keyboard.press("End");
+  await expect(latest).toHaveCount(0);
 });
