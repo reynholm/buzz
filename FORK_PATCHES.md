@@ -2617,11 +2617,26 @@ New module: `false`.
 
 ## `.github/workflows/_ci-relay.yml`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane. Preserve the MinIO CI image override in every relay integration consumer. Retain the real CLI build and artifact inventory after the upstream producer matrix split.
 
 New module: `false`.
 
 - Required symbol: `export BUZZ_TEST_BIN_DIR="$PWD/target/ci"`
+- Required symbol: `desktop-e2e-integration-shard:
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml`
+- Required symbol: `backend-integration:
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml`
+- Required symbol: `relay-e2e:
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml`
+- Required symbol: `run: cargo build --profile ci -p buzz-relay -p git-credential-nostr -p buzz-cli`
+- Required symbol: `- artifact: relay-binaries
+            paths: |
+              target/ci/buzz-relay
+              target/ci/buzz
+              target/ci/git-credential-nostr`
 - Verify: `just ci`
 
 ## `.github/workflows/_ci-rust.yml`
@@ -8515,3 +8530,28 @@ Keep relay/gateway migration references aligned with the preserved fork history.
 New module: `false`.
 
 - Verify: `python3 scripts/fork/sync.py validate`
+
+## `.github/workflows/mesh-lifecycle.yml`
+
+Preserve the MinIO CI image override for the relay-driven mesh lifecycle smoke
+
+New module: `false`.
+
+- Required symbol: `lifecycle-smoke:
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml`
+- Verify: `python3 scripts/fork/sync.py validate`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `docker-compose.ci.yml`
+
+Preserve the published MinIO CI image for the server and initialization services
+
+New module: `false`.
+
+- Required symbol: `  minio:
+    image: ${MINIO_CI_IMAGE:-ghcr.io/block/buzz-minio:latest}`
+- Required symbol: `  minio-init:
+    image: ${MINIO_CI_IMAGE:-ghcr.io/block/buzz-minio:latest}`
+- Verify: `python3 scripts/fork/sync.py validate`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`

@@ -4410,10 +4410,15 @@
     },
     {
       "path": ".github/workflows/_ci-relay.yml",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane. Preserve the MinIO CI image override in every relay integration consumer. Retain the real CLI build and artifact inventory after the upstream producer matrix split.",
       "is_new": false,
       "required_symbols": [
-        "export BUZZ_TEST_BIN_DIR=\"$PWD/target/ci\""
+        "export BUZZ_TEST_BIN_DIR=\"$PWD/target/ci\"",
+        "desktop-e2e-integration-shard:\n    env:\n      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml",
+        "backend-integration:\n    env:\n      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml",
+        "relay-e2e:\n    env:\n      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml",
+        "run: cargo build --profile ci -p buzz-relay -p git-credential-nostr -p buzz-cli",
+        "- artifact: relay-binaries\n            paths: |\n              target/ci/buzz-relay\n              target/ci/buzz\n              target/ci/git-credential-nostr"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -12916,6 +12921,33 @@
       "invocation_seams": [],
       "verification_commands": [
         "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": ".github/workflows/mesh-lifecycle.yml",
+      "responsibility": "Preserve the MinIO CI image override for the relay-driven mesh lifecycle smoke",
+      "is_new": false,
+      "required_symbols": [
+        "lifecycle-smoke:\n    env:\n      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "docker-compose.ci.yml",
+      "responsibility": "Preserve the published MinIO CI image for the server and initialization services",
+      "is_new": false,
+      "required_symbols": [
+        "  minio:\n    image: ${MINIO_CI_IMAGE:-ghcr.io/block/buzz-minio:latest}",
+        "  minio-init:\n    image: ${MINIO_CI_IMAGE:-ghcr.io/block/buzz-minio:latest}"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
       ]
     }
   ],

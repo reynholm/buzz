@@ -47,6 +47,7 @@ jobs:
           - artifact: relay-binaries
             paths: |
               target/ci/buzz-relay
+              target/ci/buzz
               target/ci/git-credential-nostr
           - artifact: backend-integration-tests
             paths: target/ci/backend-integration-tests.tar.zst
@@ -97,7 +98,7 @@ jobs:
         if: steps.relay-artifacts-cache.outputs.cache-hit != 'true' && matrix.artifact == 'relay-binaries'
         env:
           RUSTC_WRAPPER: sccache
-        run: cargo build --profile ci -p buzz-relay -p git-credential-nostr
+        run: cargo build --profile ci -p buzz-relay -p git-credential-nostr -p buzz-cli
       - name: Build backend integration test archive
         if: steps.relay-artifacts-cache.outputs.cache-hit != 'true' && matrix.artifact == 'backend-integration-tests'
         env:
@@ -228,6 +229,8 @@ jobs:
             --archive-file target/ci/postgres-tests.tar.zst
 
   desktop-e2e-integration-shard:
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
     name: Desktop E2E Integration (${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     # A shard needs ~10m; Playwright install-deps is bounded by
@@ -425,6 +428,8 @@ jobs:
           echo "Desktop E2E Integration shards passed"
 
   backend-integration:
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
     name: Backend Integration (relay e2e)
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -598,6 +603,8 @@ jobs:
           if-no-files-found: ignore
 
   relay-e2e:
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
     name: Relay E2E
     runs-on: ubuntu-latest
     timeout-minutes: 20
