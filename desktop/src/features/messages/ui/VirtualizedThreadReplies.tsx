@@ -126,8 +126,14 @@ export function VirtualizedThreadReplies<T extends ReplyItem>({
     );
   }, []);
 
+  // Virtualizer items create layout containment stacking contexts. Keep their
+  // floating action rails above the thread head when the two overlap.
   return (
-    <div ref={hostRef} data-testid="virtualized-thread-replies">
+    <div
+      ref={hostRef}
+      className="relative z-10"
+      data-testid="virtualized-thread-replies"
+    >
       <Virtualizer
         ref={listRef}
         data={data}
