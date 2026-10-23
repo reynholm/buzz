@@ -106,6 +106,9 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
+          # The runner's Azure mirror can stay degraded across every retry.
+          # Use Ubuntu's archive while retaining apt's signed index validation.
+          printf '%s\n' 'https://archive.ubuntu.com/ubuntu/' 'https://security.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt
           CI_APT_ATTEMPT_SECONDS=90 scripts/ci-apt-retry.sh sudo apt-get update
           scripts/ci-apt-retry.sh sudo apt-get install -y --no-install-recommends \
             build-essential \

@@ -2660,12 +2660,13 @@ New module: `false`.
 
 ## `.github/workflows/_ci-rust.yml`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Preserve checked ACP retirement and budget cold native Windows compilation plus the full Tauri test suite
 
 New module: `false`.
 
 - Required symbol: `python scripts/check-acp-retirement.py`
 - Required symbol: `python3 scripts/check-acp-retirement.py`
+- Required symbol: `timeout-minutes: 90`
 - Verify: `just ci`
 
 ## `.github/workflows/ci.yml`
@@ -8575,3 +8576,13 @@ New module: `false`.
     image: ${MINIO_CI_IMAGE:-ghcr.io/block/buzz-minio:latest}`
 - Verify: `python3 scripts/fork/sync.py validate`
 - Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `.github/workflows/_ci-desktop.yml`
+
+Keep native Linux CI off the degraded runner Azure apt mirror without changing required checks
+
+New module: `false`.
+
+- Required symbol: `'https://archive.ubuntu.com/ubuntu/'`
+- Required symbol: `'https://security.ubuntu.com/ubuntu/'`
+- Verify: `just ci`
