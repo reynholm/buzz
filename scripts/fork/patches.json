@@ -4399,6 +4399,20 @@
       ]
     },
     {
+      "path": ".github/workflows/_ci-clients.yml",
+      "responsibility": "Pin the Android lane to Temurin JDK 17 for Gradle 8.14.5 and explicitly select the same JAVA_HOME in Flutter before APK and JVM unit builds.",
+      "is_new": false,
+      "required_symbols": [
+        "- name: Set up Android JDK\n        if: matrix.lane == 'android'\n        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5\n        with:\n          distribution: temurin\n          java-version: '17'",
+        "- name: Select Android JDK for Flutter\n        if: matrix.lane == 'android'\n        run: flutter config --jdk-dir=\"$JAVA_HOME\""
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "node --test scripts/ci-selection.test.mjs scripts/ci-required-gates.test.mjs scripts/ci-apt-retry.test.mjs",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
       "path": ".github/workflows/_ci-desktop-macos.yml",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
       "is_new": false,
