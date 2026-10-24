@@ -399,6 +399,8 @@ export function useAnchoredScroll({
       schedulePinnedTargetSettle(anchorRef.current.messageId);
       return true;
     }
+    if (virtualizerOwnsPrependAnchoring && anchorRef.current.kind === "message")
+      return false;
     if (!isAtBottomNow(container)) return false;
 
     anchorRef.current = { kind: "at-bottom" };
@@ -518,7 +520,10 @@ export function useAnchoredScroll({
         };
       }
       if (!pinTargetCentered) {
-        setIsAtBottom(maxScrollTop - targetScrollTop <= AT_BOTTOM_THRESHOLD_PX);
+        setIsAtBottom(
+          !virtualizerOwnsPrependAnchoring &&
+            maxScrollTop - targetScrollTop <= AT_BOTTOM_THRESHOLD_PX,
+        );
       }
 
       if (options.highlight) highlightMessage(messageId);

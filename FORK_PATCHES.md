@@ -2636,7 +2636,7 @@ New module: `false`.
 
 ## `.github/workflows/_ci-relay.yml`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane. Preserve the MinIO CI image override in every relay integration consumer. Retain the real CLI build and artifact inventory after the upstream producer matrix split.; pin browser E2E to Ubuntu 24.04 supported by the locked Playwright release.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane. Preserve the MinIO CI image override in every relay integration consumer. Retain the real CLI build and artifact inventory after the upstream producer matrix split.; pin browser E2E shards and their binary producer to Ubuntu 24.04 supported by the locked Playwright release.
 
 New module: `false`.
 
@@ -2656,9 +2656,14 @@ New module: `false`.
               target/ci/buzz-relay
               target/ci/buzz
               target/ci/git-credential-nostr`
-- Required symbol: `  desktop-e2e-integration:
-`
 - Required symbol: `    runs-on: ubuntu-24.04`
+- Required symbol: `desktop-e2e-relay:
+    name: Desktop E2E Relay (${{ matrix.artifact }})
+    # Match the supported Playwright runner and its binary producer.
+    runs-on: ubuntu-24.04`
+- Required symbol: `name: Desktop E2E Integration (${{ matrix.shard }}/${{ strategy.job-total }})
+    # Match the supported Playwright runner and its binary producer.
+    runs-on: ubuntu-24.04`
 - Verify: `just ci`
 
 ## `.github/workflows/_ci-rust.yml`
@@ -8622,7 +8627,7 @@ New module: `true`.
 
 ## `desktop/src/features/messages/ui/VirtualizedThreadReplies.tsx`
 
-Virtualize variable-height replies inside the existing thread scroll region with measured head offset and cancellable bottom ownership.
+Virtualize variable-height replies inside the existing thread scroll region with measured head offset and cancellable bottom ownership. Preserve explicit reply navigation at a clamped physical floor and retire bottom intent when the reader leaves it, including direct scroll updates.
 
 New module: `true`.
 
@@ -8631,6 +8636,7 @@ New module: `true`.
 - Required symbol: `scrollRef={scrollRef}`
 - Invocation: `desktop/src/features/messages/ui/VirtualizedThreadReplies.tsx` → `useVirtualizedThreadAnchor`; exact call `useVirtualizedThreadAnchor(`; behavior test `a live reply in an earlier expanded branch preserves the reading row`; verify `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
+- Verify: `cd desktop && pnpm test:e2e:smoke messaging.spec.ts timeline-no-shift.spec.ts`
 
 ## `desktop/src/features/messages/ui/useAnchoredScroll.ts`
 
@@ -8737,3 +8743,12 @@ New module: `false`.
 
 - Verify: `cargo test --locked -p buzz-push-gateway --lib`
 - Verify: `cargo clippy --locked -p buzz-push-gateway --all-targets -- -D warnings`
+
+## `desktop/tests/e2e/messaging.spec.ts`
+
+Regress explicit inline reply navigation at a clamped thread floor and keyboard recovery of live bottom following.
+
+New module: `false`.
+
+- Required symbol: `Latest keyboard-follow reply`
+- Verify: `cd desktop && pnpm test:e2e:smoke messaging.spec.ts`

@@ -47,19 +47,29 @@ export function VirtualizedThreadReplies<T extends ReplyItem>({
   const [geometry, setGeometry] = React.useState({ margin: 0, buffer: 1_000 });
   const { cancel: cancelReadingAnchor, restore: restoreReadingAnchor } =
     useVirtualizedThreadAnchor(indexById, hostRef, scrollRef, listRef);
+  const targetIntentRef = React.useRef(false);
+  const onReaderNavigation = React.useCallback(() => {
+    targetIntentRef.current = false;
+    cancelReadingAnchor();
+  }, [cancelReadingAnchor]);
   const { cancel: cancelBottom, settle: settleBottom } =
     useVirtualizedBottomSettle(
       hostRef,
       listRef,
       lengthRef,
       scrollRef,
-      cancelReadingAnchor,
+      onReaderNavigation,
     );
   const cancel = React.useCallback(() => {
+    // A centered target can coincide with the physical floor in a short
+    // thread. Appends must not turn that target into bottom-follow intent.
+    targetIntentRef.current = true;
+    onAtBottomChange(false);
     cancelReadingAnchor();
     cancelBottom();
-  }, [cancelBottom, cancelReadingAnchor]);
+  }, [cancelBottom, cancelReadingAnchor, onAtBottomChange]);
   const settle = React.useCallback(() => {
+    targetIntentRef.current = false;
     cancelReadingAnchor();
     settleBottom();
   }, [cancelReadingAnchor, settleBottom]);
@@ -113,10 +123,11 @@ export function VirtualizedThreadReplies<T extends ReplyItem>({
     const scroller = scrollRef.current;
     if (!scroller) return;
     onRangeChange();
-    onAtBottomChange(
-      scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 32,
-    );
-  }, [onAtBottomChange, onRangeChange, scrollRef]);
+    const atBottom =
+      scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 32;
+    if (!atBottom) cancelBottom();
+    onAtBottomChange(!targetIntentRef.current && atBottom);
+  }, [cancelBottom, onAtBottomChange, onRangeChange, scrollRef]);
   const estimate = React.useCallback((item: T | null) => {
     if (!item) return 96;
     return (

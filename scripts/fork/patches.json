@@ -4425,7 +4425,7 @@
     },
     {
       "path": ".github/workflows/_ci-relay.yml",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane. Preserve the MinIO CI image override in every relay integration consumer. Retain the real CLI build and artifact inventory after the upstream producer matrix split.; pin browser E2E to Ubuntu 24.04 supported by the locked Playwright release.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane. Preserve the MinIO CI image override in every relay integration consumer. Retain the real CLI build and artifact inventory after the upstream producer matrix split.; pin browser E2E shards and their binary producer to Ubuntu 24.04 supported by the locked Playwright release.",
       "is_new": false,
       "required_symbols": [
         "export BUZZ_TEST_BIN_DIR=\"$PWD/target/ci\"",
@@ -4434,8 +4434,9 @@
         "relay-e2e:\n    env:\n      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml",
         "run: cargo build --profile ci -p buzz-relay -p git-credential-nostr -p buzz-cli",
         "- artifact: relay-binaries\n            paths: |\n              target/ci/buzz-relay\n              target/ci/buzz\n              target/ci/git-credential-nostr",
-        "  desktop-e2e-integration:\n",
-        "    runs-on: ubuntu-24.04"
+        "    runs-on: ubuntu-24.04",
+        "desktop-e2e-relay:\n    name: Desktop E2E Relay (${{ matrix.artifact }})\n    # Match the supported Playwright runner and its binary producer.\n    runs-on: ubuntu-24.04",
+        "name: Desktop E2E Integration (${{ matrix.shard }}/${{ strategy.job-total }})\n    # Match the supported Playwright runner and its binary producer.\n    runs-on: ubuntu-24.04"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -13033,7 +13034,7 @@
     },
     {
       "path": "desktop/src/features/messages/ui/VirtualizedThreadReplies.tsx",
-      "responsibility": "Virtualize variable-height replies inside the existing thread scroll region with measured head offset and cancellable bottom ownership.",
+      "responsibility": "Virtualize variable-height replies inside the existing thread scroll region with measured head offset and cancellable bottom ownership. Preserve explicit reply navigation at a clamped physical floor and retire bottom intent when the reader leaves it, including direct scroll updates.",
       "is_new": true,
       "required_symbols": [
         "export function VirtualizedThreadReplies",
@@ -13050,7 +13051,8 @@
         }
       ],
       "verification_commands": [
-        "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts"
+        "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts",
+        "cd desktop && pnpm test:e2e:smoke messaging.spec.ts timeline-no-shift.spec.ts"
       ]
     },
     {
@@ -13186,6 +13188,18 @@
       "verification_commands": [
         "cargo test --locked -p buzz-push-gateway --lib",
         "cargo clippy --locked -p buzz-push-gateway --all-targets -- -D warnings"
+      ]
+    },
+    {
+      "path": "desktop/tests/e2e/messaging.spec.ts",
+      "responsibility": "Regress explicit inline reply navigation at a clamped thread floor and keyboard recovery of live bottom following.",
+      "is_new": false,
+      "required_symbols": [
+        "Latest keyboard-follow reply"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && pnpm test:e2e:smoke messaging.spec.ts"
       ]
     }
   ],
