@@ -7,9 +7,8 @@ use tracing::{debug, warn};
 
 use buzz_core::filter::filters_match;
 use buzz_core::kind::{
-    is_unshared_gated_event, AUTHOR_ONLY_KINDS, KIND_AGENT_ENGRAM, KIND_AGENT_TURN_METRIC,
-    KIND_DM_VISIBILITY, KIND_HUDDLE_LIVENESS, P_GATED_KINDS, RESULT_GATED_KINDS,
-    SHARED_GATED_KINDS,
+    is_unshared_gated_event, AUTHOR_ONLY_KINDS, KIND_AGENT_ENGRAM, KIND_DELETION,
+    KIND_HUDDLE_LIVENESS, P_GATED_KINDS, RESULT_GATED_KINDS, SHARED_GATED_KINDS,
 };
 use buzz_core::tenant::TenantContext;
 use buzz_db::EventQuery;
@@ -25,6 +24,19 @@ use crate::state::AppState;
 
 const MAX_SUBSCRIPTIONS: usize = 1024;
 
+/// Maximum aggregate number of explicit `#h` values accepted in one REQ,
+/// COUNT, HTTP `/query`, or HTTP `/count` request.
+///
+/// Cache-missed channels are confirmed in one membership query, so the DB cost
+/// does not grow with the count. A live WS subscription still gives each
+/// authorized channel a fan-out index entry and a Redis topic retain; the
+/// reader's real membership bounds that part.
+pub(crate) const MAX_EXPLICIT_CHANNEL_VALUES: usize = 2048;
+
+/// Maximum huddle sessions one liveness REQ looks up. Each linked session
+/// costs a sequential mesh-directory lookup.
+const MAX_HUDDLE_LIVENESS_SESSIONS: usize = 128;
+
 /// Maximum `query_events` calls in flight per multi-filter REQ / bridge query.
 ///
 /// NIP-01 gives each filter its own DB query (OR semantics — see the comment at
@@ -33,14 +45,6 @@ const MAX_SUBSCRIPTIONS: usize = 1024;
 /// pool. Post-processing stays strictly in filter order (`buffered`, not
 /// `buffer_unordered`), so dedupe/trace/error semantics are unchanged.
 pub(crate) const FILTER_QUERY_CONCURRENCY: usize = 4;
-
-/// Maximum aggregate number of explicit `#h` values accepted in one REQ,
-/// COUNT, HTTP `/query`, or HTTP `/count` request.
-///
-/// Explicit channels may each require an uncached membership lookup and, for a
-/// live WS subscription, a registry entry plus Redis topic retain. Bound the
-/// values before any of that request-amplified work begins.
-pub(crate) const MAX_EXPLICIT_CHANNEL_VALUES: usize = 128;
 
 // Guard: keep the bound a small fraction of any sane Postgres pool size.
 // Raising it past this range requires re-running the relay bench and
@@ -126,6 +130,26 @@ pub async fn handle_req(
     if let Some(allowed) = token_channel_ids.as_deref() {
         accessible_channels.retain(|channel_id| allowed.contains(channel_id));
     }
+    // Named-only channels (system, and types added later) are outside
+    // `accessible_channels`. A filter that names one adds it to its own scope
+    // only (see `system_channels`).
+    let mut named_only = match super::system_channels::readable_named_only_channels_for_filters(
+        &state,
+        conn.tenant.community(),
+        &pubkey_bytes,
+        &filters,
+        &accessible_channels,
+        token_channel_ids.as_deref(),
+    )
+    .await
+    {
+        Ok(ids) => ids,
+        Err(e) => {
+            warn!(conn_id = %conn_id, "Failed to get readable named-only channels: {e}");
+            conn.send(RelayMessage::closed(&sub_id, "error: database error"));
+            return;
+        }
+    };
 
     // Build the conformance `AbstractState` once at request entry. The
     // `Option` only goes `None` on malformed pubkey bytes (already a
@@ -142,56 +166,59 @@ pub async fn handle_req(
     // on the pod that processed the write, before the 10s TTL expires or the
     // cross-pod invalidation lands), so on a miss we confirm uncached against
     // the DB; a verified positive repairs the vector request-locally (see
-    // `resolve_request_local_access`). Running this ahead of the search branch
+    // `confirm_requested_channel_access`). Running this ahead of the search branch
     // is what fixes the search false-miss: a `#h=<just-added>` search would
     // otherwise be scoped against the stale vector and return empty.
     if let Some(requested) = requested_channel_ids.as_ref() {
-        for &ch_id in requested {
-            let token_allows = token_channel_ids
-                .as_deref()
-                .is_none_or(|allowed| allowed.contains(&ch_id));
-            let db_is_member = if !token_allows || accessible_channels.contains(&ch_id) {
-                None
-            } else {
-                match state
-                    .db
-                    .is_member(conn.tenant.community(), ch_id, &pubkey_bytes)
-                    .await
-                {
-                    Ok(member) => {
-                        if let Some(state_snap) = trace_state.as_ref() {
-                            crate::conformance::record_req_authcheck(
-                                &state.tracer,
-                                state_snap,
-                                ch_id,
-                                member,
-                            );
-                        }
-                        Some(member)
-                    }
-                    Err(e) => {
-                        warn!(conn_id = %conn_id, "Channel membership confirmation failed: {e}");
-                        conn.send(RelayMessage::closed(&sub_id, "error: database error"));
-                        return;
-                    }
-                }
-            };
-            // An OR filter may include inaccessible channels; retain every
-            // authorized requested channel and silently omit the others.
-            resolve_request_local_access(
-                &mut accessible_channels,
-                ch_id,
-                token_allows,
-                db_is_member,
-            );
+        let repaired_from = accessible_channels.len();
+        let confirmed = match confirm_requested_channel_access(
+            &state,
+            conn.tenant.community(),
+            &pubkey_bytes,
+            requested,
+            token_channel_ids.as_deref(),
+            &mut accessible_channels,
+            named_only.ids(),
+        )
+        .await
+        {
+            Ok(confirmed) => confirmed,
+            Err(e) => {
+                warn!(conn_id = %conn_id, "Channel membership confirmation failed: {e}");
+                conn.send(RelayMessage::closed(&sub_id, "error: database error"));
+                return;
+            }
+        };
+        if let Some(state_snap) = trace_state.as_ref() {
+            for (ch_id, member) in confirmed {
+                crate::conformance::record_req_authcheck(&state.tracer, state_snap, ch_id, member);
+            }
+        }
+        if let Err(e) = super::system_channels::keep_repaired_named_only_channels_named(
+            &state,
+            conn.tenant.community(),
+            &mut accessible_channels,
+            repaired_from,
+            &mut named_only,
+        )
+        .await
+        {
+            warn!(conn_id = %conn_id, "Failed to classify repaired channels: {e}");
+            conn.send(RelayMessage::closed(&sub_id, "error: database error"));
+            return;
         }
     }
 
     let authorized_requested_channels = requested_channel_ids.as_ref().map(|requested| {
+        let authorized: HashSet<_> = accessible_channels
+            .iter()
+            .chain(named_only.ids())
+            .copied()
+            .collect();
         requested
             .iter()
             .copied()
-            .filter(|channel_id| accessible_channels.contains(channel_id))
+            .filter(|channel_id| authorized.contains(channel_id))
             .collect::<Vec<_>>()
     });
     // Partial authorization preserves NIP-01 OR semantics by omitting only
@@ -318,6 +345,7 @@ pub async fn handle_req(
                 owner,
                 &filters,
                 &accessible_channels,
+                &named_only,
                 token_channel_ids.is_none(),
                 &conn.tenant,
                 &pubkey_bytes,
@@ -416,7 +444,11 @@ pub async fn handle_req(
                     &mut params,
                     filter,
                     per_filter_channel,
-                    &accessible_channels,
+                    &super::system_channels::filter_channel_scope(
+                        filter,
+                        &accessible_channels,
+                        &named_only,
+                    ),
                 );
                 // Shared-gated visibility pushdown: set reader bytes so query_events
                 // appends the SQL visibility clause before ORDER/LIMIT, preventing
@@ -448,6 +480,11 @@ pub async fn handle_req(
         // Phase 3 — post-processing, strictly in filter order.
         while let Some((idx, per_filter_channel, filter_events)) = results.next().await {
             let filter = &filters[idx];
+            let filter_scope = super::system_channels::filter_channel_scope(
+                filter,
+                &accessible_channels,
+                &named_only,
+            );
             let events = match filter_events {
                 Ok(evs) => evs,
                 Err(e) => {
@@ -510,7 +547,7 @@ pub async fn handle_req(
                 }
 
                 if let Some(ch_id) = stored.channel_id {
-                    if !accessible_channels.contains(&ch_id) {
+                    if !filter_scope.contains(&ch_id) {
                         continue;
                     }
                 }
@@ -597,50 +634,91 @@ const SEARCH_PAGE_SIZE: u32 = 100;
 /// the response.
 const MAX_SEARCH_PAGES: u32 = (buzz_db::DEFAULT_MAX_PAGE_LIMIT as u32).div_ceil(SEARCH_PAGE_SIZE);
 
-/// Resolve request-local channel access, repairing a stale cache-negative.
+/// Requested channels whose access needs a DB membership check: not already
+/// in the cached `accessible_channels` or `named_only` sets, and inside
+/// the scoped-auth `token_channel_ids` bound when one is present. Deduplicated,
+/// in request order.
+///
+/// The token bound is an upper bound on the repair: a channel outside it is
+/// never checked, so a DB positive cannot push it back in. Otherwise a token
+/// scoped to channel A could reach channel B merely because the user is a DB
+/// member of B.
+pub(crate) fn channels_needing_membership_check(
+    requested: &[uuid::Uuid],
+    accessible_channels: &[uuid::Uuid],
+    named_only: &[uuid::Uuid],
+    token_channel_ids: Option<&[uuid::Uuid]>,
+) -> Vec<uuid::Uuid> {
+    let mut known: HashSet<uuid::Uuid> = accessible_channels
+        .iter()
+        .chain(named_only)
+        .copied()
+        .collect();
+    let token: Option<HashSet<uuid::Uuid>> =
+        token_channel_ids.map(|allowed| allowed.iter().copied().collect());
+    requested
+        .iter()
+        .copied()
+        .filter(|channel_id| {
+            token
+                .as_ref()
+                .is_none_or(|allowed| allowed.contains(channel_id))
+        })
+        .filter(|channel_id| known.insert(*channel_id))
+        .collect()
+}
+
+/// Confirm requested channels against the DB, repairing stale cache-negatives
+/// request-locally. Returns each checked channel with its membership answer.
 ///
 /// `accessible_channels` is the per-request membership vector — built once from
 /// the 10s cache (and already narrowed by any scoped-auth `token_channel_ids`
 /// via `retain`) and reused for subscription registration, historical delivery,
 /// search scope, and COUNT. On a multi-pod relay it can be stale on a non-writer
 /// pod (a member just added on another pod, before the TTL expires or the
-/// cross-pod invalidation lands), so the cache-negative branch confirms against
-/// the DB uncached and passes the result here.
+/// cross-pod invalidation lands), so every requested channel the cache does not
+/// grant is confirmed uncached. All of them go to the DB in one statement, so a
+/// request costs one round trip however many channels it names.
 ///
-/// `token_allows` is the scoped-auth upper bound: `false` when a scoped token is
-/// present and does NOT cover `ch_id`. The DB-positive repair must never push a
-/// channel back in past that bound, or a token scoped to channel A could reach
-/// channel B merely because the user is a DB member of B.
-///
-/// Truth table:
-/// - token denies `ch_id`               → denied, no DB needed, no repair
-/// - cached contains `ch_id`            → allowed, no repair, no DB needed
-/// - cache-miss + DB says member        → allowed, `ch_id` pushed once (repair)
-/// - cache-miss + DB says not a member  → denied, vector unchanged
-///
-/// The push is what makes the confirmation request-local-authoritative: every
-/// downstream consumer reads the same repaired vector, so a stale negative
-/// cannot stay sticky for the rest of the request. `db_is_member` is `None` when
-/// the cache hit or the token bound denied (DB was never consulted).
-pub(crate) fn resolve_request_local_access(
+/// A confirmed member is pushed onto `accessible_channels`. The push is what
+/// makes the confirmation request-local-authoritative: every downstream
+/// consumer reads the same repaired vector, so a stale negative cannot stay
+/// sticky for the rest of the request.
+pub(crate) async fn confirm_requested_channel_access(
+    state: &AppState,
+    community: buzz_core::tenant::CommunityId,
+    pubkey: &[u8],
+    requested: &[uuid::Uuid],
+    token_channel_ids: Option<&[uuid::Uuid]>,
     accessible_channels: &mut Vec<uuid::Uuid>,
-    ch_id: uuid::Uuid,
-    token_allows: bool,
-    db_is_member: Option<bool>,
-) -> bool {
-    if !token_allows {
-        return false;
+    named_only: &[uuid::Uuid],
+) -> buzz_db::Result<Vec<(uuid::Uuid, bool)>> {
+    let unconfirmed = channels_needing_membership_check(
+        requested,
+        accessible_channels,
+        named_only,
+        token_channel_ids,
+    );
+    if unconfirmed.is_empty() {
+        return Ok(Vec::new());
     }
-    if accessible_channels.contains(&ch_id) {
-        return true;
-    }
-    match db_is_member {
-        Some(true) => {
-            accessible_channels.push(ch_id);
-            true
-        }
-        _ => false,
-    }
+    let members: HashSet<uuid::Uuid> = state
+        .db
+        .membership_pairs(community, &unconfirmed, &[pubkey.to_vec()])
+        .await?
+        .into_iter()
+        .map(|(channel_id, _)| channel_id)
+        .collect();
+    Ok(unconfirmed
+        .into_iter()
+        .map(|channel_id| {
+            let member = members.contains(&channel_id);
+            if member {
+                accessible_channels.push(channel_id);
+            }
+            (channel_id, member)
+        })
+        .collect())
 }
 
 /// Map the legacy `(accessible_channels, include_global)` pair onto the
@@ -684,7 +762,8 @@ async fn handle_search_req(
     sub_id: &str,
     owner: u64,
     filters: &[Filter],
-    accessible_channels: &[uuid::Uuid],
+    implicit_channels: &[uuid::Uuid],
+    named_only: &super::system_channels::NamedOnlyChannels,
     include_global: bool,
     tenant: &TenantContext,
     reader_pubkey_bytes: &[u8],
@@ -692,17 +771,15 @@ async fn handle_search_req(
     state: &AppState,
     trace_state: Option<&crate::conformance::AbstractState>,
 ) {
-    // The community-wide channel scope (no #h tag on the filter). `None` means
-    // "no accessible channels and no global access" → EOSE, exactly as the
-    // legacy string-filter helper short-circuited.
-    let all_channels_scope =
-        match build_search_channel_scope_filter(accessible_channels, include_global) {
-            Some(scope) => scope,
-            None => {
-                conn.send(RelayMessage::eose(sub_id));
-                return;
-            }
-        };
+    // `None` means "no accessible channels and no global access" → EOSE,
+    // exactly as the legacy string-filter helper short-circuited. A filter
+    // that names a readable named-only channel can still match it.
+    if build_search_channel_scope_filter(implicit_channels, include_global).is_none()
+        && named_only.is_empty()
+    {
+        conn.send(RelayMessage::eose(sub_id));
+        return;
+    }
 
     let mut seen_ids: HashSet<nostr::EventId> = HashSet::new();
 
@@ -711,6 +788,10 @@ async fn handle_search_req(
             Some(s) if !s.is_empty() => s.clone(),
             _ => continue,
         };
+        // Implicit channels plus the readable named-only channels this filter
+        // names; never another filter's.
+        let accessible_channels =
+            &*super::system_channels::filter_channel_scope(filter, implicit_channels, named_only);
 
         let limit = filter
             .limit
@@ -742,7 +823,11 @@ async fn handle_search_req(
                 }
                 buzz_search::ChannelScope::Channels(valid)
             } else {
-                all_channels_scope.clone()
+                // The community-wide scope (no #h tag on the filter).
+                match build_search_channel_scope_filter(accessible_channels, include_global) {
+                    Some(scope) => scope,
+                    None => continue,
+                }
             };
 
         let kinds = filter.kinds.as_ref().and_then(|ks| {
@@ -784,6 +869,7 @@ async fn handle_search_req(
                 page,
                 per_page: SEARCH_PAGE_SIZE,
                 mode: buzz_search::SearchMode::FullText,
+                sort: buzz_search::SearchSort::Relevance,
             };
 
             let search_result = match state.search.search(&search_query).await {
@@ -988,7 +1074,10 @@ pub fn filter_fully_pushable(filter: &Filter) -> bool {
                 // #e is fully pushed (any count) via JSONB containment.
             }
             _ => {
-                // Any other generic tag (#t, #a, etc.) is not pushed.
+                // Any other generic tag (#t, #a, etc.) is not pushed exactly.
+                // #t/#P on group-state kinds are matched in SQL
+                // (`group_state_tag_values`), but this fast path does not
+                // model them, so COUNT still post-filters them.
                 if !tag_values.is_empty() {
                     return false;
                 }
@@ -1094,7 +1183,7 @@ fn filter_to_query_params(
         }
     });
 
-    // Push #e tag filter into SQL via JSONB containment.
+    // Push #e tag filter into SQL as an exact positional tag match.
     let e_tag_key = nostr::SingleLetterTag::lowercase(nostr::Alphabet::E);
     let e_tags = filter.generic_tags.get(&e_tag_key).and_then(|values| {
         if values.is_empty() {
@@ -1161,7 +1250,13 @@ fn filter_to_query_params(
         .filter(|values| !values.is_empty())
         .map(|values| values.iter().map(|v| v.to_string()).collect());
 
+    let tag_values = group_state_tag_values(filter);
+    // NIP-CL: a membership notice's `#t` is its channel type. SQL keeps only
+    // the types this filter may see; a filter without `#t` sees legacy types.
+    let notice_channel_types = buzz_core::filter::notice_channel_types(filter);
+
     EventQuery {
+        notice_channel_types,
         channel_id,
         kinds,
         pubkey,
@@ -1175,8 +1270,40 @@ fn filter_to_query_params(
         ids,
         e_tags,
         d_tag_values,
+        tag_values,
         ..EventQuery::for_community(community)
     }
+}
+
+/// `#t` (channel type and labels) and `#P` (creator) values to match in SQL
+/// before `LIMIT`, when every filter kind is a relay-signed group-state kind
+/// (39000–39003). Without this, a page of the newest group-state events is
+/// read first and the tag match runs after it, so a selective
+/// `{kinds:[39000], #t:[<label>], limit:n}` can return fewer than `n`
+/// matches, or none, while older matches exist.
+///
+/// The SQL match is exact NIP-01 tag matching (see
+/// [`EventQuery::tag_values`]), so no false candidate can take a place in
+/// the page. The caller's NIP-01 post-filter still runs on each event.
+fn group_state_tag_values(filter: &Filter) -> Vec<(String, Vec<String>)> {
+    if !super::system_channels::filter_is_group_state_only(filter) {
+        return Vec::new();
+    }
+    [
+        nostr::SingleLetterTag::lowercase(nostr::Alphabet::T),
+        nostr::SingleLetterTag::uppercase(nostr::Alphabet::P),
+    ]
+    .into_iter()
+    .filter_map(|key| {
+        let values = filter.generic_tags.get(&key)?;
+        (!values.is_empty()).then(|| {
+            (
+                key.to_string(),
+                values.iter().map(|value| value.to_string()).collect(),
+            )
+        })
+    })
+    .collect()
 }
 
 /// Push channel constraints into SQL before `LIMIT`.
@@ -1197,11 +1324,12 @@ pub(crate) fn apply_channel_scope_to_query(
 
     let h_tag = nostr::SingleLetterTag::lowercase(nostr::Alphabet::H);
     if let Some(values) = filter.generic_tags.get(&h_tag) {
+        let accessible: HashSet<_> = accessible_channels.iter().collect();
         query.channel_ids = Some(
             values
                 .iter()
                 .filter_map(|value| value.parse::<uuid::Uuid>().ok())
-                .filter(|requested| accessible_channels.contains(requested))
+                .filter(|requested| accessible.contains(requested))
                 .collect(),
         );
         query.channel_ids_include_global = false;
@@ -1238,12 +1366,13 @@ pub(crate) fn extract_channel_ids_from_filters_limited(
 /// [`extract_channel_ids_from_filters_limited`].
 pub(crate) fn extract_channel_ids_from_filters(filters: &[Filter]) -> Option<Vec<uuid::Uuid>> {
     let h_tag = nostr::SingleLetterTag::lowercase(nostr::Alphabet::H);
+    let mut seen = HashSet::new();
     let mut channel_ids = Vec::new();
     for filter in filters {
         let values = filter.generic_tags.get(&h_tag)?;
         for value in values {
             if let Ok(channel_id) = value.parse::<uuid::Uuid>() {
-                if !channel_ids.contains(&channel_id) {
+                if seen.insert(channel_id) {
                     channel_ids.push(channel_id);
                 }
             }
@@ -1278,7 +1407,7 @@ fn huddle_liveness_session_ids(filters: &[Filter]) -> Vec<uuid::Uuid> {
             }
         }
     }
-    session_ids.truncate(MAX_EXPLICIT_CHANNEL_VALUES);
+    session_ids.truncate(MAX_HUDDLE_LIVENESS_SESSIONS);
     session_ids
 }
 
@@ -1528,13 +1657,14 @@ pub(crate) fn p_gated_filters_authorized(filters: &[Filter], authed_pubkey_hex: 
         // when `ids` is present. KIND_AGENT_TURN_METRIC events are long-lived
         // and their cleartext envelope (pubkey, agent tag, created_at) leaks
         // turn-activity metadata — knowing an event id is NOT authorization
-        // (NIP-AM §Relay Behavior). Only filters that explicitly name the kind
-        // lose the exemption — a kindless `ids` lookup is unaffected.
+        // (NIP-AM §Relay Behavior). Membership notices are relay-signed and
+        // name the target and channel. All of these are RESULT_GATED_KINDS.
+        // Only filters that explicitly name the kind lose the exemption — a
+        // kindless `ids` lookup is admitted and then gated per result by
+        // `reader_authorized_for_event`.
         let explicitly_no_ids_exemption = filter.kinds.as_ref().is_some_and(|ks| {
-            ks.iter().any(|kind| {
-                let k = kind.as_u16() as u32;
-                k == KIND_DM_VISIBILITY || k == KIND_AGENT_TURN_METRIC
-            })
+            ks.iter()
+                .any(|kind| RESULT_GATED_KINDS.contains(&(kind.as_u16() as u32)))
         });
         if !explicitly_no_ids_exemption && filter.ids.as_ref().is_some_and(|ids| !ids.is_empty()) {
             return true;
@@ -1607,8 +1737,11 @@ pub(crate) fn engram_filters_authorized(filters: &[Filter], authed_pubkey_hex: &
 /// author-only events from the aggregate count.
 pub(crate) fn filter_can_match_author_only_kinds(filter: &Filter) -> bool {
     filter.kinds.as_ref().is_none_or(|ks| {
-        ks.iter()
-            .any(|k| AUTHOR_ONLY_KINDS.contains(&(k.as_u16() as u32)))
+        ks.iter().any(|k| {
+            let k = k.as_u16() as u32;
+            // Deletions of author-only events inherit their privacy.
+            k == KIND_DELETION || AUTHOR_ONLY_KINDS.contains(&k)
+        })
     })
 }
 
@@ -1630,8 +1763,7 @@ pub(crate) fn filter_can_match_shared_gated_kinds(filter: &Filter) -> bool {
 
 /// Returns `true` if the filter CAN match result-gated kinds — meaning it
 /// either has no `kinds` constraint (wildcard) or includes at least one kind
-/// that carries a per-event result-level read gate (currently
-/// `KIND_DM_VISIBILITY` and `KIND_AGENT_TURN_METRIC`).
+/// that carries a per-event result-level read gate (`RESULT_GATED_KINDS`).
 ///
 /// Used by the COUNT handler to force the per-event fallback path instead of
 /// the fast SQL `count_events()`, which cannot enforce the owner-only result
@@ -1667,12 +1799,13 @@ pub(crate) fn result_gated_count_safe_for_pushdown(
         .is_some_and(|values| !values.is_empty() && values.iter().all(|v| v == authed_pubkey_hex))
 }
 
-/// Returns `true` if the event is an author-only kind and the requester is NOT
-/// the author. Used as a per-event filter during historical delivery and fan-out
+/// Returns `true` if the event is author-only (see
+/// [`buzz_core::kind::is_author_only_event_kind`]) and the requester is NOT the
+/// author. Used as a per-event filter during historical delivery and fan-out
 /// to silently omit unauthorized events from mixed-kind result sets.
 pub(crate) fn is_author_only_event(event: &nostr::Event, requester_pubkey_bytes: &[u8]) -> bool {
-    let kind_u32 = event.kind.as_u16() as u32;
-    AUTHOR_ONLY_KINDS.contains(&kind_u32) && event.pubkey.to_bytes() != requester_pubkey_bytes
+    buzz_core::kind::is_author_only_event_kind(event)
+        && event.pubkey.to_bytes() != requester_pubkey_bytes
 }
 
 /// Combined per-event result-visibility check for all gated event classes.
@@ -2271,7 +2404,7 @@ mod tests {
     #[test]
     fn huddle_liveness_session_ids_are_deduplicated_and_bounded() {
         let d_tag = SingleLetterTag::lowercase(Alphabet::D);
-        let input = (0..MAX_EXPLICIT_CHANNEL_VALUES + 16)
+        let input = (0..MAX_HUDDLE_LIVENESS_SESSIONS + 16)
             .map(|_| uuid::Uuid::new_v4())
             .collect::<Vec<_>>();
         let first = input.iter().fold(Filter::new(), |filter, session_id| {
@@ -2285,7 +2418,7 @@ mod tests {
         let extracted_set = extracted.iter().copied().collect::<HashSet<_>>();
         let input_set = input.iter().copied().collect::<HashSet<_>>();
 
-        assert_eq!(extracted.len(), MAX_EXPLICIT_CHANNEL_VALUES);
+        assert_eq!(extracted.len(), MAX_HUDDLE_LIVENESS_SESSIONS);
         assert_eq!(extracted_set.len(), extracted.len());
         assert!(extracted_set.is_subset(&input_set));
     }
@@ -2352,71 +2485,46 @@ mod tests {
     }
 
     #[test]
-    fn request_local_access_cache_positive_no_db_no_repair() {
-        let ch = uuid::Uuid::new_v4();
-        let mut accessible = vec![ch];
-        // Cache hit: DB was never consulted (None), allowed, vector unchanged.
-        assert!(resolve_request_local_access(
-            &mut accessible,
-            ch,
-            true,
-            None
-        ));
-        assert_eq!(accessible, vec![ch], "no repair, no duplicate on cache hit");
-    }
-
-    #[test]
-    fn request_local_access_cache_negative_db_member_repairs() {
-        let ch = uuid::Uuid::new_v4();
-        let mut accessible: Vec<uuid::Uuid> = vec![];
-        // Stale cache-miss but DB confirms membership: allowed AND repaired.
-        assert!(resolve_request_local_access(
-            &mut accessible,
-            ch,
-            true,
-            Some(true)
-        ));
-        assert!(
-            accessible.contains(&ch),
-            "verified positive must push ch_id so the rest of the request sees it"
+    fn membership_check_skips_cached_and_readable_system_channels() {
+        let cached = uuid::Uuid::new_v4();
+        let system = uuid::Uuid::new_v4();
+        let missed = uuid::Uuid::new_v4();
+        assert_eq!(
+            channels_needing_membership_check(
+                &[cached, system, missed],
+                &[cached],
+                &[system],
+                None
+            ),
+            vec![missed],
+            "only the cache-miss needs the DB"
         );
     }
 
     #[test]
-    fn request_local_access_cache_negative_db_nonmember_denied() {
-        let ch = uuid::Uuid::new_v4();
-        let mut accessible: Vec<uuid::Uuid> = vec![];
-        // Cache-miss and DB confirms non-membership: denied, vector unchanged.
-        assert!(!resolve_request_local_access(
-            &mut accessible,
-            ch,
-            true,
-            Some(false)
-        ));
-        assert!(
-            accessible.is_empty(),
-            "denied access must not mutate the request-local vector"
+    fn membership_check_asks_once_per_channel_in_request_order() {
+        let a = uuid::Uuid::new_v4();
+        let b = uuid::Uuid::new_v4();
+        assert_eq!(
+            channels_needing_membership_check(&[b, a, b, a], &[], &[], None),
+            vec![b, a]
         );
     }
 
     #[test]
-    fn request_local_access_token_denies_never_repairs() {
-        let ch = uuid::Uuid::new_v4();
-        let mut accessible: Vec<uuid::Uuid> = vec![];
-        // Scoped token does NOT cover ch_id: denied even though the DB confirms
-        // membership. The token scope is an upper bound on the repair — a DB
-        // positive must never push a channel back in past a narrower token, or
-        // a token scoped to channel A could reach channel B merely because the
-        // user is a DB member of B.
-        assert!(!resolve_request_local_access(
-            &mut accessible,
-            ch,
-            false,
-            Some(true)
-        ));
-        assert!(
-            accessible.is_empty(),
-            "token-denied access must not be repaired into the vector"
+    fn membership_check_never_asks_past_the_token_bound() {
+        let in_scope = uuid::Uuid::new_v4();
+        let out_of_scope = uuid::Uuid::new_v4();
+        // A scoped token is an upper bound on the repair: a channel outside it
+        // is never checked, so a DB positive cannot push it back in.
+        assert_eq!(
+            channels_needing_membership_check(
+                &[in_scope, out_of_scope],
+                &[],
+                &[],
+                Some(&[in_scope]),
+            ),
+            vec![in_scope]
         );
     }
 
@@ -2562,6 +2670,48 @@ mod tests {
         assert!(!filters_are_nip43_membership_only(&[
             Filter::new().kinds([nostr::Kind::Custom(13_534), nostr::Kind::TextNote]),
         ]));
+    }
+
+    #[test]
+    fn group_state_t_and_creator_tags_reach_sql_only_for_group_state_kinds() {
+        let community = buzz_core::tenant::CommunityId::from_uuid(uuid::Uuid::nil());
+        let creator = "ab".repeat(32);
+        let filter = |kinds: serde_json::Value| -> Filter {
+            serde_json::from_value(serde_json::json!({
+                "kinds": kinds,
+                "#t": ["workspace", "team:core"],
+                "#P": [creator],
+            }))
+            .unwrap()
+        };
+        assert_eq!(
+            filter_to_query_params(&filter(serde_json::json!([39000, 39002])), None, community)
+                .tag_values,
+            vec![
+                (
+                    "t".to_string(),
+                    // Filter tag values are a set, so they arrive sorted.
+                    vec!["team:core".to_string(), "workspace".to_string()]
+                ),
+                ("P".to_string(), vec![creator.clone()]),
+            ]
+        );
+        for kinds in [serde_json::json!([39000, 1]), serde_json::json!([30023])] {
+            assert!(
+                filter_to_query_params(&filter(kinds.clone()), None, community)
+                    .tag_values
+                    .is_empty(),
+                "kinds {kinds} must keep #t/#P as a post-filter"
+            );
+        }
+        let kindless: Filter = serde_json::from_value(serde_json::json!({"#t": ["x"]})).unwrap();
+        assert!(filter_to_query_params(&kindless, None, community)
+            .tag_values
+            .is_empty());
+        assert!(
+            !filter_fully_pushable(&filter(serde_json::json!([39000]))),
+            "containment can over-match, so COUNT must still post-filter"
+        );
     }
 
     #[test]
@@ -2803,13 +2953,22 @@ mod tests {
         let owner = Filter::new().kind(dm_vis).custom_tags(p_tag, [authed]);
         assert!(p_gated_filters_authorized(&[owner], authed));
 
-        // The ids exemption still applies to other p-gated kinds (member notifs).
-        let member_notif_ids = Filter::new()
-            .kind(nostr::Kind::Custom(
-                buzz_core::kind::KIND_MEMBER_ADDED_NOTIFICATION as u16,
-            ))
-            .id(nostr::EventId::from_hex(snapshot_id).unwrap());
-        assert!(p_gated_filters_authorized(&[member_notif_ids], authed));
+        // Membership notices are relay-signed too: knowing one's id is not
+        // authorization (a system channel's notice names a hidden channel).
+        for kind in [
+            buzz_core::kind::KIND_MEMBER_ADDED_NOTIFICATION,
+            buzz_core::kind::KIND_MEMBER_REMOVED_NOTIFICATION,
+        ] {
+            let ids_only = Filter::new()
+                .kind(nostr::Kind::Custom(kind as u16))
+                .id(nostr::EventId::from_hex(snapshot_id).unwrap());
+            assert!(!p_gated_filters_authorized(&[ids_only], authed));
+            let own = Filter::new()
+                .kind(nostr::Kind::Custom(kind as u16))
+                .id(nostr::EventId::from_hex(snapshot_id).unwrap())
+                .custom_tags(p_tag, [authed]);
+            assert!(p_gated_filters_authorized(&[own], authed));
+        }
     }
 
     /// NIP-AM: kind 44200 must deny `{kinds:[44200], ids:[...]}` by non-owner.
@@ -3007,6 +3166,20 @@ mod tests {
         let owner = nostr::Keys::generate().public_key().to_hex();
         let attacker = nostr::Keys::generate().public_key().to_hex();
         (agent, owner, attacker)
+    }
+
+    #[test]
+    fn count_fallback_covers_filters_that_can_match_private_deletions() {
+        assert!(filter_can_match_author_only_kinds(&Filter::new()));
+        assert!(filter_can_match_author_only_kinds(
+            &Filter::new().id(nostr::EventId::all_zeros())
+        ));
+        assert!(filter_can_match_author_only_kinds(
+            &Filter::new().kinds([nostr::Kind::EventDeletion, nostr::Kind::TextNote])
+        ));
+        assert!(!filter_can_match_author_only_kinds(
+            &Filter::new().kind(nostr::Kind::TextNote)
+        ));
     }
 
     #[test]

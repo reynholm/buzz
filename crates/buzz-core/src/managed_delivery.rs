@@ -80,10 +80,22 @@ pub fn same_report(first: &Event, other: &Event) -> bool {
         && delivery_key(first).is_some()
 }
 
+/// Route current recovery requests and legacy JSON envelopes to checked ingest.
+///
+/// Legacy kind 20003 also carries upstream owner presence. Its plain-text
+/// statuses stay on the WebSocket presence path. This is only a routing hint:
+/// [`RecoveryRequest::decode`] must still validate all signatures and fields.
+pub fn is_recovery_envelope(event: &Event) -> bool {
+    let kind = event.kind.as_u16() as u32;
+    kind == crate::kind::KIND_MANAGED_DELIVERY_RECOVERY
+        || (kind == crate::kind::KIND_LEGACY_MANAGED_DELIVERY_RECOVERY
+            && event.content.trim_start().starts_with('{'))
+}
+
 impl RecoveryRequest {
     /// Verify the wrapper and both reports before passing the candidate to normal ingest.
     pub fn decode(wrapper: &Event, now: u64) -> Result<Self, String> {
-        if wrapper.kind.as_u16() != crate::kind::KIND_MANAGED_DELIVERY_RECOVERY as u16
+        if !is_recovery_envelope(wrapper)
             || wrapper.content.len() > MAX_RECOVERY_BYTES
             || wrapper.created_at.as_secs().abs_diff(now) > 900
         {
@@ -158,10 +170,27 @@ mod tests {
             .sign_with_keys(&keys)
             .unwrap()
         };
+        let current = wrapper(original.clone(), make("first", now), now);
+        assert!(RecoveryRequest::decode(&current, now).is_ok());
+        let legacy = EventBuilder::new(Kind::Custom(20003), &current.content)
+            .tags(current.tags.clone())
+            .custom_created_at(current.created_at)
+            .sign_with_keys(&keys)
+            .unwrap();
         assert!(
-            RecoveryRequest::decode(&wrapper(original.clone(), make("first", now), now), now)
-                .is_ok()
+            RecoveryRequest::decode(&legacy, now).is_ok(),
+            "installed CLI recovery remains valid after the presence kind is imported"
         );
+        assert!(is_recovery_envelope(&current));
+        assert!(is_recovery_envelope(&legacy));
+        for status in ["online", "away", "offline"] {
+            let presence = EventBuilder::new(Kind::Custom(20003), status)
+                .custom_created_at(Timestamp::from(now))
+                .sign_with_keys(&keys)
+                .unwrap();
+            assert!(RecoveryRequest::decode(&presence, now).is_err());
+            assert!(!is_recovery_envelope(&presence));
+        }
         assert!(RecoveryRequest::decode(
             &wrapper(original.clone(), make("changed", now), now),
             now

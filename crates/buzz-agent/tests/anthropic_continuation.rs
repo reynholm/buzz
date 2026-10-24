@@ -20,9 +20,10 @@ async fn session(h: &mut Harness) -> String {
             }]}),
         )
         .await;
-    h.recv_until(|v| v["id"] == id).await["result"]["sessionId"]
+    let reply = h.recv_until(|v| v["id"] == id).await;
+    reply["result"]["sessionId"]
         .as_str()
-        .unwrap()
+        .unwrap_or_else(|| panic!("session/new failed: {reply}"))
         .to_owned()
 }
 

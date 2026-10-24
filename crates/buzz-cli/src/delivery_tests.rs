@@ -764,5 +764,5 @@ async fn managed_expired_journal_never_treats_legacy_wrapper_ack_as_delivery() {
         .lock()
         .unwrap()
         .iter()
-        .all(|e| e.kind.as_u16() == 20003));
+        .all(|e| u32::from(e.kind.as_u16()) == buzz_core::kind::KIND_MANAGED_DELIVERY_RECOVERY));
 }

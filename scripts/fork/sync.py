@@ -247,6 +247,7 @@ def prepare_update(repo: Path, selection: UpdateSelection | None, manifest: dict
             return report
         candidate_manifest = copy.deepcopy(manifest)
         candidate_manifest.update(base_tag=selection.target_tag, base_sha=report.target_sha)
+        candidate_manifest.pop('base_ref', None)
         target_paths = set(git(repo, 'ls-tree', '-r', '--name-only', report.target_sha).stdout.splitlines())
         for item in candidate_manifest['patches']:
             item['is_new'] = item['path'] not in target_paths
@@ -310,6 +311,7 @@ def reuse_published_candidate(repo: Path, selection: UpdateSelection, manifest: 
         candidate_manifest = json.loads((worktree / 'scripts/fork/patches.json').read_text())
         expected_manifest = copy.deepcopy(manifest)
         expected_manifest.update(base_sha=target, base_tag=selection.target_tag)
+        expected_manifest.pop('base_ref', None)
         paths = set(git(repo, 'ls-tree', '-r', '--name-only', target).stdout.splitlines())
         for item in expected_manifest['patches']:
             item['is_new'] = item['path'] not in paths
@@ -499,9 +501,12 @@ def run_clean_target(repo: Path, target_sha: str, report_path: Path) -> dict:
 
 def render_registry(manifest: dict) -> str:
     """Render the authoritative JSON inventory as deterministic Markdown."""
+    base = (f"Base snapshot: `{manifest['base_ref']}` (`{manifest['base_sha']}`). "
+            f"Release floor: `{manifest['base_tag']}`."
+            if manifest.get('base_ref') else
+            f"Base: `{manifest['base_tag']}` (`{manifest['base_sha']}`).")
     lines = ['# Fork patches', '', 'Generated from `scripts/fork/patches.json`; regenerate with',
-             '`python3 scripts/fork/sync.py render`.', '',
-             f"Base: `{manifest['base_tag']}` (`{manifest['base_sha']}`).", '']
+             '`python3 scripts/fork/sync.py render`.', '', base, '']
     for patch in manifest['patches']:
         lines.extend([f"## `{patch['path']}`", '', patch['responsibility'], '',
                       f"New module: `{str(patch['is_new']).lower()}`.", ''])

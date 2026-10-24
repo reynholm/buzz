@@ -42,18 +42,18 @@ pub async fn insert(
     hash.update(key.as_bytes());
     let mut lock_bytes = [0u8; 8];
     lock_bytes.copy_from_slice(&hash.finalize()[..8]);
-    let connection = crate::observability::acquire_writer(
+    let mut tx = crate::begin_community_event_write_transaction(
         pool,
+        community,
         crate::observability::WriterOperation::EventWrite,
     )
     .await?;
-    let mut tx = sqlx::Transaction::begin(connection, None).await?;
     sqlx::query("SELECT pg_advisory_xact_lock($1)")
         .bind(i64::from_be_bytes(lock_bytes))
-        .execute(&mut *tx)
+        .execute(tx.conn())
         .await?;
     let bound = sqlx::query("SELECT event, received_at, channel_id FROM managed_deliveries WHERE community_id=$1 AND author=$2 AND delivery_key=$3")
-        .bind(community.as_uuid()).bind(author.as_slice()).bind(key).fetch_optional(&mut *tx).await?;
+        .bind(community.as_uuid()).bind(author.as_slice()).bind(key).fetch_optional(tx.conn()).await?;
     if let Some(row) = bound {
         let chosen: Event = serde_json::from_value(row.try_get("event")?)?;
         let bound_channel: Uuid = row.try_get("channel_id")?;
@@ -69,7 +69,7 @@ pub async fn insert(
     }
     // Includes soft-deleted rows: previous acceptance must never resurrect a report.
     let historical = sqlx::query("SELECT id, pubkey, created_at, kind, tags, content, sig, received_at, channel_id FROM events WHERE community_id=$1 AND id=$2")
-        .bind(community.as_uuid()).bind(original.id.as_bytes().as_slice()).fetch_optional(&mut *tx).await?;
+        .bind(community.as_uuid()).bind(original.id.as_bytes().as_slice()).fetch_optional(tx.conn()).await?;
     let result = if let Some(row) = historical {
         let stored = row_to_stored_event(row)?
             .ok_or_else(|| DbError::InvalidData("invalid historical report".into()))?;
@@ -80,22 +80,16 @@ pub async fn insert(
         }
         (stored, false)
     } else {
-        insert_event_with_thread_metadata_tx(&mut tx, community, candidate, Some(channel), metadata)
-            .await?
+        insert_event_with_thread_metadata_tx(&mut tx, candidate, Some(channel), metadata).await?
     };
     if result.1 {
-        crate::runtime::insert_mentions_in_transaction(
-            &mut tx,
-            community,
-            &result.0.event,
-            Some(channel),
-        )
-        .await?;
+        crate::runtime::insert_mentions_in_transaction(&mut tx, &result.0.event, Some(channel))
+            .await?;
     }
     let received_at: DateTime<Utc> = result.0.received_at;
     sqlx::query("INSERT INTO managed_deliveries (community_id, author, delivery_key, channel_id, event, received_at) VALUES ($1,$2,$3,$4,$5,$6)")
         .bind(community.as_uuid()).bind(author.as_slice()).bind(key).bind(channel)
-        .bind(serde_json::to_value(&result.0.event)?).bind(received_at).execute(&mut *tx).await?;
+        .bind(serde_json::to_value(&result.0.event)?).bind(received_at).execute(tx.conn()).await?;
     tx.commit().await?;
     Ok(result)
 }
