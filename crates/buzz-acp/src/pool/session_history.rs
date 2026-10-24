@@ -79,7 +79,7 @@ impl Reader<'_> {
         };
         // A relay ignoring its requested limit cannot bypass the raw-candidate bound.
         let room = MAX_CANDIDATES - self.candidates;
-        if events.len() > PAGE + 1 || events.len() > room {
+        if events.len() > requested || events.len() > room {
             self.failed = true;
             return None;
         }
@@ -208,10 +208,10 @@ pub(super) async fn selected_with_language(
     let mut complete = false;
     // Reserve the newest tail before the forward scan can exhaust the deadline.
     // Root lookup shares this request and all global budgets.
+    // Preserve the bounded newest page for language evidence as well: many
+    // agent replies may hide the last human message outside the rendered window.
+    // Recent retains only its configured window from this same acquisition.
     let mut newest = base.clone();
-    if depth == RestartDepth::Recent {
-        newest["limit"] = json!(ctx.context_message_limit.saturating_add(1));
-    }
     let mut initial = vec![newest.clone()];
     if let Some(root) = root {
         initial.push(json!({"kinds":[9,40002],"#h":[channel.to_string()],"ids":[root],"limit":1}));

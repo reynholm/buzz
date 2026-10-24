@@ -112,12 +112,18 @@ async fn restart_recent_keeps_history_across_slow_reads_partial_failure_and_reco
                 .all(|filter| filter["limit"] == 64),
             "assignment discovery must not download 500 bodies per page for recent history"
         );
-        assert!(
-            queries
-                .iter()
-                .filter(|filter| filter["#e"].is_array() && filter["depth_limit"].is_null())
-                .all(|filter| filter["limit"].as_u64().unwrap_or_default() <= 13),
-            "the recent window must only be fetched at its configured size"
+        let recent_reads = queries
+            .iter()
+            .filter(|filter| {
+                filter["#e"].is_array()
+                    && filter["depth_limit"].is_null()
+                    && filter["authors"].is_null()
+            })
+            .count();
+        assert_eq!(
+            recent_reads,
+            if mode == "history-unavailable" { 3 } else { 1 },
+            "reuse the acquired newest page instead of fetching recent history again"
         );
     }
 }

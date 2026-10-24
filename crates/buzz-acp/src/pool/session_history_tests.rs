@@ -524,3 +524,70 @@ async fn recent_history_finds_an_assignment_beyond_the_first_page_without_scanni
     );
     server.abort();
 }
+
+#[tokio::test]
+async fn recent_language_survives_agent_traffic_without_supplying_excluded_human_bodies() {
+    let human = nostr::Keys::generate();
+    let agent = nostr::Keys::generate();
+    let channel = Uuid::from_u128(42);
+    let build = |key: &nostr::Keys, at: u64, text: &str, tags: Vec<nostr::Tag>| {
+        serde_json::to_value(
+            nostr::EventBuilder::new(nostr::Kind::Custom(9), text)
+                .tags(tags)
+                .custom_created_at(nostr::Timestamp::from(at))
+                .sign_with_keys(key)
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    let h = nostr::Tag::parse(["h", &channel.to_string()]).unwrap();
+    let root = build(
+        &human,
+        1,
+        "Please inspect the task",
+        vec![
+            h.clone(),
+            nostr::Tag::parse(["p", &agent.public_key().to_hex()]).unwrap(),
+        ],
+    );
+    let root_id = root["id"].as_str().unwrap().to_owned();
+    let mut events = vec![root];
+    for n in 2..=32 {
+        let (key, text) = if n == 2 {
+            (&human, "Продолжай работу, сообщи результат")
+        } else {
+            (&agent, "The task is progressing")
+        };
+        events.push(build(
+            key,
+            n,
+            text,
+            vec![
+                h.clone(),
+                nostr::Tag::parse(["e", &root_id, "", "reply"]).unwrap(),
+            ],
+        ));
+    }
+    let (mut ctx, server, _) = scripted(events).await;
+    ctx.agent_keys = agent;
+    ctx.context_message_limit = 12;
+    let (context, _, language, failed) = selected_with_language(
+        &ContextTarget::Thread(root_id),
+        channel,
+        RestartDepth::Recent,
+        &ctx,
+        &HashSet::from([human.public_key().to_hex()]),
+    )
+    .await;
+    assert!(!failed);
+    assert_eq!(
+        language, "ru",
+        "use the last trusted human prose even after a long series of agent replies"
+    );
+    let rendered = crate::queue::format_conversation_context(&context.unwrap(), None);
+    assert!(
+        !rendered.contains("Продолжай работу"),
+        "language evidence must not expand the selected history window"
+    );
+    server.abort();
+}
