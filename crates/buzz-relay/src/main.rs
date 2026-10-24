@@ -35,16 +35,31 @@ fn buzz_auto_migrate_enabled(value: Option<&str>) -> bool {
     })
 }
 
-async fn connect_audit_pool(config: &DbConfig) -> anyhow::Result<sqlx::PgPool> {
+async fn connect_audit_pool(
+    config: &DbConfig,
+    relay_config: &Config,
+) -> anyhow::Result<sqlx::PgPool> {
     let audit_config = DbConfig {
         read_database_url: None,
-        max_connections: 5,
+        max_connections: relay_config.db_audit_pool_size,
         min_connections: 1,
         ..config.clone()
     };
     Db::connect_writer_pool(&audit_config)
         .await
         .map_err(Into::into)
+}
+
+async fn connect_search_pool(config: &Config) -> anyhow::Result<sqlx::PgPool> {
+    let database_url = config
+        .read_database_url
+        .as_deref()
+        .unwrap_or(&config.database_url);
+    sqlx::postgres::PgPoolOptions::new()
+        .max_connections(config.db_search_pool_size)
+        .connect(database_url)
+        .await
+        .map_err(|error| anyhow::anyhow!("Search DB connection failed: {error}"))
 }
 
 fn relay_keypair_from_config(relay_private_key: Option<&str>) -> anyhow::Result<nostr::Keys> {
@@ -500,7 +515,7 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     }
 
     let (audit, audit_metrics_pool) = if config.audit_enabled {
-        let audit_pool = connect_audit_pool(&db_config)
+        let audit_pool = connect_audit_pool(&db_config, &config)
             .await
             .map_err(|e| anyhow::anyhow!("Audit DB connection failed: {e}"))?;
         info!("Audit service ready");
@@ -571,14 +586,7 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     // no external collection to provision — the search service just queries the
     // same Postgres over its own pool. Search is lag-tolerant, so it prefers
     // the read replica when one is configured.
-    let search_db_url = config
-        .read_database_url
-        .as_deref()
-        .unwrap_or(&config.database_url);
-    let search_pool = sqlx::postgres::PgPoolOptions::new()
-        .connect(search_db_url)
-        .await
-        .map_err(|e| anyhow::anyhow!("Search DB connection failed: {e}"))?;
+    let search_pool = connect_search_pool(&config).await?;
     let search_metrics_pool = search_pool.clone();
     let search = SearchService::new(search_pool);
     info!(
@@ -2617,17 +2625,24 @@ mod tests {
 
     async fn audit_writer_pool_installs_timeouts_and_bounds_advisory_lock_waits() {
         let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
-        let pool = connect_audit_pool(&DbConfig {
-            database_url,
-            max_connections: 2,
-            min_connections: 0,
-            lock_timeout_ms: 500,
-            idle_txn_timeout_ms: 60_000,
-            statement_timeout_ms: 0,
-            ..DbConfig::default()
-        })
+        let mut relay_config = super::Config::from_env().expect("test config");
+        relay_config.db_audit_pool_size = 2;
+        let pool = connect_audit_pool(
+            &DbConfig {
+                database_url,
+                max_connections: 7,
+                min_connections: 0,
+                lock_timeout_ms: 500,
+                idle_txn_timeout_ms: 60_000,
+                statement_timeout_ms: 0,
+                ..DbConfig::default()
+            },
+            &relay_config,
+        )
         .await
         .expect("connect audit writer pool");
+
+        assert_eq!(pool.options().get_max_connections(), 2);
 
         let (lock, idle, statement): (String, String, String) = sqlx::query_as(
             "SELECT current_setting('lock_timeout'), \
@@ -2675,6 +2690,34 @@ mod tests {
     }
 
     mod postgres_tests {
+        #[tokio::test]
+        #[ignore = "requires isolated Postgres"]
+        async fn search_pool_uses_configured_cap_and_bounds_acquisition() {
+            let mut config = super::super::Config::from_env().expect("test config");
+            config.database_url = std::env::var("DATABASE_URL").expect("isolated DATABASE_URL");
+            config.read_database_url = None;
+            config.db_search_pool_size = 2;
+            let pool = super::super::connect_search_pool(&config)
+                .await
+                .expect("connect isolated search pool");
+            assert_eq!(pool.options().get_max_connections(), 2);
+            let first = pool.acquire().await.expect("first search connection");
+            let second = pool.acquire().await.expect("second search connection");
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(50), pool.acquire())
+                    .await
+                    .is_err(),
+                "third acquisition must wait at the configured cap"
+            );
+            drop((first, second));
+            let value: i32 = sqlx::query_scalar("SELECT 1")
+                .fetch_one(&pool)
+                .await
+                .expect("search pool remains usable");
+            assert_eq!(value, 1);
+            pool.close().await;
+        }
+
         #[tokio::test]
         #[ignore = "requires Postgres"]
         async fn audit_writer_pool_installs_timeouts_and_bounds_advisory_lock_waits() {

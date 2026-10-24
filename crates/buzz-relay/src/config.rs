@@ -162,6 +162,12 @@ pub struct Config {
     /// independently so reader capacity can be tuned against the replica's
     /// headroom without touching the writer pool.
     pub db_read_pool_size: Option<u32>,
+    /// Maximum connections in the independent Postgres full-text search pool.
+    /// `BUZZ_DB_SEARCH_POOL_SIZE` defaults to 10 and must be positive.
+    pub db_search_pool_size: u32,
+    /// Maximum connections in the independent Postgres audit writer pool.
+    /// `BUZZ_DB_AUDIT_POOL_SIZE` defaults to 5 and must be positive.
+    pub db_audit_pool_size: u32,
     /// Public WebSocket URL of this relay, advertised in NIP-11.
     pub relay_url: String,
     /// Public WebSocket URL of the dedicated device-pairing relay, when configured.
@@ -560,6 +566,20 @@ fn parse_optional_bool(name: &str) -> Result<bool, ConfigError> {
     parse_bool(name, false)
 }
 
+fn parse_positive_pool_size(name: &str, default: u32) -> Result<u32, ConfigError> {
+    let invalid = || ConfigError::InvalidValue(format!("{name} must be a positive u32 integer"));
+    match std::env::var(name) {
+        Err(std::env::VarError::NotPresent) => Ok(default),
+        Err(_) => Err(invalid()),
+        Ok(value) => value
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|value| *value > 0)
+            .ok_or_else(invalid),
+    }
+}
+
 fn ensure_git_repo_path(
     raw: impl Into<std::path::PathBuf>,
 ) -> Result<std::path::PathBuf, ConfigError> {
@@ -679,6 +699,9 @@ impl Config {
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
             .filter(|&v| v > 0);
+
+        let db_search_pool_size = parse_positive_pool_size("BUZZ_DB_SEARCH_POOL_SIZE", 10)?;
+        let db_audit_pool_size = parse_positive_pool_size("BUZZ_DB_AUDIT_POOL_SIZE", 5)?;
 
         let relay_url =
             std::env::var("RELAY_URL").unwrap_or_else(|_| "ws://localhost:3000".to_string());
@@ -1342,6 +1365,8 @@ impl Config {
             redis_pool_size,
             db_pool_size,
             db_read_pool_size,
+            db_search_pool_size,
+            db_audit_pool_size,
             relay_url,
             pairing_relay_url,
             max_connections,
@@ -2109,6 +2134,58 @@ mod tests {
         assert_eq!(overridden, 80);
         assert_eq!(zero, 50, "zero must fall back to the default");
         assert_eq!(junk, 50, "unparsable value must fall back to the default");
+    }
+
+    #[test]
+    fn dedicated_postgres_pool_caps_reject_invalid_values() {
+        let _guards = env_guards();
+        for name in ["BUZZ_DB_SEARCH_POOL_SIZE", "BUZZ_DB_AUDIT_POOL_SIZE"] {
+            let previous = std::env::var_os(name);
+            let results = ["0", "-1", "invalid-private-value", "4294967296"].map(|value| {
+                std::env::set_var(name, value);
+                Config::from_env().err().map(|error| error.to_string())
+            });
+            match previous {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+            for error in results {
+                let message = error.expect("invalid pool cap must block startup");
+                assert!(message.contains(name));
+                assert!(!message.contains("invalid-private-value"));
+            }
+        }
+    }
+
+    #[test]
+    fn dedicated_postgres_pool_caps_preserve_defaults_and_accept_overrides() {
+        let _guards = env_guards();
+        let names = ["BUZZ_DB_SEARCH_POOL_SIZE", "BUZZ_DB_AUDIT_POOL_SIZE"];
+        let previous = names.map(std::env::var_os);
+        for name in names {
+            std::env::remove_var(name);
+        }
+        let defaults = Config::from_env();
+        std::env::set_var(names[0], "2");
+        std::env::set_var(names[1], "3");
+        let custom = Config::from_env();
+        for (name, value) in names.into_iter().zip(previous) {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+        let defaults = defaults.expect("default pool caps");
+        let custom = custom.expect("custom pool caps");
+        assert_eq!(
+            (defaults.db_search_pool_size, defaults.db_audit_pool_size),
+            (10, 5)
+        );
+        assert_eq!(
+            (custom.db_search_pool_size, custom.db_audit_pool_size),
+            (2, 3)
+        );
+        assert_eq!(custom.db_pool_size, defaults.db_pool_size);
     }
 
     #[test]
