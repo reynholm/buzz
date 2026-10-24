@@ -77,6 +77,14 @@ Tauri 2.12.4 with utilities 2.10.2 removes the retired Unicode package graph via
 configuration fields that the older Tauri test context cannot initialize.
 Application directory overrides remain unset. Opus 0.4 replaces the retired audiopus_sys backend with opusic-sys.
 
+The constant-time utility advisory
+[RUSTSEC-2026-0385](https://rustsec.org/advisories/RUSTSEC-2026-0385.html)
+is fixed by `ctutils` 0.4.4 in both lockfiles. Earlier releases could generate
+branches on secret values during mask generation and, on 32-bit targets,
+`u128` comparisons. The compatible patch updates the version and checksum only;
+no advisory exception is added. Run the full dependency policy for both shipping
+workspaces after resolving against the current advisory database.
+
 ## Temporary transitive maintenance exceptions
 
 The following three advisories identify standalone crates whose APIs have moved

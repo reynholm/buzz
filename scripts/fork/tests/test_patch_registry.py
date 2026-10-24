@@ -53,6 +53,12 @@ class RegistryTests(unittest.TestCase):
         (self.repo / 'caller.py').write_text('def run():\n    pass\n')
         self.assertIn('missing invocation', '\n'.join(sync.validate_patches(self.repo, self.manifest)))
 
+    def test_snapshot_base_is_distinct_from_release_floor(self):
+        self.manifest.update(base_tag='desktop-v0.5.28', base_ref='upstream-main')
+        rendered = sync.render_registry(self.manifest)
+        self.assertIn(f"Base snapshot: `upstream-main` (`{self.base}`)", rendered)
+        self.assertIn("Release floor: `desktop-v0.5.28`", rendered)
+
     def test_registry_markdown_matches_json(self):
         (self.repo / 'FORK_PATCHES.md').write_text('drift')
         self.assertIn('Markdown registry differs', sync.validate_patches(self.repo, self.manifest))

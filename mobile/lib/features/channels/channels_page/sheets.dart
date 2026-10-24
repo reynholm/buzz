@@ -261,9 +261,9 @@ class _CreateChannelFieldShell extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: context.colors.primaryContainer.withValues(alpha: 0.55),
+        color: context.controlSurface.withValues(alpha: 0.55),
         border: Border.all(color: context.colors.outlineVariant),
-        borderRadius: BorderRadius.circular(Radii.lg),
+        borderRadius: BorderRadius.circular(Radii.container),
       ),
       child: child,
     );
@@ -292,11 +292,11 @@ class _CreateChannelRadioGroup<T> extends StatelessWidget {
       children: [
         _CreateChannelFieldLabel(label: label),
         const SizedBox(height: Grid.xxs),
-        DecoratedBox(
-          decoration: BoxDecoration(
-            color: context.colors.surface,
-            border: Border.all(color: context.colors.outlineVariant),
-            borderRadius: BorderRadius.circular(Radii.lg),
+        Material(
+          color: context.colors.surface,
+          shape: RoundedRectangleBorder(
+            side: BorderSide(color: context.colors.outlineVariant),
+            borderRadius: BorderRadius.circular(Radii.container),
           ),
           child: RadioGroup<T>(
             groupValue: value,
@@ -376,7 +376,7 @@ class _CreateChannelSettingMenu<T> extends StatelessWidget {
       decoration: BoxDecoration(
         color: context.colors.surface,
         border: Border.all(color: context.colors.outlineVariant),
-        borderRadius: BorderRadius.circular(Radii.lg),
+        borderRadius: BorderRadius.circular(Radii.container),
       ),
       child: PopupMenuButton<T>(
         enabled: enabled,
@@ -421,7 +421,7 @@ class _CreateChannelSettingMenu<T> extends StatelessWidget {
               ),
               const SizedBox(width: Grid.half),
               Icon(
-                LucideIcons.chevronDown,
+                BuzzIcons.chevronDown,
                 size: 16,
                 color: context.colors.onSurfaceVariant,
               ),
@@ -535,12 +535,14 @@ class _NewDirectMessageSheet extends HookConsumerWidget {
       ),
       child: SafeArea(
         top: false,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              GestureDetector(
+        // The sheet bounds this viewport even with the keyboard visible.
+        // Keep rows as slivers so search and chip updates do not lay out the
+        // entire directory. The field still scrolls with long chip selections.
+        child: CustomScrollView(
+          shrinkWrap: true,
+          slivers: [
+            SliverToBoxAdapter(
+              child: GestureDetector(
                 behavior: HitTestBehavior.translucent,
                 onTap: isSubmitting.value ? null : queryFocusNode.requestFocus,
                 child: SizedBox(
@@ -554,7 +556,7 @@ class _NewDirectMessageSheet extends HookConsumerWidget {
                         border: Border.all(
                           color: context.colors.outlineVariant,
                         ),
-                        borderRadius: BorderRadius.circular(Radii.lg),
+                        borderRadius: BorderRadius.circular(Radii.container),
                       ),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(
@@ -664,24 +666,27 @@ class _NewDirectMessageSheet extends HookConsumerWidget {
                   ),
                 ),
               ),
-              const SizedBox(height: Grid.xs),
-              Builder(
-                key: const Key('new-dm-results'),
-                builder: (context) {
-                  if (selectedUsers.value.length >= 8) {
-                    return const SizedBox(
+            ),
+            const SliverToBoxAdapter(child: SizedBox(height: Grid.xs)),
+            Builder(
+              key: const Key('new-dm-results'),
+              builder: (context) {
+                if (selectedUsers.value.length >= 8) {
+                  return const SliverToBoxAdapter(
+                    child: SizedBox(
                       height: 96,
                       child: Center(
                         child: Text(
                           'DMs support up to nine people, including you.',
                         ),
                       ),
-                    );
-                  }
-                  if (directoryAsync.isLoading &&
-                          directoryAsync.asData == null ||
-                      isSearchTransitionPending) {
-                    return const SizedBox(
+                    ),
+                  );
+                }
+                if (directoryAsync.isLoading && directoryAsync.asData == null ||
+                    isSearchTransitionPending) {
+                  return const SliverToBoxAdapter(
+                    child: SizedBox(
                       height: 280,
                       child: Center(
                         child: BuzzLoadingIndicator(
@@ -689,10 +694,12 @@ class _NewDirectMessageSheet extends HookConsumerWidget {
                           semanticLabel: 'Loading people',
                         ),
                       ),
-                    );
-                  }
-                  if (directoryAsync.hasError) {
-                    return SizedBox(
+                    ),
+                  );
+                }
+                if (directoryAsync.hasError) {
+                  return SliverToBoxAdapter(
+                    child: SizedBox(
                       height: 280,
                       child: Center(
                         child: Column(
@@ -719,10 +726,12 @@ class _NewDirectMessageSheet extends HookConsumerWidget {
                           ],
                         ),
                       ),
-                    );
-                  }
-                  if (availableResults.isEmpty) {
-                    return SizedBox(
+                    ),
+                  );
+                }
+                if (availableResults.isEmpty) {
+                  return SliverToBoxAdapter(
+                    child: SizedBox(
                       height: 280,
                       child: Center(
                         child: Text(
@@ -731,25 +740,23 @@ class _NewDirectMessageSheet extends HookConsumerWidget {
                               : 'No matching users.',
                         ),
                       ),
-                    );
-                  }
-                  return ListView.separated(
-                    physics: const NeverScrollableScrollPhysics(),
-                    shrinkWrap: true,
-                    itemCount: availableResults.length,
-                    separatorBuilder: (_, _) =>
-                        const Divider(height: 1, indent: 56),
-                    itemBuilder: (context, index) {
-                      final user = availableResults[index];
-                      return ListTile(
+                    ),
+                  );
+                }
+                return SliverList.builder(
+                  itemCount: availableResults.length,
+                  itemBuilder: (context, index) {
+                    final user = availableResults[index];
+                    return AppListCardItem(
+                      index: index,
+                      itemCount: availableResults.length,
+                      dividerIndent: Grid.xs + 40 + Grid.xs,
+                      child: ListTile(
                         key: Key('new-dm-person-${user.pubkey}'),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: Grid.half,
-                        ),
                         leading: AvatarImage(
                           imageUrl: user.avatarUrl,
                           radius: 20,
-                          backgroundColor: context.colors.primaryContainer,
+                          backgroundColor: context.controlSurface,
                           fallback: Text(
                             user.initial,
                             style: context.textTheme.labelLarge?.copyWith(
@@ -770,7 +777,7 @@ class _NewDirectMessageSheet extends HookConsumerWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
                         trailing: Icon(
-                          LucideIcons.plus,
+                          BuzzIcons.plus,
                           size: 18,
                           color: context.colors.onSurfaceVariant,
                         ),
@@ -787,22 +794,24 @@ class _NewDirectMessageSheet extends HookConsumerWidget {
                                 submitError.value = null;
                                 queryFocusNode.requestFocus();
                               },
-                      );
-                    },
-                  );
-                },
-              ),
-              if (submitError.value case final error?) ...[
-                const SizedBox(height: Grid.xxs),
-                Text(
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+            if (submitError.value case final error?) ...[
+              const SliverToBoxAdapter(child: SizedBox(height: Grid.xxs)),
+              SliverToBoxAdapter(
+                child: Text(
                   error,
                   style: context.textTheme.bodySmall?.copyWith(
                     color: context.colors.error,
                   ),
                 ),
-              ],
+              ),
             ],
-          ),
+          ],
         ),
       ),
     );
@@ -854,7 +863,7 @@ class _SelectedDmRecipientChip extends StatelessWidget {
                     AvatarImage(
                       imageUrl: user.avatarUrl,
                       radius: 16,
-                      backgroundColor: context.colors.primaryContainer,
+                      backgroundColor: context.controlSurface,
                       fallback: Text(
                         user.initial,
                         style: context.textTheme.labelMedium?.copyWith(

@@ -19,7 +19,9 @@ writer floor and cover absent/accepted reports, earlier accepted candidates,
 soft-deleted originals, candidate renewal, current authority and concurrent
 original/recovery elections. Historical acceptance is explicitly seeded through
 a separate fixture pool; tested recovery never disarms production connections.
-Kind 20003 is a signed recovery command over the existing event bridge. The relay
+Kind 20004 is a signed recovery command over the existing event bridge. Updated
+relays also accept legacy kind-20003 JSON recovery envelopes; owner presence
+uses kind 20003 with plaintext status over WebSocket. The relay
 atomically elects one signed kind-9 report and returns its canonical signed event.
 A coordinated relay upgrade must drain old writers before enabling recovery;
 unknown-server wrapper acknowledgment is not report confirmation.

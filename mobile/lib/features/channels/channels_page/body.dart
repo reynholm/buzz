@@ -5,7 +5,7 @@ class _ChannelsBody extends StatelessWidget {
   final AsyncValue<List<Channel>> channelsAsync;
   final bool showError;
   final SessionStatus sessionStatus;
-  final bool showConnectionSkeleton;
+  final ValueChanged<bool> onReadyChanged;
   final String? currentPubkey;
   final double topSectionHeight;
   final bool usesPinnedGradient;
@@ -18,7 +18,7 @@ class _ChannelsBody extends StatelessWidget {
     required this.channelsAsync,
     required this.showError,
     required this.sessionStatus,
-    required this.showConnectionSkeleton,
+    required this.onReadyChanged,
     required this.currentPubkey,
     required this.topSectionHeight,
     required this.usesPinnedGradient,
@@ -31,8 +31,7 @@ class _ChannelsBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final barHeight = topSectionHeight;
     final loadedChannels = channels;
-    final loading =
-        showConnectionSkeleton || (loadedChannels == null && !showError);
+    final loading = loadedChannels == null && !showError;
     final content = showError && channelsAsync.hasError
         ? Padding(
             padding: EdgeInsets.only(top: barHeight),
@@ -76,12 +75,18 @@ class _ChannelsBody extends StatelessWidget {
           );
 
     return SkeletonReveal(
+      onReadyChanged: onReadyChanged,
       loading: loading,
+      loadingSemanticsKey: const Key('channels-connection-skeleton'),
+      loadingLabel: switch (sessionStatus) {
+        SessionStatus.connecting => 'Connecting',
+        SessionStatus.reconnecting => 'Reconnecting',
+        _ => 'Loading',
+      },
       shimmerEnabled: sessionStatus != SessionStatus.disconnected,
       skeleton: _ChannelsSkeleton(
         channels: loadedChannels,
         topInset: barHeight,
-        status: sessionStatus,
       ),
       content: content,
     );
@@ -178,13 +183,13 @@ class _SliverChannelsList extends HookConsumerWidget {
       });
     }, [readState.isReady, readState.pubkey, visibleChannels]);
 
-    final unreadState = _computeUnreadChannelState(
+    final unreadState = computeUnreadChannelIds(
       channels: visibleChannels,
       readState: readState,
       channelsNotifier: ref.read(channelsProvider.notifier),
     );
     final unreadChannelIds = {
-      for (final channelId in unreadState.ids)
+      for (final channelId in unreadState)
         if (seedCompleteForPubkey ||
             readState.effectiveTimestamp(channelId) != null)
           channelId,
@@ -256,7 +261,6 @@ class _SliverChannelsList extends HookConsumerWidget {
             if (starredStreamChannels.isNotEmpty)
               _ChannelSection(
                 title: 'Starred',
-                icon: LucideIcons.star,
                 showTopDivider: false,
                 expanded: starredExpanded.value,
                 onToggle: () => starredExpanded.value = !starredExpanded.value,
@@ -367,7 +371,6 @@ class _SliverChannelsList extends HookConsumerWidget {
               ),
             _ChannelSection(
               title: 'Channels',
-              icon: LucideIcons.hash,
               showTopDivider:
                   starredStreamChannels.isNotEmpty || userSections.isNotEmpty,
               expanded: channelsExpanded.value,
@@ -383,7 +386,6 @@ class _SliverChannelsList extends HookConsumerWidget {
             ),
             _ChannelSection(
               title: 'DMs',
-              icon: LucideIcons.messagesSquare,
               showTopDivider: true,
               expanded: dmsExpanded.value,
               onToggle: () => dmsExpanded.value = !dmsExpanded.value,

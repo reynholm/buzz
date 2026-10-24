@@ -16,7 +16,15 @@ impl Db {
         query: &ArtifactQuery,
         count: bool,
     ) -> Result<(Vec<StoredEvent>, i64)> {
-        let mut tx = self.begin_event_write_transaction().await?;
+        // Read-only: a plain writer-pool snapshot transaction, labeled as the
+        // history read it is, so it neither takes community admission nor
+        // counts as an event write.
+        let connection = crate::observability::acquire_writer(
+            &self.pool,
+            crate::observability::WriterOperation::SubscriptionHistory,
+        )
+        .await?;
+        let mut tx = sqlx::Transaction::begin(connection, None).await?;
         sqlx::query("SET LOCAL statement_timeout='2s'")
             .execute(&mut *tx)
             .await?;
@@ -28,9 +36,21 @@ impl Db {
         if query.view == ArtifactView::Current {
             qb.push("JOIN artifact_heads a ON a.community_id=e.community_id AND a.event_id=e.id AND NOT a.deleted ");
         }
+        // A system channel is read only by a query whose `#h` names it
+        // (NIP-CL); malformed `#h` values name no channel.
+        let named_channels: Vec<uuid::Uuid> = query
+            .tags
+            .iter()
+            .filter(|(name, _)| name == "h")
+            .flat_map(|(_, values)| values.iter().filter_map(|value| value.parse().ok()))
+            .collect();
         // The explicit kind lets the community/kind index exclude chat before
         // the join, even for an unfiltered current-state page.
-        qb.push("WHERE e.community_id=").push_bind(community.as_uuid()).push(" AND e.kind=45010 AND e.deleted_at IS NULL AND EXISTS (SELECT 1 FROM channels c WHERE c.community_id=e.community_id AND c.id=e.channel_id AND c.deleted_at IS NULL AND (c.visibility='open' OR EXISTS (SELECT 1 FROM channel_members m WHERE m.community_id=c.community_id AND m.channel_id=c.id AND m.pubkey=")
+        qb.push("WHERE e.community_id=").push_bind(community.as_uuid()).push(" AND e.kind=45010 AND e.deleted_at IS NULL AND EXISTS (SELECT 1 FROM channels c WHERE c.community_id=e.community_id AND c.id=e.channel_id AND c.deleted_at IS NULL AND (")
+            .push(crate::store::channel::legacy_channel_type_sql("c.channel_type"))
+            .push(" OR c.id=ANY(")
+            .push_bind(named_channels)
+            .push(")) AND (c.visibility='open' OR EXISTS (SELECT 1 FROM channel_members m WHERE m.community_id=c.community_id AND m.channel_id=c.id AND m.pubkey=")
             .push_bind(reader.to_vec()).push(" AND m.removed_at IS NULL)))");
         for (name, values) in &query.tags {
             // GIN-usable necessary prefilter; retain the positional recheck

@@ -3,7 +3,7 @@
 Generated from `scripts/fork/patches.json`; regenerate with
 `python3 scripts/fork/sync.py render`.
 
-Base: `desktop-v0.5.26` (`2b4b138dc5cf2d9cc1a0ceb21d9063ff56fe8bf4`).
+Base snapshot: `upstream-main` (`2d289f720de0012fa36b5f6faa0e3bdd845ccfcf`). Release floor: `desktop-v0.5.28`.
 
 ## `docs/superpowers/plans/2026-10-03-buzz-fork-maintenance.md`
 
@@ -90,7 +90,7 @@ New module: `false`.
 
 - Invocation: `desktop/src-tauri/src/commands/agents.rs` → `deploy_to_provider_scoped`; exact call `provider_deploy::deploy_to_provider_scoped(
                 &app,
-                &state,
+                state,
                 &pubkey,
                 provider_deploy::ProviderStartScope {
                     relay: Some(&create_scope.relay_url),`; behavior test `managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await -- --exact`
@@ -102,7 +102,7 @@ New module: `false`.
                     relay: expected_relay_url.as_deref(),`; behavior test `managed_agents::device_runtime_tests::owning_provider_refuses_deploy_effects`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::owning_provider_refuses_deploy_effects -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/agents.rs` → `start_local_agent_with_preflight`; exact call `start_local_agent_with_preflight(
             &app,
-            &state,
+            state,
             &pubkey,
             true,
             runtime_start::LocalStartScope {
@@ -114,7 +114,7 @@ New module: `false`.
         )`; behavior test `managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/agents.rs` → `publish_agent_profile_with_about`; exact call `profile::publish_agent_profile_with_about(
         &app,
-        &state,
+        state,
         &agent.pubkey,
         &create_fence,`; behavior test `create_import_profile_invocation_never_redirects_after_owner_relay_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib create_import_profile_invocation_never_redirects_after_owner_relay_switch`
 - Invocation: `desktop/src-tauri/src/commands/agents.rs` → `delete_managed_agent_phase_with`; exact call `delete_managed_agent_phase_with(
@@ -588,11 +588,12 @@ New module: `false`.
 
 ## `desktop/src-tauri/Cargo.lock`
 
-Lock patched native dependencies, including emSign TLS verification and trust stores, the immutable MeshLLM and NetEq compatibility pins, maintained Opus bindings and updated Tauri utilities; retain target-specific Windows updater constraints explicitly.
+Lock patched native dependencies, including emSign TLS verification and trust stores, the immutable MeshLLM and NetEq compatibility pins, maintained Opus bindings and updated Tauri utilities; retain target-specific Windows updater constraints explicitly; include ctutils 0.4.4 for RUSTSEC-2026-0385.
 
 New module: `false`.
 
 - Verify: `just desktop-tauri-test desktop-tauri-check`
+- Verify: `cargo deny --manifest-path desktop/src-tauri/Cargo.toml --target aarch64-apple-darwin --features mesh-llm check`
 
 ## `desktop/src-tauri/src/device_identity.rs`
 
@@ -1353,14 +1354,14 @@ New module: `true`.
 - Required symbol: `stamp_new_definition`
 - Invocation: `desktop/src-tauri/src/commands/agents.rs` → `creation_phase_locked`; exact call `crate::managed_agents::device_creation::creation_phase_locked(
             &app,
-            &state,
+            state,
             requested_persona_id.as_deref(),
             Some(&create_scope),
             crate::managed_agents::persona_device_view::load_device_policy_context,
             |_| {`; behavior test `managed_agents::device_creation::tests::remote_create_has_no_mint_publish_or_save`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace managed_agents::device_creation::tests::remote_create_has_no_mint_publish_or_save -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/agents.rs` → `creation_phase_locked`; exact call `crate::managed_agents::device_creation::creation_phase_locked(
             &app,
-            &state,
+            state,
             requested_persona_id.as_deref(),
             Some(&create_scope),
             crate::managed_agents::persona_device_view::load_device_policy_context,
@@ -2607,6 +2608,24 @@ New module: `false`.
 
 - Verify: `just ci`
 
+## `.github/workflows/_ci-clients.yml`
+
+Pin the Android lane to Temurin JDK 17 for Gradle 8.14.5 and explicitly select the same JAVA_HOME in Flutter before APK and JVM unit builds.
+
+New module: `false`.
+
+- Required symbol: `- name: Set up Android JDK
+        if: matrix.lane == 'android'
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'`
+- Required symbol: `- name: Select Android JDK for Flutter
+        if: matrix.lane == 'android'
+        run: flutter config --jdk-dir="$JAVA_HOME"`
+- Verify: `node --test scripts/ci-selection.test.mjs scripts/ci-required-gates.test.mjs scripts/ci-apt-retry.test.mjs`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
 ## `.github/workflows/_ci-desktop-macos.yml`
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
@@ -2617,21 +2636,37 @@ New module: `false`.
 
 ## `.github/workflows/_ci-relay.yml`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane. Preserve the MinIO CI image override in every relay integration consumer. Retain the real CLI build and artifact inventory after the upstream producer matrix split.
 
 New module: `false`.
 
 - Required symbol: `export BUZZ_TEST_BIN_DIR="$PWD/target/ci"`
+- Required symbol: `desktop-e2e-integration-shard:
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml`
+- Required symbol: `backend-integration:
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml`
+- Required symbol: `relay-e2e:
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml`
+- Required symbol: `run: cargo build --profile ci -p buzz-relay -p git-credential-nostr -p buzz-cli`
+- Required symbol: `- artifact: relay-binaries
+            paths: |
+              target/ci/buzz-relay
+              target/ci/buzz
+              target/ci/git-credential-nostr`
 - Verify: `just ci`
 
 ## `.github/workflows/_ci-rust.yml`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Preserve checked ACP retirement and budget cold native Windows compilation plus the full Tauri test suite
 
 New module: `false`.
 
 - Required symbol: `python scripts/check-acp-retirement.py`
 - Required symbol: `python3 scripts/check-acp-retirement.py`
+- Required symbol: `timeout-minutes: 90`
 - Verify: `just ci`
 
 ## `.github/workflows/ci.yml`
@@ -2668,11 +2703,12 @@ New module: `false`.
 
 ## `Cargo.lock`
 
-Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source.
+Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils 0.4.4 for RUSTSEC-2026-0385.
 
 New module: `false`.
 
 - Verify: `just ci`
+- Verify: `cargo deny check`
 
 ## `Justfile`
 
@@ -2688,7 +2724,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -2696,7 +2732,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -2704,7 +2740,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -2746,7 +2782,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -2754,7 +2790,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -2762,7 +2798,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -2788,7 +2824,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -2904,7 +2940,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -2960,7 +2996,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -2968,7 +3004,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -2976,7 +3012,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -2992,7 +3028,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -3201,7 +3237,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -3233,7 +3269,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -3257,7 +3293,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -3337,7 +3373,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -3513,7 +3549,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -3537,7 +3573,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -3545,7 +3581,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -3615,7 +3651,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -3679,7 +3715,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -3695,7 +3731,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -3743,7 +3779,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -3799,7 +3835,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -3815,7 +3851,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -3831,7 +3867,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -3871,7 +3907,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -3903,7 +3939,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -3951,7 +3987,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -3983,7 +4019,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -3991,7 +4027,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4047,7 +4083,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4063,7 +4099,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4071,7 +4107,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4103,7 +4139,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4119,7 +4155,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4127,7 +4163,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4151,7 +4187,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4175,7 +4211,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4183,7 +4219,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4231,7 +4267,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4255,7 +4291,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4391,7 +4427,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4473,7 +4509,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4489,7 +4525,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4497,7 +4533,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4505,7 +4541,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4513,7 +4549,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4537,7 +4573,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4545,7 +4581,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4553,7 +4589,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4561,7 +4597,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4757,14 +4793,6 @@ New module: `false`.
 
 - Verify: `just ci`
 
-## `mobile/lib/features/channels/message_actions/native_actions.dart`
-
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
-
-New module: `true`.
-
-- Verify: `just ci`
-
 ## `mobile/lib/features/channels/message_long_press_region.dart`
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
@@ -4809,7 +4837,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4817,7 +4845,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4825,7 +4853,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4877,38 +4905,6 @@ New module: `false`.
 
 - Verify: `just ci`
 
-## `mobile/lib/features/pulse/agent_activity_card.dart`
-
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
-
-New module: `false`.
-
-- Verify: `just ci`
-
-## `mobile/lib/features/pulse/compose_note_page.dart`
-
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
-
-New module: `false`.
-
-- Verify: `just ci`
-
-## `mobile/lib/features/pulse/note_card.dart`
-
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
-
-New module: `false`.
-
-- Verify: `just ci`
-
-## `mobile/lib/features/pulse/pulse_page.dart`
-
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
-
-New module: `false`.
-
-- Verify: `just ci`
-
 ## `mobile/lib/features/search/search_page.dart`
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
@@ -4922,16 +4918,6 @@ New module: `false`.
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
 New module: `false`.
-
-- Verify: `just ci`
-
-## `mobile/lib/features/settings/settings_page/community_section.dart`
-
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
-
-New module: `false`.
-
-Registered upstream deletion: `true`.
 
 - Verify: `just ci`
 
@@ -4955,7 +4941,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4963,7 +4949,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -4995,7 +4981,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -5003,7 +4989,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -5019,7 +5005,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -5035,7 +5021,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -5051,7 +5037,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -5067,7 +5053,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -5083,18 +5069,17 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
 ## `mobile/test/features/channels/message_actions_test.dart`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches; isolate native cross-surface fixture from unrelated membership/connectivity
+Keep message action fixture connectivity isolated using the current upstream mocked channel; native popover fixtures were replaced by grouped action sheets.
 
 New module: `false`.
 
-- Required symbol: `channelIdentityNamesProvider(_channelId).overrideWith`
-- Required symbol: `const IdentityNameSources().scope(const [])`
+- Required symbol: `const MethodChannel('dev.fluttercommunity.plus/connectivity_status')`
 - Verify: `just ci`
 - Verify: `just mobile-install mobile-check mobile-test`
 
@@ -5110,7 +5095,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -5142,7 +5127,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -5150,7 +5135,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -5159,30 +5144,6 @@ New module: `true`.
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
 New module: `false`.
-
-- Verify: `just ci`
-
-## `mobile/test/features/pulse/compose_note_page_test.dart`
-
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
-
-New module: `false`.
-
-- Verify: `just ci`
-
-## `mobile/test/features/pulse/note_card_test.dart`
-
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
-
-New module: `false`.
-
-- Verify: `just ci`
-
-## `mobile/test/features/pulse/pulse_page_test.dart`
-
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
-
-New module: `true`.
 
 - Verify: `just ci`
 
@@ -5206,7 +5167,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -5262,7 +5223,7 @@ New module: `false`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -5270,7 +5231,7 @@ New module: `true`.
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
-New module: `true`.
+New module: `false`.
 
 - Verify: `just ci`
 
@@ -5788,10 +5749,10 @@ Reserve ephemeral managed recovery kind 20003 for signed canonical election; upg
 
 New module: `false`.
 
-- Required symbol: `KIND_MANAGED_DELIVERY_RECOVERY: u32 = 20003`
+- Required symbol: `KIND_MANAGED_DELIVERY_RECOVERY: u32 = 20004`
 - Invocation: `crates/buzz-relay/src/handlers/event.rs` → `is_ephemeral`; exact call `if is_ephemeral(kind_u32)
         && kind_u32 != buzz_core::kind::KIND_NIP43_LEAVE_REQUEST
-        && kind_u32 != buzz_core::kind::KIND_MANAGED_DELIVERY_RECOVERY`; behavior test `managed_ws_original_ack_correlates_after_recovery_wins`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib managed_ws_original_ack_correlates_after_recovery_wins -- --ignored --test-threads=1`
+        && !buzz_core::managed_delivery::is_recovery_envelope(&event)`; behavior test `managed_ws_original_ack_correlates_after_recovery_wins`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib managed_ws_original_ack_correlates_after_recovery_wins -- --ignored --test-threads=1`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
 
 ## `crates/buzz-core/src/lib.rs`
@@ -5895,12 +5856,7 @@ New module: `true`.
                     thread_params,
                     &request.original,
                 )`; behavior test `managed_old_accepted_report_recovers_with_production_writer`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib managed_old_accepted_report_recovers_with_production_writer -- --ignored --test-threads=1`
-- Invocation: `crates/buzz-db/src/store/managed_delivery.rs` → `insert_mentions_in_transaction`; exact call `crate::runtime::insert_mentions_in_transaction(
-            &mut tx,
-            community,
-            &result.0.event,
-            Some(channel),
-        )`; behavior test `managed_recovery_mention_history_survives_lost_ack`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib managed_recovery_mention_history_survives_lost_ack -- --ignored --test-threads=1`
+- Invocation: `crates/buzz-db/src/store/managed_delivery.rs` → `insert_mentions_in_transaction`; exact call `crate::runtime::insert_mentions_in_transaction(&mut tx, &result.0.event, Some(channel))`; behavior test `managed_recovery_mention_history_survives_lost_ack`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib managed_recovery_mention_history_survives_lost_ack -- --ignored --test-threads=1`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
 
 ## `crates/buzz-db/src/store/mod.rs`
@@ -8212,6 +8168,430 @@ New module: `false`.
 
 - Required symbol: `fn test_parse_envelope_rejects_invalid_oa_pubkey()`
 - Verify: `cargo test --locked -p git-sign-nostr`
+
+## `crates/buzz-audio-client/Cargo.toml`
+
+Keep the shared Huddle audio graph on the immutable NetEq security fix.
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-db/src/runtime/follow_up_retirement_tests.rs`
+
+Keep trigger retirement checks aligned with the checksum-preserving fork migration numbering.
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-db/src/runtime/push_enqueue.rs`
+
+Use the existing durable match queue in the event transaction instead of the transient post-commit producer.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-db/src/store/event_follow_up.rs`
+
+Persist eligible push work in the existing match queue inside the admitted event transaction, ordered by the lease gate; retain TTL lifecycle.
+
+New module: `false`.
+
+- Required symbol: `INSERT INTO push_match_queue (community_id, event_id)`
+- Invocation: `crates/buzz-db/src/store/event_follow_up.rs` → `enqueue_push_match`; exact call `enqueue_push_match(tx.conn(), tx_community, event_id, kind).await?`; behavior test `queue_timeout_rolls_back_normal_and_managed_reports_before_retry`; verify `scripts/postgres-test-run.sh -p buzz-db --lib --tests`
+- Verify: `just ci`
+
+## `crates/buzz-db/src/store/event_follow_up_postgres_tests.rs`
+
+Verify durable normal/managed enqueue, transaction rollback on queue error, more than256jobs, actual process death and restart claims on both schema paths.
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `docker-compose.yml`
+
+Retain bundled MinIO and mc until the separate object-storage migration is accepted.
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `docs/fork/UPSTREAM_SYNC_2026_10_22.md`
+
+Record exact snapshot integration, rollout boundaries, preserved behavior, deferred work and acceptance gates.
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `docs/push-gateway-deployment.md`
+
+Document durable push handoff and compatible writer/schema rollout instead of upstream best-effort enqueue.
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `migrations/0056_personal_read_state.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0057_personal_read_started_at.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0057_personal_read_state.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0058_personal_read_started_at.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0058_personal_read_through_message.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0059_personal_read_through_message.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0059_push_rollback_gate.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0060_push_rollback_gate.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0060_push_single_application.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0061_channel_labels.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0061_push_single_application.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0062_channel_labels.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0062_system_channel_type.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0063_retire_push_match_trigger.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0063_system_channel_type.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0064_profile_name_fields.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0064_retire_push_match_trigger.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0065_profile_name_fields.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0065_retire_channel_ttl_trigger.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0066_community_nip_fi_issuers.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0066_retire_channel_ttl_trigger.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0067_channel_join_role.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0067_community_nip_fi_issuers.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0068_channel_join_role.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0068_entity_deletion_requests.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+
+## `migrations/0069_entity_deletion_requests.sql`
+
+Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `schema/tables/public/managed_deliveries.sql`
+
+Declare the canonical managed-delivery ledger in desired-state setup.
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `schema/triggers/managed_deliveries.sql`
+
+Declare the canonical managed-delivery ledger in desired-state setup.
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-agent/tests/anthropic_continuation.rs`
+
+Include the actual session/new response in native Anthropic continuation fixture failures.
+
+New module: `false`.
+
+- Required symbol: `session/new failed: {reply}`
+- Verify: `cargo test --locked -p buzz-agent`
+
+## `crates/buzz-db/src/runtime/admitted_tx.rs`
+
+Keep admitted transactions and TTL commit hooks without a transient push handoff.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-db/src/store/channel.rs`
+
+Keep atomic channel creation and metadata edits on admitted transactions without transient producer injection.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-db/src/store/channel_members.rs`
+
+Keep member/channel writer regressions aligned with direct durable enqueue.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-db/src/store/push.rs`
+
+Keep lease ordering and durable matcher claims while exercising the actual admitted enqueue transaction.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-db/src/store/replaceable.rs`
+
+Preserve replaceable event transactional hooks without a transient producer.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-relay/src/handlers/group_state_postgres_tests.rs`
+
+Use a connected PostgreSQL fixture with bounded realistic acquisition time; preserve short lazy-pool unit fixtures.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `docs/database.md`
+
+Keep relay/gateway migration references aligned with the preserved fork history.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `.github/workflows/mesh-lifecycle.yml`
+
+Preserve the MinIO CI image override for the relay-driven mesh lifecycle smoke
+
+New module: `false`.
+
+- Required symbol: `lifecycle-smoke:
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml`
+- Verify: `python3 scripts/fork/sync.py validate`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `docker-compose.ci.yml`
+
+Preserve the published MinIO CI image for the server and initialization services
+
+New module: `false`.
+
+- Required symbol: `  minio:
+    image: ${MINIO_CI_IMAGE:-ghcr.io/block/buzz-minio:latest}`
+- Required symbol: `  minio-init:
+    image: ${MINIO_CI_IMAGE:-ghcr.io/block/buzz-minio:latest}`
+- Verify: `python3 scripts/fork/sync.py validate`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `.github/workflows/_ci-desktop.yml`
+
+Keep native Linux CI off the degraded runner Azure apt mirror without changing required checks
+
+New module: `false`.
+
+- Required symbol: `'https://archive.ubuntu.com/ubuntu/'`
+- Required symbol: `'https://security.ubuntu.com/ubuntu/'`
+- Verify: `just ci`
 
 ## `desktop/src/features/channels/useObservedUnreadPersistence.ts`
 

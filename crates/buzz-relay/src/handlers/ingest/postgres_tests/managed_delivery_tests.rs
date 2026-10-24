@@ -8,22 +8,35 @@ use nostr::{Keys, Tag, Timestamp};
 #[tokio::test]
 #[ignore = "requires Postgres and Redis"]
 async fn managed_old_absent_report_recovers_with_production_writer() {
-    old_report_recovery(false, false).await;
+    old_report_recovery(false, false, 20003).await;
 }
 
 #[tokio::test]
 #[ignore = "requires Postgres and Redis"]
 async fn managed_old_accepted_report_recovers_with_production_writer() {
-    old_report_recovery(true, false).await;
+    old_report_recovery(true, false, 20003).await;
 }
 
 #[tokio::test]
 #[ignore = "requires Postgres and Redis"]
 async fn managed_old_deleted_original_never_resurrects() {
-    old_report_recovery(true, true).await;
+    old_report_recovery(true, true, 20003).await;
 }
 
-async fn old_report_recovery(already_accepted: bool, deleted: bool) {
+#[tokio::test]
+#[ignore = "requires Postgres and Redis"]
+async fn managed_current_kind_recovers_absent_accepted_and_deleted_reports() {
+    for (accepted, deleted) in [(false, false), (true, false), (true, true)] {
+        old_report_recovery(
+            accepted,
+            deleted,
+            buzz_core::kind::KIND_MANAGED_DELIVERY_RECOVERY as u16,
+        )
+        .await;
+    }
+}
+
+async fn old_report_recovery(already_accepted: bool, deleted: bool, recovery_kind: u16) {
     let state = authenticated_http_state().await;
     let pool = state.db.pool().clone();
     let host = format!("managed-recovery-{}.test", Uuid::new_v4().simple());
@@ -106,7 +119,7 @@ async fn old_report_recovery(already_accepted: bool, deleted: bool) {
             .sign_with_keys(&author)
             .unwrap();
         let recovery = EventBuilder::new(
-            Kind::Custom(20003),
+            Kind::Custom(recovery_kind),
             serde_json::json!({"original":event,"candidate":ReportStamp::from(&candidate)})
                 .to_string(),
         )
@@ -143,7 +156,7 @@ async fn old_report_recovery(already_accepted: bool, deleted: bool) {
             .sign_with_keys(&author)
             .unwrap();
         let next_wrapper = EventBuilder::new(
-            Kind::Custom(20003),
+            Kind::Custom(recovery_kind),
             serde_json::json!({"original":event,"candidate":ReportStamp::from(&next_candidate)})
                 .to_string(),
         )

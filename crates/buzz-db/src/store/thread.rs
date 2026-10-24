@@ -11,23 +11,6 @@ use uuid::Uuid;
 
 use buzz_datastore_tracing::datastore_span;
 
-async fn acquire_event_write_connection(
-    pool: &PgPool,
-) -> Result<sqlx::pool::PoolConnection<sqlx::Postgres>> {
-    Ok(crate::observability::acquire_writer(
-        pool,
-        crate::observability::WriterOperation::EventWrite,
-    )
-    .await?)
-}
-
-async fn begin_event_write_transaction(
-    pool: &PgPool,
-) -> Result<sqlx::Transaction<'static, sqlx::Postgres>> {
-    let connection = acquire_event_write_connection(pool).await?;
-    Ok(sqlx::Transaction::begin(connection, None).await?)
-}
-
 use buzz_core::CommunityId;
 
 use crate::{
@@ -148,7 +131,12 @@ pub async fn insert_thread_metadata(
     depth: i32,
     broadcast: bool,
 ) -> Result<()> {
-    let mut tx = begin_event_write_transaction(pool).await?;
+    let mut tx = crate::begin_community_write_transaction(
+        pool,
+        community_id,
+        crate::observability::WriterOperation::EventWrite,
+    )
+    .await?;
 
     let result = sqlx::query(
         r#"
@@ -171,7 +159,7 @@ pub async fn insert_thread_metadata(
     .bind(root_event_created_at)
     .bind(depth)
     .bind(broadcast)
-    .execute(&mut *tx)
+    .execute(tx.conn())
     .await?;
 
     // Only bump reply counts if the row was actually inserted (not a duplicate).
@@ -197,7 +185,7 @@ pub async fn insert_thread_metadata(
             .bind(parent_ts)
             .bind(pid)
             .bind(channel_id)
-            .execute(&mut *tx)
+            .execute(tx.conn())
             .await?;
 
             // Ensure the root also has a row (may differ from parent for nested replies).
@@ -219,7 +207,7 @@ pub async fn insert_thread_metadata(
                     .bind(root_ts)
                     .bind(root_id)
                     .bind(channel_id)
-                    .execute(&mut *tx)
+                    .execute(tx.conn())
                     .await?;
                 }
             }
@@ -235,7 +223,7 @@ pub async fn insert_thread_metadata(
             )
             .bind(community_id.as_uuid())
             .bind(pid)
-            .execute(&mut *tx)
+            .execute(tx.conn())
             .await?;
 
             // Increment root's total descendant count.
@@ -249,7 +237,7 @@ pub async fn insert_thread_metadata(
                 )
                 .bind(community_id.as_uuid())
                 .bind(root_id)
-                .execute(&mut *tx)
+                .execute(tx.conn())
                 .await?;
             }
         }
@@ -941,6 +929,12 @@ impl Db {
                     // discarded, so counting it would overstate offload.
                     Self::record_route("thread_eof", "writer", "stale");
                 }
+                // Surface a cancel instead of re-running it on the writer; see
+                // `DbError::is_statement_cancelled` for the trade-off.
+                Err(e) if e.is_statement_cancelled() => {
+                    Self::record_route(path, "replica", "statement_cancelled");
+                    return Err(e);
+                }
                 Err(e) => {
                     // Mid-request replica failure (e.g. a hot-standby
                     // recovery conflict) fails closed to the writer.
@@ -1071,8 +1065,9 @@ impl Db {
     ///   `BUZZ_REPLICA_HEAD_MAX_AGE_SECS` until it has, proven by a
     ///   post-then-immediately-refetch test.
     ///
-    /// Every failure fails closed to the writer and is recorded in
-    /// `buzz_db_route_decision`.
+    /// Every replica failure except a cancelled statement (57014, which the
+    /// writer would only repeat) fails closed to the writer and is recorded
+    /// in `buzz_db_route_decision`.
     #[datastore_span(name = "get_channel_window", system = "postgresql")]
     pub async fn get_channel_window_with_session(
         &self,
@@ -1117,6 +1112,12 @@ impl Db {
                                 },
                             },
                         ));
+                    }
+                    // Surface a cancel instead of re-running it on the writer; see
+                    // `DbError::is_statement_cancelled` for the trade-off.
+                    Err(e) if e.is_statement_cancelled() => {
+                        Self::record_route(path, "replica", "statement_cancelled");
+                        return Err(e);
                     }
                     Err(e) => {
                         // A mid-request replica failure (e.g. a hot-standby
@@ -1284,6 +1285,7 @@ mod postgres_tests {
                 None,
                 author.public_key().to_bytes().as_slice(),
                 None,
+                &[],
             )
             .await
             .expect("channel");
@@ -1358,6 +1360,7 @@ mod postgres_tests {
             None,
             author.public_key().to_bytes().as_slice(),
             None,
+            &[],
         )
         .await
         .expect("create community A channel");
@@ -1371,6 +1374,7 @@ mod postgres_tests {
             None,
             author.public_key().to_bytes().as_slice(),
             None,
+            &[],
         )
         .await
         .expect("create community B channel");

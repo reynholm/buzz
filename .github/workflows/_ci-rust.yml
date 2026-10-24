@@ -108,9 +108,9 @@ jobs:
   windows-rust:
     name: Windows Rust (x86_64-pc-windows-msvc)
     runs-on: windows-latest
-    # Windows runners are slow and this compiles the workspace + Tauri crate
-    # cold across four steps; budget generously.
-    timeout-minutes: 45
+    # Cold workspace + Tauri compilation takes over 40 minutes before the
+    # native Tauri suite starts; leave time for the complete test run as well.
+    timeout-minutes: 90
     if: inputs.lane == 'required' && (github.event_name == 'push' || inputs.rust || inputs.desktop_rust)
     permissions:
       contents: read

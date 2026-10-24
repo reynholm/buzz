@@ -27,10 +27,8 @@ class _ChannelTile extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final contentColor = isMuted
-        ? navigationSecondaryForeground(context)
-        : navigationPrimaryForeground(
-            context,
-          ).withValues(alpha: isUnread ? 1 : 0.8);
+        ? navigationMetadataForeground(context)
+        : channelNavigationForeground(context);
 
     return InkWell(
       borderRadius: BorderRadius.circular(Radii.md),
@@ -45,21 +43,35 @@ class _ChannelTile extends ConsumerWidget {
         ),
         child: Row(
           children: [
-            SizedBox(
-              width: _kChannelLeadingWidth,
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: channel.isDm
-                    ? _DmAvatar(channel: channel, currentPubkey: currentPubkey)
-                    : Icon(
-                        channelIcon(channel),
-                        key: ValueKey('channel-icon-${channel.id}'),
-                        size: _kChannelIconSize,
-                        color: contentColor,
-                      ),
+            if (channel.isDm) ...[
+              SizedBox(
+                width: _kChannelLeadingWidth,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: _DmAvatar(
+                    channel: channel,
+                    currentPubkey: currentPubkey,
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(width: _kChannelLabelGap),
+              const SizedBox(width: _kChannelLabelGap),
+            ] else ...[
+              SizedBox(
+                width: _kChannelLeadingWidth,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Icon(
+                    channel.visibility == 'private'
+                        ? BuzzIcons.lock
+                        : BuzzIcons.hash,
+                    key: ValueKey('channel-icon-${channel.id}'),
+                    size: _kChannelIconSize,
+                    color: contentColor,
+                  ),
+                ),
+              ),
+              const SizedBox(width: _kChannelLabelGap),
+            ],
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -77,7 +89,12 @@ class _ChannelTile extends ConsumerWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: contentListTitleTextStyle.copyWith(
-                      color: contentColor,
+                      color: isMuted
+                          ? contentColor
+                          : channelNavigationForeground(
+                              context,
+                              unread: isUnread,
+                            ),
                       fontWeight: isUnread ? FontWeight.w700 : FontWeight.w400,
                     ),
                   ),
@@ -90,10 +107,15 @@ class _ChannelTile extends ConsumerWidget {
             ],
             if (isMuted) ...[
               const SizedBox(width: Grid.xxs),
-              Icon(
-                LucideIcons.bellOff,
-                size: 12,
-                color: context.colors.onSurface.withValues(alpha: 0.4),
+              SizedBox(
+                width: _kChannelIconSize,
+                child: Center(
+                  child: Icon(
+                    BuzzIcons.bellOff,
+                    size: 12,
+                    color: navigationMetadataForeground(context),
+                  ),
+                ),
               ),
             ],
             if (!channel.isMember && !channel.isDm)
@@ -211,7 +233,7 @@ class _DmAvatar extends ConsumerWidget {
           AvatarImage(
             imageUrl: avatarUrl,
             radius: _kDmAvatarSize / 2,
-            backgroundColor: context.colors.primaryContainer,
+            backgroundColor: context.controlSurface,
             fallback: Text(
               initial,
               style: context.textTheme.labelSmall?.copyWith(
