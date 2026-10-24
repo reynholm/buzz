@@ -4,7 +4,7 @@ use crate::queue::{ContextMessage, ConversationContext, PromptProfileLookup};
 use buzz_core::session_control::RestartDepth;
 use serde_json::{json, Value};
 use std::collections::{HashSet, VecDeque};
-use tokio::time::{timeout_at, Duration, Instant};
+use tokio::time::{Duration, Instant};
 use uuid::Uuid;
 
 pub(crate) const HISTORY_BYTES: usize = 256 * 1024;
@@ -18,10 +18,12 @@ struct Reader<'a> {
     deadline: Instant,
     requests: usize,
     candidates: usize,
+    failed: bool,
 }
 impl Reader<'_> {
     async fn query(&mut self, filters: &[Value]) -> Option<Vec<Value>> {
         if self.requests >= MAX_PAGES || self.candidates >= MAX_CANDIDATES {
+            self.failed = true;
             return None;
         }
         let requested = filters.iter().fold(0usize, |total, filter| {
@@ -33,24 +35,52 @@ impl Reader<'_> {
             )
         });
         if requested > MAX_CANDIDATES.saturating_sub(self.candidates) {
+            self.failed = true;
             return None;
         }
-        self.requests += 1;
-        let response = timeout_at(
-            self.deadline,
-            self.ctx
+        let mut response = None;
+        for attempt in 0..2 {
+            if self.requests >= MAX_PAGES || Instant::now() >= self.deadline {
+                break;
+            }
+            self.requests += 1;
+            let started = Instant::now();
+            let deadline = self.deadline.min(started + Duration::from_secs(5));
+            match self
+                .ctx
                 .rest_client
-                .query_raw_bounded(filters, RESPONSE_BYTES),
-        )
-        .await
-        .ok()?
-        .ok()?;
+                .query_raw_bounded_until(filters, RESPONSE_BYTES, deadline)
+                .await
+            {
+                Ok(events) => {
+                    response = Some(events);
+                    break;
+                }
+                Err(error) => {
+                    tracing::warn!(%error, attempt, elapsed_ms = started.elapsed().as_millis(),
+                        "selected history request failed");
+                }
+            }
+            if attempt == 0 {
+                tokio::time::sleep_until(
+                    self.deadline
+                        .min(Instant::now() + Duration::from_millis(250)),
+                )
+                .await;
+            }
+        }
+        let Some(response) = response else {
+            self.failed = true;
+            return None;
+        };
         let Value::Array(mut events) = response else {
+            self.failed = true;
             return None;
         };
         // A relay ignoring its requested limit cannot bypass the raw-candidate bound.
         let room = MAX_CANDIDATES - self.candidates;
         if events.len() > PAGE + 1 || events.len() > room {
+            self.failed = true;
             return None;
         }
         self.candidates += events.len();
@@ -130,7 +160,7 @@ pub(super) async fn selected(
     depth: RestartDepth,
     ctx: &PromptContext,
 ) -> (Option<ConversationContext>, Option<FirstMention>) {
-    let (context, mention, _) =
+    let (context, mention, _, _) =
         selected_with_language(target, channel, depth, ctx, &HashSet::new()).await;
     (context, mention)
 }
@@ -145,16 +175,18 @@ pub(super) async fn selected_with_language(
     Option<ConversationContext>,
     Option<FirstMention>,
     &'static str,
+    bool,
 ) {
     let mut language = super::status_language::Evidence::default();
     if *target == ContextTarget::None {
-        return (None, Some(FirstMention::NotFound), "unknown");
+        return (None, Some(FirstMention::NotFound), "unknown", false);
     }
     let mut reader = Reader {
         ctx,
         deadline: Instant::now() + Duration::from_secs(10),
         requests: 0,
         candidates: 0,
+        failed: false,
     };
     let agent = ctx.agent_keys.public_key().to_hex();
     let root = match target {
@@ -176,11 +208,50 @@ pub(super) async fn selected_with_language(
     let mut complete = false;
     // Reserve the newest tail before the forward scan can exhaust the deadline.
     // Root lookup shares this request and all global budgets.
-    let mut initial = vec![base.clone()];
+    let mut newest = base.clone();
+    if depth == RestartDepth::Recent {
+        newest["limit"] = json!(ctx.context_message_limit.saturating_add(1));
+    }
+    let mut initial = vec![newest.clone()];
     if let Some(root) = root {
         initial.push(json!({"kinds":[9,40002],"#h":[channel.to_string()],"ids":[root],"limit":1}));
     }
+    if root.is_some() && depth == RestartDepth::Recent && ctx.context_message_limit > 0 {
+        newest["authors"] = json!([agent]);
+        newest["limit"] = json!(1);
+        initial.push(newest);
+    }
     let initial = reader.query(&initial).await;
+    let initial_count = initial.as_ref().map_or(0, |events| {
+        events
+            .iter()
+            .filter_map(json_to_context_message)
+            .map(|message| message.event_id)
+            .collect::<HashSet<_>>()
+            .len()
+    });
+    let recent = initial
+        .as_ref()
+        .filter(|_| depth == RestartDepth::Recent && ctx.context_message_limit > 0)
+        .and_then(|events| {
+            if let Some(root) = root {
+                super::parse_nostr_thread_response_with_meta(
+                    json!(events),
+                    root,
+                    ctx.context_message_limit,
+                    &ctx.agent_keys.public_key(),
+                    false,
+                    ctx.context_message_limit,
+                    &HashSet::new(),
+                )
+                .map(|parsed| parsed.context)
+            } else {
+                let mut events = events.clone();
+                events.sort_by(|a, b| key(b).cmp(&key(a)));
+                events.truncate(ctx.context_message_limit as usize);
+                super::parse_nostr_dm_response(json!(events), ctx.context_message_limit)
+            }
+        });
     if let Some(events) = &initial {
         let mut events = events.iter().collect::<Vec<_>>();
         events.sort_by(|a, b| key(a).cmp(&key(b)));
@@ -206,8 +277,17 @@ pub(super) async fn selected_with_language(
     // composite cursor; only exhaustion proves the earliest assignment there.
     let mut cursor: Option<(u64, String)> = None;
     for page in 0..MAX_PAGES {
+        if depth == RestartDepth::Recent && root.is_some() && assignment.is_some() {
+            complete = true;
+            break;
+        }
         let mut filter = base.clone();
         if root.is_some() {
+            // Start small: the original assignment usually precedes the recent
+            // window. Later pages retain the full bounded scan capacity.
+            if depth == RestartDepth::Recent && page == 0 {
+                filter["limit"] = json!(64);
+            }
             filter["depth_limit"] = json!(1_000_000);
             if let Some((at, id)) = &cursor {
                 filter["thread_cursor"] = json!(at);
@@ -217,6 +297,7 @@ pub(super) async fn selected_with_language(
             filter["until"] = json!(at);
             filter["before_id"] = json!(id);
         }
+        let page_limit = filter["limit"].as_u64().unwrap_or(PAGE as u64) as usize;
         let events = if page == 0 && root.is_none() {
             initial.clone()
         } else {
@@ -242,7 +323,7 @@ pub(super) async fn selected_with_language(
             .last()
             .and_then(key)
             .map(|(at, id)| (at, id.to_owned()));
-        let short = events.len() < PAGE;
+        let short = events.len() < page_limit;
         for event in events {
             language.observe(&event, humans, channel, target);
             let Some(message) = json_to_context_message(&event) else {
@@ -279,7 +360,7 @@ pub(super) async fn selected_with_language(
                 }
             }
         }
-        if depth == RestartDepth::None && root.is_some() && assignment.is_some() {
+        if depth != RestartDepth::All && root.is_some() && assignment.is_some() {
             complete = true;
             break;
         }
@@ -342,6 +423,26 @@ pub(super) async fn selected_with_language(
         messages.extend(head);
         messages.extend(tail);
     }
+    let mut recent_total = 0;
+    let mut recent_truncated = false;
+    if let Some(
+        ConversationContext::Thread {
+            messages: tail,
+            total,
+            truncated,
+            ..
+        }
+        | ConversationContext::Dm {
+            messages: tail,
+            total,
+            truncated,
+        },
+    ) = recent
+    {
+        messages.extend(tail);
+        recent_total = total;
+        recent_truncated = truncated;
+    }
     let mut retained = HashSet::new();
     messages.retain(|message| retained.insert(message.event_id.clone()));
     // Timestamp RFC3339 strings sort chronologically for relay integer dates.
@@ -355,8 +456,13 @@ pub(super) async fn selected_with_language(
     let root_present =
         root.is_some_and(|root| messages.iter().any(|message| message.event_id == root));
     let total = (seen.len() + usize::from(root_message_id_missing(&seen, root, root_observed)))
-        .max(messages.len());
-    let truncated = incomplete || total > messages.len();
+        .max(messages.len())
+        .max(initial_count)
+        .max(recent_total);
+    // A recent window is a lower bound; assignment discovery may stop before
+    // proving exhaustion of nested replies outside that window.
+    let truncated =
+        incomplete || depth == RestartDepth::Recent || recent_truncated || total > messages.len();
     let context = if root.is_some() {
         ConversationContext::Thread {
             messages,
@@ -390,7 +496,7 @@ pub(super) async fn selected_with_language(
     }
     let mut context = Some(context);
     enforce_render_budget(&mut context, None, &pins);
-    (context, Some(mention), language.language())
+    (context, Some(mention), language.language(), reader.failed)
 }
 
 /// Reconcile assignment discovery with the bodies actually supplied after

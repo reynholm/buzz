@@ -462,3 +462,65 @@ async fn dm_same_second_all_fits_with_older_assignment_under_real_relay_cursor()
 async fn dm_same_second_none_finds_earliest_assignment_under_real_relay_cursor() {
     dm_same_second_depth(RestartDepth::None).await;
 }
+
+#[tokio::test]
+async fn recent_history_finds_an_assignment_beyond_the_first_page_without_scanning_the_tail() {
+    let agent = nostr::Keys::generate();
+    let root = format!("{:064x}", 1);
+    let events = (1..=3000)
+        .map(|n| {
+            json!({
+                "kind":9,"id":format!("{n:064x}"),"pubkey":"a".repeat(64),
+                "created_at":1000+n,"content":format!("message {n}"),
+                "tags":if n == 70 {json!([["p",agent.public_key().to_hex()]])} else {json!([])}
+            })
+        })
+        .collect();
+    let (mut ctx, server, queries) = scripted(events).await;
+    ctx.agent_keys = agent;
+    ctx.context_message_limit = 12;
+    let (context, mention) = selected(
+        &ContextTarget::Thread(root.clone()),
+        Uuid::from_u128(42),
+        RestartDepth::Recent,
+        &ctx,
+    )
+    .await;
+    assert!(matches!(mention, Some(FirstMention::Found(_))));
+    let ConversationContext::Thread {
+        messages,
+        truncated,
+        root_present,
+        ..
+    } = context.unwrap()
+    else {
+        panic!("thread");
+    };
+    assert!(truncated && root_present);
+    assert_eq!(messages[0].event_id, root);
+    assert!(messages
+        .iter()
+        .any(|message| message.content == "message 70"));
+    assert!(messages
+        .iter()
+        .any(|message| message.content == "message 3000"));
+    assert!(
+        messages.len() <= 14,
+        "only the recent window, root and original assignment are supplied"
+    );
+    let queries = queries.lock().unwrap();
+    let scans: Vec<_> = queries
+        .iter()
+        .filter(|query| !query["depth_limit"].is_null())
+        .collect();
+    assert_eq!(
+        scans.len(),
+        2,
+        "finding the assignment ends forward discovery before the tail"
+    );
+    assert!(
+        scans[0]["limit"].as_u64().unwrap() < scans[1]["limit"].as_u64().unwrap(),
+        "later pages preserve bounded long-thread discovery capacity"
+    );
+    server.abort();
+}

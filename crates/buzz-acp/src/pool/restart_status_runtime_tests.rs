@@ -12,6 +12,7 @@ use tokio::time::timeout;
 struct Relay {
     posts: Arc<Mutex<Vec<nostr::Event>>>,
     mode: Arc<Mutex<String>>,
+    queries: Arc<Mutex<Vec<serde_json::Value>>>,
     on_post: Arc<Mutex<Option<Arc<SessionStore>>>>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -26,6 +27,8 @@ async fn setup(events: Vec<nostr::Event>, channel: Uuid) -> (PromptContext, Rela
     let posts = Arc::new(Mutex::new(Vec::new()));
     let mode = Arc::new(Mutex::new(String::new()));
     let on_post: Arc<Mutex<Option<Arc<SessionStore>>>> = Arc::new(Mutex::new(None));
+    let queries = Arc::new(Mutex::new(Vec::new()));
+    let query_log = queries.clone();
     let failure_hook = on_post.clone();
     let captured = posts.clone();
     let behavior = mode.clone();
@@ -35,6 +38,7 @@ async fn setup(events: Vec<nostr::Event>, channel: Uuid) -> (PromptContext, Rela
             let captured = captured.clone();
             let behavior = behavior.clone();
             let failure_hook = failure_hook.clone();
+            let query_log = query_log.clone();
             tokio::spawn(async move {
                 let mut request = Vec::new();
                 let mut block = [0u8; 8192];
@@ -72,6 +76,7 @@ async fn setup(events: Vec<nostr::Event>, channel: Uuid) -> (PromptContext, Rela
                 }
                 let body: serde_json::Value =
                     serde_json::from_slice(&request[header..header + length]).unwrap_or_default();
+                let mut slow_history = false;
                 let response = if headers.starts_with("POST /events ") {
                     let event: nostr::Event = serde_json::from_value(body).unwrap();
                     event.verify().unwrap();
@@ -97,6 +102,24 @@ async fn setup(events: Vec<nostr::Event>, channel: Uuid) -> (PromptContext, Rela
                         .cloned()
                         .or_else(|| body.as_array().cloned())
                         .unwrap_or_default();
+                    query_log.lock().unwrap().extend(filters.clone());
+                    let mode = behavior.lock().unwrap().clone();
+                    let history = filters.iter().any(|filter| {
+                        filter["kinds"].as_array().is_some_and(|kinds| {
+                            kinds.iter().any(|kind| kind == 9 || kind == 40002)
+                        })
+                    });
+                    let scan = filters
+                        .iter()
+                        .any(|filter| !filter["depth_limit"].is_null());
+                    if history
+                        && (mode == "history-unavailable"
+                            || (mode == "history-scan-failed" && scan))
+                    {
+                        let _ = socket.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+                        return;
+                    }
+                    slow_history = history && mode == "history-slow";
                     let selected: Vec<_> = events
                         .iter()
                         .filter(|event| {
@@ -139,7 +162,16 @@ async fn setup(events: Vec<nostr::Event>, channel: Uuid) -> (PromptContext, Rela
                 };
                 let response = response.to_string();
                 let wire = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", response.len(), response);
-                let _ = socket.write_all(wire.as_bytes()).await;
+                if slow_history {
+                    // Headers arrive promptly; the acquired page body needs
+                    // longer than the old three-second metadata deadline.
+                    let split = wire.find("\r\n\r\n").unwrap() + 4;
+                    let _ = socket.write_all(&wire.as_bytes()[..split]).await;
+                    tokio::time::sleep(Duration::from_millis(3200)).await;
+                    let _ = socket.write_all(&wire.as_bytes()[split..]).await;
+                } else {
+                    let _ = socket.write_all(wire.as_bytes()).await;
+                }
             });
         }
     });
@@ -168,6 +200,7 @@ async fn setup(events: Vec<nostr::Event>, channel: Uuid) -> (PromptContext, Rela
         Relay {
             posts,
             mode,
+            queries,
             on_post,
             task,
         },
@@ -1057,3 +1090,6 @@ mod unavailable_tests;
 
 #[path = "restart_status_metadata_tests.rs"]
 mod metadata_tests;
+
+#[path = "restart_status_history_tests.rs"]
+mod history_tests;
