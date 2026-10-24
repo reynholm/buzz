@@ -2636,7 +2636,7 @@ New module: `false`.
 
 ## `.github/workflows/_ci-relay.yml`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane. Preserve the MinIO CI image override in every relay integration consumer. Retain the real CLI build and artifact inventory after the upstream producer matrix split.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane. Preserve the MinIO CI image override in every relay integration consumer. Retain the real CLI build and artifact inventory after the upstream producer matrix split.; pin browser E2E shards and their binary producer to Ubuntu 24.04 supported by the locked Playwright release.
 
 New module: `false`.
 
@@ -2656,6 +2656,14 @@ New module: `false`.
               target/ci/buzz-relay
               target/ci/buzz
               target/ci/git-credential-nostr`
+- Required symbol: `    runs-on: ubuntu-24.04`
+- Required symbol: `desktop-e2e-relay:
+    name: Desktop E2E Relay (${{ matrix.artifact }})
+    # Match the supported Playwright runner and its binary producer.
+    runs-on: ubuntu-24.04`
+- Required symbol: `name: Desktop E2E Integration (${{ matrix.shard }}/${{ strategy.job-total }})
+    # Match the supported Playwright runner and its binary producer.
+    runs-on: ubuntu-24.04`
 - Verify: `just ci`
 
 ## `.github/workflows/_ci-rust.yml`
@@ -2703,7 +2711,7 @@ New module: `false`.
 
 ## `Cargo.lock`
 
-Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils 0.4.4 for RUSTSEC-2026-0385.
+Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils 0.4.4 for RUSTSEC-2026-0385. Upgrade the gateway P-256 graph to crypto-bigint 0.7.6 for RUSTSEC-2026-0387.
 
 New module: `false`.
 
@@ -3627,15 +3635,17 @@ New module: `false`.
 
 ## `desktop/playwright.config.ts`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow. Register long-thread and large-channel virtualization coverage in the smoke suite.
 
 New module: `false`.
 
 - Required symbol: `"**/session-status.spec.ts",`
 - Required symbol: `"**/session-controls.spec.ts",`
+- Required symbol: `"**/thread-virtualization.spec.ts"`
 - Verify: `just ci`
 - Verify: `cd desktop && pnpm test:e2e:smoke`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
 
 ## `desktop/src-tauri/icons/icon.icns`
 
@@ -7868,12 +7878,16 @@ New module: `true`.
 
 ## `desktop/src/features/messages/ui/MessageThreadPanel.tsx`
 
-Provide a real persisted thread scope to composer context management while retaining focus/overlay thread layout and draft ownership.
+Provide a real persisted thread scope to composer context management while retaining focus/overlay thread layout and draft ownership. Bound mounted thread replies while preserving targets, read-state semantics, branch controls and composer clearance.
 
 New module: `false`.
 
 - Required symbol: `threadContextControl={`
+- Required symbol: `<VirtualizedThreadReplies`
+- Required symbol: `virtualizerOwnsPrependAnchoring: useVirtualizer`
+- Invocation: `desktop/src/features/messages/ui/MessageThreadPanel.tsx` → `VirtualizedThreadReplies`; exact call `<VirtualizedThreadReplies`; behavior test `long threads bound mounted replies and preserve navigation and live scroll ownership`; verify `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
 
 ## `desktop/src/features/messages/ui/MessageComposer.types.ts`
 
@@ -8579,10 +8593,163 @@ New module: `false`.
 
 ## `.github/workflows/_ci-desktop.yml`
 
-Keep native Linux CI off the degraded runner Azure apt mirror without changing required checks
+Keep native Linux CI off the degraded runner Azure apt mirror without changing required checks; pin browser E2E to Ubuntu 24.04 supported by the locked Playwright release.
 
 New module: `false`.
 
 - Required symbol: `'https://archive.ubuntu.com/ubuntu/'`
 - Required symbol: `'https://security.ubuntu.com/ubuntu/'`
+- Required symbol: `  desktop-smoke-e2e:
+`
+- Required symbol: `    runs-on: ubuntu-24.04`
 - Verify: `just ci`
+
+## `desktop/src/features/channels/useObservedUnreadPersistence.ts`
+
+Bound queued native marker snapshots per scope and preserve pending advances across acknowledgements.
+
+New module: `false`.
+
+- Required symbol: `pendingMarkerFlushScopesRef`
+- Required symbol: `pending.get(marker.contextId)?.readAt === marker.readAt`
+- Invocation: `desktop/src/features/channels/useObservedUnreadPersistence.ts` → `flushPendingMarkers`; exact call `else flushPendingMarkers(scopeKey);`; behavior test `desktop/src/features/channels/observedUnreadMarkerBatching.test.mjs`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/channels/observedUnreadMarkerBatching.test.mjs`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/channels/observedUnreadMarkerBatching.test.mjs`
+
+## `desktop/src/features/channels/observedUnreadMarkerBatching.test.mjs`
+
+Regress marker burst batching, duplicate pending advances, newer removals and retired-scope acknowledgements.
+
+New module: `true`.
+
+- Required symbol: `a marker burst writes each context once in bounded native batches`
+- Required symbol: `a retired scope acknowledgement does not strand markers when returning to it`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/channels/observedUnreadMarkerBatching.test.mjs`
+
+## `desktop/src/features/messages/ui/VirtualizedThreadReplies.tsx`
+
+Virtualize variable-height replies inside the existing thread scroll region with measured head offset and cancellable bottom ownership. Preserve explicit reply navigation at a clamped physical floor and retire bottom intent when the reader leaves it, including direct scroll updates. Reconcile reader ownership on navigation input even when an already-clamped floor produces no scroll event.
+
+New module: `true`.
+
+- Required symbol: `export function VirtualizedThreadReplies`
+- Required symbol: `startMargin={geometry.margin}`
+- Required symbol: `scrollRef={scrollRef}`
+- Invocation: `desktop/src/features/messages/ui/VirtualizedThreadReplies.tsx` → `useVirtualizedThreadAnchor`; exact call `useVirtualizedThreadAnchor(`; behavior test `a live reply in an earlier expanded branch preserves the reading row`; verify `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
+- Verify: `cd desktop && pnpm test:e2e:smoke messaging.spec.ts timeline-no-shift.spec.ts`
+
+## `desktop/src/features/messages/ui/useAnchoredScroll.ts`
+
+Wait for visible virtual targets before acknowledging navigation and preserve temporary centered targets through layout reflow. Cancel the deferred initial bottom pin when target navigation takes ownership.
+
+New module: `false`.
+
+- Required symbol: `const needsRealization`
+- Required symbol: `else if (!virtualizerOwnsPrependAnchoring)`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test "src/features/messages/ui/useAnchoredScroll*.test.mjs"`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
+
+## `desktop/src/features/messages/ui/useAnchoredScroll.lifecycle.test.mjs`
+
+Bind virtual target acknowledgement and initial-position ownership regressions to the production scroll hook. Deliver the initial settlement frame deterministically after target navigation to regress the cancellation race.
+
+New module: `false`.
+
+- Required symbol: `function PendingVirtualTargetHarness`
+- Required symbol: `virtual arrivals count independently of DOM anchoring and reset at bottom`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/useAnchoredScroll.lifecycle.test.mjs`
+
+## `desktop/src/features/messages/ui/useVirtualizedBottomSettle.ts`
+
+Support existing externally owned thread scroll nodes without changing channel scroll ownership.
+
+New module: `false`.
+
+- Required symbol: `scrollRef?: React.RefObject<HTMLDivElement | null>`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/useVirtualizedBottomSettle.test.mjs`
+
+## `desktop/src/features/messages/ui/useVirtualizedBottomSettle.test.mjs`
+
+Verify external thread scrollers retain bottom intent and yield to reader input.
+
+New module: `false`.
+
+- Required symbol: `an external thread scroller owns bottom settlement and input cancellation`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/useVirtualizedBottomSettle.test.mjs`
+
+## `desktop/tests/e2e/thread-virtualization.spec.ts`
+
+Exercise bounded mounts, offscreen targets, scroll ownership and composer clearance on 600 replies, and a channel containing 1200 threads.
+
+New module: `true`.
+
+- Required symbol: `long threads bound mounted replies and preserve navigation and live scroll ownership`
+- Required symbol: `a channel with many thread roots keeps its mounted history bounded`
+- Required symbol: `a live reply in an earlier expanded branch preserves the reading row`
+- Required symbol: `End releases a short thread target even without physical scroll movement`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
+
+## `desktop/tests/e2e/thread-focus-mode.spec.ts`
+
+Exercise reading-position preservation with explicit reader wheel ownership before a virtualized layout switch.
+
+New module: `false`.
+
+- Required symbol: `new WheelEvent("wheel", { bubbles: true, deltaY: -120 })`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-focus-mode.spec.ts`
+
+## `desktop/src/features/messages/ui/useVirtualizedThreadAnchor.ts`
+
+Preserve a reading message and offset through indexed thread insertions, follow late measurements, and yield to reader navigation with a generation fence.
+
+New module: `true`.
+
+- Required symbol: `export function useVirtualizedThreadAnchor`
+- Required symbol: `snapshot.generation !== generationRef.current`
+- Required symbol: `list.scrollTo(scroller.scrollTop + drift)`
+- Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
+
+## `crates/buzz-push-gateway/Cargo.toml`
+
+Use P-256 0.14 with the patched constant-time arithmetic graph for App Attest.
+
+New module: `false`.
+
+- Verify: `cargo test --locked -p buzz-push-gateway --lib`
+- Verify: `cargo clippy --locked -p buzz-push-gateway --all-targets -- -D warnings`
+
+## `crates/buzz-push-gateway/src/app_attest/certificate.rs`
+
+Keep App Attest certificate key extraction on the current SEC1 point API without changing encoding.
+
+New module: `false`.
+
+- Verify: `cargo test --locked -p buzz-push-gateway --lib`
+- Verify: `cargo clippy --locked -p buzz-push-gateway --all-targets -- -D warnings`
+
+## `crates/buzz-push-gateway/src/app_attest/authenticator.rs`
+
+Keep App Attest authenticator key decoding on the current SEC1 point API without changing validation.
+
+New module: `false`.
+
+- Verify: `cargo test --locked -p buzz-push-gateway --lib`
+- Verify: `cargo clippy --locked -p buzz-push-gateway --all-targets -- -D warnings`
+
+## `crates/buzz-push-gateway/src/app_attest_assertion_tests.rs`
+
+Exercise existing assertion verification regressions with the patched P-256 graph and current SEC1 names.
+
+New module: `false`.
+
+- Verify: `cargo test --locked -p buzz-push-gateway --lib`
+- Verify: `cargo clippy --locked -p buzz-push-gateway --all-targets -- -D warnings`
+
+## `desktop/tests/e2e/messaging.spec.ts`
+
+Regress explicit inline reply navigation at a clamped thread floor and keyboard recovery of live bottom following.
+
+New module: `false`.
+
+- Required symbol: `Latest keyboard-follow reply`
+- Verify: `cd desktop && pnpm test:e2e:smoke messaging.spec.ts`

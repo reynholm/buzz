@@ -105,6 +105,7 @@ export function useObservedUnreadPersistence(
       Map<string, { contextId: string; readAt: number | null }>
     >(),
   );
+  const pendingMarkerFlushScopesRef = React.useRef(new Set<string>());
   const chainRef = React.useRef(Promise.resolve());
   const persistRefs = React.useRef<ObservedUnreadRefs>({
     eventsRef: observedUnreadEventsByChannelRef,
@@ -376,9 +377,14 @@ export function useObservedUnreadPersistence(
   );
 
   const flushPendingMarkers = React.useCallback(
-    (scopeKey: string) => {
+    (scopeKey: string): void => {
       const pending = pendingMarkersRef.current.get(scopeKey);
       if (!pending || pending.size === 0) return;
+      // Keep one queued or in-flight marker snapshot per scope. Copying the
+      // growing pending map on every advance makes a burst quadratic in both
+      // queued payload size and native writes. New advances stay in the map
+      // until this acknowledgement releases the next coalesced snapshot.
+      if (pendingMarkerFlushScopesRef.current.has(scopeKey)) return;
       const markers = [...pending.values()];
       const state = nativeRef.current;
       if (!state) {
@@ -393,6 +399,7 @@ export function useObservedUnreadPersistence(
         activityScopeKey(state.scope.pubkey, state.scope.relayUrl) !== scopeKey
       )
         return;
+      pendingMarkerFlushScopesRef.current.add(scopeKey);
       enqueueNative(
         state,
         {
@@ -404,6 +411,7 @@ export function useObservedUnreadPersistence(
           clearAll: false,
         },
         () => {
+          pendingMarkerFlushScopesRef.current.delete(scopeKey);
           if (scopeLoadedRef.current !== scopeKey) return;
           const current = pendingMarkersRef.current.get(scopeKey);
           if (!current) return;
@@ -412,6 +420,7 @@ export function useObservedUnreadPersistence(
               current.delete(marker.contextId);
           }
           if (current.size === 0) pendingMarkersRef.current.delete(scopeKey);
+          else flushPendingMarkers(scopeKey);
         },
       );
     },
@@ -516,7 +525,10 @@ export function useObservedUnreadPersistence(
         pending = new Map();
         pendingMarkersRef.current.set(currentScope, pending);
       }
-      for (const marker of markers) pending.set(marker.contextId, marker);
+      for (const marker of markers) {
+        if (pending.get(marker.contextId)?.readAt === marker.readAt) continue;
+        pending.set(marker.contextId, marker);
+      }
       flushPendingMarkers(currentScope);
     },
     [currentScope, flushPendingMarkers, getEffectiveTimestamp, getOwnTimestamp],

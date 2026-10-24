@@ -4425,7 +4425,7 @@
     },
     {
       "path": ".github/workflows/_ci-relay.yml",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane. Preserve the MinIO CI image override in every relay integration consumer. Retain the real CLI build and artifact inventory after the upstream producer matrix split.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane. Preserve the MinIO CI image override in every relay integration consumer. Retain the real CLI build and artifact inventory after the upstream producer matrix split.; pin browser E2E shards and their binary producer to Ubuntu 24.04 supported by the locked Playwright release.",
       "is_new": false,
       "required_symbols": [
         "export BUZZ_TEST_BIN_DIR=\"$PWD/target/ci\"",
@@ -4433,7 +4433,10 @@
         "backend-integration:\n    env:\n      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml",
         "relay-e2e:\n    env:\n      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml",
         "run: cargo build --profile ci -p buzz-relay -p git-credential-nostr -p buzz-cli",
-        "- artifact: relay-binaries\n            paths: |\n              target/ci/buzz-relay\n              target/ci/buzz\n              target/ci/git-credential-nostr"
+        "- artifact: relay-binaries\n            paths: |\n              target/ci/buzz-relay\n              target/ci/buzz\n              target/ci/git-credential-nostr",
+        "    runs-on: ubuntu-24.04",
+        "desktop-e2e-relay:\n    name: Desktop E2E Relay (${{ matrix.artifact }})\n    # Match the supported Playwright runner and its binary producer.\n    runs-on: ubuntu-24.04",
+        "name: Desktop E2E Integration (${{ matrix.shard }}/${{ strategy.job-total }})\n    # Match the supported Playwright runner and its binary producer.\n    runs-on: ubuntu-24.04"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -4496,7 +4499,7 @@
     },
     {
       "path": "Cargo.lock",
-      "responsibility": "Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils 0.4.4 for RUSTSEC-2026-0385.",
+      "responsibility": "Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils 0.4.4 for RUSTSEC-2026-0385. Upgrade the gateway P-256 graph to crypto-bigint 0.7.6 for RUSTSEC-2026-0387.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -5989,17 +5992,19 @@
     },
     {
       "path": "desktop/playwright.config.ts",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow. Register long-thread and large-channel virtualization coverage in the smoke suite.",
       "is_new": false,
       "required_symbols": [
         "\"**/session-status.spec.ts\",",
-        "\"**/session-controls.spec.ts\","
+        "\"**/session-controls.spec.ts\",",
+        "\"**/thread-virtualization.spec.ts\""
       ],
       "invocation_seams": [],
       "verification_commands": [
         "just ci",
         "cd desktop && pnpm test:e2e:smoke",
-        "CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts"
+        "CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts",
+        "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts"
       ]
     },
     {
@@ -11206,7 +11211,7 @@
     },
     {
       "path": "desktop/tests/e2e/session-controls.spec.ts",
-      "responsibility": "Registered thread-composer Manage context → agent → action workflow: canonical target routing, signed outcomes, draft preservation, toolbar order, keyboard/click/touch navigation, disabled-editor Compact, sibling isolation, denied/revoked access and unchanged owned activity projection. Scope the open-thread root capture/status assertion to its actual thread-head row, independently of the timeline copy. Cover context-only publication preserving a deliberately unpinned composer draft/attachment/native selection/caret, plus formatting/focus/narrow toolbar order and Space/arrow selection. Exercise reset acknowledgment separately from a generated reply or independent follow-up failure, preserving draft, signer, canonical thread and ordinary event deduplication.",
+      "responsibility": "Registered thread-composer Manage context \u2192 agent \u2192 action workflow: canonical target routing, signed outcomes, draft preservation, toolbar order, keyboard/click/touch navigation, disabled-editor Compact, sibling isolation, denied/revoked access and unchanged owned activity projection. Scope the open-thread root capture/status assertion to its actual thread-head row, independently of the timeline copy. Cover context-only publication preserving a deliberately unpinned composer draft/attachment/native selection/caret, plus formatting/focus/narrow toolbar order and Space/arrow selection. Exercise reset acknowledgment separately from a generated reply or independent follow-up failure, preserving draft, signer, canonical thread and ordinary event deduplication.",
       "is_new": true,
       "required_symbols": [
         "known_agent_without_telemetry_still_has_current_scope_controls",
@@ -12013,14 +12018,25 @@
     },
     {
       "path": "desktop/src/features/messages/ui/MessageThreadPanel.tsx",
-      "responsibility": "Provide a real persisted thread scope to composer context management while retaining focus/overlay thread layout and draft ownership.",
+      "responsibility": "Provide a real persisted thread scope to composer context management while retaining focus/overlay thread layout and draft ownership. Bound mounted thread replies while preserving targets, read-state semantics, branch controls and composer clearance.",
       "is_new": false,
       "required_symbols": [
-        "threadContextControl={"
+        "threadContextControl={",
+        "<VirtualizedThreadReplies",
+        "virtualizerOwnsPrependAnchoring: useVirtualizer"
       ],
-      "invocation_seams": [],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/messages/ui/MessageThreadPanel.tsx",
+          "callee_symbol": "VirtualizedThreadReplies",
+          "invocation": "<VirtualizedThreadReplies",
+          "behavior_test": "long threads bound mounted replies and preserve navigation and live scroll ownership",
+          "verification_command": "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts"
+        }
+      ],
       "verification_commands": [
-        "CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts"
+        "CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts",
+        "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts"
       ]
     },
     {
@@ -12969,15 +12985,222 @@
     },
     {
       "path": ".github/workflows/_ci-desktop.yml",
-      "responsibility": "Keep native Linux CI off the degraded runner Azure apt mirror without changing required checks",
+      "responsibility": "Keep native Linux CI off the degraded runner Azure apt mirror without changing required checks; pin browser E2E to Ubuntu 24.04 supported by the locked Playwright release.",
       "is_new": false,
       "required_symbols": [
         "'https://archive.ubuntu.com/ubuntu/'",
-        "'https://security.ubuntu.com/ubuntu/'"
+        "'https://security.ubuntu.com/ubuntu/'",
+        "  desktop-smoke-e2e:\n",
+        "    runs-on: ubuntu-24.04"
       ],
       "invocation_seams": [],
       "verification_commands": [
         "just ci"
+      ]
+    },
+    {
+      "path": "desktop/src/features/channels/useObservedUnreadPersistence.ts",
+      "responsibility": "Bound queued native marker snapshots per scope and preserve pending advances across acknowledgements.",
+      "is_new": false,
+      "required_symbols": [
+        "pendingMarkerFlushScopesRef",
+        "pending.get(marker.contextId)?.readAt === marker.readAt"
+      ],
+      "invocation_seams": [
+        {
+          "callee_symbol": "flushPendingMarkers",
+          "invocation": "else flushPendingMarkers(scopeKey);",
+          "behavior_test": "desktop/src/features/channels/observedUnreadMarkerBatching.test.mjs",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/channels/observedUnreadMarkerBatching.test.mjs",
+          "caller_path": "desktop/src/features/channels/useObservedUnreadPersistence.ts"
+        }
+      ],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/channels/observedUnreadMarkerBatching.test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/src/features/channels/observedUnreadMarkerBatching.test.mjs",
+      "responsibility": "Regress marker burst batching, duplicate pending advances, newer removals and retired-scope acknowledgements.",
+      "is_new": true,
+      "required_symbols": [
+        "a marker burst writes each context once in bounded native batches",
+        "a retired scope acknowledgement does not strand markers when returning to it"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/channels/observedUnreadMarkerBatching.test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/VirtualizedThreadReplies.tsx",
+      "responsibility": "Virtualize variable-height replies inside the existing thread scroll region with measured head offset and cancellable bottom ownership. Preserve explicit reply navigation at a clamped physical floor and retire bottom intent when the reader leaves it, including direct scroll updates. Reconcile reader ownership on navigation input even when an already-clamped floor produces no scroll event.",
+      "is_new": true,
+      "required_symbols": [
+        "export function VirtualizedThreadReplies",
+        "startMargin={geometry.margin}",
+        "scrollRef={scrollRef}"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/messages/ui/VirtualizedThreadReplies.tsx",
+          "callee_symbol": "useVirtualizedThreadAnchor",
+          "invocation": "useVirtualizedThreadAnchor(",
+          "behavior_test": "a live reply in an earlier expanded branch preserves the reading row",
+          "verification_command": "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts"
+        }
+      ],
+      "verification_commands": [
+        "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts",
+        "cd desktop && pnpm test:e2e:smoke messaging.spec.ts timeline-no-shift.spec.ts"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/useAnchoredScroll.ts",
+      "responsibility": "Wait for visible virtual targets before acknowledging navigation and preserve temporary centered targets through layout reflow. Cancel the deferred initial bottom pin when target navigation takes ownership.",
+      "is_new": false,
+      "required_symbols": [
+        "const needsRealization",
+        "else if (!virtualizerOwnsPrependAnchoring)"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test \"src/features/messages/ui/useAnchoredScroll*.test.mjs\"",
+        "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/useAnchoredScroll.lifecycle.test.mjs",
+      "responsibility": "Bind virtual target acknowledgement and initial-position ownership regressions to the production scroll hook. Deliver the initial settlement frame deterministically after target navigation to regress the cancellation race.",
+      "is_new": false,
+      "required_symbols": [
+        "function PendingVirtualTargetHarness",
+        "virtual arrivals count independently of DOM anchoring and reset at bottom"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/useAnchoredScroll.lifecycle.test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/useVirtualizedBottomSettle.ts",
+      "responsibility": "Support existing externally owned thread scroll nodes without changing channel scroll ownership.",
+      "is_new": false,
+      "required_symbols": [
+        "scrollRef?: React.RefObject<HTMLDivElement | null>"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/useVirtualizedBottomSettle.test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/useVirtualizedBottomSettle.test.mjs",
+      "responsibility": "Verify external thread scrollers retain bottom intent and yield to reader input.",
+      "is_new": false,
+      "required_symbols": [
+        "an external thread scroller owns bottom settlement and input cancellation"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/messages/ui/useVirtualizedBottomSettle.test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/tests/e2e/thread-virtualization.spec.ts",
+      "responsibility": "Exercise bounded mounts, offscreen targets, scroll ownership and composer clearance on 600 replies, and a channel containing 1200 threads.",
+      "is_new": true,
+      "required_symbols": [
+        "long threads bound mounted replies and preserve navigation and live scroll ownership",
+        "a channel with many thread roots keeps its mounted history bounded",
+        "a live reply in an earlier expanded branch preserves the reading row",
+        "End releases a short thread target even without physical scroll movement"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts"
+      ]
+    },
+    {
+      "path": "desktop/tests/e2e/thread-focus-mode.spec.ts",
+      "responsibility": "Exercise reading-position preservation with explicit reader wheel ownership before a virtualized layout switch.",
+      "is_new": false,
+      "required_symbols": [
+        "new WheelEvent(\"wheel\", { bubbles: true, deltaY: -120 })"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "CI=1 pnpm --dir desktop test:e2e:smoke thread-focus-mode.spec.ts"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/useVirtualizedThreadAnchor.ts",
+      "responsibility": "Preserve a reading message and offset through indexed thread insertions, follow late measurements, and yield to reader navigation with a generation fence.",
+      "is_new": true,
+      "required_symbols": [
+        "export function useVirtualizedThreadAnchor",
+        "snapshot.generation !== generationRef.current",
+        "list.scrollTo(scroller.scrollTop + drift)"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts"
+      ]
+    },
+    {
+      "path": "crates/buzz-push-gateway/Cargo.toml",
+      "responsibility": "Use P-256 0.14 with the patched constant-time arithmetic graph for App Attest.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-push-gateway --lib",
+        "cargo clippy --locked -p buzz-push-gateway --all-targets -- -D warnings"
+      ]
+    },
+    {
+      "path": "crates/buzz-push-gateway/src/app_attest/certificate.rs",
+      "responsibility": "Keep App Attest certificate key extraction on the current SEC1 point API without changing encoding.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-push-gateway --lib",
+        "cargo clippy --locked -p buzz-push-gateway --all-targets -- -D warnings"
+      ]
+    },
+    {
+      "path": "crates/buzz-push-gateway/src/app_attest/authenticator.rs",
+      "responsibility": "Keep App Attest authenticator key decoding on the current SEC1 point API without changing validation.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-push-gateway --lib",
+        "cargo clippy --locked -p buzz-push-gateway --all-targets -- -D warnings"
+      ]
+    },
+    {
+      "path": "crates/buzz-push-gateway/src/app_attest_assertion_tests.rs",
+      "responsibility": "Exercise existing assertion verification regressions with the patched P-256 graph and current SEC1 names.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-push-gateway --lib",
+        "cargo clippy --locked -p buzz-push-gateway --all-targets -- -D warnings"
+      ]
+    },
+    {
+      "path": "desktop/tests/e2e/messaging.spec.ts",
+      "responsibility": "Regress explicit inline reply navigation at a clamped thread floor and keyboard recovery of live bottom following.",
+      "is_new": false,
+      "required_symbols": [
+        "Latest keyboard-follow reply"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && pnpm test:e2e:smoke messaging.spec.ts"
       ]
     }
   ],

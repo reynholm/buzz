@@ -399,6 +399,8 @@ export function useAnchoredScroll({
       schedulePinnedTargetSettle(anchorRef.current.messageId);
       return true;
     }
+    if (virtualizerOwnsPrependAnchoring && anchorRef.current.kind === "message")
+      return false;
     if (!isAtBottomNow(container)) return false;
 
     anchorRef.current = { kind: "at-bottom" };
@@ -435,6 +437,12 @@ export function useAnchoredScroll({
     ): boolean => {
       const container = scrollContainerRef.current;
       if (!container) return false;
+      // An explicit target supersedes the deferred initial bottom pin even
+      // before a virtual row has been realized in the viewport.
+      if (mountPinRafIdRef.current !== null) {
+        cancelAnimationFrame(mountPinRafIdRef.current);
+        mountPinRafIdRef.current = null;
+      }
       const el = container.querySelector<HTMLElement>(
         `[data-message-id="${messageId}"]`,
       );
@@ -443,41 +451,25 @@ export function useAnchoredScroll({
         // chosen. The already-mounted fast path centers the DOM node directly
         // and would otherwise leave durable bottom intent armed.
         virtualCancelBottomIntent?.();
-        if (el) {
-          const rect = el.getBoundingClientRect();
-          const containerRect = container.getBoundingClientRect();
-          const isInViewport =
-            rect.top >= containerRect.top &&
-            rect.bottom <= containerRect.bottom;
-          if (!isInViewport) {
-            if (!virtualScrollToMessage(messageId, { behavior: "auto" })) {
-              return false;
-            }
-            anchorRef.current = { kind: "message", messageId, topOffset: 0 };
-            setIsAtBottom(false);
+        const rect = el?.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        const needsRealization =
+          !rect ||
+          rect.bottom <= containerRect.top ||
+          rect.top >= containerRect.bottom;
+        if (needsRealization) {
+          if (
+            !virtualScrollToMessage(messageId, {
+              behavior: options.behavior ?? "auto",
+            })
+          )
             return false;
-          }
-          const centeredTop = (container.clientHeight - rect.height) / 2;
-          container.scrollTo({
-            top: Math.max(
-              0,
-              container.scrollTop +
-                (rect.top - containerRect.top) -
-                centeredTop,
-            ),
-            behavior: options.behavior ?? "auto",
-          });
-        } else if (
-          !virtualScrollToMessage(messageId, {
-            behavior: options.behavior ?? "auto",
-          })
-        ) {
+          anchorRef.current = { kind: "message", messageId, topOffset: 0 };
+          setIsAtBottom(false);
           return false;
         }
-        anchorRef.current = { kind: "message", messageId, topOffset: 0 };
-        setIsAtBottom(false);
-        if (el && options.highlight) highlightMessage(messageId);
-        return el !== null;
+        // A mounted, visible row uses the shared centering path below so a
+        // temporary layout target retains its center through resize/reflow.
       }
 
       if (!el) return false;
@@ -528,7 +520,10 @@ export function useAnchoredScroll({
         };
       }
       if (!pinTargetCentered) {
-        setIsAtBottom(maxScrollTop - targetScrollTop <= AT_BOTTOM_THRESHOLD_PX);
+        setIsAtBottom(
+          !virtualizerOwnsPrependAnchoring &&
+            maxScrollTop - targetScrollTop <= AT_BOTTOM_THRESHOLD_PX,
+        );
       }
 
       if (options.highlight) highlightMessage(messageId);
@@ -642,7 +637,7 @@ export function useAnchoredScroll({
         ) {
           handledTargetIdRef.current = targetMessageId;
           onTargetReached?.(targetMessageId);
-        } else {
+        } else if (!virtualizerOwnsPrependAnchoring) {
           pinToBottomOnMount();
         }
       } else {
@@ -697,6 +692,15 @@ export function useAnchoredScroll({
       return;
     }
 
+    if (
+      virtualizerOwnsPrependAnchoring &&
+      !virtualizerAtBottomRef.current &&
+      messagesArrived > 0 &&
+      !isPrepend
+    ) {
+      setNewMessageCount((current) => current + messagesArrived);
+    }
+
     if (anchor.kind === "pinned-center") {
       repinPinnedCenter();
     } else if (anchor.kind === "at-bottom") {
@@ -713,7 +717,11 @@ export function useAnchoredScroll({
       } else if (!virtualizerOwnsPrependAnchoring) {
         container.scrollTo({ top: container.scrollHeight, behavior: "auto" });
       }
-      if (newLatestArrived) setNewMessageCount(0);
+      if (
+        newLatestArrived &&
+        (!virtualizerOwnsPrependAnchoring || virtualizerAtBottomRef.current)
+      )
+        setNewMessageCount(0);
     } else if (
       messagesArrived > 0 &&
       !targetMessageId &&
@@ -915,11 +923,14 @@ export function useAnchoredScroll({
       // each `messages` commit and retries until the row exists.
       return;
     }
-    handledTargetIdRef.current = targetMessageId;
-    scrollToMessageImperative(targetMessageId, {
-      highlight: highlightTargetMessage,
-    });
-    onTargetReached?.(targetMessageId);
+    if (
+      scrollToMessageImperative(targetMessageId, {
+        highlight: highlightTargetMessage,
+      })
+    ) {
+      handledTargetIdRef.current = targetMessageId;
+      onTargetReached?.(targetMessageId);
+    }
   }, [
     highlightTargetMessage,
     isLoading,

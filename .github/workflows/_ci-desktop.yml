@@ -130,7 +130,8 @@ jobs:
 
   desktop-smoke-e2e:
     name: Desktop Smoke E2E (${{ matrix.shard }})
-    runs-on: ubuntu-latest
+    # The pinned Playwright release does not support Ubuntu 26.04.
+    runs-on: ubuntu-24.04
     # A smoke shard needs ~12m, and Chromium dependency setup is bounded by
     # ci-apt-retry.sh (~25m worst case). Leave time for the full suite
     # and its reports to finish.

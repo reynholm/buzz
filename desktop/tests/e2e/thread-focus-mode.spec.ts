@@ -42,6 +42,11 @@ async function scrollToMiddleVisibleMessage(
         if (maxScrollTop <= 0) return null;
 
         const targetScrollTop = Math.floor(maxScrollTop * 0.4);
+        // Transfer scroll ownership as real wheel input does before moving the
+        // viewport. Virtualized bottom settlement ignores layout-only scrolls.
+        element.dispatchEvent(
+          new WheelEvent("wheel", { bubbles: true, deltaY: -120 }),
+        );
         element.scrollTop = targetScrollTop;
         element.dispatchEvent(new Event("scroll", { bubbles: true }));
 

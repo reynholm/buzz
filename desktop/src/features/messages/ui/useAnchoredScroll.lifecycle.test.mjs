@@ -252,6 +252,7 @@ function BottomStateHarness({
   onState,
   refs,
   targetMessageId = null,
+  virtual = false,
 }) {
   const anchored = useAnchoredScroll({
     channelId: "conversation",
@@ -261,6 +262,8 @@ function BottomStateHarness({
     pinTargetCentered: targetMessageId !== null,
     scrollContainerRef: refs.container,
     targetMessageId,
+    virtualizerOwnsPrependAnchoring: virtual,
+    virtualScrollToBottom: refs.scrollToBottom,
   });
   onState(anchored);
   return null;
@@ -596,4 +599,138 @@ test("mounted virtual target retires bottom intent before direct centering", asy
   );
   assert.equal(bottomWrites.length, 1, "geometry cannot re-pin to bottom");
   await act(async () => root.unmount());
+});
+
+function PendingVirtualTargetHarness({ refs, targetMessageId, version }) {
+  useAnchoredScroll({
+    channelId: "virtual-thread",
+    contentRef: refs.content,
+    isLoading: false,
+    messages: refs.messages,
+    scrollContainerRef: refs.container,
+    targetMessageId,
+    onTargetReached: refs.onReached,
+    virtualizerOwnsPrependAnchoring: true,
+    virtualScrollToBottom: refs.scrollToBottom,
+    virtualScrollToMessage: refs.scrollToMessage,
+    virtualizerRenderVersion: version,
+  });
+  return null;
+}
+
+for (const initialTarget of [true, false]) {
+  test(`a ${initialTarget ? "mount" : "later"} virtual target waits for visible realization before acknowledgement`, async () => {
+    const originalRequestFrame = globalThis.requestAnimationFrame;
+    const originalCancelFrame = globalThis.cancelAnimationFrame;
+    const frames = new Map();
+    let nextFrame = 0;
+    globalThis.requestAnimationFrame = (callback) => {
+      const id = ++nextFrame;
+      frames.set(id, callback);
+      return id;
+    };
+    globalThis.cancelAnimationFrame = (id) => frames.delete(id);
+    const nodes = makePinnedCenterNodes();
+    nodes.moveSelectedRowBy(800);
+    const reached = [];
+    const bottomPins = [];
+    const jumps = [];
+    const refs = {
+      content: { current: nodes.content },
+      container: { current: nodes.container },
+      messages: [{ id: "selected" }],
+      onReached: (id) => reached.push(id),
+      scrollToBottom: () => bottomPins.push(true),
+      scrollToMessage: (id) => {
+        jumps.push(id);
+        return true;
+      },
+    };
+    const root = createRoot(document.createElement("div"));
+    const render = (targetMessageId, version) =>
+      act(async () => {
+        root.render(
+          React.createElement(PendingVirtualTargetHarness, {
+            refs,
+            targetMessageId,
+            version,
+          }),
+        );
+      });
+    try {
+      await render(initialTarget ? "selected" : null, 0);
+      const previousPins = bottomPins.length;
+      if (!initialTarget) await render("selected", 0);
+      assert.ok(jumps.length > 0);
+      assert.deepEqual(
+        reached,
+        [],
+        "An offscreen row is not a resolved target",
+      );
+      // Keep the initial settlement pending until navigation has committed,
+      // then deliver that frame to exercise the ordering deterministically.
+      const pendingFrames = [...frames.values()];
+      frames.clear();
+      await act(async () => {
+        for (const callback of pendingFrames) callback(0);
+      });
+      assert.equal(
+        bottomPins.length,
+        previousPins,
+        "Target navigation must not re-arm the bottom pin",
+      );
+      if (initialTarget) assert.equal(bottomPins.length, 0);
+      nodes.moveSelectedRowBy(-800);
+      await render("selected", 1);
+      assert.deepEqual(reached, ["selected"]);
+    } finally {
+      await act(async () => root.unmount());
+      globalThis.requestAnimationFrame = originalRequestFrame;
+      globalThis.cancelAnimationFrame = originalCancelFrame;
+    }
+  });
+}
+
+test("virtual arrivals count independently of DOM anchoring and reset at bottom", async () => {
+  const nodes = makePinnedCenterNodes();
+  const refs = {
+    container: { current: nodes.container },
+    content: { current: nodes.content },
+    scrollToBottom: () => {},
+  };
+  let state;
+  const root = createRoot(document.createElement("div"));
+  const render = (messages) =>
+    act(async () => {
+      root.render(
+        React.createElement(BottomStateHarness, {
+          refs,
+          messages,
+          virtual: true,
+          onState: (value) => {
+            state = value;
+          },
+        }),
+      );
+    });
+  try {
+    await render([{ id: "first" }]);
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+    await act(async () => state.onVirtualizerAtBottomStateChange(false));
+    await render([{ id: "first" }, { id: "tail" }]);
+    assert.equal(state.newMessageCount, 1);
+    await render([{ id: "first" }, { id: "nested" }, { id: "tail" }]);
+    assert.equal(state.newMessageCount, 2);
+    await act(async () => state.onVirtualizerAtBottomStateChange(true));
+    assert.equal(state.newMessageCount, 0);
+    await render([
+      { id: "first" },
+      { id: "nested" },
+      { id: "tail" },
+      { id: "latest" },
+    ]);
+    assert.equal(state.newMessageCount, 0);
+  } finally {
+    await act(async () => root.unmount());
+  }
 });

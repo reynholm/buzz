@@ -3160,6 +3160,34 @@ test("opens a single-level thread panel with inline expansion", async ({
       .getByTestId("message-row")
       .filter({ hasText: nestedReplyFromAgent }),
   ).toHaveCount(0);
+
+  // Keyboard navigation releases the explicit reply target and resumes live
+  // bottom following, even if that target was clamped to a short list's floor.
+  await threadBody.focus();
+  await page.keyboard.press("End");
+  await expect
+    .poll(() =>
+      threadBody.evaluate(
+        (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
+      ),
+    )
+    .toBeLessThan(4);
+  const latestReply = `Latest keyboard-follow reply ${timestamp}`;
+  await page.evaluate(
+    ({ content, parentEventId }) => {
+      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+        channelName: "general",
+        content,
+        parentEventId,
+      });
+    },
+    { content: latestReply, parentEventId: rootMessageId },
+  );
+  const latestRow = threadReplies.getByTestId("message-row").filter({
+    hasText: latestReply,
+  });
+  await expect(latestRow).toBeVisible();
+  await expectThreadReplyUnobscured(latestRow);
 });
 
 test("thread panel width uses session storage and reset handle", async ({

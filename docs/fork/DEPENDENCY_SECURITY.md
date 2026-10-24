@@ -79,11 +79,18 @@ Application directory overrides remain unset. Opus 0.4 replaces the retired audi
 
 The constant-time utility advisory
 [RUSTSEC-2026-0385](https://rustsec.org/advisories/RUSTSEC-2026-0385.html)
-is fixed by `ctutils` 0.4.4 in both lockfiles. Earlier releases could generate
+is fixed by `ctutils` 0.4.4 or later in both lockfiles. Earlier releases could generate
 branches on secret values during mask generation and, on 32-bit targets,
 `u128` comparisons. The compatible patch updates the version and checksum only;
 no advisory exception is added. Run the full dependency policy for both shipping
 workspaces after resolving against the current advisory database.
+
+The P-256 App Attest dependency uses `p256` 0.14 and `crypto-bigint` 0.7.6
+to address [RUSTSEC-2026-0387](https://rustsec.org/advisories/RUSTSEC-2026-0387.html).
+The patched arithmetic removes secret-dependent branches. SEC1 point extraction
+uses the current API names with the same uncompressed encoding; existing App
+Attest certificate, authenticator and signed assertion tests exercise the
+verification boundary. No advisory exception is added.
 
 ## Temporary transitive maintenance exceptions
 

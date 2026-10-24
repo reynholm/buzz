@@ -23,6 +23,8 @@ export function useVirtualizedBottomSettle(
   hostRef: React.RefObject<HTMLDivElement | null>,
   listRef: React.RefObject<VListHandle | null>,
   itemsLengthRef: React.RefObject<number>,
+  scrollRef?: React.RefObject<HTMLDivElement | null>,
+  onReaderNavigation?: () => void,
 ) {
   const bottomIntentRef = React.useRef(false);
   const frameRef = React.useRef<number | null>(null);
@@ -41,11 +43,11 @@ export function useVirtualizedBottomSettle(
 
   const pinToBottom = React.useCallback(() => {
     if (!bottomIntentRef.current) return;
-    const scroller = hostRef.current?.firstElementChild;
+    const scroller = scrollRef?.current ?? hostRef.current?.firstElementChild;
     const lastIndex = itemsLengthRef.current - 1;
     if (!(scroller instanceof HTMLDivElement) || lastIndex < 0) return;
     listRef.current?.scrollToIndex(lastIndex, { align: "end" });
-  }, [hostRef, itemsLengthRef, listRef]);
+  }, [hostRef, itemsLengthRef, listRef, scrollRef]);
 
   const schedulePinToBottom = React.useCallback(() => {
     if (!bottomIntentRef.current || frameRef.current !== null) return;
@@ -56,20 +58,23 @@ export function useVirtualizedBottomSettle(
   }, [pinToBottom]);
 
   React.useLayoutEffect(() => {
-    const scroller = hostRef.current?.firstElementChild;
+    const scroller = scrollRef?.current ?? hostRef.current?.firstElementChild;
     if (!(scroller instanceof HTMLDivElement)) return;
-    const retire = () => cancel();
+    const retire = () => {
+      cancel();
+      onReaderNavigation?.();
+    };
     const retireForPointer = (event: PointerEvent) => {
       // A descendant pointerdown is ordinary row interaction (link, reaction,
       // thread action), not evidence that the reader took scroll ownership.
       // Direct scroller hits cover scrollbar/background drag initiation.
-      if (event.target === scroller) cancel();
+      if (event.target === scroller) retire();
     };
     const retireForWheel = (event: WheelEvent) => {
       // Ctrl+wheel is browser zoom, not reader navigation. Keep bottom intent
       // armed so the resulting viewport/content reflow can settle at the new
       // physical floor.
-      if (!event.ctrlKey) cancel();
+      if (!event.ctrlKey) retire();
     };
     const retireForScrollKey = (event: KeyboardEvent) => {
       if (
@@ -81,7 +86,7 @@ export function useVirtualizedBottomSettle(
         !isEditableKeyboardTarget(event.target) &&
         SCROLL_INTENT_KEYS.has(event.key)
       ) {
-        cancel();
+        retire();
       }
     };
     scroller.addEventListener("pointerdown", retireForPointer, {
@@ -96,10 +101,10 @@ export function useVirtualizedBottomSettle(
       scroller.removeEventListener("wheel", retireForWheel);
       window.removeEventListener("keydown", retireForScrollKey, true);
     };
-  }, [cancel, hostRef]);
+  }, [cancel, hostRef, onReaderNavigation, scrollRef]);
 
   React.useLayoutEffect(() => {
-    const scroller = hostRef.current?.firstElementChild;
+    const scroller = scrollRef?.current ?? hostRef.current?.firstElementChild;
     if (!(scroller instanceof HTMLDivElement)) return;
     const content = scroller.firstElementChild;
     if (
@@ -117,7 +122,7 @@ export function useVirtualizedBottomSettle(
     observer.observe(content);
     observer.observe(scroller);
     return () => observer.disconnect();
-  }, [hostRef, schedulePinToBottom]);
+  }, [hostRef, schedulePinToBottom, scrollRef]);
 
   const settle = React.useCallback(() => {
     bottomIntentRef.current = true;
