@@ -4425,7 +4425,7 @@
     },
     {
       "path": ".github/workflows/_ci-relay.yml",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane. Preserve the MinIO CI image override in every relay integration consumer. Retain the real CLI build and artifact inventory after the upstream producer matrix split.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane. Preserve the MinIO CI image override in every relay integration consumer. Retain the real CLI build and artifact inventory after the upstream producer matrix split.; pin browser E2E to Ubuntu 24.04 supported by the locked Playwright release.",
       "is_new": false,
       "required_symbols": [
         "export BUZZ_TEST_BIN_DIR=\"$PWD/target/ci\"",
@@ -4433,7 +4433,9 @@
         "backend-integration:\n    env:\n      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml",
         "relay-e2e:\n    env:\n      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml",
         "run: cargo build --profile ci -p buzz-relay -p git-credential-nostr -p buzz-cli",
-        "- artifact: relay-binaries\n            paths: |\n              target/ci/buzz-relay\n              target/ci/buzz\n              target/ci/git-credential-nostr"
+        "- artifact: relay-binaries\n            paths: |\n              target/ci/buzz-relay\n              target/ci/buzz\n              target/ci/git-credential-nostr",
+        "  desktop-e2e-integration:\n",
+        "    runs-on: ubuntu-24.04"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -12982,11 +12984,13 @@
     },
     {
       "path": ".github/workflows/_ci-desktop.yml",
-      "responsibility": "Keep native Linux CI off the degraded runner Azure apt mirror without changing required checks",
+      "responsibility": "Keep native Linux CI off the degraded runner Azure apt mirror without changing required checks; pin browser E2E to Ubuntu 24.04 supported by the locked Playwright release.",
       "is_new": false,
       "required_symbols": [
         "'https://archive.ubuntu.com/ubuntu/'",
-        "'https://security.ubuntu.com/ubuntu/'"
+        "'https://security.ubuntu.com/ubuntu/'",
+        "  desktop-smoke-e2e:\n",
+        "    runs-on: ubuntu-24.04"
       ],
       "invocation_seams": [],
       "verification_commands": [

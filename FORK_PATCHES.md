@@ -2636,7 +2636,7 @@ New module: `false`.
 
 ## `.github/workflows/_ci-relay.yml`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane. Preserve the MinIO CI image override in every relay integration consumer. Retain the real CLI build and artifact inventory after the upstream producer matrix split.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Build, cache and transfer the CLI executable alongside relay artifacts for managed recovery tests in the PostgreSQL lane. Preserve the MinIO CI image override in every relay integration consumer. Retain the real CLI build and artifact inventory after the upstream producer matrix split.; pin browser E2E to Ubuntu 24.04 supported by the locked Playwright release.
 
 New module: `false`.
 
@@ -2656,6 +2656,9 @@ New module: `false`.
               target/ci/buzz-relay
               target/ci/buzz
               target/ci/git-credential-nostr`
+- Required symbol: `  desktop-e2e-integration:
+`
+- Required symbol: `    runs-on: ubuntu-24.04`
 - Verify: `just ci`
 
 ## `.github/workflows/_ci-rust.yml`
@@ -8585,12 +8588,15 @@ New module: `false`.
 
 ## `.github/workflows/_ci-desktop.yml`
 
-Keep native Linux CI off the degraded runner Azure apt mirror without changing required checks
+Keep native Linux CI off the degraded runner Azure apt mirror without changing required checks; pin browser E2E to Ubuntu 24.04 supported by the locked Playwright release.
 
 New module: `false`.
 
 - Required symbol: `'https://archive.ubuntu.com/ubuntu/'`
 - Required symbol: `'https://security.ubuntu.com/ubuntu/'`
+- Required symbol: `  desktop-smoke-e2e:
+`
+- Required symbol: `    runs-on: ubuntu-24.04`
 - Verify: `just ci`
 
 ## `desktop/src/features/channels/useObservedUnreadPersistence.ts`

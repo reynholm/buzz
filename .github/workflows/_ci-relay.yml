@@ -412,7 +412,8 @@ jobs:
 
   desktop-e2e-integration:
     name: Desktop E2E Integration
-    runs-on: ubuntu-latest
+    # The pinned Playwright release does not support Ubuntu 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     needs: [desktop-e2e-integration-shard]
     if: always() && inputs.lane == 'required' && (github.event_name == 'push' || inputs.desktop || inputs.desktop_rust || inputs.rust)
