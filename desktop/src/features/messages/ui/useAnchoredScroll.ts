@@ -435,6 +435,12 @@ export function useAnchoredScroll({
     ): boolean => {
       const container = scrollContainerRef.current;
       if (!container) return false;
+      // An explicit target supersedes the deferred initial bottom pin even
+      // before a virtual row has been realized in the viewport.
+      if (mountPinRafIdRef.current !== null) {
+        cancelAnimationFrame(mountPinRafIdRef.current);
+        mountPinRafIdRef.current = null;
+      }
       const el = container.querySelector<HTMLElement>(
         `[data-message-id="${messageId}"]`,
       );

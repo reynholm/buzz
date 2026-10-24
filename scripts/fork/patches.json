@@ -13055,7 +13055,7 @@
     },
     {
       "path": "desktop/src/features/messages/ui/useAnchoredScroll.ts",
-      "responsibility": "Wait for visible virtual targets before acknowledging navigation and preserve temporary centered targets through layout reflow.",
+      "responsibility": "Wait for visible virtual targets before acknowledging navigation and preserve temporary centered targets through layout reflow. Cancel the deferred initial bottom pin when target navigation takes ownership.",
       "is_new": false,
       "required_symbols": [
         "const needsRealization",
@@ -13069,7 +13069,7 @@
     },
     {
       "path": "desktop/src/features/messages/ui/useAnchoredScroll.lifecycle.test.mjs",
-      "responsibility": "Bind virtual target acknowledgement and initial-position ownership regressions to the production scroll hook.",
+      "responsibility": "Bind virtual target acknowledgement and initial-position ownership regressions to the production scroll hook. Deliver the initial settlement frame deterministically after target navigation to regress the cancellation race.",
       "is_new": false,
       "required_symbols": [
         "function PendingVirtualTargetHarness",

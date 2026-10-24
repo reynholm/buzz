@@ -8634,7 +8634,7 @@ New module: `true`.
 
 ## `desktop/src/features/messages/ui/useAnchoredScroll.ts`
 
-Wait for visible virtual targets before acknowledging navigation and preserve temporary centered targets through layout reflow.
+Wait for visible virtual targets before acknowledging navigation and preserve temporary centered targets through layout reflow. Cancel the deferred initial bottom pin when target navigation takes ownership.
 
 New module: `false`.
 
@@ -8645,7 +8645,7 @@ New module: `false`.
 
 ## `desktop/src/features/messages/ui/useAnchoredScroll.lifecycle.test.mjs`
 
-Bind virtual target acknowledgement and initial-position ownership regressions to the production scroll hook.
+Bind virtual target acknowledgement and initial-position ownership regressions to the production scroll hook. Deliver the initial settlement frame deterministically after target navigation to regress the cancellation race.
 
 New module: `false`.
 

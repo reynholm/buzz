@@ -620,6 +620,16 @@ function PendingVirtualTargetHarness({ refs, targetMessageId, version }) {
 
 for (const initialTarget of [true, false]) {
   test(`a ${initialTarget ? "mount" : "later"} virtual target waits for visible realization before acknowledgement`, async () => {
+    const originalRequestFrame = globalThis.requestAnimationFrame;
+    const originalCancelFrame = globalThis.cancelAnimationFrame;
+    const frames = new Map();
+    let nextFrame = 0;
+    globalThis.requestAnimationFrame = (callback) => {
+      const id = ++nextFrame;
+      frames.set(id, callback);
+      return id;
+    };
+    globalThis.cancelAnimationFrame = (id) => frames.delete(id);
     const nodes = makePinnedCenterNodes();
     nodes.moveSelectedRowBy(800);
     const reached = [];
@@ -657,6 +667,13 @@ for (const initialTarget of [true, false]) {
         [],
         "An offscreen row is not a resolved target",
       );
+      // Keep the initial settlement pending until navigation has committed,
+      // then deliver that frame to exercise the ordering deterministically.
+      const pendingFrames = [...frames.values()];
+      frames.clear();
+      await act(async () => {
+        for (const callback of pendingFrames) callback(0);
+      });
       assert.equal(
         bottomPins.length,
         previousPins,
@@ -668,6 +685,8 @@ for (const initialTarget of [true, false]) {
       assert.deepEqual(reached, ["selected"]);
     } finally {
       await act(async () => root.unmount());
+      globalThis.requestAnimationFrame = originalRequestFrame;
+      globalThis.cancelAnimationFrame = originalCancelFrame;
     }
   });
 }
