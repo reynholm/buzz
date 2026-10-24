@@ -2706,7 +2706,7 @@ New module: `false`.
 
 ## `Cargo.lock`
 
-Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils 0.4.4 for RUSTSEC-2026-0385.
+Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils 0.4.4 for RUSTSEC-2026-0385. Upgrade the gateway P-256 graph to crypto-bigint 0.7.6 for RUSTSEC-2026-0387.
 
 New module: `false`.
 
@@ -8701,3 +8701,39 @@ New module: `true`.
 - Required symbol: `snapshot.generation !== generationRef.current`
 - Required symbol: `list.scrollTo(scroller.scrollTop + drift)`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
+
+## `crates/buzz-push-gateway/Cargo.toml`
+
+Use P-256 0.14 with the patched constant-time arithmetic graph for App Attest.
+
+New module: `false`.
+
+- Verify: `cargo test --locked -p buzz-push-gateway --lib`
+- Verify: `cargo clippy --locked -p buzz-push-gateway --all-targets -- -D warnings`
+
+## `crates/buzz-push-gateway/src/app_attest/certificate.rs`
+
+Keep App Attest certificate key extraction on the current SEC1 point API without changing encoding.
+
+New module: `false`.
+
+- Verify: `cargo test --locked -p buzz-push-gateway --lib`
+- Verify: `cargo clippy --locked -p buzz-push-gateway --all-targets -- -D warnings`
+
+## `crates/buzz-push-gateway/src/app_attest/authenticator.rs`
+
+Keep App Attest authenticator key decoding on the current SEC1 point API without changing validation.
+
+New module: `false`.
+
+- Verify: `cargo test --locked -p buzz-push-gateway --lib`
+- Verify: `cargo clippy --locked -p buzz-push-gateway --all-targets -- -D warnings`
+
+## `crates/buzz-push-gateway/src/app_attest_assertion_tests.rs`
+
+Exercise existing assertion verification regressions with the patched P-256 graph and current SEC1 names.
+
+New module: `false`.
+
+- Verify: `cargo test --locked -p buzz-push-gateway --lib`
+- Verify: `cargo clippy --locked -p buzz-push-gateway --all-targets -- -D warnings`

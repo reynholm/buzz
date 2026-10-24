@@ -4498,7 +4498,7 @@
     },
     {
       "path": "Cargo.lock",
-      "responsibility": "Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils 0.4.4 for RUSTSEC-2026-0385.",
+      "responsibility": "Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils 0.4.4 for RUSTSEC-2026-0385. Upgrade the gateway P-256 graph to crypto-bigint 0.7.6 for RUSTSEC-2026-0387.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -13142,6 +13142,50 @@
       "invocation_seams": [],
       "verification_commands": [
         "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts"
+      ]
+    },
+    {
+      "path": "crates/buzz-push-gateway/Cargo.toml",
+      "responsibility": "Use P-256 0.14 with the patched constant-time arithmetic graph for App Attest.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-push-gateway --lib",
+        "cargo clippy --locked -p buzz-push-gateway --all-targets -- -D warnings"
+      ]
+    },
+    {
+      "path": "crates/buzz-push-gateway/src/app_attest/certificate.rs",
+      "responsibility": "Keep App Attest certificate key extraction on the current SEC1 point API without changing encoding.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-push-gateway --lib",
+        "cargo clippy --locked -p buzz-push-gateway --all-targets -- -D warnings"
+      ]
+    },
+    {
+      "path": "crates/buzz-push-gateway/src/app_attest/authenticator.rs",
+      "responsibility": "Keep App Attest authenticator key decoding on the current SEC1 point API without changing validation.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-push-gateway --lib",
+        "cargo clippy --locked -p buzz-push-gateway --all-targets -- -D warnings"
+      ]
+    },
+    {
+      "path": "crates/buzz-push-gateway/src/app_attest_assertion_tests.rs",
+      "responsibility": "Exercise existing assertion verification regressions with the patched P-256 graph and current SEC1 names.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-push-gateway --lib",
+        "cargo clippy --locked -p buzz-push-gateway --all-targets -- -D warnings"
       ]
     }
   ],
