@@ -191,8 +191,9 @@ async fn reconcile(
         verify_ids(accepted, accepted, &found)?;
         let mut observer = connect(config, endpoint, keys, true).await?;
         let mut replay = Vec::new();
-        for chunk in accepted.chunks(64) {
-            observer.connection.send_raw(&json!(["REQ", "replay", {"kinds":[9],"#h":[config.channel],"ids":chunk,"limit":128}])).await?;
+        for (index, chunk) in accepted.chunks(64).enumerate() {
+            let subscription = format!("replay-{index}");
+            observer.connection.send_raw(&json!(["REQ", subscription, {"kinds":[9],"#h":[config.channel],"ids":chunk,"limit":128}])).await?;
             let deadline = Instant::now() + Duration::from_secs(60);
             loop {
                 let remaining = deadline.saturating_duration_since(Instant::now());
@@ -201,15 +202,19 @@ async fn reconcile(
                     RelayMessage::Event {
                         subscription_id,
                         event,
-                    } if subscription_id == "replay" => replay.push(event.id.to_hex()),
-                    RelayMessage::Eose { subscription_id } if subscription_id == "replay" => break,
-                    RelayMessage::Closed { .. } => bail!("replay subscription denied"),
+                    } if subscription_id == subscription => replay.push(event.id.to_hex()),
+                    RelayMessage::Eose { subscription_id } if subscription_id == subscription => {
+                        break
+                    }
+                    RelayMessage::Closed {
+                        subscription_id, ..
+                    } if subscription_id == subscription => bail!("replay subscription denied"),
                     _ => {}
                 }
             }
             observer
                 .connection
-                .send_raw(&json!(["CLOSE", "replay"]))
+                .send_raw(&json!(["CLOSE", subscription]))
                 .await?;
         }
         observer.connection.disconnect().await?;
