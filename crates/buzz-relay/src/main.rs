@@ -559,6 +559,15 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
         info!("Postgres connected");
     }
 
+    if config.deploy_control_token.is_some()
+        && (buzz_auto_migrate_enabled(std::env::var("BUZZ_AUTO_MIGRATE").ok().as_deref())
+            || std::env::var("BUZZ_RECONCILE_CHANNELS").is_ok())
+    {
+        anyhow::bail!(
+            "Deployment drain requires separate migrations and disables development reconciliation"
+        );
+    }
+
     let auto_migrate =
         buzz_auto_migrate_enabled(std::env::var("BUZZ_AUTO_MIGRATE").ok().as_deref());
     if auto_migrate {
@@ -810,23 +819,27 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     info!("Redis pub/sub connected");
     step.finish();
 
+    let mut runtime_dependencies = buzz_relay::deploy_runtime::RuntimeDependencies::default();
+
     // Spawn Redis pub/sub subscriber for multi-node fan-out.
     // Events published by other relay instances are received here and
     // fanned out to local WebSocket subscribers.
     let pubsub_for_sub = Arc::clone(&pubsub);
-    tokio::spawn(async move { pubsub_for_sub.run_subscriber().await });
+    runtime_dependencies.spawn_reader(async move { pubsub_for_sub.run_subscriber().await });
 
     // Spawn Redis pub/sub subscriber for cross-pod cache-key invalidation.
     // Membership / visibility changes on other pods are received here and the
     // matching local moka caches are dropped (via the consumer loop below).
     let pubsub_for_cache = Arc::clone(&pubsub);
-    tokio::spawn(async move { pubsub_for_cache.run_cache_invalidation_subscriber().await });
+    runtime_dependencies
+        .spawn_reader(async move { pubsub_for_cache.run_cache_invalidation_subscriber().await });
 
     // Spawn Redis pub/sub subscriber for cross-pod connection-control commands.
     // Bans recorded on other pods are received here and applied to any local
     // sockets (via the consumer loop below), enforcing live disconnect fan-out.
     let pubsub_for_conn_ctrl = Arc::clone(&pubsub);
-    tokio::spawn(async move { pubsub_for_conn_ctrl.run_conn_control_subscriber().await });
+    runtime_dependencies
+        .spawn_reader(async move { pubsub_for_conn_ctrl.run_conn_control_subscriber().await });
 
     // Spawn Redis pub/sub subscriber for NIP-FI cross-pod disconnect commands.
     // Remote pods publish to this global channel after accepting a disconnect
@@ -837,7 +850,7 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     let pubsub_for_nip_fi = Arc::clone(&pubsub);
     let nip_fi_channels =
         buzz_relay::api::nip_fi::disconnect_subscribe_channels(config.nip_fi.mode);
-    tokio::spawn(async move {
+    runtime_dependencies.spawn_reader(async move {
         pubsub_for_nip_fi
             .run_nip_fi_disconnect_subscriber(nip_fi_channels)
             .await
@@ -938,12 +951,15 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     }
     let state = Arc::new(app_state);
     if let Some(tenant) = &deployment_community {
-        buzz_relay::handlers::side_effects::fan_out_nip43_membership_list(
-            tenant,
-            &state,
-            startup_membership_list,
-        )
-        .await;
+        state
+            .run_startup_work(
+                buzz_relay::handlers::side_effects::fan_out_nip43_membership_list(
+                    tenant,
+                    &state,
+                    startup_membership_list,
+                ),
+            )
+            .await?;
     }
     let startup_partition_attempt = startup_partition_audit
         .as_ref()
@@ -958,41 +974,61 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     {
         let partition_state = Arc::clone(&state);
         let audit_interval = state.config.partition_audit_interval;
+        let worker = state.deployment_worker("partition-maintenance");
         tokio::spawn(async move {
             let mut schedule =
                 PartitionAuditSchedule::new(audit_interval, startup_partition_attempt);
-            loop {
-                schedule.wait().await;
-                let db = &partition_state.db;
-                let result = if partition_policy.advance_enabled {
-                    match db
-                        .maintain_partitions(PARTITION_MANAGER_MONTHS_AHEAD, partition_policy)
-                        .await
-                    {
-                        Ok(audit) => Ok(audit),
-                        Err(error) => {
-                            warn!(%error, "Periodic partition maintenance failed");
+            while worker.idle(schedule.wait()).await.is_some() {
+                if worker
+                    .batch(async {
+                        let db = &partition_state.db;
+                        let result = if partition_policy.advance_enabled {
+                            match db
+                                .maintain_partitions(
+                                    PARTITION_MANAGER_MONTHS_AHEAD,
+                                    partition_policy,
+                                )
+                                .await
+                            {
+                                Ok(audit) => Ok(audit),
+                                Err(error) => {
+                                    warn!(%error, "Periodic partition maintenance failed");
+                                    counted_partition_audit(
+                                        db.audit_partitions(PARTITION_MANAGER_MONTHS_AHEAD),
+                                    )
+                                    .await
+                                }
+                            }
+                        } else {
                             counted_partition_audit(
                                 db.audit_partitions(PARTITION_MANAGER_MONTHS_AHEAD),
                             )
                             .await
+                        };
+                        schedule.record_attempt(
+                            result
+                                .as_ref()
+                                .ok()
+                                .map(|audit| audit.awaits_catch_all_advance(partition_policy)),
+                        );
+                        match result {
+                            Ok(audit) => {
+                                partition_state.record_partition_audit(audit);
+                                Ok::<_, ()>(())
+                            }
+                            Err(error) => {
+                                warn!(%error, "Periodic partition catalog audit failed");
+                                Err(())
+                            }
                         }
-                    }
-                } else {
-                    counted_partition_audit(db.audit_partitions(PARTITION_MANAGER_MONTHS_AHEAD))
-                        .await
-                };
-                schedule.record_attempt(
-                    result
-                        .as_ref()
-                        .ok()
-                        .map(|audit| audit.awaits_catch_all_advance(partition_policy)),
-                );
-                match result {
-                    Ok(audit) => partition_state.record_partition_audit(audit),
-                    Err(error) => warn!(%error, "Periodic partition catalog audit failed"),
+                    })
+                    .await
+                    .is_none()
+                {
+                    break;
                 }
             }
+            worker.finish();
         });
     }
 
@@ -1009,7 +1045,8 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     let jwks_refresh_cancel = CancellationToken::new();
     // The binding refresh loop stops with the JWKS loop on shutdown.
     if let Some(resolver) = state.nip_fi_resolver.clone() {
-        tokio::spawn(resolver.run_refresh_loop(jwks_refresh_cancel.child_token()));
+        runtime_dependencies
+            .spawn_reader(resolver.run_refresh_loop(jwks_refresh_cancel.child_token()));
     }
     let jwks_refresh_handle = if let Some(jwks_source) = state.nip_fi_jwks_source.clone() {
         let jwks_configs = state.config.nip_fi.jwks_configs.clone();
@@ -1139,7 +1176,11 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     // makes migration 0032 a code/schema compatibility gate before the new
     // replacement protocol or listener can serve traffic.
     let mut step = StepTimer::start(StartupStep::LargeRosterReconcile);
-    match buzz_relay::handlers::side_effects::reconcile_large_channel_member_snapshots(&state).await
+    match state
+        .run_startup_work(
+            buzz_relay::handlers::side_effects::reconcile_large_channel_member_snapshots(&state),
+        )
+        .await?
     {
         Ok(summary) => {
             if summary.failed > 0 {
@@ -1213,91 +1254,18 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     workflow_engine.set_action_sink(action_sink);
 
     // Start the cron loop AFTER the action sink is wired.
-    let wf_cron = Arc::clone(&workflow_engine);
-    tokio::spawn(async move { wf_cron.run().await });
+    tokio::spawn(buzz_relay::background::run_workflow_scheduler(
+        state.clone(),
+    ));
 
-    // Ephemeral channel reaper — archives channels whose TTL deadline has passed.
-    // Runs every 60s, matching the workflow cron loop pattern. The SQL UPDATE
-    // uses `archived_at IS NULL` as a guard, so concurrent runs from multiple
-    // pods are harmless (at worst, duplicate system messages — same trade-off
-    // as the workflow cron loop). Will be upgraded to use pg_advisory_lock
-    // together with the workflow engine in a future multi-pod coordination pass.
-    {
-        let reaper_state = Arc::clone(&state);
-        let reaper_interval_secs: u64 = std::env::var("BUZZ_REAPER_INTERVAL_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(60);
-        tokio::spawn(async move {
-            info!(
-                interval_secs = reaper_interval_secs,
-                "Ephemeral channel reaper started"
-            );
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(reaper_interval_secs)).await;
-
-                let expired = match reaper_state.db.reap_expired_ephemeral_channels().await {
-                    Ok(ids) => ids,
-                    Err(e) => {
-                        error!("Ephemeral reaper tick failed: {e}");
-                        continue;
-                    }
-                };
-
-                if expired.is_empty() {
-                    continue;
-                }
-
-                info!(count = expired.len(), "Ephemeral reaper archived channels");
-
-                for channel in &expired {
-                    // Per-row tenant: the reaper crosses communities, so each
-                    // archived channel carries its own server-resolved
-                    // `(community, host)` from the DB RETURNING. Build the
-                    // `TenantContext` from that row — never a default tenant.
-                    let tenant = buzz_core::tenant::TenantContext::resolved(
-                        channel.community_id,
-                        channel.host.clone(),
-                    );
-                    let channel_id = channel.channel_id;
-                    // Emit a system message so members see why the channel was archived.
-                    if let Err(e) = buzz_relay::handlers::side_effects::emit_system_message(
-                        &tenant,
-                        &reaper_state,
-                        channel_id,
-                        serde_json::json!({ "type": "channel_auto_archived" }),
-                        chrono::Utc::now(),
-                    )
-                    .await
-                    {
-                        error!(channel = %channel_id, "reaper system message failed: {e}");
-                    }
-
-                    // Update NIP-29 discovery events so clients see the archived state.
-                    if let Err(e) = buzz_relay::handlers::side_effects::emit_group_discovery_events(
-                        &tenant,
-                        &reaper_state,
-                        channel_id,
-                    )
-                    .await
-                    {
-                        error!(channel = %channel_id, "reaper discovery update failed: {e}");
-                    }
-
-                    // Close live subscriptions so connected clients drop the
-                    // archived channel immediately (CLOSED is in the client's
-                    // drop-set → no reconnect storm). Offline clients are caught
-                    // by the archived=true skip in discover_channels on reconnect.
-                    buzz_relay::handlers::side_effects::evict_all_channel_subscriptions(
-                        &tenant,
-                        &reaper_state,
-                        channel_id,
-                    )
-                    .await;
-                }
-            }
-        });
-    }
+    let reaper_interval_secs = std::env::var("BUZZ_REAPER_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60);
+    tokio::spawn(buzz_relay::background::run_channel_reaper(
+        state.clone(),
+        reaper_interval_secs,
+    ));
 
     // NIP-PL matcher and worker are enabled as one unit behind the explicit
     // deployment opt-in. The gateway URL alone never enables push.
@@ -1336,9 +1304,7 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     // run the worker concurrently without double-delivery.
     {
         let outbox_state = Arc::clone(&state);
-        tokio::spawn(
-            async move { buzz_relay::handlers::admin_outbox_worker::run(outbox_state).await },
-        );
+        tokio::spawn(buzz_relay::handlers::admin_outbox_worker::run(outbox_state));
         info!("Admin outbox delivery worker started");
     }
 
@@ -1349,142 +1315,30 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     // step_marker state without re-running the mutation.
     {
         let action_state = Arc::clone(&state);
-        tokio::spawn(
-            async move { buzz_relay::handlers::admin_action_worker::run(action_state).await },
-        );
+        tokio::spawn(buzz_relay::handlers::admin_action_worker::run(action_state));
         info!("Admin action recovery worker started");
     }
 
-    // NIP-ER reminder scheduler — polls for due reminders and publishes them
-    // to Redis pub/sub for cross-pod fan-out. Each pod's existing
-    // subscribe_local consumer picks them up and applies the author-only gate.
-    // Mirrors the channel reaper pattern. Cross-pod dedup via `delivered_at`
-    // column: only the pod that wins the atomic claim publishes.
-    {
-        let scheduler_state = Arc::clone(&state);
-        let scheduler_interval_secs: u64 = std::env::var("SPROUT_REMINDER_SCHEDULER_INTERVAL_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(10);
-        let scheduler_batch_limit: i64 = std::env::var("SPROUT_REMINDER_SCHEDULER_BATCH_LIMIT")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(100);
-        tokio::spawn(async move {
-            info!(
-                interval_secs = scheduler_interval_secs,
-                batch_limit = scheduler_batch_limit,
-                "NIP-ER reminder scheduler started"
-            );
-            // The scheduler is a background sweep with no inbound connection,
-            // so it cannot use a request Host header as tenant provenance. Each
-            // DueReminder row carries `(community_id, host)` from the DB row's
-            // community join (mirroring the ephemeral-channel reaper); publish
-            // each reminder to that row's community-global topic.
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(scheduler_interval_secs)).await;
-
-                let now_secs = chrono::Utc::now().timestamp();
-                let due = match scheduler_state
-                    .db
-                    .query_due_reminders(now_secs, scheduler_batch_limit)
-                    .await
-                {
-                    Ok(reminders) => reminders,
-                    Err(e) => {
-                        error!("Reminder scheduler tick failed: {e}");
-                        continue;
-                    }
-                };
-
-                if due.is_empty() {
-                    continue;
-                }
-
-                info!(count = due.len(), "Reminder scheduler: due reminders found");
-
-                for reminder in due {
-                    // Claim before side effect (§5c: claim-before-publish). A
-                    // unique per-attempt stamp lets a failed publish roll back
-                    // exactly this pod's claim via compare-and-clear, without a
-                    // racing pod's later claim being clobbered. `delivered_at`
-                    // is only ever read as a NULL/non-NULL sentinel (the
-                    // due-reminder query guard and the partial index), never as
-                    // a wall-clock value, so an opaque stamp is safe to store.
-                    let reminder_tenant = buzz_core::tenant::TenantContext::resolved(
-                        reminder.community_id,
-                        reminder.host.clone(),
-                    );
-                    let delivery_stamp = chrono::Utc::now()
-                        .timestamp_nanos_opt()
-                        .unwrap_or_else(|| chrono::Utc::now().timestamp())
-                        ^ rand::random::<i64>();
-
-                    match scheduler_state
-                        .db
-                        .claim_due_reminder_with_stamp(
-                            reminder.community_id,
-                            &reminder.id,
-                            reminder.created_at,
-                            delivery_stamp,
-                        )
-                        .await
-                    {
-                        Ok(true) => {}         // We won the claim — proceed to publish.
-                        Ok(false) => continue, // Another pod claimed it; no side effect here.
-                        Err(e) => {
-                            warn!(
-                                event_id = hex::encode(&reminder.id),
-                                "Reminder scheduler: claim failed, skipping publish: {e}"
-                            );
-                            continue;
-                        }
-                    }
-
-                    // Publish the single side effect. On failure, release our
-                    // claim so the next tick (this pod or another) can retry —
-                    // the stamp guard ensures we only clear our own claim.
-                    if let Err(e) = scheduler_state
-                        .pubsub
-                        .publish_event(
-                            &reminder_tenant,
-                            buzz_pubsub::EventTopic::Global,
-                            &reminder_to_event(&reminder),
-                        )
-                        .await
-                    {
-                        error!(
-                            event_id = hex::encode(&reminder.id),
-                            "Reminder scheduler: Redis publish failed after claim, releasing: {e}"
-                        );
-                        if let Err(release_err) = scheduler_state
-                            .db
-                            .release_due_reminder(
-                                reminder.community_id,
-                                &reminder.id,
-                                reminder.created_at,
-                                delivery_stamp,
-                            )
-                            .await
-                        {
-                            warn!(
-                                event_id = hex::encode(&reminder.id),
-                                "Reminder scheduler: release after failed publish errored \
-                                 (reminder stays claimed, will not retry): {release_err}"
-                            );
-                        }
-                    }
-                }
-            }
-        });
-    }
+    let scheduler_interval_secs = std::env::var("SPROUT_REMINDER_SCHEDULER_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10);
+    let scheduler_batch_limit = std::env::var("SPROUT_REMINDER_SCHEDULER_BATCH_LIMIT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(100);
+    tokio::spawn(buzz_relay::background::run_reminders(
+        state.clone(),
+        scheduler_interval_secs,
+        scheduler_batch_limit,
+    ));
 
     // Multi-node fan-out consumer: receive events from Redis pub/sub
     // (published by other relay instances) and fan out to local WS subscribers.
     {
         let state_for_sub = Arc::clone(&state);
         let mut rx = state_for_sub.pubsub.subscribe_local();
-        tokio::spawn(async move {
+        runtime_dependencies.spawn_reader(async move {
             loop {
                 match rx.recv().await {
                     Ok(channel_event) => {
@@ -1514,7 +1368,7 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     {
         let state_for_cache = Arc::clone(&state);
         let mut rx = state_for_cache.pubsub.subscribe_cache_invalidations();
-        tokio::spawn(async move {
+        runtime_dependencies.spawn_reader(async move {
             loop {
                 match rx.recv().await {
                     Ok(scoped) => {
@@ -1549,20 +1403,29 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
             .unwrap_or(30)
             .clamp(1, 300);
         let cancel = lifecycle_state.community_revalidator_cancel.clone();
-        tokio::spawn(run_community_revalidator(
-            lifecycle_state,
-            std::time::Duration::from_secs(interval_secs),
+        runtime_dependencies.own(
+            tokio::spawn(run_community_revalidator(
+                lifecycle_state,
+                std::time::Duration::from_secs(interval_secs),
+                cancel.clone(),
+            )),
             cancel,
-        ));
+        );
     }
 
     // Per-pod dependency diagnostics runtime: one seam starts the dependency
     // sampler and its independent completion-epoch republisher together.
     {
         let diagnostics_state = Arc::clone(&state);
-        buzz_relay::readiness::start_dependency_sampler_and_completion_publisher(
-            diagnostics_state,
-            dependency_sample_completion_republish_interval,
+        let [sampler, publisher] =
+            buzz_relay::readiness::start_dependency_sampler_and_completion_publisher(
+                diagnostics_state,
+                dependency_sample_completion_republish_interval,
+            );
+        runtime_dependencies.own(sampler, state.dependency_sampler_cancel.clone());
+        runtime_dependencies.own(
+            publisher,
+            state.dependency_completion_publisher_cancel.clone(),
         );
     }
 
@@ -1574,7 +1437,11 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     // banned member's next auth attempt at the auth seam.
     {
         let rx = state.pubsub.subscribe_conn_control();
-        tokio::spawn(Arc::clone(&state).run_conn_control_consumer(rx));
+        let cancel = runtime_dependencies.cancellation();
+        runtime_dependencies.own(
+            tokio::spawn(Arc::clone(&state).run_conn_control_consumer_until(rx, cancel.clone())),
+            cancel,
+        );
     }
 
     // Cross-pod NIP-FI disconnect consumer: receive deny entries from remote
@@ -1589,7 +1456,7 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     {
         let state_for_nip_fi = Arc::clone(&state);
         let nip_fi_mode = state.config.nip_fi.mode;
-        tokio::spawn(async move {
+        runtime_dependencies.spawn_reader(async move {
             loop {
                 match nip_fi_disconnect_rx.recv().await {
                     Ok(msg) => {
@@ -1630,68 +1497,87 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(10)
             .max(1); // tokio::time::interval panics on Duration::ZERO
+        let worker = state.deployment_worker("pool-lease-reaper");
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
-            loop {
-                interval.tick().await;
-                let db_stats = pool_state.db.pool_stats();
-                let read_stats = pool_state.db.read_pool_stats();
-                relay_metrics::record_db_pool_metrics(relay_metrics::DbPoolMetricsInput {
-                    writer: db_stats,
-                    reader: read_stats,
-                    audit: audit_metrics_pool
-                        .as_ref()
-                        .map(buzz_db::DbPoolStats::from_pool),
-                    search: buzz_db::DbPoolStats::from_pool(&search_metrics_pool),
-                });
-                pool_state.db.refresh_pool_waiter_metrics();
+            while worker.idle(interval.tick()).await.is_some() {
+                if worker
+                    .batch(async {
+                        let db_stats = pool_state.db.pool_stats();
+                        let read_stats = pool_state.db.read_pool_stats();
+                        relay_metrics::record_db_pool_metrics(relay_metrics::DbPoolMetricsInput {
+                            writer: db_stats,
+                            reader: read_stats,
+                            audit: audit_metrics_pool
+                                .as_ref()
+                                .map(buzz_db::DbPoolStats::from_pool),
+                            search: buzz_db::DbPoolStats::from_pool(&search_metrics_pool),
+                        });
+                        pool_state.db.refresh_pool_waiter_metrics();
 
-                if read_stats.is_some() {
-                    // Fence observability: 1 when replica routing is
-                    // eligible, and the verified-freshness lag in seconds.
-                    // Closed/stale fence reports open=0 with lag untouched.
-                    match pool_state.db.fence().verified_through() {
-                        Some(fence_ts) => {
-                            let lag = (chrono::Utc::now() - fence_ts).num_seconds();
-                            metrics::gauge!("buzz_db_replica_fence_open").set(1.0);
-                            metrics::gauge!("buzz_db_replica_fence_lag_seconds").set(lag as f64);
+                        if read_stats.is_some() {
+                            // Fence observability: 1 when replica routing is
+                            // eligible, and the verified-freshness lag in seconds.
+                            // Closed/stale fence reports open=0 with lag untouched.
+                            match pool_state.db.fence().verified_through() {
+                                Some(fence_ts) => {
+                                    let lag = (chrono::Utc::now() - fence_ts).num_seconds();
+                                    metrics::gauge!("buzz_db_replica_fence_open").set(1.0);
+                                    metrics::gauge!("buzz_db_replica_fence_lag_seconds")
+                                        .set(lag as f64);
+                                }
+                                None => {
+                                    metrics::gauge!("buzz_db_replica_fence_open").set(0.0);
+                                }
+                            }
+                            // Probe liveness, ungated by staleness: how long since
+                            // the probe last committed a heartbeat token.
+                            if let Some(age) = pool_state.db.fence().heartbeat_age() {
+                                metrics::gauge!("buzz_db_replica_heartbeat_age_seconds")
+                                    .set(age.as_secs_f64());
+                            }
                         }
-                        None => {
-                            metrics::gauge!("buzz_db_replica_fence_open").set(0.0);
+
+                        let rs = pool_state.redis_pool.status();
+                        metrics::gauge!("buzz_redis_pool_available").set(rs.available as f64);
+                        metrics::gauge!("buzz_redis_pool_size").set(rs.size as f64);
+                        metrics::gauge!("buzz_redis_pool_max").set(rs.max_size as f64);
+                        metrics::gauge!("buzz_redis_pool_waiting").set(rs.waiting as f64);
+
+                        let deletion_store = pool_state.db.deletion_store();
+                        let reaped = deletion_store.reap_expired_serving_write_leases(1000).await;
+                        let complete = reaped.is_ok();
+                        match reaped {
+                            Ok(reaped) => {
+                                metrics::counter!("buzz_deletion_serving_leases_reaped_total")
+                                    .increment(reaped)
+                            }
+                            Err(error) => tracing::warn!(%error, "serving-lease reaper failed"),
                         }
-                    }
-                    // Probe liveness, ungated by staleness: how long since
-                    // the probe last committed a heartbeat token.
-                    if let Some(age) = pool_state.db.fence().heartbeat_age() {
-                        metrics::gauge!("buzz_db_replica_heartbeat_age_seconds")
-                            .set(age.as_secs_f64());
-                    }
-                }
-
-                let rs = pool_state.redis_pool.status();
-                metrics::gauge!("buzz_redis_pool_available").set(rs.available as f64);
-                metrics::gauge!("buzz_redis_pool_size").set(rs.size as f64);
-                metrics::gauge!("buzz_redis_pool_max").set(rs.max_size as f64);
-                metrics::gauge!("buzz_redis_pool_waiting").set(rs.waiting as f64);
-
-                let deletion_store = pool_state.db.deletion_store();
-                match deletion_store.reap_expired_serving_write_leases(1000).await {
-                    Ok(reaped) => metrics::counter!("buzz_deletion_serving_leases_reaped_total")
-                        .increment(reaped),
-                    Err(error) => tracing::warn!(%error, "serving-lease reaper failed"),
-                }
-                match deletion_store.serving_lease_stats().await {
-                    Ok(stats) => {
-                        metrics::gauge!("buzz_deletion_serving_leases_active")
-                            .set(stats.active as f64);
-                        metrics::gauge!("buzz_deletion_serving_leases_expired")
-                            .set(stats.expired as f64);
-                        metrics::gauge!("buzz_deletion_serving_leases_dead_tuples")
-                            .set(stats.dead_tuples as f64);
-                    }
-                    Err(error) => tracing::warn!(%error, "serving-lease metrics failed"),
+                        match deletion_store.serving_lease_stats().await {
+                            Ok(stats) => {
+                                metrics::gauge!("buzz_deletion_serving_leases_active")
+                                    .set(stats.active as f64);
+                                metrics::gauge!("buzz_deletion_serving_leases_expired")
+                                    .set(stats.expired as f64);
+                                metrics::gauge!("buzz_deletion_serving_leases_dead_tuples")
+                                    .set(stats.dead_tuples as f64);
+                            }
+                            Err(error) => tracing::warn!(%error, "serving-lease metrics failed"),
+                        }
+                        if complete {
+                            Ok::<_, ()>(())
+                        } else {
+                            Err(())
+                        }
+                    })
+                    .await
+                    .is_none()
+                {
+                    break;
                 }
             }
+            worker.finish();
         });
     }
 
@@ -1713,6 +1599,7 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
         let mut leader = None;
         let mut emitted_in_memory = HashSet::new();
         let mut fleet_schedule = FleetUsageSchedule::new();
+        let worker = state.deployment_worker("usage-invite-reaper");
         tokio::spawn(async move {
             // Jitter the first tick by a random fraction of the interval so
             // that a rolling deploy with N pods doesn't hammer the DB
@@ -1721,23 +1608,35 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
             // seeds are unsafe in containers where the relay is typically PID 1
             // in every pod, which would make all pods compute the same delay).
             let jitter_secs = rand::random::<u64>() % interval_secs;
-            tokio::time::sleep(std::time::Duration::from_secs(jitter_secs)).await;
+            if worker
+                .idle(tokio::time::sleep(std::time::Duration::from_secs(
+                    jitter_secs,
+                )))
+                .await
+                .is_none()
+            {
+                worker.finish();
+                return;
+            }
 
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
             // Skip a tick rather than scheduling a burst of catch-up ticks if
             // the system falls behind (e.g. the previous tick took > interval).
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            loop {
-                interval.tick().await;
-                if let Err(e) = run_usage_metrics_tick(
-                    &usage_state,
-                    &emission_scope,
-                    &mut leader,
-                    &mut emitted_in_memory,
-                    &mut fleet_schedule,
-                )
-                .await
-                {
+            while worker.idle(interval.tick()).await.is_some() {
+                let Some(result) = worker
+                    .batch(run_usage_metrics_tick(
+                        &usage_state,
+                        &emission_scope,
+                        &mut leader,
+                        &mut emitted_in_memory,
+                        &mut fleet_schedule,
+                    ))
+                    .await
+                else {
+                    break;
+                };
+                if let Err(e) = result {
                     error!(error = %e, "Usage metrics tick failed — skipping");
                 }
                 metrics::gauge!("buzz_usage_poller_is_leader").set(if leader.is_some() {
@@ -1746,7 +1645,23 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
                     0.0
                 });
             }
+            drop(leader);
+            metrics::gauge!("buzz_usage_poller_is_leader").set(0.0);
+            worker.finish();
         });
+    }
+
+    let (legacy_runtime, deployment_runtime) = if state.config.deploy_control_token.is_some() {
+        (
+            None,
+            Some(runtime_dependencies.start_drain(state.deploy_drain.clone(), audit_shutdown)),
+        )
+    } else {
+        (Some((runtime_dependencies, audit_shutdown)), None)
+    };
+
+    if state.config.deploy_control_token.is_some() {
+        buzz_relay::deploy_runtime::RuntimeDependencies::seal_census(&state.deploy_drain)?;
     }
 
     serve(
@@ -1772,9 +1687,17 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     // Signal the audit worker to stop accepting, flush buffered entries, and
     // exit. Uses a CancellationToken so it works regardless of how many
     // Arc<AppState> clones are still alive in background tasks.
-    audit_shutdown
-        .drain(std::time::Duration::from_secs(5))
-        .await;
+    if let Some((runtime_dependencies, audit_shutdown)) = legacy_runtime {
+        if let Err(error) = runtime_dependencies.shutdown().await {
+            tracing::warn!(%error, "Serving dependency task failed");
+        }
+        audit_shutdown
+            .drain(std::time::Duration::from_secs(5))
+            .await;
+    }
+    if let Some(runtime) = deployment_runtime {
+        runtime.await?;
+    }
 
     // Flush pending OTEL spans before exit.
     if let telemetry::TracerInit::Enabled(tp) = tracer_init {
@@ -2118,6 +2041,21 @@ async fn run_periodic_until_cancelled<Tick, TickFuture>(
 /// teardown reaches those stages.
 const GRACEFUL_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Enabled deployments stop only after the controller has retired the edge,
+/// fenced admission and observed all accepted work and workers completing.
+/// A signal or elapsed legacy timeout cannot supply that evidence.
+async fn deployment_shutdown_barrier(
+    drain: Option<&buzz_relay::deploy_drain::DrainController>,
+) -> bool {
+    let Some(drain) = drain else {
+        return false;
+    };
+    while !drain.snapshot().safe_to_stop {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    true
+}
+
 async fn serve(
     router: axum::Router,
     health_router: axum::Router,
@@ -2171,6 +2109,18 @@ async fn serve(
     // sleeps. Not implemented here. This comment records the plan only.
     let shutdown_handle = tokio::spawn(async move {
         shutdown_signal().await;
+        let deployment = shutdown_state
+            .config
+            .deploy_control_token
+            .as_ref()
+            .map(|_| &shutdown_state.deploy_drain);
+        if deployment.is_some() {
+            info!("Shutdown signal received; waiting for safe deployment drain");
+        }
+        if deployment_shutdown_barrier(deployment).await {
+            let _ = tx.send(true);
+            return None;
+        }
         shutdown_state.begin_shutdown();
         info!("Shutdown signal received — readiness now returns 503");
         // 5s grace: let K8s stop routing new traffic before we close listeners.
@@ -2201,7 +2151,7 @@ async fn serve(
             max_jitter_ms = MAX_DRAIN_JITTER_MS,
             "Signalled restart close to all live WebSocket connections"
         );
-        hard_shutdown_abort
+        Some(hard_shutdown_abort)
     });
 
     let step = StepTimer::start(StartupStep::ListenerBind);
@@ -2263,7 +2213,9 @@ async fn serve(
                 tracing::warn!(error = %e, "NIP-FI: JWKS refresh supervisor join error on shutdown");
             }
         }
-        hard_shutdown.abort();
+        if let Some(hard_shutdown) = hard_shutdown {
+            hard_shutdown.abort();
+        }
         return Ok(());
     }
 
@@ -2295,7 +2247,9 @@ async fn serve(
             tracing::warn!(error = %e, "NIP-FI: JWKS refresh supervisor join error on shutdown");
         }
     }
-    hard_shutdown.abort();
+    if let Some(hard_shutdown) = hard_shutdown {
+        hard_shutdown.abort();
+    }
     Ok(())
 }
 
@@ -2315,21 +2269,6 @@ async fn shutdown_signal() {
         tokio::signal::ctrl_c().await.ok();
     }
 }
-/// Reconstruct a `nostr::Event` from a [`DueReminder`] row for Redis pub/sub.
-fn reminder_to_event(reminder: &buzz_db::event::DueReminder) -> nostr::Event {
-    let event_json = serde_json::json!({
-        "id": hex::encode(&reminder.id),
-        "pubkey": hex::encode(&reminder.pubkey),
-        "created_at": reminder.created_at.timestamp(),
-        "kind": reminder.kind as u16,
-        "tags": reminder.tags,
-        "content": reminder.content,
-        "sig": hex::encode(&reminder.sig),
-    });
-
-    serde_json::from_value(event_json).expect("valid event JSON from DB row")
-}
-
 /// Return the usage poll interval, with a floor that prevents a busy loop.
 fn usage_metrics_interval_secs() -> u64 {
     std::env::var("BUZZ_USAGE_METRICS_INTERVAL_SECS")
@@ -2534,6 +2473,7 @@ async fn run_usage_metrics_tick(
             Ok(_) => {}
             Err(error) => {
                 warn!(error = %error, "failed to reap expired relay invites");
+                return Err(error.into());
             }
         }
         run_storage_sweep_tick(
@@ -3114,6 +3054,37 @@ async fn emit_db_usage_metrics(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test(start_paused = true)]
+    async fn deployment_shutdown_waits_past_legacy_deadline_for_fence_and_accepted_work() {
+        use buzz_relay::deploy_drain::{DrainController, WorkKind};
+        let drain = DrainController::new();
+        let work = drain.try_admit_root(WorkKind::Http).unwrap();
+        let waiting = tokio::spawn({
+            let drain = drain.clone();
+            async move { super::deployment_shutdown_barrier(Some(&drain)).await }
+        });
+        tokio::task::yield_now().await;
+        tokio::time::advance(std::time::Duration::from_secs(36)).await;
+        assert!(
+            !waiting.is_finished(),
+            "SIGTERM cannot override unfinished drain"
+        );
+        let op = uuid::Uuid::new_v4();
+        let boot = drain.begin(op).unwrap().boot_id;
+        work.complete();
+        tokio::time::advance(std::time::Duration::from_secs(901)).await;
+        assert!(
+            !waiting.is_finished(),
+            "zero work cannot replace the admission fence"
+        );
+        drain.fence_http(op, boot, "test-edge-retired").unwrap();
+        assert!(waiting.await.unwrap());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn deployment_shutdown_disabled_keeps_legacy_shutdown_path() {
+        assert!(!super::deployment_shutdown_barrier(None).await);
+    }
     use std::collections::HashSet;
     use std::sync::Arc;
     use std::time::Duration;

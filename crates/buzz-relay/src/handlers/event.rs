@@ -394,25 +394,46 @@ pub(crate) async fn dispatch_persistent_event(
     let actor_pubkey_hex = actor_pubkey_hex.to_owned();
 
     metrics::counter!("buzz_post_commit_dispatch_scheduled_total").increment(1);
+    let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);
     tokio::spawn(async move {
-        let recipients = dispatch_persistent_event_inner(
-            &tenant,
-            &state,
-            &stored_event,
-            kind_u32,
-            &actor_pubkey_hex,
-            false,
-            threaded_visibility,
-        )
-        .await;
-        debug!(
-            event_id = %event_id_hex,
-            recipients,
-            "post-commit dispatch complete"
-        );
+        let task = async {
+            #[cfg(test)]
+            crate::nip_fi_test_hooks::before_deploy_post_commit(tenant.community()).await;
+            let outcome = dispatch_persistent_event_inner(
+                &tenant,
+                &state,
+                &stored_event,
+                kind_u32,
+                &actor_pubkey_hex,
+                false,
+                threaded_visibility,
+            )
+            .await;
+            debug!(
+                event_id = %event_id_hex,
+                recipients = outcome.recipients,
+                complete = outcome.complete,
+                "post-commit dispatch finished"
+            );
+            #[cfg(test)]
+            crate::nip_fi_test_hooks::after_deploy_post_commit(tenant.community()).await;
+            outcome.complete
+        };
+        if let Some(work) = work {
+            if work.scope(task).await {
+                work.complete();
+            }
+        } else {
+            task.await;
+        }
     });
 
     0
+}
+
+struct DispatchOutcome {
+    recipients: usize,
+    complete: bool,
 }
 
 /// Run post-commit delivery/side effects for a stored event.
@@ -424,7 +445,7 @@ async fn dispatch_persistent_event_inner(
     actor_pubkey_hex: &str,
     enqueue_audit: bool,
     threaded_visibility: Option<crate::state::ThreadedChannelVisibility>,
-) -> usize {
+) -> DispatchOutcome {
     // No `crate::conformance` emit here — the spec doesn't have a
     // separate fan-out action. Acceptance was already recorded at the
     // ingest seam (`crates/buzz-relay/src/handlers/ingest.rs`'s
@@ -432,6 +453,7 @@ async fn dispatch_persistent_event_inner(
     // surfaces as `ReadMessageRows` observations on the subscriber side
     // (read seam in req.rs, emitted by the held-back read-seam diff).
     let event_id_hex = stored_event.event.id.to_hex();
+    let mut complete = true;
 
     let topic = match stored_event.channel_id {
         Some(channel_id) => EventTopic::Channel(channel_id),
@@ -445,6 +467,7 @@ async fn dispatch_persistent_event_inner(
         .publish_event(tenant, topic, &stored_event.event)
         .await
     {
+        complete = false;
         state
             .local_event_ids
             .invalidate(&(tenant.community(), stored_event.event.id.to_bytes()));
@@ -476,7 +499,10 @@ async fn dispatch_persistent_event_inner(
             error!(event_id = %event_id_hex, "Failed to serialize event for fan-out: {e}");
             metrics::counter!("buzz_post_commit_dispatch_errors_total", "stage" => "serialize")
                 .increment(1);
-            return 0;
+            return DispatchOutcome {
+                recipients: 0,
+                complete: false,
+            };
         }
     };
     let recipients: Vec<_> = matches
@@ -534,24 +560,38 @@ async fn dispatch_persistent_event_inner(
         // community keeps a colliding channel id in B from triggering A's
         // workflows.
         let workflow_community = tenant.community();
+        let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);
         tokio::spawn(async move {
-            if let Err(e) = workflow_engine
-                .on_event(workflow_community, &workflow_event)
-                .await
-            {
-                tracing::error!(event_id = ?workflow_event.event.id, "Workflow trigger failed: {e}");
+            let task = async {
+                let result = workflow_engine
+                    .on_event(workflow_community, &workflow_event)
+                    .await;
+                if let Err(e) = &result {
+                    tracing::error!(event_id = ?workflow_event.event.id, "Workflow trigger failed: {e}");
+                } else {
+                    metrics::counter!(
+                        "buzz_workflow_runs_total",
+                        "trigger" => trigger_kind,
+                        "community" => workflow_community_host
+                    )
+                    .increment(1);
+                }
+                result.is_ok()
+            };
+            if let Some(work) = work {
+                if work.scope(task).await {
+                    work.complete();
+                }
             } else {
-                metrics::counter!(
-                    "buzz_workflow_runs_total",
-                    "trigger" => trigger_kind,
-                    "community" => workflow_community_host
-                )
-                .increment(1);
+                task.await;
             }
         });
     }
 
-    matches.len()
+    DispatchOutcome {
+        recipients: matches.len(),
+        complete,
+    }
 }
 
 async fn enqueue_event_created_audit(
@@ -2976,6 +3016,10 @@ mod tests {
         pub(super) async fn test_state_with_redis_url(redis_url: &str) -> Arc<AppState> {
             let mut config = test_config();
             config.redis_url = redis_url.to_string();
+            test_state_with_config(config).await
+        }
+
+        pub(super) async fn test_state_with_config(config: crate::config::Config) -> Arc<AppState> {
             let pool = sqlx::PgPool::connect_lazy(&config.database_url).expect("lazy pg pool");
             let db = buzz_db::Db::from_pool(pool.clone());
             let redis_pool = deadpool_redis::Config::from_url(&config.redis_url)
@@ -2986,7 +3030,9 @@ mod tests {
                     .await
                     .expect("pubsub manager"),
             );
-            let audit = buzz_audit::AuditService::new(pool.clone());
+            let audit = config
+                .audit_enabled
+                .then(|| buzz_audit::AuditService::new(pool.clone()));
             let auth = buzz_auth::AuthService::new(config.auth.clone());
             let search = buzz_search::SearchService::new(pool.clone());
             let workflow_engine = Arc::new(buzz_workflow::WorkflowEngine::new(
@@ -4198,6 +4244,370 @@ mod tests {
                 }
                 other => panic!("P1-b: expected Text OK frame, got {other:?}"),
             }
+        }
+    }
+
+    mod deploy_dispatch_postgres_tests {
+        use super::*;
+        use crate::deploy_drain::{WorkGuard, WorkKind};
+        use crate::handlers::event::dispatch_persistent_event;
+        use buzz_core::{StoredEvent, TenantContext};
+        use std::time::Duration;
+
+        struct PausedWorkflowSink {
+            entered: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+            release: Arc<tokio::sync::Notify>,
+            drain: crate::deploy_drain::DrainController,
+            inherited: Arc<std::sync::atomic::AtomicBool>,
+        }
+
+        impl buzz_workflow::ActionSink for PausedWorkflowSink {
+            fn send_message(
+                &self,
+                _community_id: buzz_core::CommunityId,
+                _channel_id: &str,
+                _text: &str,
+                _authored_text: &str,
+                _author_pubkey: &str,
+                _reply_to: Option<&str>,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = Result<String, buzz_workflow::ActionSinkError>>
+                        + Send
+                        + '_,
+                >,
+            > {
+                Box::pin(async move {
+                    self.entered
+                        .lock()
+                        .unwrap()
+                        .take()
+                        .unwrap()
+                        .send(())
+                        .unwrap();
+                    self.release.notified().await;
+                    // This effect is reached after the serving parent and HTTP
+                    // admission have ended. The actual engine must retain and
+                    // re-enter its own accepted run context.
+                    let descendant = self.drain.admit_current_child(WorkKind::Background);
+                    if let Ok(descendant) = descendant {
+                        self.inherited
+                            .store(true, std::sync::atomic::Ordering::SeqCst);
+                        descendant.complete();
+                    }
+                    Ok("synthetic-effect-complete".to_owned())
+                })
+            }
+        }
+
+        async fn exercise_workflow(database_available: bool) {
+            use buzz_core::channel::{ChannelType, ChannelVisibility};
+            let (state, tenant, _stored, parent, cleanup) = fixture(false).await;
+            let owner = Keys::generate();
+            let owner_bytes = owner.public_key().to_bytes();
+            state
+                .db
+                .ensure_user(tenant.community(), &owner_bytes)
+                .await
+                .unwrap();
+            let channel = state
+                .db
+                .create_channel(
+                    tenant.community(),
+                    "deploy-workflow",
+                    ChannelType::Stream,
+                    ChannelVisibility::Open,
+                    None,
+                    &owner_bytes,
+                    None,
+                )
+                .await
+                .unwrap();
+            let definition = serde_json::json!({
+                "name": "Drain descendant", "trigger": {"on": "message_posted"},
+                "steps": [{"id": "send", "action": "send_message", "text": "accepted effect"}],
+                "enabled": true,
+            });
+            let workflow = state
+                .db
+                .create_workflow(
+                    tenant.community(),
+                    Some(channel.id),
+                    &owner_bytes,
+                    "Drain descendant",
+                    &definition.to_string(),
+                    &[17; 32],
+                )
+                .await
+                .unwrap();
+            let event = EventBuilder::new(
+                Kind::from(buzz_core::kind::KIND_STREAM_MESSAGE as u16),
+                "accepted trigger",
+            )
+            .sign_with_keys(&owner)
+            .unwrap();
+            let (stored, _) = state
+                .db
+                .insert_event(tenant.community(), &event, Some(channel.id))
+                .await
+                .unwrap();
+            let (entered, ready) = tokio::sync::oneshot::channel();
+            let release = Arc::new(tokio::sync::Notify::new());
+            let inherited = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            state
+                .workflow_engine
+                .set_action_sink(Arc::new(PausedWorkflowSink {
+                    entered: std::sync::Mutex::new(Some(entered)),
+                    release: release.clone(),
+                    drain: state.deploy_drain.clone(),
+                    inherited: inherited.clone(),
+                }));
+            let operation = Uuid::new_v4();
+            let boot = state.deploy_drain.begin(operation).unwrap().boot_id;
+            state
+                .deploy_drain
+                .fence_http(operation, boot, "qualified-edge")
+                .unwrap();
+            parent
+                .scope(state.workflow_engine.on_event(tenant.community(), &stored))
+                .await
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(3), ready)
+                .await
+                .unwrap()
+                .unwrap();
+            parent.complete();
+            let parked = state.deploy_drain.snapshot();
+            if !database_available {
+                state.db.pool().close().await;
+            }
+            release.notify_one();
+            tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    let complete = if database_available {
+                        sqlx::query_scalar::<_, bool>(
+                            "SELECT EXISTS(SELECT 1 FROM workflow_runs WHERE community_id=$1 AND workflow_id=$2 AND status='completed')",
+                        ).bind(tenant.community().as_uuid()).bind(workflow).fetch_one(&cleanup).await.unwrap()
+                    } else { true };
+                    if complete && state.deploy_drain.snapshot().background_inflight == 0 { break; }
+                    tokio::task::yield_now().await;
+                }
+            }).await.expect("actual run finalizes after releasing its effect");
+            let finished = state.deploy_drain.snapshot();
+            for query in [
+                "DELETE FROM workflow_runs WHERE community_id=$1",
+                "DELETE FROM workflows WHERE community_id=$1",
+                "DELETE FROM events WHERE community_id=$1",
+                "DELETE FROM channel_members WHERE community_id=$1",
+                "DELETE FROM channels WHERE community_id=$1",
+                "DELETE FROM users WHERE community_id=$1",
+                // A deliberately closed writer cannot release its last
+                // serving-write lease. Remove only this fixture's lease using
+                // the separate observer connection before its community.
+                "DELETE FROM community_serving_write_leases WHERE community_id=$1",
+            ] {
+                sqlx::query(query)
+                    .bind(tenant.community().as_uuid())
+                    .execute(&cleanup)
+                    .await
+                    .unwrap();
+            }
+            sqlx::query("DELETE FROM communities WHERE id=$1")
+                .bind(tenant.community().as_uuid())
+                .execute(&cleanup)
+                .await
+                .unwrap();
+            cleanup.close().await;
+            assert_eq!(parked.http_inflight, 0);
+            assert_eq!(
+                parked.background_inflight, 1,
+                "the actual spawned workflow must retain its own lifetime"
+            );
+            assert!(inherited.load(std::sync::atomic::Ordering::SeqCst));
+            assert!(!finished
+                .blocking_workers
+                .iter()
+                .any(|fault| fault == "unattributed-work"));
+            assert_eq!(
+                finished
+                    .blocking_workers
+                    .iter()
+                    .any(|fault| fault == "unresolved-background"),
+                !database_available,
+                "failed durable finalization must remain unresolved",
+            );
+        }
+
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn deployment_event_workflow_outlives_http_parent_and_finalizes_durably() {
+            exercise_workflow(true).await;
+        }
+
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn deployment_event_workflow_failed_finalization_blocks_stop() {
+            exercise_workflow(false).await;
+        }
+
+        async fn fixture(
+            redis_available: bool,
+        ) -> (
+            Arc<crate::state::AppState>,
+            TenantContext,
+            StoredEvent,
+            WorkGuard,
+            sqlx::PgPool,
+        ) {
+            let mut config = super::fanout_access::test_config();
+            config.database_url = crate::test_support::database_url();
+            config.redis_url = if redis_available {
+                std::env::var("REDIS_URL").expect("isolated Redis URL")
+            } else {
+                "redis://127.0.0.1:1".to_owned()
+            };
+            config.audit_enabled = false;
+            config.deploy_control_token = Some(
+                crate::config::DeployControlToken::from_secret("a".repeat(64)).expect("test token"),
+            );
+            let cleanup = sqlx::PgPool::connect(&config.database_url)
+                .await
+                .expect("isolated PG");
+            let state = super::fanout_access::test_state_with_config(config).await;
+            let parent = state
+                .deploy_drain
+                .try_admit_root(WorkKind::Http)
+                .expect("accepted HTTP request");
+            let (tenant, stored) = parent
+                .scope(async {
+                    let host = format!("deploy-dispatch-{}.test", Uuid::new_v4().simple());
+                    let community = state
+                        .db
+                        .ensure_configured_community(&host)
+                        .await
+                        .expect("community")
+                        .id;
+                    let tenant = TenantContext::resolved(community, host);
+                    let event = EventBuilder::new(Kind::TextNote, "synthetic dispatch fixture")
+                        .sign_with_keys(&Keys::generate())
+                        .expect("signed fixture");
+                    let (stored, inserted) = state
+                        .db
+                        .insert_event(community, &event, None)
+                        .await
+                        .expect("durable accepted event");
+                    assert!(inserted);
+                    (tenant, stored)
+                })
+                .await;
+            (state, tenant, stored, parent, cleanup)
+        }
+
+        async fn exercise(inherit_parent: bool, redis_available: bool) {
+            let (state, tenant, stored, parent, cleanup) = fixture(redis_available).await;
+            let (entered, release) =
+                crate::nip_fi_test_hooks::deploy_post_commit_hook::arm(tenant.community());
+            let (finished, finish_release) =
+                crate::nip_fi_test_hooks::deploy_post_commit_done_hook::arm(tenant.community());
+            let operation = Uuid::new_v4();
+            let begun = state.deploy_drain.begin(operation).expect("begin");
+            state
+                .deploy_drain
+                .fence_http(operation, begun.boot_id, "evidence:retired")
+                .expect("fence");
+            let actor = stored.event.pubkey.to_hex();
+            let dispatch = dispatch_persistent_event(&tenant, &state, &stored, 1, &actor, None);
+            if inherit_parent {
+                parent.scope(dispatch).await;
+            } else {
+                dispatch.await;
+            }
+            tokio::time::timeout(Duration::from_secs(3), entered)
+                .await
+                .expect("actual spawned dispatch reaches barrier")
+                .expect("barrier signal");
+            parent.complete();
+            let parked = state.deploy_drain.snapshot();
+            // Release both gates even when checking a RED implementation, so
+            // fixture teardown never strands a real dispatch or database row.
+            release.notify_one();
+            tokio::time::timeout(Duration::from_secs(3), finished)
+                .await
+                .expect("real dispatch side effects finish")
+                .expect("finish signal");
+            finish_release.notify_one();
+            tokio::time::timeout(Duration::from_secs(3), async {
+                while state.deploy_drain.snapshot().background_inflight != 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("all dispatch descendants complete");
+            let remains: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM events WHERE community_id=$1 AND id=$2)",
+            )
+            .bind(tenant.community().as_uuid())
+            .bind(stored.event.id.as_bytes().to_vec())
+            .fetch_one(&cleanup)
+            .await
+            .expect("accepted event remains durable");
+            sqlx::query("DELETE FROM events WHERE community_id=$1")
+                .bind(tenant.community().as_uuid())
+                .execute(&cleanup)
+                .await
+                .expect("only own event cleanup");
+            sqlx::query("DELETE FROM communities WHERE id=$1")
+                .bind(tenant.community().as_uuid())
+                .execute(&cleanup)
+                .await
+                .expect("only own community cleanup");
+            cleanup.close().await;
+            assert!(remains);
+            assert_eq!(parked.http_inflight, 0);
+            assert_eq!(
+                parked.background_inflight, 1,
+                "the real detached post-commit task must retain accepted work"
+            );
+            assert!(!parked.safe_to_stop);
+            if !redis_available {
+                assert!(
+                    state
+                        .deploy_drain
+                        .snapshot()
+                        .blocking_workers
+                        .iter()
+                        .any(|worker| worker == "unresolved-background"),
+                    "failed post-commit publication must not acknowledge all side effects complete"
+                );
+            }
+            if !inherit_parent {
+                assert!(
+                    state
+                        .deploy_drain
+                        .snapshot()
+                        .blocking_workers
+                        .iter()
+                        .any(|worker| worker == "unattributed-work"),
+                    "lost lineage must preserve accepted dispatch and block termination"
+                );
+            }
+        }
+
+        #[tokio::test]
+        #[ignore = "requires Postgres and Redis"]
+        async fn deployment_post_commit_dispatch_retains_parent_after_http_fence() {
+            exercise(true, true).await;
+        }
+
+        #[tokio::test]
+        #[ignore = "requires Postgres and Redis"]
+        async fn deployment_post_commit_unknown_origin_keeps_work_and_blocks_stop() {
+            exercise(false, true).await;
+        }
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn deployment_post_commit_publish_failure_remains_unresolved() {
+            exercise(true, false).await;
         }
     }
 }

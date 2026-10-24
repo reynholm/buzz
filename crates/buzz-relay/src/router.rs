@@ -490,6 +490,21 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .layer(middleware::from_fn(track_metrics))
         .layer(http_trace_layer())
         .layer(build_cors_layer(&state.config.cors_origins))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::deploy_drain::track_http,
+        ))
+        .layer(middleware::from_fn(reject_public_deploy_control))
+}
+
+async fn reject_public_deploy_control(
+    request: Request<Body>,
+    next: middleware::Next,
+) -> axum::response::Response {
+    if request.uri().path() == "/_deploy" || request.uri().path().starts_with("/_deploy/") {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    next.run(request).await
 }
 
 fn http_trace_layer() -> TraceLayer<HttpMakeClassifier, fn(&Request<Body>) -> tracing::Span> {
@@ -576,14 +591,21 @@ async fn admin_spa_document(state: &AppState, accept: &str) -> axum::response::R
 
 /// Build the health-only router for K8s probes (port 8080 in CAKE).
 ///
-/// No metrics middleware, no auth, no CORS, no body limit.
+/// Probes remain unauthenticated. Optional deployment control has private auth
+/// and its own bounded request body; it is never mounted in the app router.
 pub fn build_health_router(state: Arc<AppState>) -> Router {
+    let control = if state.config.deploy_control_token.is_some() {
+        crate::deploy_drain::control_router(Arc::clone(&state))
+    } else {
+        Router::new()
+    };
     Router::new()
         .route("/_liveness", get(liveness_handler))
         .route("/_readiness", get(kubernetes_readiness_handler))
         .route("/_status", get(status_handler))
         .route("/_mesh", get(mesh_status_handler))
         .with_state(state)
+        .merge(control)
 }
 
 /// Content-negotiated: NIP-11 JSON for plain HTTP, WebSocket upgrade otherwise.
@@ -814,9 +836,14 @@ async fn nip11_or_ws_handler(
                     connection_time,
                 )
             });
+            let work = crate::deploy_drain::UpgradeWork::new(
+                state.track_accepted_child(crate::deploy_drain::WorkKind::WebSocket),
+            );
+            let failed = work.clone();
             limit_relay_websocket(ws, max_frame_bytes)
+                .on_failed_upgrade(move |_| failed.failed())
                 .on_upgrade(move |socket| {
-                    handle_connection(
+                    work.run(handle_connection(
                         socket,
                         state,
                         addr,
@@ -824,7 +851,7 @@ async fn nip11_or_ws_handler(
                         nip_fi_assertion,
                         shadow,
                         connection_time,
-                    )
+                    ))
                 })
                 .into_response()
         }
@@ -1031,6 +1058,7 @@ fn build_cors_layer(cors_origins: &[String]) -> CorsLayer {
 
 #[cfg(test)]
 mod tests {
+    use http_body_util::BodyExt;
     use std::collections::VecDeque;
     use std::sync::{Mutex, PoisonError};
     use std::time::Duration;
@@ -2567,6 +2595,200 @@ mod tests {
     mod postgres_tests {
         use super::*;
         use std::sync::Arc;
+
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn deployment_audio_socket_is_tracked_until_client_disconnects() {
+            check_deployment_audio_socket(false).await;
+        }
+
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn deployment_audio_socket_receives_restart_close_from_control_begin() {
+            check_deployment_audio_socket(true).await;
+        }
+
+        async fn check_deployment_audio_socket(server_restart: bool) {
+            use futures_util::{SinkExt, StreamExt};
+            use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+            let base = real_db_state().await.expect("Postgres");
+            let id = uuid::Uuid::new_v4();
+            let host = format!("drain-audio-{}.test", id.simple());
+            sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+                .bind(id)
+                .bind(&host)
+                .execute(base.db.pool())
+                .await
+                .unwrap();
+            let mut state = (*base).clone();
+            Arc::make_mut(&mut state.config).deploy_control_token =
+                Some(crate::config::DeployControlToken::from_secret("a".repeat(64)).unwrap());
+            let state = Arc::new(state);
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let app = build_router(state.clone())
+                .into_make_service_with_connect_info::<std::net::SocketAddr>();
+            let server = tokio::spawn(async move { axum::serve(listener, app).await });
+            let mut request = format!("ws://{address}/huddle/{id}/audio")
+                .into_client_request()
+                .unwrap();
+            request.headers_mut().insert("host", host.parse().unwrap());
+            let (mut socket, _) = connect_async(request).await.unwrap();
+            assert!(matches!(
+                socket.next().await.unwrap().unwrap(),
+                Message::Text(_)
+            ));
+            let open = state.deploy_drain.snapshot();
+            let op = uuid::Uuid::new_v4();
+            if !server_restart {
+                let boot = state.deploy_drain.begin(op).unwrap().boot_id;
+                state
+                    .deploy_drain
+                    .fence_http(op, boot, "test-edge-retired")
+                    .unwrap();
+            }
+            let fenced = state.deploy_drain.snapshot();
+            let restarted = if server_restart {
+                let response = deployment_control_request(
+                    build_health_router(state.clone()),
+                    "POST",
+                    "/_deploy/drain",
+                    true,
+                    &serde_json::json!({"operation_id": op}).to_string(),
+                )
+                .await;
+                assert_eq!(response.status(), StatusCode::ACCEPTED);
+                drop(response);
+                tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                    while let Some(message) = socket.next().await {
+                        if let Message::Close(frame) = message.unwrap() {
+                            return frame.map(|f| u16::from(f.code));
+                        }
+                    }
+                    None
+                })
+                .await
+                .ok()
+                .flatten()
+            } else {
+                socket.send(Message::Close(None)).await.unwrap();
+                None
+            };
+            drop(socket);
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                while state.deploy_drain.snapshot().ws_open != 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            server.abort();
+            let _ = server.await;
+            sqlx::query("DELETE FROM communities WHERE id=$1")
+                .bind(id)
+                .execute(base.db.pool())
+                .await
+                .unwrap();
+            if server_restart {
+                assert_eq!(
+                    restarted,
+                    Some(1012),
+                    "audio restart must flush a reconnect close"
+                );
+            }
+            assert_eq!(open.ws_open, 1);
+            assert_eq!(
+                fenced.ws_open, 1,
+                "HTTP fence must not forget an accepted audio connection"
+            );
+            assert!(!state
+                .deploy_drain
+                .snapshot()
+                .blocking_workers
+                .iter()
+                .any(|fault| fault == "unresolved-websocket"));
+        }
+
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn deployment_websocket_lifetime_survives_upgrade_and_drains_with_1012() {
+            use futures_util::StreamExt;
+            use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+            let base = real_db_state().await.expect("Postgres");
+            let id = uuid::Uuid::new_v4();
+            let host = format!("drain-ws-{}.test", id.simple());
+            sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+                .bind(id)
+                .bind(&host)
+                .execute(base.db.pool())
+                .await
+                .unwrap();
+            let mut state = (*base).clone();
+            let config = Arc::make_mut(&mut state.config);
+            config.deploy_control_token =
+                Some(crate::config::DeployControlToken::from_secret("a".repeat(64)).unwrap());
+            config.drain_jitter_ms = 0;
+            let state = Arc::new(state);
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let app = build_router(state.clone())
+                .into_make_service_with_connect_info::<std::net::SocketAddr>();
+            let server = tokio::spawn(async move { axum::serve(listener, app).await });
+            let mut request = format!("ws://{address}/").into_client_request().unwrap();
+            request.headers_mut().insert("host", host.parse().unwrap());
+            let (mut socket, _) = connect_async(request).await.unwrap();
+            let challenge = socket.next().await.unwrap().unwrap();
+            assert!(matches!(challenge, Message::Text(_)));
+            let open = state.deploy_drain.snapshot();
+            let operation = uuid::Uuid::new_v4();
+            let response = deployment_control_request(
+                build_health_router(state.clone()),
+                "POST",
+                "/_deploy/drain",
+                true,
+                &serde_json::json!({"operation_id": operation}).to_string(),
+            )
+            .await;
+            // Use the registered private route, so the test covers close dispatch.
+            let status = response.status();
+            drop(response);
+            let closed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                while let Some(message) = socket.next().await {
+                    if let Message::Close(frame) = message.unwrap() {
+                        return frame.map(|f| u16::from(f.code));
+                    }
+                }
+                None
+            })
+            .await;
+            drop(socket);
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                while state.deploy_drain.snapshot().ws_open != 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            server.abort();
+            let _ = server.await;
+            sqlx::query("DELETE FROM communities WHERE id=$1")
+                .bind(id)
+                .execute(base.db.pool())
+                .await
+                .unwrap();
+            assert_eq!(status, StatusCode::ACCEPTED);
+            assert_eq!(closed.unwrap(), Some(1012));
+            assert_eq!(
+                open.ws_open, 1,
+                "upgraded socket must retain its own work after HTTP completes"
+            );
+            assert!(!state
+                .deploy_drain
+                .snapshot()
+                .blocking_workers
+                .iter()
+                .any(|fault| fault == "unresolved-websocket"));
+        }
 
         // Pins: a real shadow root handshake runs the upgrade check once, and
         // a passing assertion closed before AUTH records no verdict.
@@ -4479,5 +4701,291 @@ mod tests {
         .await;
         assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
         assert_eq!(verifier.calls(), 1);
+    }
+
+    async fn deployment_control_state() -> Arc<AppState> {
+        let mut state = unreachable_dependency_state().await;
+        Arc::get_mut(&mut Arc::get_mut(&mut state).expect("unique state").config)
+            .expect("unique config")
+            .deploy_control_token = Some(
+            crate::config::DeployControlToken::from_secret("a".repeat(64)).expect("test token"),
+        );
+        state
+    }
+
+    async fn deployment_control_request(
+        router: Router,
+        method: &str,
+        path: &str,
+        authorized: bool,
+        body: &str,
+    ) -> axum::response::Response {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("host", "relay.example.test")
+            .header("content-type", "application/json");
+        if authorized {
+            request = request.header("authorization", format!("Bearer {}", "a".repeat(64)));
+        }
+        router
+            .oneshot(request.body(Body::from(body.to_owned())).expect("request"))
+            .await
+            .expect("response")
+    }
+
+    #[tokio::test]
+    async fn deployment_control_is_optional_private_and_authenticated_before_json_parsing() {
+        let disabled = unreachable_dependency_state().await;
+        assert_eq!(
+            deployment_control_request(
+                build_health_router(disabled),
+                "GET",
+                "/_deploy/drain",
+                true,
+                ""
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND
+        );
+        let state = deployment_control_state().await;
+        for (method, path) in [
+            ("GET", "/_deploy/drain"),
+            ("POST", "/_deploy/drain"),
+            ("POST", "/_deploy/drain/fence-http"),
+        ] {
+            assert_eq!(
+                deployment_control_request(build_router(state.clone()), method, path, true, "{}")
+                    .await
+                    .status(),
+                StatusCode::NOT_FOUND,
+                "control must never enter public app routes"
+            );
+        }
+        let health = build_health_router(state);
+        assert_eq!(
+            deployment_control_request(health.clone(), "GET", "/_deploy/drain", false, "")
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            deployment_control_request(
+                health.clone(),
+                "POST",
+                "/_deploy/drain",
+                false,
+                "malformed JSON"
+            )
+            .await
+            .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let wrong = Request::get("/_deploy/drain")
+            .header("authorization", format!("Bearer {}", "b".repeat(64)))
+            .body(Body::empty())
+            .expect("request");
+        assert_eq!(
+            health
+                .clone()
+                .oneshot(wrong)
+                .await
+                .expect("response")
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let valid = deployment_control_request(health, "GET", "/_deploy/drain", true, "").await;
+        assert_eq!(valid.status(), StatusCode::OK);
+        let bytes = valid.into_body().collect().await.expect("body").to_bytes();
+        let snapshot: serde_json::Value = serde_json::from_slice(&bytes).expect("snapshot");
+        assert_eq!(snapshot["phase"], "serving");
+        assert!(uuid::Uuid::parse_str(snapshot["boot_id"].as_str().expect("boot ID")).is_ok());
+        assert!(!String::from_utf8_lossy(&bytes).contains(&"a".repeat(64)));
+    }
+
+    #[tokio::test]
+    async fn deployment_control_begin_withdraws_readiness_and_fence_binds_operation_and_boot() {
+        let state = deployment_control_state().await;
+        let health = build_health_router(state);
+        let operation = uuid::Uuid::new_v4();
+        let request = serde_json::json!({"operation_id": operation}).to_string();
+        let response =
+            deployment_control_request(health.clone(), "POST", "/_deploy/drain", true, &request)
+                .await;
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let begun: serde_json::Value = serde_json::from_slice(&bytes).expect("snapshot");
+        assert_eq!(begun["phase"], "quiescing");
+        assert_eq!(begun["root_http_open"], true);
+        assert_eq!(begun["safe_to_stop"], false);
+        assert_eq!(
+            deployment_control_request(health.clone(), "GET", "/_readiness", false, "")
+                .await
+                .status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        let wrong = serde_json::json!({"operation_id": operation, "boot_id": uuid::Uuid::new_v4(), "routing_evidence_ref": "evidence:routed"}).to_string();
+        assert_eq!(
+            deployment_control_request(
+                health.clone(),
+                "POST",
+                "/_deploy/drain/fence-http",
+                true,
+                &wrong
+            )
+            .await
+            .status(),
+            StatusCode::CONFLICT
+        );
+        let correct = serde_json::json!({"operation_id": operation, "boot_id": begun["boot_id"], "routing_evidence_ref": "evidence:routed"}).to_string();
+        let response = deployment_control_request(
+            health.clone(),
+            "POST",
+            "/_deploy/drain/fence-http",
+            true,
+            &correct,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let fenced: serde_json::Value = serde_json::from_slice(
+            &response
+                .into_body()
+                .collect()
+                .await
+                .expect("body")
+                .to_bytes(),
+        )
+        .expect("snapshot");
+        assert_eq!(fenced["root_http_open"], false);
+        assert_eq!(fenced["routing_evidence_ref"], "evidence:routed");
+        assert_eq!(fenced["boot_id"], begun["boot_id"]);
+        let conflict = serde_json::json!({"operation_id": uuid::Uuid::new_v4()}).to_string();
+        assert_eq!(
+            deployment_control_request(health, "POST", "/_deploy/drain", true, &conflict)
+                .await
+                .status(),
+            StatusCode::CONFLICT
+        );
+    }
+
+    async fn deployment_control_snapshot(health: Router) -> serde_json::Value {
+        let response = deployment_control_request(health, "GET", "/_deploy/drain", true, "").await;
+        assert_eq!(response.status(), StatusCode::OK);
+        serde_json::from_slice(
+            &response
+                .into_body()
+                .collect()
+                .await
+                .expect("snapshot body")
+                .to_bytes(),
+        )
+        .expect("snapshot JSON")
+    }
+
+    #[tokio::test]
+    async fn deployment_http_guard_lives_through_response_body_and_closes_new_roots_after_fence() {
+        let state = deployment_control_state().await;
+        let health = build_health_router(state.clone());
+        let app = build_router(state);
+        let held = deployment_control_request(app.clone(), "GET", "/health", false, "").await;
+        assert_eq!(held.status(), StatusCode::OK);
+        assert_eq!(
+            deployment_control_snapshot(health.clone()).await["http_inflight"],
+            1,
+            "response headers must not release an unconsumed body"
+        );
+        let operation = uuid::Uuid::new_v4();
+        let begin = deployment_control_request(
+            health.clone(),
+            "POST",
+            "/_deploy/drain",
+            true,
+            &serde_json::json!({"operation_id":operation}).to_string(),
+        )
+        .await;
+        assert_eq!(begin.status(), StatusCode::ACCEPTED);
+        let snapshot = deployment_control_snapshot(health.clone()).await;
+        let fence = deployment_control_request(
+            health.clone(),
+            "POST",
+            "/_deploy/drain/fence-http",
+            true,
+            &serde_json::json!({"operation_id":operation,"boot_id":snapshot["boot_id"],
+                                          "routing_evidence_ref":"evidence:routed"})
+            .to_string(),
+        )
+        .await;
+        assert_eq!(fence.status(), StatusCode::ACCEPTED);
+        assert_eq!(
+            deployment_control_request(app, "GET", "/health", false, "")
+                .await
+                .status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "root HTTP must actually close when the snapshot claims it is fenced"
+        );
+        assert_eq!(
+            deployment_control_snapshot(health.clone()).await["http_inflight"],
+            1
+        );
+        let _ = held
+            .into_body()
+            .collect()
+            .await
+            .expect("accepted response completes after fence");
+        assert_eq!(
+            deployment_control_snapshot(health).await["http_inflight"],
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn deployment_http_guard_covers_a_real_file_stream_between_frames() {
+        let directory = tempfile::tempdir().expect("test web directory");
+        let assets = directory.path().join("assets");
+        std::fs::create_dir(&assets).expect("asset directory");
+        std::fs::write(directory.path().join("index.html"), "fixture").expect("index");
+        let size = 2 * 1024 * 1024;
+        std::fs::write(assets.join("large.data"), vec![42u8; size]).expect("streamed asset");
+        let mut state = spa_state(directory.path(), directory.path()).await;
+        Arc::get_mut(&mut Arc::get_mut(&mut state).expect("state").config)
+            .expect("config")
+            .deploy_control_token = Some(
+            crate::config::DeployControlToken::from_secret("a".repeat(64)).expect("test token"),
+        );
+        let health = build_health_router(state.clone());
+        let response =
+            deployment_control_request(build_router(state), "GET", "/assets/large.data", false, "")
+                .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut body = response.into_body();
+        let first = body
+            .frame()
+            .await
+            .expect("first frame")
+            .expect("file data")
+            .into_data()
+            .expect("data frame");
+        assert!(first.len() < size, "fixture must use real streaming");
+        assert_eq!(
+            deployment_control_snapshot(health.clone()).await["http_inflight"],
+            1,
+            "partial response streaming still owns the root work"
+        );
+        let rest = body
+            .collect()
+            .await
+            .expect("remaining file stream")
+            .to_bytes();
+        assert_eq!(first.len() + rest.len(), size);
+        assert_eq!(
+            deployment_control_snapshot(health).await["http_inflight"],
+            0
+        );
     }
 }

@@ -50,6 +50,10 @@ pub enum WorkflowError {
     #[error("capacity exceeded")]
     CapacityExceeded,
 
+    /// The host has fenced admission of new autonomous work.
+    #[error("workflow admission is draining")]
+    Draining,
+
     /// A database operation failed.
     #[error("database error: {0}")]
     Database(String),
@@ -76,6 +80,7 @@ impl WorkflowError {
             Self::StepTimeout { .. } => "step_timeout",
             Self::WebhookError(_) => "webhook_failed",
             Self::CapacityExceeded => "capacity_exceeded",
+            Self::Draining => "draining",
             Self::Database(_) => "database_error",
             Self::Unauthorized(_) => "owner_unauthorized",
             Self::NotImplemented(_) => "action_not_implemented",

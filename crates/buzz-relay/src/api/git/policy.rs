@@ -54,7 +54,7 @@ use crate::state::AppState;
 const MAX_CALLBACK_AGE_SECS: u64 = 30;
 
 /// Request payload from the pre-receive hook.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HookCallbackRequest {
     /// Repo identifier (d-tag from kind:30617).
     pub repo_id: String,
@@ -65,6 +65,10 @@ pub struct HookCallbackRequest {
     pub community_id: String,
     /// Hex-encoded pusher pubkey.
     pub pusher_pubkey: String,
+    /// Per-push capability assigned by a deploy-controlled relay. Omission
+    /// preserves the legacy wire/HMAC format only when deploy control is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<Uuid>,
     /// Ref updates from git stdin (old_oid, new_oid, ref_name, is_ancestor).
     pub ref_updates: Vec<HookRefUpdate>,
     /// Unix timestamp when the hook was invoked.
@@ -74,7 +78,7 @@ pub struct HookCallbackRequest {
 }
 
 /// A single ref update as reported by the pre-receive hook.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HookRefUpdate {
     /// Old object ID (40 hex chars, zero OID for creates).
     pub old_oid: String,
@@ -125,7 +129,7 @@ impl From<Denial> for DenialResponse {
 ///
 /// Fixed-length fields (OIDs=40, pubkeys=64) need no length prefix.
 /// Variable-length fields (repo_id, ref_name) are length-prefixed to prevent concatenation ambiguity.
-fn compute_hmac(secret: &[u8], req: &HookCallbackRequest) -> Vec<u8> {
+pub(crate) fn compute_hmac(secret: &[u8], req: &HookCallbackRequest) -> Vec<u8> {
     let mut mac = Hmac::<Sha256>::new_from_slice(secret).expect("HMAC can take key of any size");
 
     // Structurally unambiguous format: length-prefixed fields separated by |.
@@ -154,6 +158,10 @@ fn compute_hmac(secret: &[u8], req: &HookCallbackRequest) -> Vec<u8> {
     }
     mac.update(b"|");
     mac.update(req.timestamp.to_string().as_bytes());
+    if let Some(operation) = req.operation_id {
+        mac.update(b"|operation:");
+        mac.update(operation.to_string().as_bytes());
+    }
 
     mac.finalize().into_bytes().to_vec()
 }
@@ -170,17 +178,17 @@ fn verify_hmac(secret: &[u8], req: &HookCallbackRequest) -> bool {
     expected.ct_eq(&provided).into()
 }
 
-/// `POST /internal/git/policy` — pre-receive hook callback.
-///
-/// Fail-closed: ANY error returns 403. The hook script treats non-200 as deny.
-pub async fn hook_policy_check(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<HookCallbackRequest>,
-) -> Response {
+/// Authenticate the bounded callback before descendant transport admission.
+/// Database authorization remains in the handler after parent admission.
+#[allow(clippy::result_large_err)] // Response is the natural axum rejection type.
+pub(crate) fn authenticate_callback(
+    state: &AppState,
+    req: &HookCallbackRequest,
+) -> Result<buzz_core::CommunityId, Response> {
     // 1. Validate input fields (cheap structural checks before expensive HMAC).
     // This prevents wasting CPU on malformed payloads.
     if req.repo_id.is_empty() || req.repo_id.len() > 64 {
-        return (StatusCode::FORBIDDEN, "invalid repo_id").into_response();
+        return Err((StatusCode::FORBIDDEN, "invalid repo_id").into_response());
     }
     if req.repo_owner.len() != 64
         || !req
@@ -188,7 +196,7 @@ pub async fn hook_policy_check(
             .chars()
             .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
     {
-        return (StatusCode::FORBIDDEN, "invalid repo_owner").into_response();
+        return Err((StatusCode::FORBIDDEN, "invalid repo_owner").into_response());
     }
     if req.pusher_pubkey.len() != 64
         || !req
@@ -196,22 +204,22 @@ pub async fn hook_policy_check(
             .chars()
             .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
     {
-        return (StatusCode::FORBIDDEN, "invalid pusher_pubkey").into_response();
+        return Err((StatusCode::FORBIDDEN, "invalid pusher_pubkey").into_response());
     }
     let community_uuid = match Uuid::parse_str(&req.community_id) {
         Ok(id) => id,
-        Err(_) => return (StatusCode::FORBIDDEN, "invalid community_id").into_response(),
+        Err(_) => return Err((StatusCode::FORBIDDEN, "invalid community_id").into_response()),
     };
     let community = buzz_core::CommunityId::from_uuid(community_uuid);
     if req.ref_updates.is_empty() || req.ref_updates.len() > 500 {
-        return (StatusCode::FORBIDDEN, "invalid ref_updates count").into_response();
+        return Err((StatusCode::FORBIDDEN, "invalid ref_updates count").into_response());
     }
     for r in &req.ref_updates {
         if r.old_oid.len() != 40 || !r.old_oid.chars().all(|c| c.is_ascii_hexdigit()) {
-            return (StatusCode::FORBIDDEN, "invalid old_oid").into_response();
+            return Err((StatusCode::FORBIDDEN, "invalid old_oid").into_response());
         }
         if r.new_oid.len() != 40 || !r.new_oid.chars().all(|c| c.is_ascii_hexdigit()) {
-            return (StatusCode::FORBIDDEN, "invalid new_oid").into_response();
+            return Err((StatusCode::FORBIDDEN, "invalid new_oid").into_response());
         }
         if r.ref_name.is_empty()
             || r.ref_name.len() > 256
@@ -219,15 +227,15 @@ pub async fn hook_policy_check(
             || r.ref_name.contains("..")
             || r.ref_name.bytes().any(|b| b <= 0x20 || b == 0x7f)
         {
-            return (StatusCode::FORBIDDEN, "invalid ref_name").into_response();
+            return Err((StatusCode::FORBIDDEN, "invalid ref_name").into_response());
         }
     }
 
     // 2. Verify HMAC signature (now that we know the payload is structurally valid).
     let secret = state.config.git_hook_hmac_secret.as_bytes();
-    if !verify_hmac(secret, &req) {
+    if !verify_hmac(secret, req) {
         warn!(repo = %req.repo_id, "hook callback: HMAC verification failed");
-        return (StatusCode::FORBIDDEN, "signature verification failed").into_response();
+        return Err((StatusCode::FORBIDDEN, "signature verification failed").into_response());
     }
 
     // 3. Validate timestamp (30s TTL, max 5s future tolerance).
@@ -237,12 +245,27 @@ pub async fn hook_policy_check(
         .as_secs();
     if now.saturating_sub(req.timestamp) > MAX_CALLBACK_AGE_SECS {
         warn!(repo = %req.repo_id, age = now.saturating_sub(req.timestamp), "hook callback: expired");
-        return (StatusCode::FORBIDDEN, "callback expired").into_response();
+        return Err((StatusCode::FORBIDDEN, "callback expired").into_response());
     }
     if req.timestamp.saturating_sub(now) > 5 {
         warn!(repo = %req.repo_id, "hook callback: timestamp too far in future");
-        return (StatusCode::FORBIDDEN, "callback timestamp invalid").into_response();
+        return Err((StatusCode::FORBIDDEN, "callback timestamp invalid").into_response());
     }
+
+    Ok(community)
+}
+
+/// `POST /internal/git/policy` — pre-receive hook callback.
+///
+/// Fail-closed: ANY error returns 403. The hook script treats non-200 as deny.
+pub async fn hook_policy_check(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<HookCallbackRequest>,
+) -> Response {
+    let community = match authenticate_callback(&state, &req) {
+        Ok(community) => community,
+        Err(response) => return response,
+    };
 
     // 4. Validate and resolve kind:30617 for this repo.
     // Query by (community_id, kind=30617, pubkey=owner, d_tag=repo_id) to
@@ -449,6 +472,7 @@ pub fn generate_hook_hmac(
     timestamp: u64,
 ) -> String {
     let req = HookCallbackRequest {
+        operation_id: None,
         repo_id: repo_id.to_string(),
         repo_owner: repo_owner.to_string(),
         community_id: community_id.to_string(),
@@ -467,6 +491,7 @@ mod postgres_tests {
 
     fn make_request() -> HookCallbackRequest {
         HookCallbackRequest {
+            operation_id: None,
             repo_id: "test-repo".to_string(),
             repo_owner: "a".repeat(64),
             community_id: uuid::Uuid::from_u128(1).to_string(),
@@ -488,6 +513,117 @@ mod postgres_tests {
     fn sign_request(req: &mut HookCallbackRequest, secret: &[u8]) {
         let mac = compute_hmac(secret, req);
         req.signature = hex::encode(mac);
+    }
+
+    #[test]
+    fn deployment_hook_hmac_binds_operation_and_rejects_omission_or_substitution() {
+        let secret = b"synthetic-hook-secret";
+        let mut payload = serde_json::json!({
+            "repo_id": "test-repo", "repo_owner": "a".repeat(64),
+            "community_id": Uuid::from_u128(1).to_string(), "pusher_pubkey": "b".repeat(64),
+            "ref_updates": [{"old_oid": "1".repeat(40), "new_oid": "2".repeat(40),
+                "ref_name": "refs/heads/main", "is_ancestor": true}],
+            "timestamp": 1234567890, "signature": "", "operation_id": Uuid::new_v4(),
+        });
+        let mut request: HookCallbackRequest = serde_json::from_value(payload.clone()).unwrap();
+        sign_request(&mut request, secret);
+        assert!(verify_hmac(secret, &request));
+        payload["signature"] = serde_json::json!(request.signature);
+        payload["operation_id"] = serde_json::json!(Uuid::new_v4());
+        let changed = serde_json::from_value(payload.clone()).unwrap();
+        assert!(
+            !verify_hmac(secret, &changed),
+            "changing the push operation must invalidate its signature"
+        );
+        payload.as_object_mut().unwrap().remove("operation_id");
+        let omitted = serde_json::from_value(payload).unwrap();
+        assert!(
+            !verify_hmac(secret, &omitted),
+            "dropping the operation cannot downgrade a signed callback"
+        );
+    }
+
+    #[tokio::test]
+    async fn deployment_hook_script_posts_matching_legacy_and_operation_signatures() {
+        use axum::{routing::post, Router};
+        use std::process::Stdio;
+        use std::sync::Mutex;
+        use tokio::io::AsyncWriteExt;
+
+        for operation in [None, Some(Uuid::new_v4())] {
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            let sender = Arc::new(Mutex::new(Some(sender)));
+            let app = Router::new().route(
+                "/policy",
+                post(move |Json(value): Json<serde_json::Value>| {
+                    let sender = sender.clone();
+                    async move {
+                        sender.lock().unwrap().take().unwrap().send(value).unwrap();
+                        StatusCode::OK
+                    }
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap();
+            });
+            let repo = tempfile::tempdir().unwrap();
+            crate::api::git::hook::install_hook(repo.path())
+                .await
+                .unwrap();
+            let mut command = tokio::process::Command::new(repo.path().join("hooks/pre-receive"));
+            command
+                .env("BUZZ_HOOK_URL", format!("http://{address}/policy"))
+                .env("BUZZ_HOOK_SECRET", "synthetic-hook-secret")
+                .env("BUZZ_REPO_ID", "test-repo")
+                .env("BUZZ_REPO_OWNER", "a".repeat(64))
+                .env("BUZZ_COMMUNITY_ID", Uuid::from_u128(1).to_string())
+                .env("BUZZ_PUSHER_PUBKEY", "b".repeat(64))
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            if let Some(operation) = operation {
+                command.env("BUZZ_HOOK_OPERATION_ID", operation.to_string());
+            } else {
+                command.env_remove("BUZZ_HOOK_OPERATION_ID");
+            }
+            let mut child = command.spawn().unwrap();
+            let mut input = child.stdin.take().unwrap();
+            input
+                .write_all(
+                    format!("{} {} refs/heads/main\n", "0".repeat(40), "1".repeat(40)).as_bytes(),
+                )
+                .await
+                .unwrap();
+            drop(input);
+            let output =
+                tokio::time::timeout(std::time::Duration::from_secs(15), child.wait_with_output())
+                    .await
+                    .unwrap()
+                    .unwrap();
+            server.abort();
+            let _ = server.await;
+            assert!(
+                output.status.success(),
+                "actual hook failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let payload = receiver.await.unwrap();
+            let observed = payload
+                .get("operation_id")
+                .and_then(|value| value.as_str())
+                .map(|value| Uuid::parse_str(value).unwrap());
+            let request: HookCallbackRequest = serde_json::from_value(payload).unwrap();
+            assert!(
+                verify_hmac(b"synthetic-hook-secret", &request),
+                "actual Bash payload must match Rust verification"
+            );
+            assert_eq!(
+                observed, operation,
+                "actual hook must carry the server-assigned operation"
+            );
+        }
     }
 
     #[test]
@@ -891,6 +1027,7 @@ printf '%s' "$HMAC_INPUT" | openssl dgst -sha256 -hmac "{secret}" -hex 2>/dev/nu
 
         let owner_hex = keys.public_key().to_hex();
         let mut req = HookCallbackRequest {
+            operation_id: None,
             repo_id: repo_id.to_string(),
             repo_owner: owner_hex.clone(),
             community_id: community.as_uuid().to_string(),

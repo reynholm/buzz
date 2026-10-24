@@ -41,25 +41,53 @@ enum WorkerIteration {
 }
 
 /// Reap stale deliveries every five minutes and expired registrations daily.
-pub async fn run_reaper(state: Arc<AppState>) {
-    tokio::join!(
-        async {
-            loop {
-                if let Err(error) = state.db.delete_expired_operator_listener_pubkeys().await {
-                    warn!(%error, "operator-listener registration cleanup failed");
+/// Registers both workers synchronously before the returned future is spawned.
+pub fn run_reaper(state: Arc<AppState>) -> impl std::future::Future<Output = ()> {
+    let drain = state
+        .config
+        .deploy_control_token
+        .as_ref()
+        .map(|_| state.deploy_drain.clone());
+    let registrations = crate::deploy_drain::periodic_worker(
+        drain.clone(),
+        "operator-registration-reaper",
+        REGISTRATION_REAP_INTERVAL,
+        {
+            let state = state.clone();
+            move || {
+                let state = state.clone();
+                async move {
+                    state
+                        .db
+                        .delete_expired_operator_listener_pubkeys()
+                        .await
+                        .inspect_err(
+                            |error| warn!(%error, "operator-listener registration cleanup failed"),
+                        )
+                        .map(|_| ())
                 }
-                tokio::time::sleep(REGISTRATION_REAP_INTERVAL).await;
             }
         },
-        async {
-            loop {
-                if let Err(error) = state.db.reap_operator_listener_deliveries().await {
-                    warn!(%error, "operator-listener outbox reap failed");
-                }
-                tokio::time::sleep(OUTBOX_REAP_INTERVAL).await;
-            }
-        }
     );
+    let deliveries = crate::deploy_drain::periodic_worker(
+        drain,
+        "operator-outbox-reaper",
+        OUTBOX_REAP_INTERVAL,
+        move || {
+            let state = state.clone();
+            async move {
+                state
+                    .db
+                    .reap_operator_listener_deliveries()
+                    .await
+                    .inspect_err(|error| warn!(%error, "operator-listener outbox reap failed"))
+                    .map(|_| ())
+            }
+        },
+    );
+    async move {
+        tokio::join!(registrations, deliveries);
+    }
 }
 
 /// Continuously deliver operator-listener notification rows with bounded concurrency and retries.
@@ -382,6 +410,66 @@ async fn retry_or_fail<S: DeliveryStore>(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn deployment_reaper_quiesces_without_running_fenced_database_cleanup() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://test:test@127.0.0.1:1/test").unwrap();
+        pool.close().await;
+        let base = crate::state::tests::test_state_with_database_pool(pool).await;
+        let mut state = (*base).clone();
+        std::sync::Arc::make_mut(&mut state.config).deploy_control_token =
+            Some(crate::config::DeployControlToken::from_secret("a".repeat(64)).unwrap());
+        let state = std::sync::Arc::new(state);
+        let reaper = super::run_reaper(state.clone());
+        let op = uuid::Uuid::new_v4();
+        let boot = state.deploy_drain.begin(op).unwrap().boot_id;
+        state
+            .deploy_drain
+            .fence_http(op, boot, "test-edge-retired")
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_millis(100), reaper)
+            .await
+            .expect("fenced reaper must join without waiting for its daily timer");
+        assert!(!state
+            .deploy_drain
+            .snapshot()
+            .blocking_workers
+            .iter()
+            .any(|name| name.starts_with("operator-") || name == "unresolved-background"));
+    }
+    #[tokio::test]
+    async fn deployment_admin_workers_register_before_spawn_and_join_without_claiming_after_begin()
+    {
+        let pool = sqlx::PgPool::connect_lazy("postgres://test:test@127.0.0.1:1/test").unwrap();
+        pool.close().await;
+        let base = crate::state::tests::test_state_with_database_pool(pool).await;
+        let mut state = (*base).clone();
+        std::sync::Arc::make_mut(&mut state.config).deploy_control_token =
+            Some(crate::config::DeployControlToken::from_secret("a".repeat(64)).unwrap());
+        let state = std::sync::Arc::new(state);
+        let outbox = crate::handlers::admin_outbox_worker::run(state.clone());
+        let actions = crate::handlers::admin_action_worker::run(state.clone());
+        let registered = state.deploy_drain.snapshot().blocking_workers;
+        assert!(registered.iter().any(|name| name == "admin-outbox"));
+        assert!(registered.iter().any(|name| name == "admin-action"));
+        let op = uuid::Uuid::new_v4();
+        let boot = state.deploy_drain.begin(op).unwrap().boot_id;
+        state
+            .deploy_drain
+            .fence_http(op, boot, "test-edge-retired")
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_millis(100), async {
+            tokio::join!(outbox, actions);
+        })
+        .await
+        .expect("both fenced claim loops must join promptly");
+        assert!(!state
+            .deploy_drain
+            .snapshot()
+            .blocking_workers
+            .iter()
+            .any(|name| name.starts_with("admin-") || name == "unresolved-background"));
+    }
+
     use std::sync::Mutex;
 
     use tokio::{

@@ -29,47 +29,59 @@ const LEASE_SECS: i64 = 120;
 /// Actions claimed per tick.
 const BATCH_SIZE: i64 = 8;
 
-/// Run the action recovery worker. Never returns; intended for `tokio::spawn`.
-pub async fn run(state: Arc<AppState>) {
-    let worker_id = format!("admin-action-worker-{}", Uuid::new_v4());
-    info!(worker_id = %worker_id, "Admin action recovery worker started");
-
-    let mut idle_delay = Duration::from_secs(5);
-
-    loop {
-        let lease_until = Utc::now() + chrono::Duration::seconds(LEASE_SECS);
-        let batch = match state
-            .db
-            .claim_stranded_admin_action_batch(&worker_id, lease_until, BATCH_SIZE)
-            .await
-        {
-            Ok(rows) => rows,
-            Err(e) => {
-                error!(worker_id = %worker_id, "Admin action recovery claim failed: {e}");
-                tokio::time::sleep(Duration::from_secs(10)).await;
-                continue;
+/// Run the leased worker; register before spawn and join admitted batches on drain.
+pub fn run(state: Arc<AppState>) -> impl std::future::Future<Output = ()> {
+    let lifecycle = state.deployment_worker("admin-action");
+    async move {
+        let worker_id = format!("admin-action-{}", Uuid::new_v4());
+        let mut idle_delay = Duration::from_secs(5);
+        loop {
+            let batch = lifecycle
+                .batch(async {
+                    let lease_until = Utc::now() + chrono::Duration::seconds(LEASE_SECS);
+                    let rows = state
+                        .db
+                        .claim_stranded_admin_action_batch(&worker_id, lease_until, BATCH_SIZE)
+                        .await
+                        .map_err(|e| {
+                            error!(worker_id = %worker_id, "Worker claim failed: {e}");
+                        })?;
+                    if rows.is_empty() {
+                        let delay = idle_delay;
+                        idle_delay = (idle_delay * 2).min(Duration::from_secs(60));
+                        return Ok(delay);
+                    }
+                    idle_delay = Duration::from_secs(5);
+                    let mut complete = true;
+                    for row in rows {
+                        complete &= recover_one(&state, row).await;
+                    }
+                    if complete {
+                        Ok(Duration::ZERO)
+                    } else {
+                        Err(())
+                    }
+                })
+                .await;
+            let Some(result) = batch else { break };
+            if lifecycle
+                .idle(tokio::time::sleep(
+                    result.unwrap_or(Duration::from_secs(10)),
+                ))
+                .await
+                .is_none()
+            {
+                break;
             }
-        };
-
-        if batch.is_empty() {
-            // Back off exponentially when idle, capped at 60 s.
-            tokio::time::sleep(idle_delay).await;
-            idle_delay = (idle_delay * 2).min(Duration::from_secs(60));
-            continue;
         }
-
-        idle_delay = Duration::from_secs(5);
-
-        for claim in batch {
-            recover_one(&state, claim).await;
-        }
+        lifecycle.finish();
     }
 }
 
 /// Recover one stranded action from the batch claim.
 /// Made pub(crate) for integration tests — allows tests to call through
 /// the real production recovery path without the infinite worker loop.
-pub(crate) async fn recover_one(state: &Arc<AppState>, claim: StrandedActionClaim) {
+pub(crate) async fn recover_one(state: &Arc<AppState>, claim: StrandedActionClaim) -> bool {
     let rec = &claim.record;
     let action_id = rec.id;
 
@@ -82,14 +94,14 @@ pub(crate) async fn recover_one(state: &Arc<AppState>, claim: StrandedActionClai
                 action_id = %action_id,
                 "Action recovery: community not found, skipping"
             );
-            return;
+            return false;
         }
         Err(e) => {
             warn!(
                 action_id = %action_id,
                 "Action recovery: host lookup failed: {e}"
             );
-            return;
+            return false;
         }
     };
 
@@ -103,7 +115,7 @@ pub(crate) async fn recover_one(state: &Arc<AppState>, claim: StrandedActionClai
 
     let Some(report_id) = rec.report_id else {
         // Direct action: every target field was persisted at acceptance.
-        match crate::handlers::report_resolution::drive_direct_action(
+        return match crate::handlers::report_resolution::drive_direct_action(
             state,
             &tenant,
             rec,
@@ -111,12 +123,15 @@ pub(crate) async fn recover_one(state: &Arc<AppState>, claim: StrandedActionClai
         )
         .await
         {
-            Ok(_) => info!(action_id = %action_id, "Action recovery worker: action converged"),
-            Err(e) => {
-                warn!(action_id = %action_id, "Action recovery worker: re-drive failed: {e:?}")
+            Ok(_) => {
+                info!(action_id = %action_id, "Action recovery worker: action converged");
+                true
             }
-        }
-        return;
+            Err(e) => {
+                warn!(action_id = %action_id, "Action recovery worker: re-drive failed: {e:?}");
+                false
+            }
+        };
     };
 
     // Use the target context persisted at claim time for kick actions only.
@@ -152,11 +167,11 @@ pub(crate) async fn recover_one(state: &Arc<AppState>, claim: StrandedActionClai
             Ok(Some(r)) => r,
             Ok(None) => {
                 warn!(action_id = %action_id, "Action recovery: report not found");
-                return;
+                return false;
             }
             Err(e) => {
                 warn!(action_id = %action_id, "Action recovery: report lookup failed: {e}");
-                return;
+                return false;
             }
         };
         let (pk, eid) =
@@ -167,7 +182,7 @@ pub(crate) async fn recover_one(state: &Arc<AppState>, claim: StrandedActionClai
                         action_id = %action_id,
                         "Action recovery: target derive failed: {e:?}"
                     );
-                    return;
+                    return false;
                 }
             };
         (pk, eid, report.report.channel_id)
@@ -197,12 +212,14 @@ pub(crate) async fn recover_one(state: &Arc<AppState>, claim: StrandedActionClai
     {
         Ok(_) => {
             info!(action_id = %action_id, "Action recovery worker: action converged");
+            true
         }
         Err(e) => {
             warn!(
                 action_id = %action_id,
                 "Action recovery worker: re-drive failed: {e:?}"
             );
+            false
         }
     }
 }

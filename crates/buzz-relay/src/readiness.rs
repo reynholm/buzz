@@ -580,16 +580,17 @@ pub async fn run_dependency_sampler(state: Arc<AppState>, cancel: CancellationTo
 pub fn start_dependency_sampler_and_completion_publisher(
     state: Arc<AppState>,
     republish_interval: Duration,
-) {
+) -> [tokio::task::JoinHandle<()>; 2] {
     let sampler_cancel = state.dependency_sampler_cancel.clone();
-    tokio::spawn(run_dependency_sampler(Arc::clone(&state), sampler_cancel));
+    let sampler = tokio::spawn(run_dependency_sampler(Arc::clone(&state), sampler_cancel));
 
     let publisher_cancel = state.dependency_completion_publisher_cancel.clone();
-    tokio::spawn(run_dependency_sample_completion_publisher(
+    let publisher = tokio::spawn(run_dependency_sample_completion_publisher(
         state,
         republish_interval,
         publisher_cancel,
     ));
+    [sampler, publisher]
 }
 
 async fn run_dependency_sampler_for_diagnostics(
