@@ -287,3 +287,59 @@ test("a live reply in an earlier expanded branch preserves the reading row", asy
   await page.keyboard.press("End");
   await expect(latest).toHaveCount(0);
 });
+
+test("End releases a short thread target even without physical scroll movement", async ({
+  page,
+}) => {
+  await setup(page);
+  const { rootId, replyId } = await page.evaluate(() => {
+    const emit = window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__;
+    if (!emit) throw new Error("Mock emitter unavailable");
+    const root = emit({
+      channelName: "engineering",
+      content: "Short target root",
+    });
+    const reply = emit({
+      channelName: "engineering",
+      parentEventId: root.id,
+      content: "Short target reply",
+    });
+    return { rootId: root.id, replyId: reply.id };
+  });
+  await page.getByTestId("channel-engineering").click();
+  const path = new URL(page.url()).hash.split("?")[0];
+  await page.evaluate(
+    ({ path, rootId, replyId }) => {
+      location.hash = `${path}?messageId=${replyId}&threadRootId=${rootId}`;
+    },
+    { path, rootId, replyId },
+  );
+  const body = page.getByTestId("message-thread-body");
+  await expect(body.locator(`[data-message-id="${replyId}"]`)).toBeInViewport();
+  const latest = page.getByTestId("thread-scroll-to-latest");
+  await expect(latest).toBeVisible();
+  await expect
+    .poll(() =>
+      body.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop),
+    )
+    .toBeLessThan(4);
+  const offset = await body.evaluate((el) => el.scrollTop);
+  await body.focus();
+  await page.keyboard.press("End");
+  await expect(latest).toHaveCount(0);
+  expect(await body.evaluate((el) => el.scrollTop)).toBe(offset);
+  await page.evaluate((rootId) => {
+    window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+      channelName: "engineering",
+      parentEventId: rootId,
+      content: `Live reply after End\n\n${"More details. ".repeat(100)}`,
+      createdAt: Math.floor(Date.now() / 1_000) + 1,
+    });
+  }, rootId);
+  await expect(latest).toHaveCount(0);
+  await expect
+    .poll(() =>
+      body.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop),
+    )
+    .toBeLessThan(4);
+});

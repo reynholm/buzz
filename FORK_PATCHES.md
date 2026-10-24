@@ -8627,7 +8627,7 @@ New module: `true`.
 
 ## `desktop/src/features/messages/ui/VirtualizedThreadReplies.tsx`
 
-Virtualize variable-height replies inside the existing thread scroll region with measured head offset and cancellable bottom ownership. Preserve explicit reply navigation at a clamped physical floor and retire bottom intent when the reader leaves it, including direct scroll updates.
+Virtualize variable-height replies inside the existing thread scroll region with measured head offset and cancellable bottom ownership. Preserve explicit reply navigation at a clamped physical floor and retire bottom intent when the reader leaves it, including direct scroll updates. Reconcile reader ownership on navigation input even when an already-clamped floor produces no scroll event.
 
 New module: `true`.
 
@@ -8686,6 +8686,7 @@ New module: `true`.
 - Required symbol: `long threads bound mounted replies and preserve navigation and live scroll ownership`
 - Required symbol: `a channel with many thread roots keeps its mounted history bounded`
 - Required symbol: `a live reply in an earlier expanded branch preserves the reading row`
+- Required symbol: `End releases a short thread target even without physical scroll movement`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
 
 ## `desktop/tests/e2e/thread-focus-mode.spec.ts`

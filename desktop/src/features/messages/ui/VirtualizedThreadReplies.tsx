@@ -51,7 +51,15 @@ export function VirtualizedThreadReplies<T extends ReplyItem>({
   const onReaderNavigation = React.useCallback(() => {
     targetIntentRef.current = false;
     cancelReadingAnchor();
-  }, [cancelReadingAnchor]);
+    // End at an already-clamped floor may produce no scroll event. Reconcile
+    // ownership now so the next live reply can resume bottom following.
+    const scroller = scrollRef.current;
+    if (scroller)
+      onAtBottomChange(
+        scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <=
+          32,
+      );
+  }, [cancelReadingAnchor, onAtBottomChange, scrollRef]);
   const { cancel: cancelBottom, settle: settleBottom } =
     useVirtualizedBottomSettle(
       hostRef,

@@ -13034,7 +13034,7 @@
     },
     {
       "path": "desktop/src/features/messages/ui/VirtualizedThreadReplies.tsx",
-      "responsibility": "Virtualize variable-height replies inside the existing thread scroll region with measured head offset and cancellable bottom ownership. Preserve explicit reply navigation at a clamped physical floor and retire bottom intent when the reader leaves it, including direct scroll updates.",
+      "responsibility": "Virtualize variable-height replies inside the existing thread scroll region with measured head offset and cancellable bottom ownership. Preserve explicit reply navigation at a clamped physical floor and retire bottom intent when the reader leaves it, including direct scroll updates. Reconcile reader ownership on navigation input even when an already-clamped floor produces no scroll event.",
       "is_new": true,
       "required_symbols": [
         "export function VirtualizedThreadReplies",
@@ -13113,7 +13113,8 @@
       "required_symbols": [
         "long threads bound mounted replies and preserve navigation and live scroll ownership",
         "a channel with many thread roots keeps its mounted history bounded",
-        "a live reply in an earlier expanded branch preserves the reading row"
+        "a live reply in an earlier expanded branch preserves the reading row",
+        "End releases a short thread target even without physical scroll movement"
       ],
       "invocation_seams": [],
       "verification_commands": [
