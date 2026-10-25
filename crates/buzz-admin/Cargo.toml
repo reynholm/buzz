@@ -34,6 +34,7 @@ deadpool-redis = { workspace = true }
 # install ring explicitly in main(). Mirrors buzz-relay's setup.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 sqlx = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }

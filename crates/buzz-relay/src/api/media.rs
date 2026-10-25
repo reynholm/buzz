@@ -433,9 +433,17 @@ async fn upload_blob_inner(
     body: axum::body::Body,
 ) -> axum::response::Response {
     use axum::response::IntoResponse as _;
-    upload_blob_result(state, auth, headers, body)
-        .await
-        .into_response()
+    let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Upload);
+    let upload = upload_blob_result(state, auth, headers, body);
+    if let Some(work) = work {
+        let response = work.scope(upload).await.into_response();
+        if !response.status().is_server_error() {
+            work.complete();
+        }
+        response
+    } else {
+        upload.await.into_response()
+    }
 }
 
 async fn upload_blob_result(
@@ -4401,3 +4409,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "media_deploy_postgres.rs"]
+mod external_infra_deploy_tests;

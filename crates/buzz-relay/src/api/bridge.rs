@@ -2680,6 +2680,12 @@ pub async fn workflow_webhook(
         .await
         .map_err(|_| not_found("workflow not found"))?;
 
+    let work = state.workflow_engine.admit_run(false).map_err(|_| {
+        super::api_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "workflow admission is draining",
+        )
+    })?;
     let run_id = state
         .db
         .create_workflow_run(community_id, id, None, trigger_ctx_json.as_ref())
@@ -2688,47 +2694,24 @@ pub async fn workflow_webhook(
 
     // Spawn workflow execution asynchronously.
     let engine = Arc::clone(&state.workflow_engine);
-    let db = state.db.clone();
-    let def_value = workflow.definition.clone();
     let trigger_ctx_clone = trigger_ctx.clone();
     tokio::spawn(async move {
-        let def: buzz_workflow::WorkflowDef = match serde_json::from_value(def_value) {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::error!("webhook: failed to parse definition: {e}");
-                if let Err(db_err) = db
-                    .update_workflow_run(
-                        community_id,
-                        run_id,
-                        buzz_db::workflow::RunStatus::Failed,
-                        0,
-                        &serde_json::json!([]),
-                        Some(buzz_db::workflow::WorkflowRunFailure {
-                            code: "invalid_definition",
-                            message: &format!("definition parse error: {e}"),
-                        }),
-                    )
-                    .await
-                {
-                    tracing::error!("webhook: failed to mark run as failed: {db_err}");
-                }
-                return;
-            }
-        };
-
-        let result = buzz_workflow::executor::execute_from_step(
-            &engine,
-            community_id,
-            run_id,
-            &def,
-            &trigger_ctx_clone,
-            0,
-            None,
-        )
-        .await;
-        engine
-            .finalize_run(community_id, run_id, result, None)
+        buzz_workflow::lifecycle::finish(work, async {
+            let result = buzz_workflow::executor::execute_from_step(
+                &engine,
+                community_id,
+                run_id,
+                &def,
+                &trigger_ctx_clone,
+                0,
+                None,
+            )
             .await;
+            engine
+                .finalize_run_checked(community_id, run_id, result, None)
+                .await
+        })
+        .await;
     });
 
     Ok((

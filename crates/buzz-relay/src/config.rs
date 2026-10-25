@@ -4,6 +4,7 @@ use std::time::Duration;
 use std::{collections::HashMap, net::SocketAddr};
 
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 use thiserror::Error;
 use tracing::{error, warn};
 
@@ -113,9 +114,40 @@ impl std::fmt::Debug for KlipyConfig {
 /// WebSocket close-frame delivery after the final delayed cancellation.
 pub const MAX_DRAIN_JITTER_MS: u64 = 20_000;
 
+/// Optional private deployment-control credential. Debug output is redacted.
+#[derive(Clone)]
+pub struct DeployControlToken(String);
+
+impl DeployControlToken {
+    /// Validate an operator-provided printable credential without disclosing it.
+    pub fn from_secret(value: String) -> Result<Self, ConfigError> {
+        if !(32..=1024).contains(&value.len())
+            || !value.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
+        {
+            return Err(ConfigError::InvalidValue(
+                "BUZZ_DEPLOY_CONTROL_TOKEN must contain 32..=1024 visible ASCII bytes".into(),
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    /// Compare request credential bytes using the constant-time secret primitive.
+    pub(crate) fn matches(&self, provided: &[u8]) -> bool {
+        bool::from(self.0.as_bytes().ct_eq(provided))
+    }
+}
+
+impl std::fmt::Debug for DeployControlToken {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("DeployControlToken([REDACTED])")
+    }
+}
+
 /// Relay runtime configuration, loaded from environment variables.
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// Private health-listener lifecycle control; absent disables that API.
+    pub deploy_control_token: Option<DeployControlToken>,
     /// Address the relay HTTP/WebSocket server binds to.
     pub bind_addr: SocketAddr,
     /// Postgres database connection URL.
@@ -166,6 +198,12 @@ pub struct Config {
     /// independently so reader capacity can be tuned against the replica's
     /// headroom without touching the writer pool.
     pub db_read_pool_size: Option<u32>,
+    /// Maximum connections in the independent Postgres full-text search pool.
+    /// `BUZZ_DB_SEARCH_POOL_SIZE` defaults to 10 and must be positive.
+    pub db_search_pool_size: u32,
+    /// Maximum connections in the independent Postgres audit writer pool.
+    /// `BUZZ_DB_AUDIT_POOL_SIZE` defaults to 5 and must be positive.
+    pub db_audit_pool_size: u32,
     /// Public WebSocket URL of this relay, advertised in NIP-11.
     pub relay_url: String,
     /// Public WebSocket URL of the dedicated device-pairing relay, when configured.
@@ -583,6 +621,20 @@ fn parse_optional_bool(name: &str) -> Result<bool, ConfigError> {
     parse_bool(name, false)
 }
 
+fn parse_positive_pool_size(name: &str, default: u32) -> Result<u32, ConfigError> {
+    let invalid = || ConfigError::InvalidValue(format!("{name} must be a positive u32 integer"));
+    match std::env::var(name) {
+        Err(std::env::VarError::NotPresent) => Ok(default),
+        Err(_) => Err(invalid()),
+        Ok(value) => value
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|value| *value > 0)
+            .ok_or_else(invalid),
+    }
+}
+
 fn ensure_git_repo_path(
     raw: impl Into<std::path::PathBuf>,
 ) -> Result<std::path::PathBuf, ConfigError> {
@@ -631,6 +683,15 @@ fn inert_env_vars<'a>(names: &[&'a str], lookup: impl Fn(&str) -> Option<String>
 impl Config {
     /// Loads configuration from environment variables, falling back to development defaults.
     pub fn from_env() -> Result<Self, ConfigError> {
+        let deploy_control_token = match std::env::var("BUZZ_DEPLOY_CONTROL_TOKEN") {
+            Ok(value) => Some(DeployControlToken::from_secret(value)?),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err(ConfigError::InvalidValue(
+                    "BUZZ_DEPLOY_CONTROL_TOKEN must contain visible ASCII bytes".into(),
+                ));
+            }
+        };
         let bind_addr_raw =
             std::env::var("BUZZ_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:3000".to_string());
         let bind_addr = parse_bind_addr(&bind_addr_raw)?;
@@ -712,6 +773,9 @@ impl Config {
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
             .filter(|&v| v > 0);
+
+        let db_search_pool_size = parse_positive_pool_size("BUZZ_DB_SEARCH_POOL_SIZE", 10)?;
+        let db_audit_pool_size = parse_positive_pool_size("BUZZ_DB_AUDIT_POOL_SIZE", 5)?;
 
         let relay_url =
             std::env::var("RELAY_URL").unwrap_or_else(|_| "ws://localhost:3000".to_string());
@@ -1395,7 +1459,8 @@ impl Config {
                     .into(),
             ));
         }
-        Ok(Self {
+        let config = Self {
+            deploy_control_token,
             bind_addr,
             database_url,
             read_database_url,
@@ -1406,6 +1471,8 @@ impl Config {
             redis_pool_size,
             db_pool_size,
             db_read_pool_size,
+            db_search_pool_size,
+            db_audit_pool_size,
             relay_url,
             pairing_relay_url,
             max_connections,
@@ -1463,7 +1530,25 @@ impl Config {
             nip_fi_provision_binding,
             nip_fi_resolver_bounds,
             nip_fi,
-        })
+        };
+        config.validate_deployment_features()?;
+        Ok(config)
+    }
+
+    /// Validate the feature combination supported by deployment drain.
+    pub fn validate_deployment_features(&self) -> Result<(), ConfigError> {
+        if self.deploy_control_token.is_some()
+            && (self.push_enabled
+                || self.mesh.enabled
+                || self.read_database_url.is_some()
+                || !self.operator_listener_delivery_urls.is_empty()
+                || !self.nip_fi.mode.is_off())
+        {
+            return Err(ConfigError::InvalidValue(
+                "Deployment drain supports embedded audio, local primary storage, and NIP-FI off; push, mesh, read replicas, and operator delivery require separate lifecycle qualification".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Build a baseline `Config` suitable for test fixtures that need a
@@ -1497,6 +1582,38 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deployment_rejects_unqualified_workers_without_changing_legacy_features() {
+        let baseline = Config::for_test();
+        let cases: &[fn(&mut Config)] = &[
+            |c| c.push_enabled = true,
+            |c| c.mesh.enabled = true,
+            |c| c.read_database_url = Some("postgres://test:test@127.0.0.1/test".into()),
+            |c| {
+                c.operator_listener_delivery_urls.insert(
+                    "listener".into(),
+                    url::Url::parse("https://example.test/").unwrap(),
+                );
+            },
+            |c| c.nip_fi.mode = buzz_auth::NipFiMode::Enforce,
+        ];
+        for configure in cases {
+            let mut config = baseline.clone();
+            configure(&mut config);
+            config.deploy_control_token =
+                Some(DeployControlToken::from_secret("a".repeat(64)).unwrap());
+            assert!(
+                config.validate_deployment_features().is_err(),
+                "unqualified feature must reject deployment control"
+            );
+            config.deploy_control_token = None;
+            assert!(
+                config.validate_deployment_features().is_ok(),
+                "legacy feature support must be preserved"
+            );
+        }
+    }
 
     #[test]
     fn klipy_config_debug_redacts_the_api_key() {
@@ -2318,6 +2435,58 @@ mod tests {
     }
 
     #[test]
+    fn dedicated_postgres_pool_caps_reject_invalid_values() {
+        let _guards = env_guards();
+        for name in ["BUZZ_DB_SEARCH_POOL_SIZE", "BUZZ_DB_AUDIT_POOL_SIZE"] {
+            let previous = std::env::var_os(name);
+            let results = ["0", "-1", "invalid-private-value", "4294967296"].map(|value| {
+                std::env::set_var(name, value);
+                Config::from_env().err().map(|error| error.to_string())
+            });
+            match previous {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+            for error in results {
+                let message = error.expect("invalid pool cap must block startup");
+                assert!(message.contains(name));
+                assert!(!message.contains("invalid-private-value"));
+            }
+        }
+    }
+
+    #[test]
+    fn dedicated_postgres_pool_caps_preserve_defaults_and_accept_overrides() {
+        let _guards = env_guards();
+        let names = ["BUZZ_DB_SEARCH_POOL_SIZE", "BUZZ_DB_AUDIT_POOL_SIZE"];
+        let previous = names.map(std::env::var_os);
+        for name in names {
+            std::env::remove_var(name);
+        }
+        let defaults = Config::from_env();
+        std::env::set_var(names[0], "2");
+        std::env::set_var(names[1], "3");
+        let custom = Config::from_env();
+        for (name, value) in names.into_iter().zip(previous) {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+        let defaults = defaults.expect("default pool caps");
+        let custom = custom.expect("custom pool caps");
+        assert_eq!(
+            (defaults.db_search_pool_size, defaults.db_audit_pool_size),
+            (10, 5)
+        );
+        assert_eq!(
+            (custom.db_search_pool_size, custom.db_audit_pool_size),
+            (2, 3)
+        );
+        assert_eq!(custom.db_pool_size, defaults.db_pool_size);
+    }
+
+    #[test]
     fn db_read_pool_size_env_override_and_invalid_fallback() {
         let _guards = env_guards();
         let previous = std::env::var_os("BUZZ_DB_READ_POOL_SIZE");
@@ -2988,5 +3157,48 @@ mod tests {
             matches!(result, Err(ConfigError::InvalidValue(ref msg)) if msg.contains("BUZZ_GIT_REPO_PATH")),
             "expected InvalidValue mentioning BUZZ_GIT_REPO_PATH, got {result:?}"
         );
+    }
+
+    #[test]
+    fn deployment_control_token_is_opt_in_strict_and_redacted() {
+        let _guards = env_guards();
+        let key = "BUZZ_DEPLOY_CONTROL_TOKEN";
+        let previous = std::env::var_os(key);
+        let valid = "a".repeat(64);
+        let mut observations = Vec::new();
+        for value in [
+            None,
+            Some(valid.as_str()),
+            Some(""),
+            Some("short"),
+            Some("abcd abcdabcdabcdabcdabcdabcdabcdabcd"),
+            Some("abcd\nabcdabcdabcdabcdabcdabcdabcdabcd"),
+        ] {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+            observations.push(Config::from_env());
+        }
+        match previous {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+        assert!(observations
+            .remove(0)
+            .expect("default config")
+            .deploy_control_token
+            .is_none());
+        let configured = observations.remove(0).expect("configured token");
+        let token = configured
+            .deploy_control_token
+            .expect("token parsed from real environment");
+        assert!(token.matches(valid.as_bytes()));
+        assert!(!token.matches("b".repeat(64).as_bytes()));
+        assert!(!token.matches(b""));
+        assert!(!format!("{token:?}").contains(&valid));
+        for invalid in observations {
+            assert!(invalid.is_err(), "malformed token must reject startup");
+        }
     }
 }

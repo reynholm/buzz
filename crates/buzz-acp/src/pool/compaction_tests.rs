@@ -540,7 +540,9 @@ async fn compact_terminal_write_retries_after_repair_without_reexecuting_effect(
         loop {
             reconciliation.drive(&ctx.session_controls, 128);
             tokio::select! { _ = reconciliation.wake() => {}, _ = tokio::time::sleep(Duration::from_millis(10)) => {} }
-            if fixture.record(&scope()).control_receipts[0].state != crate::session_store::ControlReceiptState::Started { break; }
+            if fixture.record(&scope()).control_receipts[0].state != crate::session_store::ControlReceiptState::Started
+                && ctx.session_controls.receipt_write_count() == 0
+            { break; }
         }
     }).await;
     result.agent.acp.shutdown().await;

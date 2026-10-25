@@ -22,6 +22,7 @@ use tracing::{error, info};
 /// Environment variables set by the relay before spawning git receive-pack:
 /// - `BUZZ_HOOK_URL` — internal policy endpoint (http://127.0.0.1:{port}/internal/git/policy)
 /// - `BUZZ_HOOK_SECRET` — per-push HMAC secret
+/// - `BUZZ_HOOK_OPERATION_ID` — optional deploy-controlled push UUID
 /// - `BUZZ_REPO_ID` — repo identifier (d-tag)
 /// - `BUZZ_COMMUNITY_ID` — server-resolved community UUID for the git HTTP request
 /// - `BUZZ_PUSHER_PUBKEY` — authenticated pusher's hex pubkey
@@ -112,6 +113,17 @@ if [ -f "$HMAC_FILE" ]; then
 fi
 HMAC_INPUT="${HMAC_INPUT}|${TIMESTAMP}"
 
+# Bind the optional deployment capability without changing the legacy payload.
+OPERATION_JSON=""
+if [ -n "${BUZZ_HOOK_OPERATION_ID:-}" ]; then
+    if ! [[ "$BUZZ_HOOK_OPERATION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+        echo "error: invalid push operation" >&2
+        exit 1
+    fi
+    HMAC_INPUT="${HMAC_INPUT}|operation:${BUZZ_HOOK_OPERATION_ID}"
+    OPERATION_JSON=",\"operation_id\":\"${BUZZ_HOOK_OPERATION_ID}\""
+fi
+
 SIGNATURE=$(printf '%s' "$HMAC_INPUT" | openssl dgst -sha256 -hmac "$BUZZ_HOOK_SECRET" -hex 2>/dev/null | sed 's/.*= //')
 if [ -z "$SIGNATURE" ]; then
     echo "error: failed to compute HMAC signature" >&2
@@ -122,7 +134,7 @@ fi
 # repo_id is free-form (user-chosen d-tag) — must be escaped for JSON safety.
 # repo_owner, community_id, and pusher_pubkey are validated fixed-shape strings — no escaping needed.
 SAFE_REPO_ID=$(printf '%s' "$BUZZ_REPO_ID" | sed 's/\\/\\\\/g; s/"/\\"/g')
-BODY="{\"repo_id\":\"${SAFE_REPO_ID}\",\"repo_owner\":\"${BUZZ_REPO_OWNER}\",\"community_id\":\"${BUZZ_COMMUNITY_ID}\",\"pusher_pubkey\":\"${BUZZ_PUSHER_PUBKEY}\",\"ref_updates\":[${REFS}],\"timestamp\":${TIMESTAMP},\"signature\":\"${SIGNATURE}\"}"
+BODY="{\"repo_id\":\"${SAFE_REPO_ID}\",\"repo_owner\":\"${BUZZ_REPO_OWNER}\",\"community_id\":\"${BUZZ_COMMUNITY_ID}\",\"pusher_pubkey\":\"${BUZZ_PUSHER_PUBKEY}\",\"ref_updates\":[${REFS}],\"timestamp\":${TIMESTAMP},\"signature\":\"${SIGNATURE}\"${OPERATION_JSON}}"
 
 HTTP_CODE=$(curl --silent --max-time 10 \
     -o "$RESP_FILE" \

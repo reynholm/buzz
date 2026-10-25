@@ -926,6 +926,10 @@ async fn handle_workflow_trigger(
     let trigger_ctx_json = serde_json::to_value(&trigger_ctx).ok();
 
     let event_id_bytes = event.id.as_bytes().to_vec();
+    let work = state
+        .workflow_engine
+        .admit_run(false)
+        .map_err(|_| IngestError::Rejected("unavailable: workflow admission is draining".into()))?;
     let run_id = state
         .db
         .create_workflow_run(
@@ -944,47 +948,24 @@ async fn handle_workflow_trigger(
 
     // 5. Spawn workflow execution
     let engine = Arc::clone(&state.workflow_engine);
-    let db = state.db.clone();
-    let def_value = workflow.definition.clone();
     let trigger_ctx_clone = trigger_ctx.clone();
     tokio::spawn(async move {
-        let def: buzz_workflow::WorkflowDef = match serde_json::from_value(def_value) {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::error!("workflow_trigger: failed to parse definition: {e}");
-                if let Err(db_err) = db
-                    .update_workflow_run(
-                        community_id,
-                        run_id,
-                        RunStatus::Failed,
-                        0,
-                        &serde_json::json!([]),
-                        Some(buzz_db::workflow::WorkflowRunFailure {
-                            code: "invalid_definition",
-                            message: &format!("definition parse error: {e}"),
-                        }),
-                    )
-                    .await
-                {
-                    tracing::error!("workflow_trigger: failed to mark run as failed: {db_err}");
-                }
-                return;
-            }
-        };
-
-        let result = buzz_workflow::executor::execute_from_step(
-            &engine,
-            community_id,
-            run_id,
-            &def,
-            &trigger_ctx_clone,
-            0,
-            None,
-        )
-        .await;
-        engine
-            .finalize_run(community_id, run_id, result, None)
+        buzz_workflow::lifecycle::finish(work, async {
+            let result = buzz_workflow::executor::execute_from_step(
+                &engine,
+                community_id,
+                run_id,
+                &def,
+                &trigger_ctx_clone,
+                0,
+                None,
+            )
             .await;
+            engine
+                .finalize_run_checked(community_id, run_id, result, None)
+                .await
+        })
+        .await;
     });
 
     // 6. Return response
@@ -1125,9 +1106,23 @@ async fn handle_approval_grant(
     let engine = Arc::clone(&state.workflow_engine);
     let db = state.db.clone();
 
+    let work = state
+        .workflow_engine
+        .admit_run(false)
+        .map_err(|_| IngestError::Rejected("unavailable: workflow admission is draining".into()))?;
     tokio::spawn(async move {
-        resume_workflow_after_approval(engine, db, community_id, run_id, workflow_id, resume_index)
-            .await;
+        buzz_workflow::lifecycle::finish(work, async {
+            resume_workflow_after_approval(
+                engine,
+                db,
+                community_id,
+                run_id,
+                workflow_id,
+                resume_index,
+            )
+            .await
+        })
+        .await;
     });
 
     // 7. Return response
@@ -1234,40 +1229,49 @@ async fn handle_approval_deny(
     let pubkey_hex = self_hex.clone();
     let db = state.db.clone();
 
+    let work = state
+        .workflow_engine
+        .admit_run(false)
+        .map_err(|_| IngestError::Rejected("unavailable: workflow admission is draining".into()))?;
     tokio::spawn(async move {
-        let run = match db.get_workflow_run(community_id, run_id).await {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::error!("approval_deny: failed to fetch run {run_id}: {e}");
-                return;
+        buzz_workflow::lifecycle::finish(work, async {
+            let run = match db.get_workflow_run(community_id, run_id).await {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!("approval_deny: failed to fetch run {run_id}: {e}");
+                    return false;
+                }
+            };
+
+            if run.status != RunStatus::WaitingApproval {
+                tracing::warn!(
+                    "approval_deny: run {run_id} has status '{}', expected 'waiting_approval'",
+                    run.status
+                );
+                return true;
             }
-        };
 
-        if run.status != RunStatus::WaitingApproval {
-            tracing::warn!(
-                "approval_deny: run {run_id} has status '{}', expected 'waiting_approval'",
-                run.status
-            );
-            return;
-        }
-
-        let cancel_msg = format!("workflow cancelled: approval denied by {pubkey_hex}");
-        if let Err(e) = db
-            .update_workflow_run(
-                community_id,
-                run_id,
-                RunStatus::Cancelled,
-                run.current_step,
-                &run.execution_trace,
-                Some(buzz_db::workflow::WorkflowRunFailure {
-                    code: "approval_denied",
-                    message: &cancel_msg,
-                }),
-            )
-            .await
-        {
-            tracing::error!("approval_deny: failed to cancel run {run_id}: {e}");
-        }
+            let cancel_msg = format!("workflow cancelled: approval denied by {pubkey_hex}");
+            if let Err(e) = db
+                .update_workflow_run(
+                    community_id,
+                    run_id,
+                    RunStatus::Cancelled,
+                    run.current_step,
+                    &run.execution_trace,
+                    Some(buzz_db::workflow::WorkflowRunFailure {
+                        code: "approval_denied",
+                        message: &cancel_msg,
+                    }),
+                )
+                .await
+            {
+                tracing::error!("approval_deny: failed to cancel run {run_id}: {e}");
+                return false;
+            }
+            true
+        })
+        .await;
     });
 
     // 7. Return response
@@ -1292,12 +1296,12 @@ async fn resume_workflow_after_approval(
     run_id: Uuid,
     workflow_id: Uuid,
     resume_index: usize,
-) {
+) -> bool {
     let run = match db.get_workflow_run(community_id, run_id).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!("resume_workflow: failed to fetch run {run_id}: {e}");
-            return;
+            return false;
         }
     };
 
@@ -1307,14 +1311,14 @@ async fn resume_workflow_after_approval(
             "resume_workflow: run {run_id} has status '{}', expected 'waiting_approval'",
             run.status
         );
-        return;
+        return true;
     }
 
     let workflow = match db.get_workflow(community_id, workflow_id).await {
         Ok(w) => w,
         Err(e) => {
             tracing::error!("resume_workflow: failed to fetch workflow {workflow_id}: {e}");
-            return;
+            return false;
         }
     };
 
@@ -1323,7 +1327,7 @@ async fn resume_workflow_after_approval(
         Ok(d) => d,
         Err(e) => {
             tracing::error!("resume_workflow: failed to parse workflow definition: {e}");
-            if let Err(db_err) = db
+            let finalized = db
                 .update_workflow_run(
                     community_id,
                     run_id,
@@ -1335,11 +1339,11 @@ async fn resume_workflow_after_approval(
                         message: &format!("definition parse error: {e}"),
                     }),
                 )
-                .await
-            {
+                .await;
+            if let Err(db_err) = &finalized {
                 tracing::error!("resume_workflow: failed to mark run as failed: {db_err}");
             }
-            return;
+            return finalized.is_ok();
         }
     };
 
@@ -1377,8 +1381,8 @@ async fn resume_workflow_after_approval(
     )
     .await;
     engine
-        .finalize_run(community_id, run_id, result, existing_trace)
-        .await;
+        .finalize_run_checked(community_id, run_id, result, existing_trace)
+        .await
 }
 
 #[cfg(test)]
@@ -1652,3 +1656,7 @@ mod postgres_tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "workflows_deploy_postgres.rs"]
+mod deployment_postgres_tests;

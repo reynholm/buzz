@@ -94,7 +94,14 @@ enum Command {
     /// Generate a new Nostr keypair (for bootstrapping).
     GenerateKey,
     /// Run pending database migrations.
-    Migrate,
+    Migrate {
+        /// Bound lock waits on the dedicated migration backend (milliseconds).
+        #[arg(long, requires = "statement_timeout_ms", value_parser = clap::value_parser!(u32).range(1..=2_147_483_647))]
+        lock_timeout_ms: Option<u32>,
+        /// Bound each migration statement (milliseconds); requires the lock budget.
+        #[arg(long, requires = "lock_timeout_ms", value_parser = clap::value_parser!(u32).range(1..=2_147_483_647))]
+        statement_timeout_ms: Option<u32>,
+    },
     /// Compute one complete S3 storage snapshot and persist it for relay readers.
     StorageSnapshot {
         /// Abort before folding a page that would exceed this object count.
@@ -192,9 +199,35 @@ async fn run(cli: Cli) -> Result<i32> {
             println!("\nSet BUZZ_PRIVATE_KEY to the secret key to use this identity.");
             Ok(0)
         }
-        Command::Migrate => {
+        Command::Migrate {
+            lock_timeout_ms,
+            statement_timeout_ms,
+        } => {
+            let policy = match (lock_timeout_ms, statement_timeout_ms) {
+                (Some(lock_timeout_ms), Some(statement_timeout_ms)) => {
+                    tracing_subscriber::fmt()
+                        .with_env_filter("buzz_db::migration=info")
+                        .json()
+                        .with_writer(std::io::stderr)
+                        .with_ansi(false)
+                        .try_init()
+                        .map_err(|_| {
+                            anyhow::anyhow!("cannot initialize migration evidence logging")
+                        })?;
+                    Some(buzz_db::MigrationTimeouts {
+                        lock_timeout_ms,
+                        statement_timeout_ms,
+                    })
+                }
+                (None, None) => None,
+                _ => anyhow::bail!("migration timeout flags must be supplied together"),
+            };
             let db = connect_db().await?;
-            db.migrate().await?;
+            if let Some(policy) = policy {
+                db.migrate_with_timeouts(policy).await?;
+            } else {
+                db.migrate().await?;
+            }
             println!("Database migrations complete.");
             Ok(0)
         }
@@ -912,6 +945,49 @@ mod storage_snapshot_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migration_timeout_flags_are_paired_and_positive() {
+        assert!(
+            Cli::try_parse_from([
+                "buzz-admin",
+                "migrate",
+                "--lock-timeout-ms",
+                "5000",
+                "--statement-timeout-ms",
+                "300000",
+            ])
+            .is_ok(),
+            "bounded migration flags must be accepted"
+        );
+        for arguments in [
+            vec!["--lock-timeout-ms", "5000"],
+            vec!["--statement-timeout-ms", "300000"],
+            vec!["--lock-timeout-ms", "0", "--statement-timeout-ms", "300000"],
+            vec![
+                "--lock-timeout-ms",
+                "5000",
+                "--statement-timeout-ms",
+                "2147483648",
+            ],
+            vec![
+                "--lock-timeout-ms",
+                "invalid",
+                "--statement-timeout-ms",
+                "300000",
+            ],
+        ] {
+            let command: Vec<_> = ["buzz-admin", "migrate"]
+                .into_iter()
+                .chain(arguments)
+                .collect();
+            assert!(Cli::try_parse_from(command).is_err());
+        }
+        assert!(
+            Cli::try_parse_from(["buzz-admin", "migrate"]).is_ok(),
+            "legacy callers retain the unbounded migration policy"
+        );
+    }
 
     #[test]
     fn parses_partition_audit_month_horizon() {

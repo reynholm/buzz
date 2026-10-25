@@ -995,24 +995,48 @@ async fn info_refs_subprocess(
         .kill_on_drop(true);
     harden_git_env(&mut cmd);
 
+    let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Git);
     let mut child = cmd.spawn().map_err(|e| {
         error!(error = %e, "git subprocess failed to spawn");
         (StatusCode::INTERNAL_SERVER_ERROR, "git error").into_response()
     })?;
 
-    let status = tokio::time::timeout(INFO_REFS_TIMEOUT, child.wait())
+    let (status, (repo, _permit, stdout_tmp, stderr_tmp)) = if let Some(work) = work {
+        super::read_lifetime::spawn_buffered_read(
+            child,
+            (repo, _permit, stdout_tmp, stderr_tmp),
+            work,
+            INFO_REFS_TIMEOUT,
+        )
         .await
-        .map_err(|_| {
-            warn!(
-                "git info_refs subprocess timed out ({}s)",
-                INFO_REFS_TIMEOUT.as_secs()
-            );
-            (StatusCode::GATEWAY_TIMEOUT, "git operation timed out").into_response()
-        })?
-        .map_err(|e| {
-            error!(error = %e, "git subprocess failed");
+        .map_err(|error| {
+            error!(%error, "git info_refs supervisor failed");
             (StatusCode::INTERNAL_SERVER_ERROR, "git error").into_response()
-        })?;
+        })?
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::TimedOut {
+                (StatusCode::GATEWAY_TIMEOUT, "git operation timed out").into_response()
+            } else {
+                error!(%error, "git info_refs subprocess failed");
+                (StatusCode::INTERNAL_SERVER_ERROR, "git error").into_response()
+            }
+        })?
+    } else {
+        let status = tokio::time::timeout(INFO_REFS_TIMEOUT, child.wait())
+            .await
+            .map_err(|_| {
+                warn!(
+                    "git info_refs subprocess timed out ({}s)",
+                    INFO_REFS_TIMEOUT.as_secs()
+                );
+                (StatusCode::GATEWAY_TIMEOUT, "git operation timed out").into_response()
+            })?
+            .map_err(|e| {
+                error!(error = %e, "git subprocess failed");
+                (StatusCode::INTERNAL_SERVER_ERROR, "git error").into_response()
+            })?;
+        (status, (repo, _permit, stdout_tmp, stderr_tmp))
+    };
 
     if !status.success() {
         let stderr = read_log_prefix(stderr_tmp.path(), 64 * 1024).await;
@@ -1182,6 +1206,7 @@ pub async fn upload_pack(
         body,
         Vec::new(),
         "application/x-git-upload-pack-result".to_string(),
+        state.track_accepted_child(crate::deploy_drain::WorkKind::Git),
     )
 }
 
@@ -1287,30 +1312,68 @@ pub async fn receive_pack(
     ];
     hook_env.extend(receive_pack_git_config(hooks_dir));
 
-    // Run receive-pack against the tempdir. Returns the *owned* subprocess
-    // output (PackOutput) — crucially NOT a Response, so the post-push
-    // fence in finalize_push can sequence the CAS before any 2xx exists.
-    let pack = run_git_at(
-        repo.path(),
-        "receive-pack",
-        body,
-        &hook_env,
-        &state.config.git_repo_path,
-        RECEIVE_PACK_MAX_OUTPUT_BYTES,
-    )
-    .await?;
-
-    let ctx = PushContext {
-        pack,
-        parent_state,
-        owner: params.owner.clone(),
-        repo: params.repo.clone(),
-        repo_id: repo_name.to_string(),
-        pusher: auth.pubkey,
-        tenant: auth.tenant,
-        repo_handle: repo,
+    let drain = state
+        .config
+        .deploy_control_token
+        .as_ref()
+        .map(|_| state.deploy_drain.clone());
+    let push = if drain.is_some() {
+        let identity = super::deploy::PushIdentity {
+            repo: repo_name.to_owned(),
+            owner: params.owner.clone(),
+            community: auth.tenant.community(),
+            pusher: pusher_hex.clone(),
+        };
+        Some(state.git_pushes.register(identity).map_err(|_| {
+            (StatusCode::SERVICE_UNAVAILABLE, "git lifecycle unavailable").into_response()
+        })?)
+    } else {
+        None
     };
-    Ok(finalize_push(&state, ctx).await)
+    if let Some(push) = &push {
+        hook_env.push(("BUZZ_HOOK_OPERATION_ID", push.operation_id().to_string()));
+    }
+    let execution = async {
+        // Run receive-pack against the tempdir. Returns the *owned* subprocess
+        // output (PackOutput) — crucially NOT a Response, so the post-push
+        // fence in finalize_push can sequence the CAS before any 2xx exists.
+        let pack = run_git_at(
+            repo.path(),
+            "receive-pack",
+            body,
+            &hook_env,
+            &state.config.git_repo_path,
+            RECEIVE_PACK_MAX_OUTPUT_BYTES,
+            drain,
+        )
+        .await?;
+
+        let ctx = PushContext {
+            pack,
+            parent_state,
+            owner: params.owner.clone(),
+            repo: params.repo.clone(),
+            repo_id: repo_name.to_string(),
+            pusher: auth.pubkey,
+            tenant: auth.tenant,
+            repo_handle: repo,
+        };
+        Ok(finalize_push(&state, ctx).await)
+    };
+    if let Some(push) = push {
+        let result = push.scope(execution).await;
+        let status = match &result {
+            Ok(response) | Err(response) => response.status(),
+        };
+        // Server errors can leave uncertain CAS/publication outcomes. Retain
+        // an unresolved fault; only determinate protocol/client outcomes finish.
+        if !status.is_server_error() {
+            push.complete();
+        }
+        result
+    } else {
+        execution.await
+    }
 }
 
 /// Per-process git configuration for the hydrated receive-pack workspace.
@@ -1367,6 +1430,7 @@ async fn run_git_at(
     extra_env: &[(&str, String)],
     scratch_dir: &Path,
     max_output_bytes: u64,
+    drain: Option<crate::deploy_drain::DrainController>,
 ) -> Result<PackOutput, Response> {
     let stdout_tmp = tempfile::NamedTempFile::new_in(scratch_dir).map_err(|e| {
         error!(error = %e, service = %service, "git stdout tempfile failed");
@@ -1405,30 +1469,40 @@ async fn run_git_at(
     // Stream request body to git stdin.
     let mut stdin = child.stdin.take().unwrap();
     let pump_service = service.to_string();
+    let body_work =
+        drain.map(|drain| drain.track_accepted_child(crate::deploy_drain::WorkKind::Background));
     let body_task = tokio::spawn(async move {
-        use futures_util::StreamExt;
-        let mut stream = body.into_data_stream();
-        while let Some(chunk) = stream.next().await {
-            match chunk {
-                Ok(bytes) => {
-                    if tokio::io::AsyncWriteExt::write_all(&mut stdin, &bytes)
-                        .await
-                        .is_err()
-                    {
+        let pump = async {
+            use futures_util::StreamExt;
+            let mut stream = body.into_data_stream();
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    Ok(bytes) => {
+                        if tokio::io::AsyncWriteExt::write_all(&mut stdin, &bytes)
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        // Body/decode errors (client abort, malformed gzip,
+                        // decoded-size cap) surface to git as early EOF; log so
+                        // there is a server-side signal, not just an opaque
+                        // client-side hangup.
+                        warn!(error = %e, service = %pump_service, "git request body stream failed");
                         break;
                     }
                 }
-                Err(e) => {
-                    // Body/decode errors (client abort, malformed gzip,
-                    // decoded-size cap) surface to git as early EOF; log so
-                    // there is a server-side signal, not just an opaque
-                    // client-side hangup.
-                    warn!(error = %e, service = %pump_service, "git request body stream failed");
-                    break;
-                }
             }
+            drop(stdin); // close stdin → EOF for git
+        };
+        if let Some(work) = body_work {
+            work.scope(pump).await;
+            work.complete();
+        } else {
+            pump.await;
         }
-        drop(stdin); // close stdin → EOF for git
     });
     let body_abort = body_task.abort_handle();
 
@@ -1648,7 +1722,7 @@ struct StreamingGit {
 /// The response status is already committed when this stream is polled, so a
 /// timeout is surfaced as an in-band body error. [`StreamingGit`] observes
 /// that error and kills the subprocess.
-struct TimedByteStream<S> {
+pub(super) struct TimedByteStream<S> {
     inner: std::pin::Pin<Box<S>>,
     deadline: std::pin::Pin<Box<tokio::time::Sleep>>,
     started_at: Instant,
@@ -1701,7 +1775,7 @@ impl futures_util::Stream for StreamingGit {
 }
 
 impl<S> TimedByteStream<S> {
-    fn new(inner: S, timeout: Duration) -> Self {
+    pub(super) fn new(inner: S, timeout: Duration) -> Self {
         Self {
             inner: Box::pin(inner),
             deadline: Box::pin(tokio::time::sleep(timeout)),
@@ -1779,7 +1853,7 @@ impl Drop for StreamingGit {
 /// stream, not via HTTP status. The buffered [`run_git_at`] stays the push
 /// path's runner precisely because the fence needs the bytes in hand before
 /// committing to a status.
-#[allow(clippy::result_large_err)]
+#[allow(clippy::result_large_err, clippy::too_many_arguments)]
 fn stream_git_read(
     repo: HydratedRepo,
     permit: tokio::sync::OwnedSemaphorePermit,
@@ -1788,6 +1862,7 @@ fn stream_git_read(
     body: Body,
     prefix: Vec<u8>,
     content_type: String,
+    work: Option<crate::deploy_drain::WorkGuard>,
 ) -> Result<Response, Response> {
     let mut cmd = Command::new("git");
     cmd.arg(service).arg("--stateless-rpc");
@@ -1805,6 +1880,31 @@ fn stream_git_read(
         error!(error = %e, service = %service, "git subprocess failed to spawn");
         (StatusCode::INTERNAL_SERVER_ERROR, "git error").into_response()
     })?;
+
+    if let Some(work) = work {
+        let stream = super::read_lifetime::ManagedRead::spawn(
+            child,
+            body,
+            (repo, permit),
+            work,
+            PACK_OPS_TIMEOUT,
+        )
+        .map_err(|error| {
+            error!(%error, "git read lifecycle setup failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, "git error").into_response()
+        })?;
+        let prefix = futures_util::stream::once(async move {
+            Ok::<_, std::io::Error>(bytes::Bytes::from(prefix))
+        });
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, content_type)
+            .header(header::CACHE_CONTROL, "no-cache")
+            .body(Body::from_stream(futures_util::StreamExt::chain(
+                prefix, stream,
+            )))
+            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "git error").into_response());
+    }
 
     // Pump the request body into git's stdin, then close it (EOF). Detached:
     // the task ends on its own when the body ends or the write fails.
@@ -2237,6 +2337,103 @@ pub fn git_router(state: Arc<AppState>) -> Router {
 #[cfg(test)]
 mod track_c_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn deployment_real_receive_pack_body_retains_descendant_through_fence() {
+        use crate::api::git::deploy::{GitPushRegistry, PushIdentity};
+        use crate::deploy_drain::{DrainController, WorkKind};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let scratch = tempfile::tempdir().unwrap();
+        let repo_path = scratch.path().join("receiver.git");
+        assert!(Command::new("git")
+            .args(["init", "--bare"])
+            .arg(&repo_path)
+            .output()
+            .await
+            .unwrap()
+            .status
+            .success());
+        let drain = DrainController::new();
+        let registry = GitPushRegistry::new(drain.clone());
+        let parent = drain.try_admit_root(WorkKind::Http).unwrap();
+        let push = parent
+            .scope(async {
+                registry
+                    .register(PushIdentity {
+                        repo: "receiver".to_owned(),
+                        owner: "a".repeat(64),
+                        community: buzz_core::CommunityId::from_uuid(uuid::Uuid::new_v4()),
+                        pusher: "b".repeat(64),
+                    })
+                    .unwrap()
+            })
+            .await;
+        let (entered, ready) = tokio::sync::oneshot::channel();
+        let release = Arc::new(tokio::sync::Notify::new());
+        let inherited = Arc::new(AtomicBool::new(false));
+        let body = Body::from_stream(futures_util::stream::once({
+            let release = release.clone();
+            let inherited = inherited.clone();
+            let drain = drain.clone();
+            async move {
+                entered.send(()).unwrap();
+                release.notified().await;
+                if let Ok(child) = drain.admit_current_child(WorkKind::Background) {
+                    inherited.store(true, Ordering::SeqCst);
+                    child.complete();
+                }
+                Ok::<_, std::io::Error>(bytes::Bytes::from_static(b"0000"))
+            }
+        }));
+        let worker = tokio::spawn({
+            let drain = drain.clone();
+            let scratch_path = scratch.path().to_path_buf();
+            async move {
+                let result = push
+                    .scope(run_git_at(
+                        &repo_path,
+                        "receive-pack",
+                        body,
+                        &[],
+                        &scratch_path,
+                        RECEIVE_PACK_MAX_OUTPUT_BYTES,
+                        Some(drain),
+                    ))
+                    .await;
+                if result.is_ok() {
+                    push.complete();
+                }
+                result
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(5), ready)
+            .await
+            .unwrap()
+            .unwrap();
+        let operation = uuid::Uuid::new_v4();
+        let boot = drain.begin(operation).unwrap().boot_id;
+        drain.fence_http(operation, boot, "qualified-edge").unwrap();
+        parent.complete();
+        let parked = drain.snapshot();
+        release.notify_one();
+        let output = tokio::time::timeout(Duration::from_secs(5), worker)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(
+            output.ok,
+            "actual receive-pack must finish after its input flush"
+        );
+        assert_eq!(parked.http_inflight, 0);
+        assert_eq!(parked.git_inflight, 1);
+        assert_eq!(
+            parked.background_inflight, 1,
+            "actual detached stdin pump must own its accepted work"
+        );
+        assert!(inherited.load(Ordering::SeqCst));
+        assert!(drain.snapshot().safe_to_stop);
+    }
     use crate::api::git::hydrate::{hydrate_for_write, HydrationOptions};
     use crate::api::git::manifest::Manifest;
     use buzz_core::CommunityId;
