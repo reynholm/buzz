@@ -79,7 +79,9 @@ Application directory overrides remain unset. Opus 0.4 replaces the retired audi
 
 The constant-time utility advisory
 [RUSTSEC-2026-0385](https://rustsec.org/advisories/RUSTSEC-2026-0385.html)
-is fixed by `ctutils` 0.4.4 or later in both lockfiles. Earlier releases could generate
+is fixed by `ctutils` 0.4.4 or later; both lockfiles select 0.4.5. The patch registry
+records this security floor rather than an exact compatibility pin, so later
+compatible updates remain allowed. Earlier releases could generate
 branches on secret values during mask generation and, on 32-bit targets,
 `u128` comparisons. The compatible patch updates the version and checksum only;
 no advisory exception is added. Run the full dependency policy for both shipping
