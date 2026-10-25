@@ -36,7 +36,7 @@ keypair.
   `buzz-admin migrate` before starting the relay when bootstrapping a fresh
   database. Auto-migration requires an image that includes embedded SQLx
   migrations.
-- The stack uses Postgres, Redis, MinIO, and a git data volume because
+- The stack uses Postgres, Redis, Silo, and a git data volume because
   those are real Buzz dependencies today. Minimal mode can simplify this later.
 - Mobile push remains off by default. To use the public gateway, keep the
   template's explicit `BUZZ_PUSH_GATEWAY_DELIVERY_URL` and set

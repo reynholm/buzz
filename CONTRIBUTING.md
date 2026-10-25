@@ -85,7 +85,7 @@ We review as capacity allows — focused PRs that follow this guide move fastest
 | pnpm | 10+ | Required for desktop app commands and `just ci` |
 | Flutter | 3.47.7+ | Required for mobile app — install via [flutter.dev](https://docs.flutter.dev/get-started/install) |
 | Xcode | 27.0 recommended; 26 supported | Required for iOS builds; see [iOS toolchain setup](mobile/README.md#ios-toolchain) |
-| Docker | 24+ | For Postgres, Redis, MinIO |
+| Docker | 24+ | For Postgres, Redis, Silo |
 | `just` | latest | Task runner — `cargo install just` |
 | `lefthook` | 2.1.3 (Hermit-pinned) | Auto-installed by `just hooks` — no manual install needed |
 | `sqlx` migrations | workspace crate | `just migrate` applies embedded migrations from `migrations/` |
@@ -158,9 +158,22 @@ cached thereafter). You can also run `just bootstrap` independently at any time;
 it is safe to re-run.
 
 `just setup` then starts Docker services (Postgres on `:5432`, Redis on `:6379`,
-Adminer on `:8082`, Keycloak on `:8180` for local OAuth/OIDC testing, MinIO on
+Adminer on `:8082`, Keycloak on `:8180` for local OAuth/OIDC testing, Silo on
 `:9000` for media storage, and Prometheus on `:9090` for metrics) and runs all
 pending database migrations.
+
+Object storage uses Silo, a MinIO-compatible server, with the same pinned
+server/client release as the harness and deployment templates. The Compose
+service names (`minio`, `minio-init`), `buzz-minio-data` volume, `MINIO_*`
+settings, and S3 endpoint remain unchanged; these names do not identify the
+server binary. The separate CI stack still uses its cached MinIO fixture.
+
+For an existing local MinIO dataset, stop the relay and other storage writers,
+stop `minio`, and save a complete cold copy of `buzz-minio-data`, including hidden
+metadata, before starting Silo. Validate a restored copy with Silo first. Keep
+the original backup untouched; do not point the old MinIO image at data already
+written by Silo. Fresh setups create the private `buzz-media` bucket through the
+existing `minio-init` service.
 
 ### Running the Relay and Desktop App
 

@@ -8223,7 +8223,7 @@ New module: `false`.
 
 ## `docker-compose.yml`
 
-Retain bundled MinIO and mc until the separate object-storage migration is accepted.
+Use pinned Silo and mc for local development, matching the harness and deployment templates while preserving existing storage names and volumes; keep the separate cached MinIO CI fixture.
 
 New module: `false`.
 
@@ -9008,3 +9008,43 @@ New module: `true`.
 
 - Verify: `just test`
 - Verify: `just ci`
+
+## `CONTRIBUTING.md`
+
+Document Silo development storage and preservation of existing local datasets and compatible service names.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `README.md`
+
+Describe Silo as the bundled object store for development and deployment.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `deploy/charts/buzz/README.md`
+
+Name the existing bundled Silo server consistently while preserving the minio chart API.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `deploy/charts/buzz/values.yaml`
+
+Describe the bundled Silo quickstart in comments without changing chart values.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `deploy/compose/README.md`
+
+Name the existing bundled Silo dependency consistently.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`

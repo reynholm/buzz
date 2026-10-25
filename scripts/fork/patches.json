@@ -12547,7 +12547,7 @@
     },
     {
       "path": "docker-compose.yml",
-      "responsibility": "Retain bundled MinIO and mc until the separate object-storage migration is accepted.",
+      "responsibility": "Use pinned Silo and mc for local development, matching the harness and deployment templates while preserving existing storage names and volumes; keep the separate cached MinIO CI fixture.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -13513,6 +13513,56 @@
       "verification_commands": [
         "just test",
         "just ci"
+      ]
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "responsibility": "Document Silo development storage and preservation of existing local datasets and compatible service names.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "README.md",
+      "responsibility": "Describe Silo as the bundled object store for development and deployment.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "deploy/charts/buzz/README.md",
+      "responsibility": "Name the existing bundled Silo server consistently while preserving the minio chart API.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "deploy/charts/buzz/values.yaml",
+      "responsibility": "Describe the bundled Silo quickstart in comments without changing chart values.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "deploy/compose/README.md",
+      "responsibility": "Name the existing bundled Silo dependency consistently.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
       ]
     }
   ],
