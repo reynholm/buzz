@@ -187,7 +187,7 @@ function ThreadContextPicker({
                 action.pending ? "Sending session control…" : undefined
               }
               data-testid="manage-thread-context"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+              className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
               onMouseDown={(event) => event.preventDefault()}
             >
               {action.pending ? (
@@ -235,6 +235,7 @@ function ThreadContextPicker({
                 Could not load thread agents.
               </p>
               <DropdownMenuItem
+                className="cursor-pointer"
                 onSelect={(event) => {
                   event.preventDefault();
                   if (directory.isError) void directory.refetch();
@@ -266,6 +267,7 @@ function ThreadContextPicker({
             agents.map((agent) => (
               <DropdownMenuItem
                 key={agent.pubkey}
+                className="cursor-pointer"
                 onSelect={(event) => {
                   event.preventDefault();
                   setSelected(agent.pubkey);
