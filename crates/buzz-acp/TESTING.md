@@ -184,7 +184,11 @@ process-lifecycle behavior.
 Run the package suite normally. The `mcp_service` integration test additionally
 requires Node.js and npm on PATH and starts a real `npm start` service with no
 package download. It verifies registration before tool calls and exclusion of
-real marker-controlled work. For configured Codex/provider acceptance:
+real marker-controlled work. A sequential Python stdio server additionally
+pipelines two-megabyte requests and responses through the production wrapper;
+independent input/output forwarding must keep both pipes progressing while
+the initialize response still waits for registration. For configured
+Codex/provider acceptance:
 
 ```sh
 cargo build --locked -p buzz-acp

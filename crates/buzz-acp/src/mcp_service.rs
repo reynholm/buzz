@@ -157,51 +157,62 @@ pub(crate) async fn run(args: Vec<String>) -> Result<()> {
         LinesCodec::new_with_max_length(32 * 1024 * 1024),
     );
     let mut stdout = tokio_util::codec::FramedWrite::new(tokio::io::stdout(), LinesCodec::new());
-    let mut initialize_id = None;
+    let (initialize_tx, initialize_rx) = tokio::sync::watch::channel(None::<serde_json::Value>);
     let mut initialized = false;
-    let outcome = async {
-        loop {
-            tokio::select! {
-                line = input.next() => {
-                    let Some(line) = line else { break; };
-                    let line = line?;
-                    if !initialized {
-                        if let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) {
-                            if message["method"] == "initialize" {
-                                initialize_id = message.get("id").cloned();
-                            }
-                        }
-                    }
-                    child_stdin.write_all(line.as_bytes()).await?;
-                    child_stdin.write_all(b"\n").await?;
-                    child_stdin.flush().await?;
-                }
-                line = output.next() => {
-                    let Some(line) = line else { break; };
-                    let line = line?;
-                    if !initialized {
-                        let initialized_response = serde_json::from_str::<serde_json::Value>(&line).ok().is_some_and(|message| {
-                            initialize_id.is_some() && message.get("id") == initialize_id.as_ref() && message.get("result").is_some()
-                        });
-                        if initialized_response {
-                            let directory = directory.clone();
-                            let registered = tokio::task::spawn_blocking(move || {
-                                let tree = crate::process_tree::snapshot().context("MCP identity snapshot unavailable")?;
-                                register(&directory, generation, id, std::process::id(), &tree)
-                            }).await?;
-                            if let Err(error) = registered {
-                                // Missing provenance keeps the worker conservatively held.
-                                eprintln!("MCP service registration failed: {error}");
-                            }
-                            initialized = true;
-                        }
-                    }
-                    stdout.send(line).await?;
+    // Poll both pumps independently: a blocked request write must not prevent
+    // draining the server's previous response (and vice versa).
+    let input_task = async {
+        while let Some(line) = input.next().await {
+            let line = line?;
+            if let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) {
+                if message["method"] == "initialize" {
+                    initialize_tx.send_replace(message.get("id").cloned());
                 }
             }
+            child_stdin.write_all(line.as_bytes()).await?;
+            child_stdin.write_all(b"\n").await?;
+            child_stdin.flush().await?;
         }
         Ok::<(), anyhow::Error>(())
-    }.await;
+    };
+    let output_task = async {
+        while let Some(line) = output.next().await {
+            let line = line?;
+            if !initialized {
+                let initialized_response = serde_json::from_str::<serde_json::Value>(&line)
+                    .ok()
+                    .is_some_and(|message| {
+                        initialize_rx
+                            .borrow()
+                            .as_ref()
+                            .is_some_and(|initialize_id| {
+                                message.get("id") == Some(initialize_id)
+                                    && message.get("result").is_some()
+                            })
+                    });
+                if initialized_response {
+                    let directory = directory.clone();
+                    let registered = tokio::task::spawn_blocking(move || {
+                        let tree = crate::process_tree::snapshot()
+                            .context("MCP identity snapshot unavailable")?;
+                        register(&directory, generation, id, std::process::id(), &tree)
+                    })
+                    .await?;
+                    if let Err(error) = registered {
+                        // Missing provenance keeps the worker conservatively held.
+                        eprintln!("MCP service registration failed: {error}");
+                    }
+                    initialized = true;
+                }
+            }
+            stdout.send(line).await?;
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+    let outcome = tokio::select! {
+        result = input_task => result,
+        result = output_task => result,
+    };
     // The enclosing ACP worker owns process-group retirement, including escaped
     // descendants. This wrapper reaps its direct child on every transport exit.
     drop(child_stdin);

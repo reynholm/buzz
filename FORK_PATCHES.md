@@ -9070,11 +9070,12 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/mcp_service.rs`
 
-Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.
+Register initialized service process instances and preserve independent, bounded forwarding in both stdio directions.
 
 New module: `true`.
 
 - Invocation: `crates/buzz-acp/src/mcp_service.rs` → `register_service_instances`; exact call `tree.register_service_instances(record.root, &record.instances);`; behavior test `registration_matches_worker_and_process_instance_without_hiding_work`; verify `cargo test --locked -p buzz-acp --lib registration_matches_worker_and_process_instance_without_hiding_work -- --test-threads=1`
+- Verify: `cargo test --locked -p buzz-acp --test mcp_service -- --test-threads=1`
 - Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/mcp_service/codex.rs`
@@ -9148,8 +9149,10 @@ New module: `true`.
 
 ## `crates/buzz-acp/tests/mcp_service.rs`
 
-Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.
+Exercise real npm service provenance, actual child work, and large pipelined messages through the production stdio wrapper.
 
 New module: `true`.
 
+- Required symbol: `real_npm_service_registers_before_tools_and_excludes_actual_work`
+- Required symbol: `pipelined_large_messages_keep_both_stdio_directions_progressing`
 - Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`

@@ -22,6 +22,84 @@ impl Drop for ProcessGroup {
 }
 
 #[tokio::test]
+async fn pipelined_large_messages_keep_both_stdio_directions_progressing() {
+    let directory = tempfile::tempdir().unwrap();
+    let ready = directory.path().join("response-prefix-written");
+    // A sequential server finishes its first response before reading request two.
+    // Leave the first response incomplete until request two reaches the OS pipe,
+    // making both directions exceed pipe capacity without relying on timing.
+    let server = r#"
+import array, fcntl, json, pathlib, sys, termios, time
+for line in sys.stdin:
+    request = json.loads(line)
+    if request['id'] == 2:
+        sys.stdout.write('{"jsonrpc":"2.0","id":2,"result":"' + 'x' * (1024 * 1024))
+        sys.stdout.flush()
+        pathlib.Path(sys.argv[1]).touch()
+        pending = array.array('i', [0])
+        while not pending[0]:
+            fcntl.ioctl(sys.stdin.fileno(), termios.FIONREAD, pending, True)
+            time.sleep(0.001)
+        sys.stdout.write('x' * (1024 * 1024) + '"}\n')
+        sys.stdout.flush()
+    else:
+        result = {} if request['id'] == 1 else len(request['params']['text'])
+        print(json.dumps({'jsonrpc':'2.0', 'id':request['id'], 'result':result}), flush=True)
+"#;
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_buzz-acp"))
+        .arg("__mcp-service")
+        .arg(directory.path())
+        .arg(uuid::Uuid::new_v4().to_string())
+        .arg(uuid::Uuid::new_v4().to_string())
+        .args(["python3", "-u", "-c", server])
+        .arg(&ready)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .kill_on_drop(true)
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let mut group = ProcessGroup(child.id());
+    let outcome = tokio::time::timeout(Duration::from_secs(15), async {
+        let mut input = child.stdin.take().unwrap();
+        let mut output = BufReader::new(child.stdout.take().unwrap()).lines();
+        input
+            .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}\n")
+            .await
+            .unwrap();
+        let initialized: serde_json::Value =
+            serde_json::from_str(&output.next_line().await.unwrap().unwrap()).unwrap();
+        assert_eq!(initialized["id"], 1);
+        input
+            .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\"}\n")
+            .await
+            .unwrap();
+        while !ready.exists() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let mut request = serde_json::to_vec(&serde_json::json!({
+            "jsonrpc":"2.0", "id":3, "method":"tools/call",
+            "params":{"text":"y".repeat(2 * 1024 * 1024)}
+        }))
+        .unwrap();
+        request.push(b'\n');
+        input.write_all(&request).await.unwrap();
+        let first: serde_json::Value =
+            serde_json::from_str(&output.next_line().await.unwrap().unwrap()).unwrap();
+        assert_eq!(first["id"], 2);
+        assert_eq!(first["result"].as_str().unwrap().len(), 2 * 1024 * 1024);
+        let second: serde_json::Value =
+            serde_json::from_str(&output.next_line().await.unwrap().unwrap()).unwrap();
+        assert_eq!(second["id"], 3);
+        assert_eq!(second["result"], 2 * 1024 * 1024);
+    })
+    .await;
+    group.kill();
+    let _ = child.wait().await;
+    outcome.expect("pipelined requests and responses must progress concurrently");
+}
+
+#[tokio::test]
 async fn real_npm_service_registers_before_tools_and_excludes_actual_work() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("finish");

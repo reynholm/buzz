@@ -13609,7 +13609,7 @@
     },
     {
       "path": "crates/buzz-acp/src/mcp_service.rs",
-      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "responsibility": "Register initialized service process instances and preserve independent, bounded forwarding in both stdio directions.",
       "is_new": true,
       "required_symbols": [],
       "invocation_seams": [
@@ -13622,6 +13622,7 @@
         }
       ],
       "verification_commands": [
+        "cargo test --locked -p buzz-acp --test mcp_service -- --test-threads=1",
         "cargo test --locked -p buzz-acp -- --test-threads=1"
       ]
     },
@@ -13727,9 +13728,12 @@
     },
     {
       "path": "crates/buzz-acp/tests/mcp_service.rs",
-      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "responsibility": "Exercise real npm service provenance, actual child work, and large pipelined messages through the production stdio wrapper.",
       "is_new": true,
-      "required_symbols": [],
+      "required_symbols": [
+        "real_npm_service_registers_before_tools_and_excludes_actual_work",
+        "pipelined_large_messages_keep_both_stdio_directions_progressing"
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "cargo test --locked -p buzz-acp -- --test-threads=1"
