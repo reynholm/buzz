@@ -9103,6 +9103,7 @@ Preserve service launch provenance, nonblocking process polling, fair capacity d
 
 New module: `true`.
 
+- Required symbol: `mod launcher_tests;`
 - Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/dispatch_diagnostics.rs`
@@ -9203,3 +9204,24 @@ New module: `true`.
 - Required symbol: `multicall_target_runs_injected_mcp_transport`
 - Required symbol: `multicall_target_runs_native_codex_proxy`
 - Verify: `cargo test --locked -p sprig`
+
+## `crates/buzz-acp/src/mcp_service/launcher_tests.rs`
+
+Exercise actual adapter 2.2.2 and external Codex 0.164.0 through a CODEX_PATH-preserving operator launcher, with live proxy ancestry and native/injected MCP receipts.
+
+New module: `true`.
+
+- Required symbol: `real_launcher_wrapper_preserves_proxy_and_external_cli`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+- Verify: `env -u CODEX_PATH cargo test --locked -p buzz-acp --lib real_launcher_wrapper -- --ignored --nocapture --test-threads=1`
+
+## `crates/buzz-acp/tests/fixtures/codex_launcher.py`
+
+Record launcher selection and exec the actual adapter/external CLI; reproduce inherited-proxy loss with an explicit negative-control flag.
+
+New module: `true`.
+
+- Required symbol: `selected = inherited or environment["BUZZ_TEST_LAUNCHER_FALLBACK"]`
+- Required symbol: `os.execve(target, [target, *sys.argv[1:]], environment)`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+- Verify: `env -u CODEX_PATH cargo test --locked -p buzz-acp --lib real_launcher_wrapper -- --ignored --nocapture --test-threads=1`

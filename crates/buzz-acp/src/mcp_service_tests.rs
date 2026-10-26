@@ -1,6 +1,9 @@
 use super::*;
 use std::collections::HashSet;
 
+#[path = "mcp_service/launcher_tests.rs"]
+mod launcher_tests;
+
 #[test]
 fn registration_matches_worker_and_process_instance_without_hiding_work() {
     let registry = ServiceRegistry::new(std::path::PathBuf::from("/bin/wrapper")).unwrap();

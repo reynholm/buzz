@@ -227,6 +227,43 @@ initialization. These checks do not publish to a relay or attest a human app
 test. Repeat the native-app workflow above with the candidate harness for that
 acceptance boundary.
 
+### Operator launcher with an external Codex CLI
+
+The separate opt-in `real_launcher_wrapper` check requires adapter **2.2.2** and
+external Codex **0.164.0**. It uses an isolated recording launcher with the
+operator contract: preserve an inherited `CODEX_PATH`, otherwise select the
+configured external CLI. It does not modify an installed launcher. Set paths to
+the actual adapter entry point and external executable, then run:
+
+```sh
+cargo build --locked -p buzz-acp
+BUZZ_TEST_BIN_DIR="$PWD/target/debug" \
+BUZZ_TEST_CODEX_ADAPTER_222=/path/to/codex-acp-2.2.2/dist/index.js \
+BUZZ_TEST_CODEX_EXTERNAL_0164=/path/to/codex-0.164.0 \
+  env -u CODEX_PATH cargo test --locked -p buzz-acp --lib real_launcher_wrapper \
+  -- --ignored --nocapture --test-threads=1
+```
+
+The test checks both wrapper fallback and an explicitly configured CLI. It
+observes the real external executable below the live MCP proxy, requires native
+and injected npm MCP initialize receipts, and rejects a false worker hold. No
+model prompt or relay publication is performed. As a negative control, set
+`BUZZ_TEST_LAUNCHER_OVERWRITE=1`: the same test must fail because the launcher
+replaces the inherited proxy path.
+
+For the existing five-worker, background-work and resume checks through this
+profile, copy `tests/fixtures/codex_launcher.py` into a temporary directory under
+the names `codex-acp` and `external-cli`, then run `chmod 700` on both copies. Set
+`BUZZ_TEST_CODEX_ACP` to that temporary `codex-acp`,
+`BUZZ_TEST_LAUNCHER_ADAPTER` to the 2.2.2 entry point,
+`BUZZ_TEST_LAUNCHER_REAL_CLI` to the external 0.164.0 executable,
+`BUZZ_TEST_LAUNCHER_FALLBACK` to the temporary `external-cli`, and
+`BUZZ_TEST_LAUNCHER_TRACE` to a temporary JSONL receipt file. Unset `CODEX_PATH`
+and the negative-control flag, then run the `real_codex_` command above. The
+recording fixture execs the selected actual binary; it does not substitute an
+app-server implementation. These provider checks still require configured
+credentials and remain separate from human native-app acceptance.
+
 Capacity stalls log their scope, queue age, active/held/idle slots, hold reason
 and PIDs on transition and at most once per minute per scope. Process observation
 logs include only executable basenames, capped at sixteen PIDs; arguments may

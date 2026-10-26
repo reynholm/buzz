@@ -13674,7 +13674,9 @@
       "path": "crates/buzz-acp/src/mcp_service_tests.rs",
       "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
       "is_new": true,
-      "required_symbols": [],
+      "required_symbols": [
+        "mod launcher_tests;"
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "cargo test --locked -p buzz-acp -- --test-threads=1"
@@ -13804,6 +13806,33 @@
       "invocation_seams": [],
       "verification_commands": [
         "cargo test --locked -p sprig"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/mcp_service/launcher_tests.rs",
+      "responsibility": "Exercise actual adapter 2.2.2 and external Codex 0.164.0 through a CODEX_PATH-preserving operator launcher, with live proxy ancestry and native/injected MCP receipts.",
+      "is_new": true,
+      "required_symbols": [
+        "real_launcher_wrapper_preserves_proxy_and_external_cli"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1",
+        "env -u CODEX_PATH cargo test --locked -p buzz-acp --lib real_launcher_wrapper -- --ignored --nocapture --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/tests/fixtures/codex_launcher.py",
+      "responsibility": "Record launcher selection and exec the actual adapter/external CLI; reproduce inherited-proxy loss with an explicit negative-control flag.",
+      "is_new": true,
+      "required_symbols": [
+        "selected = inherited or environment[\"BUZZ_TEST_LAUNCHER_FALLBACK\"]",
+        "os.execve(target, [target, *sys.argv[1:]], environment)"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1",
+        "env -u CODEX_PATH cargo test --locked -p buzz-acp --lib real_launcher_wrapper -- --ignored --nocapture --test-threads=1"
       ]
     }
   ],
