@@ -115,6 +115,45 @@ async fn prompt(agent: &mut OwnedAgent, session: &str, text: &str) {
     );
 }
 
+async fn wait_for_mcp_tools(agent: &mut OwnedAgent, session: &str, worker: usize) {
+    let observer = crate::observer::ObserverHandle::in_process();
+    agent.acp.set_observer(Some(observer.clone()), worker);
+    let mut status = String::new();
+    let ready = timeout(Duration::from_secs(15), async {
+        loop {
+            let after = observer.snapshot().last().map_or(0, |event| event.seq);
+            // Codex handles /mcp locally: inspect its discovered tool inventory
+            // before asking the model to use a server that starts asynchronously.
+            prompt(agent, session, "/mcp").await;
+            status = observer
+                .snapshot()
+                .iter()
+                .filter(|event| event.seq > after && event.kind == "acp_read")
+                .map(|event| &event.payload["params"]["update"])
+                .filter(|update| update["sessionUpdate"] == "agent_message_chunk")
+                .filter_map(|update| update["content"]["text"].as_str())
+                .collect();
+            let lines: Vec<_> = status.lines().map(|line| line.replace('`', "")).collect();
+            if ["late_service", "native_late"].iter().all(|server| {
+                lines.iter().any(|line| {
+                    line.replace("late-service", "late_service")
+                        .starts_with(&format!("- {server}: 2 tools"))
+                })
+            }) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    eprintln!("worker {worker} MCP inventory before model prompt: {status}");
+    assert!(
+        ready.is_ok(),
+        "both servers must advertise their actual tools"
+    );
+    agent.acp.set_observer(None, worker);
+}
+
 async fn take_result(pool: &mut AgentPool, queue: &mut EventQueue) -> SessionScope {
     let result = timeout(Duration::from_secs(180), pool.result_rx.recv())
         .await
@@ -225,6 +264,7 @@ async fn real_codex_five_workers_late_npm_services_and_original_collection() {
             .state
             .set_scope_owner_generation(original.clone(), generation);
         agent.agent_name = "codex-acp".into();
+        wait_for_mcp_tools(&mut agent, &session, index).await;
         prompt(&mut agent, &session, "Call the late-service ping MCP tool exactly once, then answer OK. Do not use any other tool.").await;
         timeout(Duration::from_secs(10), async {
             while std::fs::read_to_string(&starts)

@@ -13696,7 +13696,10 @@
       "path": "crates/buzz-acp/src/pool/real_codex_stall_tests.rs",
       "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
       "is_new": true,
-      "required_symbols": [],
+      "required_symbols": [
+        "async fn wait_for_mcp_tools(",
+        "wait_for_mcp_tools(&mut agent, &session, index).await;"
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "cargo test --locked -p buzz-acp -- --test-threads=1"

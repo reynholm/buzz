@@ -261,8 +261,12 @@ the names `codex-acp` and `external-cli`, then run `chmod 700` on both copies. S
 `BUZZ_TEST_LAUNCHER_TRACE` to a temporary JSONL receipt file. Unset `CODEX_PATH`
 and the negative-control flag, then run the `real_codex_` command above. The
 recording fixture execs the selected actual binary; it does not substitute an
-app-server implementation. These provider checks still require configured
-credentials and remain separate from human native-app acceptance.
+app-server implementation. The five-worker fixture first uses the adapter's
+local `/mcp` command to require both discovered tool inventories before each
+initial model prompt; `session/new` can acknowledge asynchronous MCP startup.
+The five actual ping receipts remain required. These provider checks still
+require configured credentials and remain separate from human native-app
+acceptance.
 
 Capacity stalls log their scope, queue age, active/held/idle slots, hold reason
 and PIDs on transition and at most once per minute per scope. Process observation

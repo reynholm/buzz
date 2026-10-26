@@ -9120,6 +9120,8 @@ Preserve service launch provenance, nonblocking process polling, fair capacity d
 
 New module: `true`.
 
+- Required symbol: `async fn wait_for_mcp_tools(`
+- Required symbol: `wait_for_mcp_tools(&mut agent, &session, index).await;`
 - Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/stall_tests.rs`
