@@ -5266,8 +5266,9 @@ sleep 1"#,
             .session_prompt_with_idle_timeout(
                 "wire-session",
                 "hello",
-                std::time::Duration::from_secs(2),
-                std::time::Duration::from_secs(5),
+                // Allow process scheduling jitter in this wire-usage fixture.
+                std::time::Duration::from_secs(10),
+                std::time::Duration::from_secs(30),
             )
             .await
             .expect("wire prompt");

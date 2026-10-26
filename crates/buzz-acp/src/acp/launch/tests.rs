@@ -11,6 +11,13 @@ use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf, process::Command};
 
 const CHILD: &str = "BUZZ_LAUNCH_TEST_CHILD";
 const LITERAL: &str = "policy with spaces, ; $(not-a-shell)";
+const RUNTIMES: [&str; 5] = [
+    "goose",
+    "codex-acp",
+    "claude-agent-acp",
+    "hermes-acp",
+    "buzz-pi-acp",
+];
 
 struct Fixture(PathBuf);
 impl Fixture {
@@ -27,13 +34,7 @@ os.execv(sys.argv[2], sys.argv[2:])
 "#,
         )
         .unwrap();
-        for name in [
-            "goose",
-            "codex-acp",
-            "claude-agent-acp",
-            "hermes-acp",
-            "buzz-pi-acp",
-        ] {
+        for name in RUNTIMES {
             let path = dir.join(name);
             fs::write(
                 &path,
@@ -92,7 +93,7 @@ for line in sys.stdin:
         let output = cmd.output().unwrap();
         assert!(
             output.status.success(),
-            "{}\n{}",
+            "mode={mode}\n{}\n{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
@@ -109,7 +110,12 @@ fn wrapper_preserves_worker_identity_and_runs_on_each_spawn() {
     for wrapped in [false, true] {
         let f = Fixture::new();
         let prefix = f.prefix();
-        f.run("success", wrapped.then_some(prefix.as_str()));
+        for runtime in RUNTIMES {
+            f.run(
+                &format!("success:{runtime}"),
+                wrapped.then_some(prefix.as_str()),
+            );
+        }
         assert_eq!(
             fs::read_to_string(f.0.join("worker-started"))
                 .unwrap()
@@ -162,15 +168,16 @@ async fn spawn_child() {
     let Ok(mode) = std::env::var(CHILD) else {
         return;
     };
-    // Bound a broken wrapper/stdio regression; no arbitrary timing gates.
+    // Bound each runtime's initial/replacement handshake independently,
+    // including its bounded native service discovery and process census.
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        for name in [
-            "goose",
-            "codex-acp",
-            "claude-agent-acp",
-            "hermes-acp",
-            "buzz-pi-acp",
-        ] {
+        for name in RUNTIMES {
+            if mode
+                .strip_prefix("success:")
+                .is_some_and(|selected| selected != name)
+            {
+                continue;
+            }
             let worker = std::env::current_dir().unwrap().join(name);
             let args = CliArgs::try_parse_from([
                 "buzz-acp",
