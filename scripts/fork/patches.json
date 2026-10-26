@@ -5999,19 +5999,21 @@
     },
     {
       "path": "desktop/playwright.config.ts",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow. Register long-thread and large-channel virtualization coverage in the smoke suite.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow. Register long-thread and large-channel virtualization coverage in the smoke suite. Register the open-thread highlight smoke spec.",
       "is_new": false,
       "required_symbols": [
         "\"**/session-status.spec.ts\",",
         "\"**/session-controls.spec.ts\",",
-        "\"**/thread-virtualization.spec.ts\""
+        "\"**/thread-virtualization.spec.ts\"",
+        "\"**/open-thread-highlight.spec.ts\","
       ],
       "invocation_seams": [],
       "verification_commands": [
         "just ci",
         "cd desktop && pnpm test:e2e:smoke",
         "CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts",
-        "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts"
+        "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts",
+        "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
       ]
     },
     {
@@ -6886,22 +6888,45 @@
     },
     {
       "path": "desktop/src/features/messages/ui/TimelineMessageList.tsx",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Pass the open thread root id into the channel timeline.",
       "is_new": false,
-      "required_symbols": [],
-      "invocation_seams": [],
+      "required_symbols": [
+        "openThreadHeadId={openThreadHeadId}"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/messages/ui/TimelineMessageList.tsx",
+          "callee_symbol": "MessageRowItem",
+          "invocation": "<MessageRowItem\n              openThreadHeadId={openThreadHeadId}",
+          "behavior_test": "buzz: highlights only the open root with a reply summary",
+          "verification_command": "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
+        }
+      ],
       "verification_commands": [
-        "just ci"
+        "just ci",
+        "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
       ]
     },
     {
       "path": "desktop/src/features/messages/ui/TimelineMessageRow.tsx",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Mark only the open thread root with theme-derived background and aria-current.",
       "is_new": false,
-      "required_symbols": [],
-      "invocation_seams": [],
+      "required_symbols": [
+        "const isOpenThreadHead =",
+        "hoverBackground={!isOpenThreadHead}"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/messages/ui/TimelineMessageRow.tsx",
+          "callee_symbol": "MessageRow",
+          "invocation": "<MessageRow\n        channelId={channelId}\n        hoverBackground={!isOpenThreadHead}",
+          "behavior_test": "buzz: highlights an open root without replies",
+          "verification_command": "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
+        }
+      ],
       "verification_commands": [
-        "just ci"
+        "just ci",
+        "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
       ]
     },
     {
@@ -13836,6 +13861,61 @@
       "verification_commands": [
         "cargo test --locked -p buzz-acp -- --test-threads=1",
         "env -u CODEX_PATH cargo test --locked -p buzz-acp --lib real_launcher_wrapper -- --ignored --nocapture --test-threads=1"
+      ]
+    },
+    {
+      "path": "desktop/src/features/channels/ui/ChannelPane.tsx",
+      "responsibility": "Pass the open thread root id into the channel timeline.",
+      "is_new": false,
+      "required_symbols": [
+        "openThreadHeadId={openThreadHeadId}"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/channels/ui/ChannelPane.tsx",
+          "callee_symbol": "MessageTimeline",
+          "invocation": "<MessageTimeline\n              openThreadHeadId={openThreadHeadId}",
+          "behavior_test": "buzz: highlights only the open root with a reply summary",
+          "verification_command": "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
+        }
+      ],
+      "verification_commands": [
+        "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/MessageTimeline.tsx",
+      "responsibility": "Pass the open thread root id into the channel timeline.",
+      "is_new": false,
+      "required_symbols": [
+        "openThreadHeadId={openThreadHeadId}"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/messages/ui/MessageTimeline.tsx",
+          "callee_symbol": "TimelineMessageList",
+          "invocation": "<TimelineMessageList\n      openThreadHeadId={openThreadHeadId}",
+          "behavior_test": "buzz: highlights only the open root with a reply summary",
+          "verification_command": "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
+        }
+      ],
+      "verification_commands": [
+        "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
+      ]
+    },
+    {
+      "path": "desktop/tests/e2e/open-thread-highlight.spec.ts",
+      "responsibility": "Verify open thread root highlighting, assistive state, and screenshots in both themes with and without replies.",
+      "is_new": true,
+      "required_symbols": [
+        "data-open-thread-head",
+        "aria-current",
+        "buzz-dark",
+        "highlights only the open root with a reply summary"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
       ]
     }
   ],
