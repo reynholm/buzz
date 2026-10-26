@@ -102,6 +102,7 @@ fn return_after_turn(pool: &mut AgentPool, mut agent: OwnedAgent, scope: Session
         continuation: None,
         collection_pending: false,
     });
+    agent.prepare_background_return();
     pool.return_agent(agent);
 }
 
@@ -232,6 +233,7 @@ async fn child_of_codex_host_queues_original_collection_before_releasing_slot() 
             received_at: std::time::Instant::now(),
         }),
     });
+    agent.prepare_background_return();
     pool.return_agent(agent);
     let mut queue = EventQueue::new(DedupMode::Queue);
     pool.queue_finished_background_work(&mut queue);
@@ -253,6 +255,7 @@ async fn child_of_codex_host_queues_original_collection_before_releasing_slot() 
     let mut agent = pool.try_claim(Some(&original)).unwrap();
     agent.finish_background_collection();
     queue.mark_complete(&original);
+    agent.prepare_background_return();
     pool.return_agent(agent);
     assert!(pool.try_claim(Some(&scope())).is_some());
 }

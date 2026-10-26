@@ -95,9 +95,69 @@ pub struct ProcessTree {
     snapshot_helpers: HashSet<u32>,
     snapshot_candidates: HashSet<u32>,
     uncertain_snapshots: HashSet<u32>,
+    instances: HashMap<u32, ProcessInstance>,
+    registered_services: HashSet<u32>,
+}
+
+/// PID birth and current command, both required for a service registration.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ProcessInstance {
+    birth: String,
+    command: String,
 }
 
 impl ProcessTree {
+    /// Executable basename only: arguments can contain credentials or task data.
+    pub(crate) fn safe_command(&self, pid: u32) -> String {
+        self.children
+            .values()
+            .flatten()
+            .find(|child| child.pid == pid)
+            .and_then(|child| child.command.split_whitespace().next())
+            .and_then(|program| program.rsplit('/').next())
+            .unwrap_or("unknown")
+            .chars()
+            .take(64)
+            .collect()
+    }
+    #[cfg(unix)]
+    pub(crate) fn service_instances(&self, root: u32) -> HashMap<u32, ProcessInstance> {
+        self.descendant_pids(root)
+            .into_iter()
+            .chain([root])
+            .filter_map(|pid| {
+                self.instances
+                    .get(&pid)
+                    .cloned()
+                    .map(|instance| (pid, instance))
+            })
+            .collect()
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn register_service_instances(
+        &mut self,
+        root: u32,
+        instances: &HashMap<u32, ProcessInstance>,
+    ) {
+        if instances.get(&root).is_none() || instances.get(&root) != self.instances.get(&root) {
+            return;
+        }
+        let live = self.descendant_pids(root);
+        for (&pid, instance) in instances {
+            if (pid == root || live.contains(&pid)) && self.instances.get(&pid) == Some(instance) {
+                self.registered_services.insert(pid);
+            }
+        }
+    }
+
+    pub(crate) fn is_registered_service(&self, pid: u32) -> bool {
+        self.registered_services.contains(&pid)
+    }
+
+    pub(crate) fn process_instance(&self, pid: u32) -> Option<&ProcessInstance> {
+        self.instances.get(&pid)
+    }
     #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
     pub(crate) fn from_snapshot_with_identities(output: &str, identities: Option<&str>) -> Self {
         let mut tree = parse_snapshot(output).unwrap();
@@ -127,7 +187,10 @@ impl ProcessTree {
         let mut pending = vec![parent];
         while let Some(parent) = pending.pop() {
             for child in self.children(parent) {
-                if !self.is_snapshot_candidate(child.pid) && residents.insert(child.pid) {
+                if !self.is_snapshot_candidate(child.pid)
+                    && !self.is_registered_service(child.pid)
+                    && residents.insert(child.pid)
+                {
                     pending.push(child.pid);
                 }
             }
@@ -155,7 +218,10 @@ impl ProcessTree {
     }
 
     fn is_helper_within(&self, child: &ChildProcess, depth: usize) -> bool {
-        if self.resident_helpers.contains(&child.pid) || is_resident_helper(&child.command) {
+        if self.registered_services.contains(&child.pid)
+            || self.resident_helpers.contains(&child.pid)
+            || is_resident_helper(&child.command)
+        {
             return true;
         }
         let children = self.children(child.pid);
@@ -193,13 +259,15 @@ impl ProcessTree {
 #[cfg(unix)]
 pub fn snapshot() -> Option<ProcessTree> {
     let mut command = tokio::process::Command::new("/bin/ps");
-    command.args(["-axo", "pid=,ppid=,stat=,command="]);
+    command
+        .args(["-ww", "-axo", "pid=,ppid=,stat=,lstart=,command="])
+        .env("LC_ALL", "C");
     let output = bounded_output(
         command,
         std::time::Duration::from_millis(250),
         4 * 1024 * 1024,
     )?;
-    let tree = parse_snapshot(&output)?;
+    let tree = parse_instance_snapshot(&output)?;
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let tree = codex_helpers::classify(tree);
     Some(tree)
@@ -225,6 +293,33 @@ fn parse_snapshot(output: &str) -> Option<ProcessTree> {
             command: command.to_owned(),
         });
     }
+    Some(tree)
+}
+
+#[cfg(unix)]
+pub(crate) fn parse_instance_snapshot(output: &str) -> Option<ProcessTree> {
+    let mut normalized = String::new();
+    let mut instances = HashMap::new();
+    for line in output.lines().filter(|line| !line.trim().is_empty()) {
+        let mut fields = line.split_whitespace();
+        let pid: u32 = fields.next()?.parse().ok()?;
+        let parent = fields.next()?;
+        let state = fields.next()?;
+        let birth = (0..5)
+            .map(|_| fields.next())
+            .collect::<Option<Vec<_>>>()?
+            .join(" ");
+        let command = fields.collect::<Vec<_>>().join(" ");
+        if command.is_empty() || instances.contains_key(&pid) {
+            return None;
+        }
+        normalized.push_str(&format!("{pid} {parent} {state} {command}\n"));
+        if !state.starts_with('Z') {
+            instances.insert(pid, ProcessInstance { birth, command });
+        }
+    }
+    let mut tree = parse_snapshot(&normalized)?;
+    tree.instances = instances;
     Some(tree)
 }
 

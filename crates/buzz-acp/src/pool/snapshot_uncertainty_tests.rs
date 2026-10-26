@@ -62,6 +62,7 @@ async fn partial_snapshot_identity_does_not_invent_collection_but_preserves_obse
             Some(empty(worker, server)),
         ]);
         let _ = agent.background_work_running(&PromptSource::Channel(original.clone()));
+        agent.prepare_background_return();
         pool.return_agent(agent);
         let mut queue = EventQueue::new(DedupMode::Queue);
         pool.queue_finished_background_work(&mut queue);
@@ -185,6 +186,7 @@ async fn new_real_work_alongside_uncertain_snapshot_collects_after_its_exit() {
         .unwrap()
         .blocking_pids
         .clone();
+    agent.prepare_background_return();
     pool.return_agent(agent);
     let mut queue = EventQueue::new(DedupMode::Queue);
     pool.queue_finished_background_work(&mut queue);

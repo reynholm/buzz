@@ -4727,10 +4727,10 @@
     },
     {
       "path": "crates/buzz-acp/src/lib.rs",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Preserve the heartbeat collection call with a textual drift guard; full live-service-loop behavioral mutation coverage is not claimed. Refresh idle clocks when a non-heartbeat prompt result is handled (port of block/buzz#7173). Enable session status once per harness and retire status on owner rotate and channel removal; forward the status directory to the managed MCP server.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Preserve the heartbeat collection call with a textual drift guard; full live-service-loop behavioral mutation coverage is not claimed. Refresh idle clocks when a non-heartbeat prompt result is handled (port of block/buzz#7173). Enable session status once per harness and retire status on owner rotate and channel removal; forward the status directory to the managed MCP server. Schedule one asynchronous shared process poll, fence its application, and continue capacity dispatch across unavailable scopes. Main-loop select wiring is textually guarded; full relay-loop mutation coverage is not claimed.",
       "is_new": false,
       "required_symbols": [
-        "pool.queue_finished_background_work(&mut queue);",
+        "process_poll.start(pool.background_poll_requests());",
         "fn result_refreshes_idle_clock(source: &PromptSource) -> bool",
         "mod session_status;",
         "name == session_status::SESSION_STATUS_DIR_ENV",
@@ -5113,6 +5113,13 @@
           "behavior_test": "retired_adapter_death_replaces_the_worker_through_result_handling",
           "verification_command": "cargo test -p buzz-acp --lib retired_adapter_death_replaces_the_worker_through_result_handling -- --test-threads=1",
           "coverage": "Task2 fix round1: preserve fatal health at stale fences and follow real relay DM ordering; fresh production-path regression and targeted mutation."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "prepare_background_return",
+          "invocation": "agent.prepare_background_return();",
+          "behavior_test": "completed_empty_turn_prepares_observation_before_listener_return",
+          "verification_command": "cargo test --locked -p buzz-acp --lib completed_empty_turn_prepares_observation_before_listener_return -- --test-threads=1"
         }
       ],
       "verification_commands": [
@@ -8376,11 +8383,18 @@
         },
         {
           "caller_path": "crates/buzz-acp/src/pool/background_work.rs",
-          "callee_symbol": "background_child_pids",
-          "invocation": "let Some(children) = agent.acp.background_child_pids() else {",
+          "callee_symbol": "apply_background_children",
+          "invocation": "self.apply_background_children(index, children, queue);",
           "behavior_test": "background_observed_then_unknown_then_empty_collects_exactly_once",
           "verification_command": "cargo test -p buzz-acp --lib background_observed_then_unknown_then_empty_collects_exactly_once -- --test-threads=1",
-          "coverage": "Previously observed work survives Unknown and yields exactly one original-session collection."
+          "coverage": "Shared snapshot application and local process fixtures converge on the production collection transition; unknown observations do not authorize release."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool/background_work.rs",
+          "callee_symbol": "background_child_pids_in",
+          "invocation": "agent.acp.background_child_pids_in(tree)",
+          "behavior_test": "current_shared_snapshot_retains_actual_work_in_its_slot",
+          "verification_command": "cargo test --locked -p buzz-acp --lib current_shared_snapshot_retains_actual_work_in_its_slot -- --test-threads=1"
         }
       ],
       "verification_commands": [
@@ -13563,6 +13577,162 @@
       "invocation_seams": [],
       "verification_commands": [
         "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/background_poll.rs",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/background_poll.rs",
+          "callee_symbol": "spawn_blocking",
+          "invocation": "self.tasks.spawn_blocking(move || {",
+          "behavior_test": "slow_snapshot_keeps_event_loop_responsive_and_allows_only_one_poll",
+          "verification_command": "cargo test --locked -p buzz-acp --lib slow_snapshot_keeps_event_loop_responsive_and_allows_only_one_poll -- --test-threads=1"
+        }
+      ],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/background_poll_tests.rs",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/mcp_service.rs",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/mcp_service.rs",
+          "callee_symbol": "register_service_instances",
+          "invocation": "tree.register_service_instances(record.root, &record.instances);",
+          "behavior_test": "registration_matches_worker_and_process_instance_without_hiding_work",
+          "verification_command": "cargo test --locked -p buzz-acp --lib registration_matches_worker_and_process_instance_without_hiding_work -- --test-threads=1"
+        }
+      ],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/mcp_service/codex.rs",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/mcp_service/codex.rs",
+          "callee_symbol": "install",
+          "invocation": "super::codex_proxy::install(registry, adapter, launch, registered)",
+          "behavior_test": "real_codex_native_mcp_config_survives_injected_server_configuration",
+          "verification_command": "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test --locked -p buzz-acp --lib real_codex_native_mcp_config -- --ignored --test-threads=1"
+        }
+      ],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/mcp_service/codex_proxy.rs",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/mcp_service/codex_proxy.rs",
+          "callee_symbol": "apply_servers",
+          "invocation": "apply_servers(&mut request, &spec.servers)?;",
+          "behavior_test": "real_codex_native_mcp_config_survives_injected_server_configuration",
+          "verification_command": "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo build --locked -p buzz-acp && BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test --locked -p buzz-acp --lib real_codex_native_mcp_config -- --ignored --test-threads=1"
+        }
+      ],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/mcp_service_tests.rs",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/dispatch_diagnostics.rs",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/real_codex_stall_tests.rs",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/stall_tests.rs",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [
+        "unavailable_oldest_scope_does_not_block_available_held_owner",
+        "newly_registered_service_does_not_invent_collection_or_hide_reused_work_pid",
+        "checked_restart_of_held_scope_releases_slot_and_retains_ordinary_input"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/tests/fixtures/late_service/package.json",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/tests/fixtures/late_service/src/index.mjs",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/tests/mcp_service.rs",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
       ]
     }
   ],

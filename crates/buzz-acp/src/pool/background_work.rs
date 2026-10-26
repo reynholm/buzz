@@ -49,6 +49,11 @@ pub(crate) enum ContinuationState {
 }
 
 impl OwnedAgent {
+    pub(crate) fn prepare_background_return(&mut self) {
+        if self.background_context.is_some() {
+            self.acp.return_children = Some(self.acp.background_child_pids());
+        }
+    }
     pub(super) fn remember_background_context(
         &mut self,
         source: &PromptSource,
@@ -88,6 +93,7 @@ impl OwnedAgent {
 
     /// Stop retaining an original collection after success or terminal failure.
     pub(crate) fn finish_background_collection(&mut self) {
+        self.acp.observed_background_instances.clear();
         if let Some(hold) = &mut self.background_context {
             hold.continuation = None;
             hold.collection_pending = false;
@@ -112,8 +118,102 @@ impl OwnedAgent {
     }
 }
 
+/// A result may only update the unchanged idle worker and hold it observed.
+#[derive(Clone)]
+pub(crate) struct BackgroundPollRequest {
+    index: usize,
+    worker: Uuid,
+    hold_epoch: Uuid,
+    #[cfg(unix)]
+    pub registry: Option<Arc<crate::mcp_service::ServiceRegistry>>,
+}
+
 impl AgentPool {
+    pub(crate) fn background_poll_requests(&self) -> Vec<BackgroundPollRequest> {
+        self.runtime_holds
+            .keys()
+            .filter_map(|&index| {
+                let agent = self.agents.get(index)?.as_ref()?;
+                Some(BackgroundPollRequest {
+                    index,
+                    worker: agent.acp.process_instance,
+                    hold_epoch: *self.runtime_hold_epochs.get(&index)?,
+                    #[cfg(unix)]
+                    registry: agent.acp.service_registry.clone(),
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn apply_background_snapshot(
+        &mut self,
+        requests: &[BackgroundPollRequest],
+        tree: Option<&crate::process_tree::ProcessTree>,
+        queue: &mut EventQueue,
+    ) {
+        let Some(tree) = tree else {
+            return;
+        };
+        for request in requests {
+            let index = request.index;
+            if !self.runtime_holds.contains_key(&index)
+                || self.runtime_hold_epochs.get(&index) != Some(&request.hold_epoch)
+            {
+                continue;
+            }
+            let Some(Some(agent)) = self.agents.get_mut(index) else {
+                continue;
+            };
+            if agent.acp.process_instance != request.worker {
+                continue;
+            }
+            if let Some(children) = agent.acp.background_child_pids_in(tree) {
+                if let Some(hold) = self.runtime_holds.get_mut(&index) {
+                    // Resolving startup uncertainty into a proven service is
+                    // not a task completion. PID equality alone is insufficient:
+                    // a service reusing an exited task's PID must still collect.
+                    hold.blocking_pids.retain(|pid| {
+                        !(tree.is_registered_service(*pid)
+                            && agent
+                                .acp
+                                .observed_background_instances
+                                .get(pid)
+                                .is_some_and(|instance| {
+                                    tree.process_instance(*pid) == Some(instance)
+                                }))
+                    });
+                }
+                let mut pids: Vec<_> = children.iter().copied().collect();
+                pids.sort_unstable();
+                let descriptions: Vec<_> = pids
+                    .into_iter()
+                    .take(16)
+                    .map(|pid| (pid, tree.safe_command(pid)))
+                    .collect();
+                if self.hold_descriptions.get(&index) != Some(&descriptions) {
+                    tracing::info!(
+                        worker = index,
+                        ?descriptions,
+                        blocking_count = children.len(),
+                        uncertain = false,
+                        "background hold process state observed"
+                    );
+                    self.hold_descriptions.insert(index, descriptions);
+                }
+                self.apply_background_children(index, children, queue);
+                if !self.runtime_holds.contains_key(&index) {
+                    if let Some(Some(agent)) = self.agents.get_mut(index) {
+                        agent.acp.observed_background_instances.clear();
+                    }
+                }
+            }
+        }
+        self.hold_descriptions
+            .retain(|index, _| self.runtime_holds.contains_key(index));
+    }
+
     pub fn set_runtime_hold(&mut self, index: usize, hold: RuntimeHold) {
+        self.runtime_hold_epochs.insert(index, Uuid::new_v4());
         self.runtime_holds.insert(index, hold);
     }
 
@@ -179,9 +279,10 @@ impl AgentPool {
     pub(super) fn refresh_runtime_hold(&mut self, agent: &mut OwnedAgent) {
         self.runtime_holds.remove(&agent.index);
         let Some(mut hold) = agent.background_context.take() else {
+            agent.acp.observed_background_instances.clear();
             return;
         };
-        match agent.acp.background_child_pids() {
+        match agent.acp.return_children.take().flatten() {
             // Work seen at prompt completion may exit while publishing metrics.
             // Keep that completion pending so the poll still queues collection.
             Some(children)
@@ -189,7 +290,8 @@ impl AgentPool {
                     && hold.blocking_pids.is_empty()
                     && !hold.collection_pending =>
             {
-                return
+                agent.acp.observed_background_instances.clear();
+                return;
             }
             Some(children) if !children.is_empty() => hold.blocking_pids = children,
             Some(_) => {} // Preserve observed exit until polling queues collection.
@@ -207,51 +309,59 @@ impl AgentPool {
         self.set_runtime_hold(agent.index, hold);
     }
 
-    /// Poll independently of lazy-pool sleep. Only a valid original session resumes.
+    /// Synchronous fixture entry; production uses the asynchronous shared poll.
+    #[cfg(test)]
     pub fn queue_finished_background_work(&mut self, queue: &mut EventQueue) {
         let indexes: Vec<_> = self.runtime_holds.keys().copied().collect();
         for index in indexes {
             let Some(Some(agent)) = self.agents.get_mut(index) else {
                 continue;
             };
-            let Some(children) = agent.acp.background_child_pids() else {
-                continue;
-            };
-            if !children.is_empty() {
-                if let Some(hold) = self.runtime_holds.get_mut(&index) {
-                    hold.blocking_pids = children;
-                }
-                continue;
+            if let Some(children) = agent.acp.background_child_pids() {
+                self.apply_background_children(index, children, queue);
             }
-            if self.retire_on_return.contains(&index) {
-                self.runtime_holds.remove(&index);
-                continue;
-            }
-            let Some(hold) = self.runtime_holds.get(&index) else {
-                continue;
-            };
-            if hold.blocking_pids.is_empty() && !hold.collection_pending {
-                // Unknown discovery held this worker conservatively, but no
-                // workload was observed. Empty now is not a completion event.
-                self.runtime_holds.remove(&index);
-                continue;
-            }
-            let valid = hold.continuation.as_ref().is_some_and(|continuation| {
-                self.agents[index].as_ref().is_some_and(|agent| {
-                    self.continuation_matches(agent, &hold.scope, continuation)
-                })
-            });
-            if !valid {
-                self.runtime_holds.remove(&index);
-                continue;
-            }
+        }
+    }
+
+    fn apply_background_children(
+        &mut self,
+        index: usize,
+        children: HashSet<u32>,
+        queue: &mut EventQueue,
+    ) {
+        if !children.is_empty() {
             if let Some(hold) = self.runtime_holds.get_mut(&index) {
-                hold.blocking_pids.clear();
-                if !hold.collection_pending {
-                    if let Some(continuation) = &hold.continuation {
-                        queue.enqueue_continuation(hold.scope.clone(), continuation.clone());
-                        hold.collection_pending = true;
-                    }
+                hold.blocking_pids = children;
+            }
+            return;
+        }
+        if self.retire_on_return.contains(&index) {
+            self.runtime_holds.remove(&index);
+            return;
+        }
+        let Some(hold) = self.runtime_holds.get(&index) else {
+            return;
+        };
+        if hold.blocking_pids.is_empty() && !hold.collection_pending {
+            // Unknown discovery held this worker, but no actual work was observed.
+            self.runtime_holds.remove(&index);
+            return;
+        }
+        let valid = hold.continuation.as_ref().is_some_and(|continuation| {
+            self.agents[index]
+                .as_ref()
+                .is_some_and(|agent| self.continuation_matches(agent, &hold.scope, continuation))
+        });
+        if !valid {
+            self.runtime_holds.remove(&index);
+            return;
+        }
+        if let Some(hold) = self.runtime_holds.get_mut(&index) {
+            hold.blocking_pids.clear();
+            if !hold.collection_pending {
+                if let Some(continuation) = &hold.continuation {
+                    queue.enqueue_continuation(hold.scope.clone(), continuation.clone());
+                    hold.collection_pending = true;
                 }
             }
         }

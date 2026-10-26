@@ -145,6 +145,70 @@ child running under code mode: its original worker must remain protected until
 exit, and collection must still return to the original thread. This check needs
 the rebuilt harness; source tests do not update the installed desktop app.
 
+## Saturated workers and late MCP services
+
+Capacity dispatch visits every eligible scope once per pass. An unavailable
+scope stays outside the queue until the pass ends, then returns with its event
+age and retry budget. Ready background collections retain their precedence.
+The `stall_tests` regressions cover a blocked oldest scope followed by the
+available owner of a held worker, unchanged retry exhaustion, checked retirement
+with retained ordinary input, failed discovery and stale worker/hold results.
+
+The listener launches at most one shared process enumeration on a blocking
+thread. Completion is selected separately from incoming events and controls.
+Worker instance IDs and hold epochs fence application after claim/return,
+replacement or retirement. Failed discovery retains holds. Prompt tasks prepare
+return observations before handing workers to the listener; pool return does
+not run process enumeration. `background_poll_tests` exercises a blocked
+collector on a single-thread runtime while an incoming control is received.
+
+On Unix, Codex stdio MCP launches use the harness's internal transport wrapper.
+After a successful MCP initialize, before forwarding its response, the wrapper
+registers its service process instances in a private worker-generation directory.
+Registrations compare PID, birth stamp and command and require the original
+wrapper to remain an ancestor. Registered services remain traversal roots;
+subsequent tool children still hold the worker. Resolving an observed process
+into the same registered service does not invent a background completion. A
+different process instance reusing an old task PID still collects that task.
+
+Native Codex servers are discovered through the adapter's CLI with bounded time
+and output. A controlled Codex stdio proxy preserves their registered launches
+when the adapter constructs thread start/resume/fork configuration containing
+injected servers. Native environment, cwd and tool settings are retained; secrets
+stay in a private launch file instead of discovery arguments. Unsupported or
+failed discovery emits a warning and leaves unknown processes protected. These
+native hooks are exercised with codex-acp 2.1.1; an adapter changing its CLI or
+app-server methods needs its own acceptance run. Windows keeps its existing
+process-lifecycle behavior.
+
+Run the package suite normally. The `mcp_service` integration test additionally
+requires Node.js and npm on PATH and starts a real `npm start` service with no
+package download. It verifies registration before tool calls and exclusion of
+real marker-controlled work. For configured Codex/provider acceptance:
+
+```sh
+cargo build --locked -p buzz-acp
+BUZZ_TEST_BIN_DIR="$PWD/target/debug" \
+  cargo test --locked -p buzz-acp --lib real_codex_ -- --ignored --nocapture --test-threads=1
+```
+
+Set `BUZZ_TEST_CODEX_ACP` when the adapter is outside PATH. The five-worker check
+uses actual provider calls, services through npm and a missed session census.
+It verifies a sixth scope and a later original-scope request, a real child held
+for ten seconds, and production collection in the original scope. The separate
+native check combines configured and injected servers and waits for late MCP
+initialization. These checks do not publish to a relay or attest a human app
+test. Repeat the native-app workflow above with the candidate harness for that
+acceptance boundary.
+
+Capacity stalls log their scope, queue age, active/held/idle slots, hold reason
+and PIDs on transition and at most once per minute per scope. Process observation
+logs include only executable basenames, capped at sixteen PIDs; arguments may
+contain credentials. Slow or failed snapshots warn at most once per minute.
+Scoped `!restart`/`!rotate` remains the explicit checked recovery path for the
+old held session. No TTL silently releases or kills real work. Incoming queue
+durability across a full harness restart remains outside this change.
+
 ## Git bootstrap
 
 The credential fixture requires Git 2.46 or newer for the `authtype` credential

@@ -7,7 +7,7 @@
 //! 3. [`AcpClient::session_new`] — create session with MCP server config
 
 mod claude_context;
-mod launch;
+pub(crate) mod launch;
 mod provider_failure;
 mod restart_status;
 
@@ -257,6 +257,13 @@ pub struct AcpClient {
     /// Seeded at `initialize`, extended by newly created `session/new`
     /// processes and MCP helpers. Their own turn-work children still block sleep.
     resident_pids: HashSet<u32>,
+    /// Unique to this spawned worker, independent of slot and OS PID reuse.
+    pub(crate) process_instance: uuid::Uuid,
+    /// Prepared by the prompt task; returning it to the pool never runs ps.
+    pub(crate) return_children: Option<Option<HashSet<u32>>>,
+    pub(crate) observed_background_instances: HashMap<u32, crate::process_tree::ProcessInstance>,
+    #[cfg(unix)]
+    pub(crate) service_registry: Option<std::sync::Arc<crate::mcp_service::ServiceRegistry>>,
     /// Status snapshots of this worker's provider sessions, keyed by the
     /// provider session ID. Usage notifications select an entry by their own
     /// `params.sessionId`, never by the current turn.
@@ -643,6 +650,22 @@ impl AcpClient {
             };
         cmd.envs(launch_env.iter().cloned());
         cmd.env_remove(launch::PREFIX_ENV);
+        #[cfg(unix)]
+        let service_registry = if standard_adapter == Some(StandardAdapterKind::Codex) {
+            let registry = std::sync::Arc::new(
+                crate::mcp_service::ServiceRegistry::for_current_executable()
+                    .map_err(std::io::Error::other)?,
+            );
+            if crate::mcp_service::wrap_native_config(&registry, command, &mut cmd)
+                .await
+                .is_err()
+            {
+                tracing::warn!("native MCP service discovery unavailable; unregistered processes remain protected");
+            }
+            Some(registry)
+        } else {
+            None
+        };
         let claude_thinking_summaries = standard_adapter == Some(StandardAdapterKind::Claude)
             && !launch_prefixed
             && claude_cli_accepts_thinking_display(&cmd).await;
@@ -694,6 +717,11 @@ impl AcpClient {
             standard_adapter,
             claude_thinking_summaries,
             resident_pids: HashSet::new(),
+            process_instance: uuid::Uuid::new_v4(),
+            return_children: None,
+            observed_background_instances: HashMap::new(),
+            #[cfg(unix)]
+            service_registry,
             session_status: HashMap::new(),
             status_capture: None,
             compactions: compaction::CompactionTracker::default(),
@@ -710,7 +738,16 @@ impl AcpClient {
         if let Some(snapshot) = self.process_tree_snapshots.pop_front() {
             return snapshot;
         }
-        crate::process_tree::snapshot()
+        let tree = crate::process_tree::snapshot()?;
+        #[cfg(unix)]
+        let tree = {
+            let mut tree = tree;
+            if let Some(registry) = &self.service_registry {
+                registry.apply(&mut tree);
+            }
+            tree
+        };
+        Some(tree)
     }
 
     /// Remember processes created before the first turn, including providers'
@@ -732,10 +769,18 @@ impl AcpClient {
         if let Some(snapshot) = self.background_child_snapshots.pop_front() {
             return snapshot;
         }
+        let tree = self.process_tree_snapshot()?;
+        self.background_child_pids_in(&tree)
+    }
+
+    /// Classify one worker against a shared, already collected snapshot.
+    pub(crate) fn background_child_pids_in(
+        &mut self,
+        tree: &crate::process_tree::ProcessTree,
+    ) -> Option<HashSet<u32>> {
         let Some(pid) = self.process_id() else {
             return Some(HashSet::new());
         };
-        let tree = self.process_tree_snapshot()?;
         let live = tree.descendant_pids(pid);
         self.resident_pids.retain(|pid| live.contains(pid));
         let mut pending = vec![pid];
@@ -755,7 +800,8 @@ impl AcpClient {
                     continue;
                 }
                 if self.resident_pids.contains(&child.pid) || tree.is_resident_helper(child) {
-                    if !tree.is_snapshot_helper(child.pid) {
+                    if !tree.is_snapshot_helper(child.pid) && !tree.is_registered_service(child.pid)
+                    {
                         self.resident_pids.insert(child.pid);
                     }
                     pending.push(child.pid);
@@ -765,6 +811,15 @@ impl AcpClient {
         if blocking.is_empty() && uncertain {
             None
         } else {
+            for pid in &blocking {
+                if self.observed_background_instances.len() < 4096 {
+                    if let Some(instance) = tree.process_instance(*pid) {
+                        self.observed_background_instances
+                            .entry(*pid)
+                            .or_insert_with(|| instance.clone());
+                    }
+                }
+            }
             Some(blocking)
         }
     }
@@ -786,7 +841,7 @@ impl AcpClient {
                 continue;
             }
             for child in tree.children(parent) {
-                if tree.is_snapshot_candidate(child.pid) {
+                if tree.is_snapshot_candidate(child.pid) || tree.is_registered_service(child.pid) {
                     continue;
                 }
                 if self.resident_pids.contains(&child.pid) || !before.contains(&child.pid) {
@@ -893,6 +948,12 @@ impl AcpClient {
         system_prompt: Option<SystemPromptTransport<'_>>,
         session_title: Option<&str>,
     ) -> Result<SessionNewResponse, AcpError> {
+        #[cfg(unix)]
+        let mcp_servers = if let Some(registry) = &self.service_registry {
+            registry.wrap_servers(mcp_servers)
+        } else {
+            mcp_servers
+        };
         let params = self.build_session_params(cwd, mcp_servers, system_prompt, session_title);
         let before = self.process_id().and_then(|pid| {
             self.process_tree_snapshot()
@@ -973,6 +1034,12 @@ impl AcpClient {
         system_prompt: Option<SystemPromptTransport<'_>>,
         session_title: Option<&str>,
     ) -> Result<SessionNewResponse, AcpError> {
+        #[cfg(unix)]
+        let mcp_servers = if let Some(registry) = &self.service_registry {
+            registry.wrap_servers(mcp_servers)
+        } else {
+            mcp_servers
+        };
         let mut params = self.build_session_params(cwd, mcp_servers, system_prompt, session_title);
         params["sessionId"] = serde_json::Value::String(session_id.to_owned());
         let before = self

@@ -39,6 +39,9 @@ os.execv(sys.argv[2], sys.argv[2:])
                 &path,
                 r#"#!/usr/bin/env python3
 import json, os, sys
+if sys.argv[1:] == ['cli', 'mcp', 'list', '--json']:
+    print('[]', flush=True)
+    sys.exit(0)
 with open('worker-started', 'a') as log:
     log.write('started\n')
 for line in sys.stdin:
@@ -120,7 +123,12 @@ fn wrapper_preserves_worker_identity_and_runs_on_each_spawn() {
                 .lines()
                 .map(|line| serde_json::from_str(line).unwrap())
                 .collect();
-            assert_eq!(calls.len(), 10);
+            assert_eq!(calls.iter().filter(|call| call[2] != "cli").count(), 10);
+            assert_eq!(
+                calls.iter().filter(|call| call[2] == "cli").count(),
+                2,
+                "native discovery must obey the same launch prefix"
+            );
             for call in calls {
                 assert_eq!(call[0], LITERAL);
             }

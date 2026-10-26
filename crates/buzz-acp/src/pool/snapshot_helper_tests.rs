@@ -273,6 +273,7 @@ async fn late_codex_snapshot_exit_does_not_enqueue_background_collection() {
     let mut agent = remember(&mut pool, &original);
     action(&mut agent, "start").await;
     let _ = agent.background_work_running(&PromptSource::Channel(original.clone()));
+    agent.prepare_background_return();
     pool.return_agent(agent);
     action(pool.agents[0].as_mut().unwrap(), "stop").await;
     let mut queue = EventQueue::new(DedupMode::Queue);
@@ -301,6 +302,7 @@ async fn codex_snapshot_child_work_survives_late_and_session_capture() {
         // Startup capture must also avoid adopting ordinary descendants of a snapshot.
         agent.acp.capture_startup_children();
         assert!(agent.background_work_running(&PromptSource::Channel(original.clone())));
+        agent.prepare_background_return();
         pool.return_agent(agent);
         let mut queue = EventQueue::new(DedupMode::Queue);
         pool.queue_finished_background_work(&mut queue);
@@ -343,6 +345,7 @@ async fn ordinary_snapshot_lookalikes_still_collect_actual_work() {
         let mut agent = remember(&mut pool, &original);
         action(&mut agent, "start").await;
         let running = agent.background_work_running(&PromptSource::Channel(original.clone()));
+        agent.prepare_background_return();
         pool.return_agent(agent);
         let retained = pool.has_runtime_hold();
         action(pool.agents[0].as_mut().unwrap(), "stop").await;
