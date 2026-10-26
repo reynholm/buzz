@@ -178,18 +178,24 @@ pub async fn ws_audio_handler(
             connection_time,
         )
     });
-    limit_audio_websocket(ws).on_upgrade(move |socket| {
-        handle_audio_connection(
-            socket,
-            state,
-            tenant,
-            channel_id,
-            permit,
-            nip_fi_assertion,
-            shadow,
-            connection_time,
-        )
-    })
+    let work = crate::deploy_drain::UpgradeWork::new(
+        state.track_accepted_child(crate::deploy_drain::WorkKind::WebSocket),
+    );
+    let failed = work.clone();
+    limit_audio_websocket(ws)
+        .on_failed_upgrade(move |_| failed.failed())
+        .on_upgrade(move |socket| {
+            work.run(handle_audio_connection(
+                socket,
+                state,
+                tenant,
+                channel_id,
+                permit,
+                nip_fi_assertion,
+                shadow,
+                connection_time,
+            ))
+        })
 }
 
 fn acquire_audio_connection_permit(
@@ -2190,7 +2196,14 @@ async fn run_active_audio_connection(
         // ordering. Omit it rather than publishing a plausible-but-wrong value.
         None
     };
-    let should_auto_end = removal.as_ref().map(|(_, ended)| *ended).unwrap_or(false);
+    let deployment_restart = state.config.deploy_control_token.is_some()
+        && state
+            .shutting_down
+            .load(std::sync::atomic::Ordering::Acquire);
+    // A deployment closes transports so participants can rejoin the other
+    // color. Preserve their durable huddle; normal last-peer leave still ends it.
+    let should_auto_end =
+        removal.as_ref().map(|(_, ended)| *ended).unwrap_or(false) && !deployment_restart;
 
     if remote_session.is_none() {
         if let Some((delta, _)) = removal {
@@ -3676,6 +3689,8 @@ async fn emit_participant_event(
     parent_channel_id: Uuid,
     lifecycle: ParticipantLifecycle<'_>,
 ) {
+    let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);
+    let mut complete = true;
     let ParticipantLifecycle {
         kind,
         participant_pubkey,
@@ -3753,6 +3768,9 @@ async fn emit_participant_event(
                 channel_id = %parent_channel_id,
                 "audio lifecycle event already persisted — skipping fan-out"
             );
+            if let Some(work) = work {
+                work.complete();
+            }
             return;
         }
         Err(e) => {
@@ -3766,6 +3784,7 @@ async fn emit_participant_event(
                 kind = %event.kind.as_u16(),
                 "audio: failed to persist lifecycle event: {e}"
             );
+            complete = false;
             StoredEvent::new(event.clone(), Some(parent_channel_id))
         }
     };
@@ -3787,6 +3806,7 @@ async fn emit_participant_event(
         .publish_event(tenant, EventTopic::Channel(parent_channel_id), &event)
         .await
     {
+        complete = false;
         state
             .local_event_ids
             .invalidate(&(tenant.community(), event.id.to_bytes()));
@@ -3795,6 +3815,11 @@ async fn emit_participant_event(
             channel_id = %parent_channel_id,
             "audio: failed to publish lifecycle event: {e}"
         );
+    }
+    if complete {
+        if let Some(work) = work {
+            work.complete();
+        }
     }
 }
 
@@ -5558,7 +5583,7 @@ mod tests {
     }
 
     /// `audio_test_state_real_db` with a final `configure` pass over the config.
-    async fn audio_test_state_real_db_with(
+    pub(super) async fn audio_test_state_real_db_with(
         configure: impl FnOnce(&mut crate::config::Config),
     ) -> Option<std::sync::Arc<crate::state::AppState>> {
         use std::sync::Arc;
@@ -5608,7 +5633,7 @@ mod tests {
     }
 
     /// Seed a community + channel + membership row. Returns `(pool, tenant, channel_id, pubkey_bytes)`.
-    async fn seed_audio_fixture(
+    pub(super) async fn seed_audio_fixture(
         pool: &sqlx::PgPool,
     ) -> (buzz_core::tenant::TenantContext, uuid::Uuid, nostr::Keys) {
         let community_uuid = uuid::Uuid::new_v4();
@@ -15748,3 +15773,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "postgres_deploy_tests.rs"]
+mod deployment_postgres_tests;

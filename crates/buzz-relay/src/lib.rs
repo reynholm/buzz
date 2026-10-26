@@ -23,6 +23,7 @@ pub(crate) mod nip_fi_upgrade;
 pub mod api;
 /// WebSocket audio relay for huddle voice channels.
 pub mod audio;
+pub mod background;
 /// Relay configuration from environment variables.
 pub mod config;
 /// Runtime conformance harness — abstract trace emission at the
@@ -32,6 +33,9 @@ pub mod config;
 pub mod conformance;
 /// WebSocket connection lifecycle and state.
 pub mod connection;
+/// Deployment admission barriers and transitive work accounting.
+pub mod deploy_drain;
+pub mod deploy_runtime;
 /// Relay error types.
 pub mod error;
 /// WebSocket message handlers for NIP-01 client commands.

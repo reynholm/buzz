@@ -1038,86 +1038,145 @@ pub fn emit_live_thread_summary(
     channel_id: Uuid,
     root_id: Vec<u8>,
 ) {
+    let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);
     let tenant = tenant.clone();
     let state = Arc::clone(state);
     tokio::spawn(async move {
-        let summary = match state
-            .db
-            .get_thread_summary(tenant.community(), &root_id)
-            .await
-        {
-            Ok(Some(summary)) => summary,
-            // Root has no thread row — nothing to summarize (e.g., the root
-            // itself was just deleted).
-            Ok(None) => return,
-            Err(e) => {
-                warn!(
-                    root = %hex::encode(&root_id),
-                    "live thread summary lookup failed: {e}"
-                );
-                return;
-            }
-        };
-
-        let root_hex = hex::encode(&root_id);
-        // Same tags/content shape as the channel-window page overlay in
-        // `api/bridge.rs` — one contract, two delivery doors.
-        let content = serde_json::json!({
-            "reply_count": summary.reply_count,
-            "descendant_count": summary.descendant_count,
-            "last_reply_at": summary.last_reply_at.map(|t| t.timestamp()),
-            "participants": summary.participants.iter().map(hex::encode).collect::<Vec<_>>(),
-        });
-        let tags = [
-            Tag::parse(["e", &root_hex]),
-            Tag::parse(["d", &root_hex]),
-            Tag::parse(["h", &channel_id.to_string()]),
-        ];
-        let mut parsed = Vec::with_capacity(tags.len());
-        for tag in tags {
-            match tag {
-                Ok(tag) => parsed.push(tag),
+        let dispatch = async {
+            let summary = match state
+                .db
+                .get_thread_summary(tenant.community(), &root_id)
+                .await
+            {
+                Ok(Some(summary)) => summary,
+                // Root has no thread row — nothing to summarize (e.g., the root
+                // itself was just deleted).
+                Ok(None) => return true,
                 Err(e) => {
-                    warn!(root = %root_hex, "live thread summary tag failed: {e}");
-                    return;
+                    warn!(
+                        root = %hex::encode(&root_id),
+                        "live thread summary lookup failed: {e}"
+                    );
+                    return false;
+                }
+            };
+
+            let root_hex = hex::encode(&root_id);
+            // Same tags/content shape as the channel-window page overlay in
+            // `api/bridge.rs` — one contract, two delivery doors.
+            let content = serde_json::json!({
+                "reply_count": summary.reply_count,
+                "descendant_count": summary.descendant_count,
+                "last_reply_at": summary.last_reply_at.map(|t| t.timestamp()),
+                "participants": summary.participants.iter().map(hex::encode).collect::<Vec<_>>(),
+            });
+            let tags = [
+                Tag::parse(["e", &root_hex]),
+                Tag::parse(["d", &root_hex]),
+                Tag::parse(["h", &channel_id.to_string()]),
+            ];
+            let mut parsed = Vec::with_capacity(tags.len());
+            for tag in tags {
+                match tag {
+                    Ok(tag) => parsed.push(tag),
+                    Err(e) => {
+                        warn!(root = %root_hex, "live thread summary tag failed: {e}");
+                        return false;
+                    }
                 }
             }
-        }
-        let event = match EventBuilder::new(
-            Kind::Custom(KIND_THREAD_SUMMARY as u16),
-            content.to_string(),
-        )
-        .tags(parsed)
-        .sign_with_keys(&state.relay_keypair)
-        {
-            Ok(event) => event,
-            Err(e) => {
-                warn!(root = %root_hex, "live thread summary sign failed: {e}");
-                return;
-            }
-        };
+            let event = match EventBuilder::new(
+                Kind::Custom(KIND_THREAD_SUMMARY as u16),
+                content.to_string(),
+            )
+            .tags(parsed)
+            .sign_with_keys(&state.relay_keypair)
+            {
+                Ok(event) => event,
+                Err(e) => {
+                    warn!(root = %root_hex, "live thread summary sign failed: {e}");
+                    return false;
+                }
+            };
 
-        // Redis before local fan-out so subscribers on other relay pods
-        // receive it too, matching `dispatch_persistent_event`.
-        state.mark_local_event(tenant.community(), &event.id);
-        if let Err(e) = state
-            .pubsub
-            .publish_event(&tenant, EventTopic::Channel(channel_id), &event)
-            .await
-        {
-            state
-                .local_event_ids
-                .invalidate(&(tenant.community(), event.id.to_bytes()));
-            warn!(root = %root_hex, "live thread summary Redis publish failed: {e}");
+            // Redis before local fan-out so subscribers on other relay pods
+            // receive it too, matching `dispatch_persistent_event`.
+            state.mark_local_event(tenant.community(), &event.id);
+            let mut published = true;
+            if let Err(e) = state
+                .pubsub
+                .publish_event(&tenant, EventTopic::Channel(channel_id), &event)
+                .await
+            {
+                state
+                    .local_event_ids
+                    .invalidate(&(tenant.community(), event.id.to_bytes()));
+                published = false;
+                warn!(root = %root_hex, "live thread summary Redis publish failed: {e}");
+            }
+            let stored = StoredEvent::new(event, Some(channel_id));
+            crate::handlers::event::fan_out_event_to_local_subscribers(
+                &state,
+                tenant.community(),
+                &stored,
+            )
+            .await;
+            published
+        };
+        if let Some(work) = work {
+            if work.scope(dispatch).await {
+                work.complete();
+            }
+        } else {
+            dispatch.await;
         }
-        let stored = StoredEvent::new(event, Some(channel_id));
-        crate::handlers::event::fan_out_event_to_local_subscribers(
-            &state,
-            tenant.community(),
-            &stored,
+    });
+}
+
+#[cfg(test)]
+mod deploy_summary_tests {
+    use super::*;
+    #[tokio::test]
+    async fn deployment_summary_spawn_retains_work_and_failed_lookup_is_unresolved() {
+        use crate::deploy_drain::WorkKind;
+        let base = crate::state::tests::test_state_with_database_url(
+            "postgres://test:test@127.0.0.1:1/test",
         )
         .await;
-    });
+        let mut state = (*base).clone();
+        Arc::make_mut(&mut state.config).deploy_control_token =
+            Some(crate::config::DeployControlToken::from_secret("a".repeat(64)).unwrap());
+        let state = Arc::new(state);
+        let drain = state.deploy_drain.clone();
+        let parent = drain.try_admit_root(WorkKind::Http).unwrap();
+        let tenant = TenantContext::resolved(
+            buzz_core::CommunityId::from_uuid(Uuid::new_v4()),
+            "summary.test",
+        );
+        parent
+            .scope(async {
+                emit_live_thread_summary(&tenant, &state, Uuid::new_v4(), vec![0; 32]);
+            })
+            .await;
+        let queued = drain.snapshot();
+        let op = Uuid::new_v4();
+        let boot = drain.begin(op).unwrap().boot_id;
+        drain.fence_http(op, boot, "test-edge-retired").unwrap();
+        parent.complete();
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while drain.snapshot().background_inflight != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(queued.background_inflight, 1);
+        assert!(drain
+            .snapshot()
+            .blocking_workers
+            .iter()
+            .any(|fault| fault == "unresolved-background"));
+    }
 }
 
 /// Emit a relay-signed membership notification event stored globally (channel_id = None).

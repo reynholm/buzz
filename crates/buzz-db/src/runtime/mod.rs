@@ -1327,6 +1327,12 @@ impl Db {
         migration::run_migrations(&self.pool).await
     }
 
+    /// Run migrations on a dedicated backend with bounded lock and statement waits.
+    #[datastore_span(name = "migrate", system = "postgresql")]
+    pub async fn migrate_with_timeouts(&self, policy: migration::MigrationTimeouts) -> Result<()> {
+        migration::run_migrations_with_timeouts(&self.pool, policy).await
+    }
+
     /// Returns `true` if the database is reachable.
     pub async fn ping(&self) -> bool {
         let Ok(mut connection) =

@@ -1164,6 +1164,10 @@ mod external_infra {
 
     impl Fixture {
         async fn new() -> Self {
+            Self::with_deployment(None).await
+        }
+
+        async fn with_deployment(bind: Option<std::net::SocketAddr>) -> Self {
             let database_url = std::env::var("BUZZ_TEST_DATABASE_URL")
                 .expect("explicit isolated BUZZ_TEST_DATABASE_URL");
             let redis_url = std::env::var("BUZZ_TEST_REDIS_URL")
@@ -1181,8 +1185,16 @@ mod external_infra {
             config.media.s3_endpoint = endpoint;
             config.media.s3_bucket =
                 std::env::var("BUZZ_TEST_S3_BUCKET").unwrap_or_else(|_| "buzz-git".into());
-            config.media.s3_access_key = "buzz_dev".into();
-            config.media.s3_secret_key = "buzz_dev_secret".into();
+            config.media.s3_access_key =
+                std::env::var("BUZZ_TEST_S3_ACCESS_KEY").unwrap_or_else(|_| "buzz_dev".into());
+            config.media.s3_secret_key = std::env::var("BUZZ_TEST_S3_SECRET_KEY")
+                .unwrap_or_else(|_| "buzz_dev_secret".into());
+            if let Some(bind) = bind {
+                config.bind_addr = bind;
+                config.deploy_control_token =
+                    Some(crate::config::DeployControlToken::from_secret("a".repeat(64)).unwrap());
+                config.audit_enabled = false;
+            }
             let pool = sqlx::PgPool::connect(&config.database_url).await.unwrap();
             let db = buzz_db::Db::from_pool(pool.clone());
             // CI provisions schema/schema.sql with pgschema before this suite.
@@ -2326,4 +2338,6 @@ mod external_infra {
              Falsifying mutation: set_default_branch skipped → digest unchanged."
         );
     }
+    #[path = "deploy.rs"]
+    mod external_infra_deployment;
 }

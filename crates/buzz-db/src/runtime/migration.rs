@@ -33,6 +33,38 @@ pub async fn run_migrations(pool: &PgPool) -> Result<()> {
     .await
 }
 
+/// Per-statement budgets for the dedicated migration backend.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MigrationTimeouts {
+    /// Maximum lock wait, in milliseconds (1 through `i32::MAX`).
+    pub lock_timeout_ms: u32,
+    /// Maximum statement duration, in milliseconds (1 through `i32::MAX`).
+    pub statement_timeout_ms: u32,
+}
+
+impl MigrationTimeouts {
+    fn validate(self) -> Result<()> {
+        if [self.lock_timeout_ms, self.statement_timeout_ms]
+            .into_iter()
+            .any(|ms| ms == 0 || ms > i32::MAX as u32)
+        {
+            return Err(crate::DbError::InvalidData(
+                "migration timeouts must be between 1 and 2147483647 milliseconds".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Run migrations with budgets applied before either migration lock is taken.
+pub async fn run_migrations_with_timeouts(pool: &PgPool, policy: MigrationTimeouts) -> Result<()> {
+    with_exclusive_schema_destruction_lock_policy(pool, Some(policy), |mut conn| async move {
+        let outcome = run_migrations_locked(&mut conn).await;
+        (conn, outcome)
+    })
+    .await
+}
+
 #[cfg(test)]
 pub(crate) async fn run_migrations_through(pool: &PgPool, target: i64) -> Result<()> {
     with_exclusive_schema_destruction_lock(pool, |mut conn| async move {
@@ -82,21 +114,43 @@ where
     F: FnOnce(PgConnection) -> Fut,
     Fut: Future<Output = (PgConnection, Result<T>)>,
 {
+    with_exclusive_schema_destruction_lock_policy(pool, None, op).await
+}
+
+async fn with_exclusive_schema_destruction_lock_policy<T, F, Fut>(
+    pool: &PgPool,
+    policy: Option<MigrationTimeouts>,
+    op: F,
+) -> Result<T>
+where
+    F: FnOnce(PgConnection) -> Fut,
+    Fut: Future<Output = (PgConnection, Result<T>)>,
+{
+    if let Some(policy) = policy {
+        policy.validate()?;
+    }
     let mut lock_conn = crate::observability::acquire_writer_with_legacy_metrics(
         pool,
         crate::observability::WriterOperation::Bootstrap,
     )
     .await?
     .detach();
-    // This dedicated connection intentionally waits for the current migration
-    // or schema-destruction owner and may then run long DDL. Exempt those two
-    // phases from runtime lock/statement budgets. Keep the idle-in-transaction
-    // timeout: a client wedged idle mid-migration is still a lock holder that
-    // should be reaped. The detached connection is closed below and never
-    // returns these session settings to the pool.
-    sqlx::raw_sql("SET lock_timeout = 0; SET statement_timeout = 0")
-        .execute(&mut lock_conn)
-        .await?;
+    // Set the policy on the detached backend, before the schema lock or SQLx
+    // can wait. Legacy callers retain their unbounded migration policy.
+    // Neither path overrides the idle-in-transaction timeout or returns these
+    // settings (or a held lock) to the pool.
+    if let Some(policy) = policy {
+        sqlx::query("SELECT set_config('lock_timeout', $1, false), set_config('statement_timeout', $2, false)")
+            .bind(format!("{}ms", policy.lock_timeout_ms))
+            .bind(format!("{}ms", policy.statement_timeout_ms))
+            .execute(&mut lock_conn)
+            .await?;
+        record_migration_timeouts(&mut lock_conn, "before_schema_lock").await?;
+    } else {
+        sqlx::raw_sql("SET lock_timeout = 0; SET statement_timeout = 0")
+            .execute(&mut lock_conn)
+            .await?;
+    }
     crate::observability::observe_advisory_lock(
         crate::observability::LockType::MigrationSchemaSafety,
         sqlx::query("SELECT pg_advisory_lock($1)")
@@ -104,6 +158,9 @@ where
             .execute(&mut lock_conn),
     )
     .await?;
+    if policy.is_some() {
+        record_migration_timeouts(&mut lock_conn, "before_migrations").await?;
+    }
     let (mut lock_conn, outcome) = op(lock_conn).await;
     let unlock = sqlx::query("SELECT pg_advisory_unlock($1)")
         .bind(SCHEMA_DESTRUCTION_LOCK_KEY)
@@ -113,6 +170,26 @@ where
     let value = outcome?;
     unlock?;
     Ok(value)
+}
+
+async fn record_migration_timeouts(conn: &mut PgConnection, stage: &'static str) -> Result<()> {
+    let (backend_pid, lock_timeout_ms, statement_timeout_ms): (i32, i64, i64) = sqlx::query_as(
+        "SELECT pg_backend_pid(), \
+         (extract(epoch FROM current_setting('lock_timeout')::interval) * 1000)::bigint, \
+         (extract(epoch FROM current_setting('statement_timeout')::interval) * 1000)::bigint",
+    )
+    .fetch_one(conn)
+    .await?;
+    tracing::info!(
+        target: "buzz_db::migration",
+        event = "migration_timeouts",
+        stage,
+        backend_pid,
+        lock_timeout_ms,
+        statement_timeout_ms,
+        "effective migration backend policy"
+    );
+    Ok(())
 }
 
 /// Migration 0007 is checksum-frozen and predates exact NIP-RS tag-cardinality
@@ -185,6 +262,49 @@ async fn reject_legacy_nip_rs_cardinality_ambiguity(conn: &mut PgConnection) -> 
     Ok(())
 }
 
+#[cfg(test)]
+mod timeout_policy_tests {
+    use super::*;
+    use sqlx::postgres::PgPoolOptions;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn invalid_migration_policy_is_rejected_before_pool_acquisition() {
+        let pool = PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(50))
+            .connect_lazy("postgres://test:test@127.0.0.1:9/unused") // sadscan:disable np.postgres.1
+            .expect("lazy isolated pool");
+        for policy in [
+            MigrationTimeouts {
+                lock_timeout_ms: 0,
+                statement_timeout_ms: 1,
+            },
+            MigrationTimeouts {
+                lock_timeout_ms: 1,
+                statement_timeout_ms: 0,
+            },
+            MigrationTimeouts {
+                lock_timeout_ms: i32::MAX as u32 + 1,
+                statement_timeout_ms: 1,
+            },
+            MigrationTimeouts {
+                lock_timeout_ms: 1,
+                statement_timeout_ms: u32::MAX,
+            },
+        ] {
+            let result = tokio::time::timeout(
+                Duration::from_millis(100),
+                run_migrations_with_timeouts(&pool, policy),
+            )
+            .await
+            .expect("policy must fail before I/O");
+            assert!(
+                matches!(result, Err(crate::DbError::InvalidData(_))),
+                "invalid policy reached PostgreSQL"
+            );
+        }
+    }
+}
 #[cfg(test)]
 #[path = "follow_up_retirement_tests.rs"]
 mod retirement_postgres_tests;

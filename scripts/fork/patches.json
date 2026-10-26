@@ -830,7 +830,7 @@
     },
     {
       "path": "desktop/src-tauri/Cargo.lock",
-      "responsibility": "Lock patched native dependencies, including emSign TLS verification and trust stores, the immutable MeshLLM and NetEq compatibility pins, maintained Opus bindings and updated Tauri utilities; retain target-specific Windows updater constraints explicitly; include ctutils 0.4.4 for RUSTSEC-2026-0385.",
+      "responsibility": "Lock patched native dependencies, including emSign TLS verification and trust stores, the immutable MeshLLM and NetEq compatibility pins, maintained Opus bindings and updated Tauri utilities; retain target-specific Windows updater constraints explicitly; include ctutils >= 0.4.4 for RUSTSEC-2026-0385.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -4499,7 +4499,7 @@
     },
     {
       "path": "Cargo.lock",
-      "responsibility": "Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils 0.4.4 for RUSTSEC-2026-0385. Upgrade the gateway P-256 graph to crypto-bigint 0.7.6 for RUSTSEC-2026-0387.",
+      "responsibility": "Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils >= 0.4.4 for RUSTSEC-2026-0385. Upgrade the gateway P-256 graph to crypto-bigint 0.7.6 for RUSTSEC-2026-0387.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -12547,7 +12547,7 @@
     },
     {
       "path": "docker-compose.yml",
-      "responsibility": "Retain bundled MinIO and mc until the separate object-storage migration is accepted.",
+      "responsibility": "Use pinned Silo and mc for local development, matching the harness and deployment templates while preserving existing storage names and volumes; keep the separate cached MinIO CI fixture.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -13201,6 +13201,368 @@
       "invocation_seams": [],
       "verification_commands": [
         "cd desktop && pnpm test:e2e:smoke messaging.spec.ts"
+      ]
+    },
+    {
+      "path": ".env.example",
+      "responsibility": "Document optional bounded database pools for relay overlap",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-admin/Cargo.toml",
+      "responsibility": "Dependencies for bounded migration CLI tests",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-admin/src/main.rs",
+      "responsibility": "Bounded migration CLI and effective timeout evidence",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-admin/tests/postgres_migration_timeouts.rs",
+      "responsibility": "Exercise migration locks, statement timeout and cancellation against PostgreSQL",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/lib.rs",
+      "responsibility": "Export the bounded migration timeout interface",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/api/git/deploy.rs",
+      "responsibility": "Connect deployment lifecycle ownership to the existing relay or workflow path",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/api/git/external_infra/deploy.rs",
+      "responsibility": "Verify accepted-work drain and descendant completion",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/api/git/hook.rs",
+      "responsibility": "Connect deployment lifecycle ownership to the existing relay or workflow path",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/api/git/mod.rs",
+      "responsibility": "Connect deployment lifecycle ownership to the existing relay or workflow path",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/api/git/policy.rs",
+      "responsibility": "Connect deployment lifecycle ownership to the existing relay or workflow path",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/api/git/read_lifetime.rs",
+      "responsibility": "Connect deployment lifecycle ownership to the existing relay or workflow path",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/api/media_deploy_postgres.rs",
+      "responsibility": "Verify accepted-work drain and descendant completion",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/audio/postgres_deploy_tests.rs",
+      "responsibility": "Verify accepted-work drain and descendant completion",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/background.rs",
+      "responsibility": "Track post-commit dispatch and dependent effects until completion",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/deploy_drain.rs",
+      "responsibility": "Private per-boot admission fence and transitive accepted-work accounting",
+      "is_new": true,
+      "required_symbols": [
+        "pub fn fence_http(",
+        "pub struct WorkGuard",
+        "pub enum DrainPhase"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/deploy_runtime.rs",
+      "responsibility": "Retain dependency readers and audit until accepted work and workers finish",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/handlers/command_executor.rs",
+      "responsibility": "Connect deployment lifecycle ownership to the existing relay or workflow path",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/handlers/side_effects.rs",
+      "responsibility": "Connect deployment lifecycle ownership to the existing relay or workflow path",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/handlers/workflows_deploy_postgres.rs",
+      "responsibility": "Verify accepted-work drain and descendant completion",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/operator_listener.rs",
+      "responsibility": "Connect deployment lifecycle ownership to the existing relay or workflow path",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/readiness.rs",
+      "responsibility": "Connect deployment lifecycle ownership to the existing relay or workflow path",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/tests/deploy_drain.rs",
+      "responsibility": "Verify accepted-work drain and descendant completion",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/tests/postgres_deploy_drain.rs",
+      "responsibility": "Verify accepted-work drain and descendant completion",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-test-client/Cargo.toml",
+      "responsibility": "Verify accepted-work drain and descendant completion",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-test-client/src/bin/blue_green_probe.rs",
+      "responsibility": "Signed cross-color traffic, reconnect and replay verification within principal quotas",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-workflow/src/lib.rs",
+      "responsibility": "Connect deployment lifecycle ownership to the existing relay or workflow path",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-workflow/src/lifecycle.rs",
+      "responsibility": "Keep accepted workflow executions owned through finalization",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-workflow/tests/lifecycle.rs",
+      "responsibility": "Verify accepted-work drain and descendant completion",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just test",
+        "just ci"
+      ]
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "responsibility": "Document Silo development storage and preservation of existing local datasets and compatible service names.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "README.md",
+      "responsibility": "Describe Silo as the bundled object store for development and deployment.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "deploy/charts/buzz/README.md",
+      "responsibility": "Name the existing bundled Silo server consistently while preserving the minio chart API.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "deploy/charts/buzz/values.yaml",
+      "responsibility": "Describe the bundled Silo quickstart in comments without changing chart values.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "deploy/compose/README.md",
+      "responsibility": "Name the existing bundled Silo dependency consistently.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
       ]
     }
   ],

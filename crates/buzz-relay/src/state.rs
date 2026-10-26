@@ -44,6 +44,8 @@ pub(crate) type ScopedPubkeyKey = (CommunityId, [u8; 32]);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommunityDisconnectReason {
     CommunityArchived,
+    /// Deployment drain asks every socket type to reconnect.
+    ServiceRestart,
     CommunityDeleted,
     /// NIP-FI: the connection's proven pubkey was added to the deny set.
     AuthorizationDenied,
@@ -57,6 +59,10 @@ impl CommunityDisconnectReason {
             Self::CommunityArchived => WsMessage::Close(Some(axum::extract::ws::CloseFrame {
                 code: axum::extract::ws::close_code::POLICY,
                 reason: WsUtf8Bytes::from_static("community archived"),
+            })),
+            Self::ServiceRestart => WsMessage::Close(Some(axum::extract::ws::CloseFrame {
+                code: axum::extract::ws::close_code::RESTART,
+                reason: WsUtf8Bytes::from_static("relay restarting"),
             })),
             Self::CommunityDeleted => WsMessage::Close(Some(axum::extract::ws::CloseFrame {
                 code: axum::extract::ws::close_code::POLICY,
@@ -108,6 +114,18 @@ pub(crate) struct CommunityConnectionControl {
 }
 
 impl CommunityConnectionControl {
+    fn restart(&self) {
+        self.reason_tx.send_if_modified(|current| {
+            if current.is_none() {
+                *current = Some(CommunityDisconnectReason::ServiceRestart);
+                true
+            } else {
+                false
+            }
+        });
+        self.cancel.cancel();
+    }
+
     pub(crate) fn new(cancel: CancellationToken) -> Self {
         let (reason_tx, _reason_rx) = watch::channel(None);
         Self {
@@ -332,6 +350,7 @@ struct ConnEntry {
 /// the revalidation. The returned guard removes the entry on every exit path.
 pub struct CommunityConnectionRegistry {
     connections: Arc<DashMap<Uuid, (CommunityId, CommunityConnectionControl)>>,
+    restarting: AtomicBool,
 }
 
 impl Default for CommunityConnectionRegistry {
@@ -345,6 +364,7 @@ impl CommunityConnectionRegistry {
     pub fn new() -> Self {
         Self {
             connections: Arc::new(DashMap::new()),
+            restarting: AtomicBool::new(false),
         }
     }
 
@@ -356,10 +376,22 @@ impl CommunityConnectionRegistry {
         control: CommunityConnectionControl,
     ) -> CommunityConnectionGuard {
         self.connections
-            .insert(connection_id, (community_id, control));
+            .insert(connection_id, (community_id, control.clone()));
+        if self.restarting.load(Ordering::SeqCst) {
+            control.restart();
+        }
         CommunityConnectionGuard {
             connection_id,
             connections: Arc::clone(&self.connections),
+        }
+    }
+
+    /// Restart all socket types, including audio and upgrades still in bootstrap.
+    /// Insert-then-check registration closes the race with a late upgrade.
+    pub(crate) fn restart_all(&self) {
+        self.restarting.store(true, Ordering::SeqCst);
+        for entry in self.connections.iter() {
+            entry.value().1.restart();
         }
     }
 
@@ -1171,6 +1203,9 @@ impl Default for ConnectionManager {
 /// Shared application state, cloned cheaply via inner `Arc` fields.
 #[derive(Clone)]
 pub struct AppState {
+    /// Per-boot admission and completion registry for private deploy control.
+    pub deploy_drain: crate::deploy_drain::DrainController,
+    pub(crate) git_pushes: crate::api::git::deploy::GitPushRegistry,
     /// Relay configuration.
     pub config: Arc<Config>,
     /// Database connection pool.
@@ -1245,7 +1280,7 @@ pub struct AppState {
     pub channel_visibility_cache: Arc<moka::sync::Cache<(CommunityId, Uuid), String>>,
 
     /// Bounded channel for audit logging, absent when audit logging is disabled.
-    pub audit_tx: Option<mpsc::Sender<buzz_audit::NewAuditEntry>>,
+    pub audit_tx: Option<AuditQueue>,
     /// Media storage client (S3/MinIO).
     pub media_storage: Arc<MediaStorage>,
     /// Cached worker snapshot and storage metric emission bookkeeping. See
@@ -1435,9 +1470,24 @@ impl AppState {
         let max_connections = config.max_connections;
         let max_concurrent_handlers = config.max_concurrent_handlers;
         let search_arc = Arc::new(search);
+        // Keep termination unavailable until all serving and worker seams are
+        // integrated. Audit entries share this same per-boot controller.
+        let deploy_drain =
+            crate::deploy_drain::DrainController::with_workers(&["worker-inventory-incomplete"]);
+        if config.deploy_control_token.is_some()
+            && !workflow_engine.set_run_admission(Arc::new(deploy_drain.clone()))
+        {
+            let _ = deploy_drain.register_worker("workflow-admission-conflict");
+            tracing::error!("Workflow lifecycle admission was already initialized");
+        }
 
         let audit_arc = audit.into().map(Arc::new);
-        let (audit_tx, mut audit_rx) = mpsc::channel::<buzz_audit::NewAuditEntry>(1000);
+        let (audit_tx, mut audit_rx) = AuditQueue::channel(
+            config
+                .deploy_control_token
+                .as_ref()
+                .map(|_| deploy_drain.clone()),
+        );
         let audit_for_worker = audit_arc.clone();
         let audit_cancel = CancellationToken::new();
         let audit_cancel_worker = audit_cancel.clone();
@@ -1451,7 +1501,7 @@ impl AppState {
                 tokio::select! {
                     entry = audit_rx.recv() => {
                         match entry {
-                            Some(entry) => log_audit_entry(&audit_for_worker, entry).await,
+                            Some(entry) => entry.append(&audit_for_worker).await,
                             None => break, // channel closed
                         }
                     }
@@ -1466,7 +1516,7 @@ impl AppState {
             // Drain: recv() returns buffered entries, then None once empty.
             let mut drained = 0u32;
             while let Some(entry) = audit_rx.recv().await {
-                log_audit_entry(&audit_for_worker, entry).await;
+                entry.append(&audit_for_worker).await;
                 drained += 1;
             }
             if drained > 0 {
@@ -1504,6 +1554,8 @@ impl AppState {
         // Build NIP-FI components before moving config into the state Arc.
         let (nip_fi_verifier, nip_fi_jwks_source) = build_nip_fi_components(&config);
         let state = Self {
+            git_pushes: crate::api::git::deploy::GitPushRegistry::new(deploy_drain.clone()),
+            deploy_drain,
             config: Arc::new(config),
             db,
             redis_pool,
@@ -1636,6 +1688,48 @@ impl AppState {
     pub fn begin_shutdown(&self) {
         self.shutting_down.store(true, Ordering::Release);
         self.push_cancel.cancel();
+    }
+
+    /// Own finite startup publications and their descendants before listeners
+    /// open. Startup after quiescence is refused without polling its effects.
+    pub async fn run_startup_work<F: std::future::Future>(
+        &self,
+        future: F,
+    ) -> Result<F::Output, crate::deploy_drain::DrainError> {
+        let work = self
+            .config
+            .deploy_control_token
+            .as_ref()
+            .map(|_| {
+                self.deploy_drain
+                    .try_admit_root(crate::deploy_drain::WorkKind::Background)
+            })
+            .transpose()?;
+        Ok(crate::deploy_drain::run_accepted(work, future).await)
+    }
+
+    /// Register a mutation-capable background worker before spawning its loop.
+    pub fn deployment_worker(&self, name: &'static str) -> crate::deploy_drain::Worker {
+        crate::deploy_drain::Worker::new(
+            self.config
+                .deploy_control_token
+                .as_ref()
+                .map(|_| self.deploy_drain.clone()),
+            name,
+        )
+    }
+
+    /// Track a side effect already accepted by a serving parent. Legacy mode
+    /// keeps its existing behavior; missing enabled-mode lineage blocks stop
+    /// while preserving the accepted effect. Never use this for root admission.
+    pub(crate) fn track_accepted_child(
+        &self,
+        kind: crate::deploy_drain::WorkKind,
+    ) -> Option<crate::deploy_drain::WorkGuard> {
+        self.config
+            .deploy_control_token
+            .as_ref()
+            .map(|_| self.deploy_drain.track_accepted_child(kind))
     }
 
     #[cfg(test)]
@@ -1876,10 +1970,13 @@ impl AppState {
     fn spawn_cache_invalidation(&self, tenant: &TenantContext, invalidation: CacheInvalidation) {
         let pubsub = Arc::clone(&self.pubsub);
         let tenant = tenant.clone();
+        let work = self.track_accepted_child(crate::deploy_drain::WorkKind::Background);
         tokio::spawn(async move {
-            if let Err(e) = pubsub
-                .publish_cache_invalidation(&tenant, &invalidation)
-                .await
+            if let Err(e) = crate::deploy_drain::run_accepted_result(
+                work,
+                pubsub.publish_cache_invalidation(&tenant, &invalidation),
+            )
+            .await
             {
                 tracing::warn!("Failed to publish cache invalidation {invalidation:?}: {e}");
             }
@@ -2059,8 +2156,14 @@ impl AppState {
         // durable ban row rejects the member again at auth. Community archival
         // is different: its API awaits publication and live sockets also have a
         // periodic durable-state revalidation backstop below.
+        let work = self.track_accepted_child(crate::deploy_drain::WorkKind::Background);
         tokio::spawn(async move {
-            if let Err(e) = pubsub.publish_conn_control(&tenant, &command).await {
+            if let Err(e) = crate::deploy_drain::run_accepted_result(
+                work,
+                pubsub.publish_conn_control(&tenant, &command),
+            )
+            .await
+            {
                 tracing::warn!("Failed to publish conn-control disconnect: {e}");
             }
         });
@@ -2107,15 +2210,38 @@ impl AppState {
     /// does not matter.
     pub async fn run_conn_control_consumer(
         self: Arc<Self>,
-        mut rx: tokio::sync::broadcast::Receiver<ScopedConnControl>,
+        rx: tokio::sync::broadcast::Receiver<ScopedConnControl>,
     ) {
+        self.run_conn_control_consumer_until(rx, CancellationToken::new())
+            .await;
+    }
+
+    /// Stop intake at the supplied dependency boundary and join all accepted
+    /// community revalidations before returning. Pubkey revocations stay inline.
+    pub async fn run_conn_control_consumer_until(
+        self: Arc<Self>,
+        mut rx: tokio::sync::broadcast::Receiver<ScopedConnControl>,
+        cancel: CancellationToken,
+    ) {
+        let mut checks = tokio::task::JoinSet::new();
         loop {
-            match rx.recv().await {
+            let received = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => break,
+                joined = checks.join_next(), if !checks.is_empty() => {
+                    if joined.is_some_and(|result| result.is_err()) {
+                        self.deploy_drain.record_fault("connection-control-task-failed");
+                    }
+                    continue;
+                },
+                received = rx.recv() => received,
+            };
+            match received {
                 Ok(scoped) => match scoped.command {
                     ConnControl::DisconnectCommunity { archived_at } => {
                         let state = Arc::clone(&self);
                         let community_id = scoped.community_id;
-                        tokio::spawn(async move {
+                        checks.spawn(async move {
                             match state
                                 .apply_community_disconnect(community_id, archived_at)
                                 .await
@@ -2158,6 +2284,12 @@ impl AppState {
                     tracing::error!("Connection-control broadcast channel closed");
                     break;
                 }
+            }
+        }
+        while let Some(joined) = checks.join_next().await {
+            if joined.is_err() {
+                self.deploy_drain
+                    .record_fault("connection-control-task-failed");
             }
         }
     }
@@ -2337,6 +2469,63 @@ pub struct ThreadedChannelVisibility {
     pub visibility: String,
 }
 
+/// Bounded audit queue retaining the serving parent's accepted work through
+/// queueing and the durable append. A failed send leaves an unresolved fault.
+#[derive(Clone)]
+pub struct AuditQueue {
+    sender: mpsc::Sender<AuditEnvelope>,
+    drain: Option<crate::deploy_drain::DrainController>,
+}
+
+struct AuditEnvelope {
+    entry: buzz_audit::NewAuditEntry,
+    work: Option<crate::deploy_drain::WorkGuard>,
+}
+
+impl AuditQueue {
+    fn channel(
+        drain: Option<crate::deploy_drain::DrainController>,
+    ) -> (Self, mpsc::Receiver<AuditEnvelope>) {
+        let (sender, receiver) = mpsc::channel(1000);
+        (Self { sender, drain }, receiver)
+    }
+
+    /// Enqueue an already accepted audit entry, preserving bounded backpressure.
+    pub async fn send(
+        &self,
+        entry: buzz_audit::NewAuditEntry,
+    ) -> Result<(), mpsc::error::SendError<buzz_audit::NewAuditEntry>> {
+        let work = self
+            .drain
+            .as_ref()
+            .map(|drain| drain.track_accepted_child(crate::deploy_drain::WorkKind::Background));
+        self.sender
+            .send(AuditEnvelope { entry, work })
+            .await
+            .map_err(|error| mpsc::error::SendError(error.0.entry))
+    }
+}
+
+impl AuditEnvelope {
+    async fn append(self, audit: &buzz_audit::AuditService) {
+        let Self { entry, work } = self;
+        Self::finish_work(work, log_audit_entry(audit, entry).await);
+    }
+
+    fn finish_work(work: Option<crate::deploy_drain::WorkGuard>, complete: bool) {
+        if complete {
+            if let Some(work) = work {
+                work.complete();
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn finish(self, complete: bool) {
+        Self::finish_work(self.work, complete);
+    }
+}
+
 /// Handle for graceful audit worker shutdown.
 ///
 /// Signals the worker to stop accepting new entries, drain its buffer,
@@ -2348,6 +2537,13 @@ pub struct AuditShutdownHandle {
 }
 
 impl AuditShutdownHandle {
+    /// Close the queue after every producer has completed, then await actual
+    /// worker exit. Deployment shutdown must not time out or detach this join.
+    pub async fn join(self) -> Result<(), tokio::task::JoinError> {
+        self.cancel.cancel();
+        self.handle.await
+    }
+
     /// Signal the audit worker to drain and wait up to `timeout` for it to finish.
     pub async fn drain(self, timeout: std::time::Duration) {
         self.cancel.cancel();
@@ -2406,7 +2602,10 @@ fn build_nip_fi_components(config: &crate::config::Config) -> NipFiComponents {
 
 /// Log a single audit entry with metrics. Extracted so the normal loop
 /// and the post-cancel drain share the same logic.
-async fn log_audit_entry(audit: &buzz_audit::AuditService, entry: buzz_audit::NewAuditEntry) {
+async fn log_audit_entry(
+    audit: &buzz_audit::AuditService,
+    entry: buzz_audit::NewAuditEntry,
+) -> bool {
     let t = std::time::Instant::now();
     let mut retry_delay_ms = 50u64;
     let mut retries = 0u64;
@@ -2414,7 +2613,7 @@ async fn log_audit_entry(audit: &buzz_audit::AuditService, entry: buzz_audit::Ne
         match audit.log(entry.clone()).await {
             Ok(_) => {
                 metrics::histogram!("buzz_audit_log_seconds").record(t.elapsed().as_secs_f64());
-                return;
+                return true;
             }
             Err(error) if is_retryable_append_failure(&error) => {
                 retries += 1;
@@ -2430,7 +2629,7 @@ async fn log_audit_entry(audit: &buzz_audit::AuditService, entry: buzz_audit::Ne
             Err(error) => {
                 metrics::counter!("buzz_audit_log_errors_total").increment(1);
                 tracing::error!("Audit log failed: {error}");
-                return;
+                return false;
             }
         }
     }
@@ -2929,6 +3128,13 @@ pub(crate) mod tests {
     }
 
     async fn build_test_state(config: crate::config::Config, pool: sqlx::PgPool) -> Arc<AppState> {
+        build_test_state_with_shutdown(config, pool).await.0
+    }
+
+    pub(crate) async fn build_test_state_with_shutdown(
+        config: crate::config::Config,
+        pool: sqlx::PgPool,
+    ) -> (Arc<AppState>, AuditShutdownHandle) {
         let db = buzz_db::Db::from_pool(pool.clone());
         let redis_pool = deadpool_redis::Config::from_url(&config.redis_url)
             .create_pool(Some(deadpool_redis::Runtime::Tokio1))
@@ -2946,7 +3152,7 @@ pub(crate) mod tests {
             buzz_workflow::WorkflowConfig::default(),
         ));
         let media_storage = buzz_media::MediaStorage::new(&config.media).expect("media storage");
-        let (state, _audit_shutdown) = AppState::new(
+        let (state, audit_shutdown) = AppState::new(
             config,
             db,
             redis_pool,
@@ -2958,7 +3164,7 @@ pub(crate) mod tests {
             nostr::Keys::generate(),
             media_storage,
         );
-        Arc::new(state)
+        (Arc::new(state), audit_shutdown)
     }
 
     /// The lock an audit-retry test holds while the worker times out on it.
@@ -2981,15 +3187,22 @@ pub(crate) mod tests {
         Statement,
     }
 
-    async fn audit_worker_retries_lock_timeout_until_original_entry_is_appended_once() {
-        assert_audit_worker_retries_lock_timeout(HeldAuditLock::AuditChain, AuditWaitTimeout::Lock)
-            .await;
+    async fn audit_worker_retries_lock_timeout_until_original_entry_is_appended_once(
+        deployment: bool,
+    ) {
+        assert_audit_worker_retries_lock_timeout(
+            HeldAuditLock::AuditChain,
+            AuditWaitTimeout::Lock,
+            deployment,
+        )
+        .await;
     }
 
     async fn audit_worker_retries_admission_lock_timeout_until_original_entry_is_appended_once() {
         assert_audit_worker_retries_lock_timeout(
             HeldAuditLock::CommunityDeletion,
             AuditWaitTimeout::Lock,
+            false,
         )
         .await;
     }
@@ -2998,6 +3211,7 @@ pub(crate) mod tests {
         assert_audit_worker_retries_lock_timeout(
             HeldAuditLock::AuditChain,
             AuditWaitTimeout::Statement,
+            false,
         )
         .await;
     }
@@ -3005,6 +3219,7 @@ pub(crate) mod tests {
     async fn assert_audit_worker_retries_lock_timeout(
         held: HeldAuditLock,
         timeout: AuditWaitTimeout,
+        deployment: bool,
     ) {
         let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
         let observer = sqlx::PgPool::connect(&database_url)
@@ -3073,11 +3288,40 @@ pub(crate) mod tests {
         }
         .expect("hold lock");
 
-        let audit = Arc::new(AuditService::new(audit_pool));
-        let worker = tokio::spawn({
-            let audit = Arc::clone(&audit);
-            async move { log_audit_entry(&audit, entry).await }
-        });
+        let (worker, drain) = if deployment {
+            use crate::deploy_drain::WorkKind;
+            let mut config = crate::config::Config::for_test();
+            config.redis_url = "redis://127.0.0.1:1".to_owned();
+            config.deploy_control_token =
+                Some(crate::config::DeployControlToken::from_secret("a".repeat(64)).unwrap());
+            let (state, shutdown) = build_test_state_with_shutdown(config, audit_pool).await;
+            let drain = state.deploy_drain.clone();
+            let worker = crate::deploy_runtime::RuntimeDependencies::default()
+                .start_drain(drain.clone(), shutdown);
+            let parent = drain.try_admit_root(WorkKind::Http).unwrap();
+            let operation = Uuid::new_v4();
+            let boot = drain.begin(operation).unwrap().boot_id;
+            drain.fence_http(operation, boot, "qualified-edge").unwrap();
+            drain
+                .worker_quiesced("worker-inventory-incomplete")
+                .unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            parent
+                .scope(state.audit_tx.as_ref().unwrap().send(entry))
+                .await
+                .unwrap();
+            parent.complete();
+            assert_eq!(drain.snapshot().background_inflight, 1);
+            (worker, Some(drain))
+        } else {
+            let audit = Arc::new(AuditService::new(audit_pool));
+            (
+                tokio::spawn(async move {
+                    log_audit_entry(&audit, entry).await;
+                }),
+                None,
+            )
+        };
 
         // Observe one timed-out advisory-lock attempt and then a second wait.
         // Releasing during the first wait would not prove that the worker
@@ -3111,6 +3355,10 @@ pub(crate) mod tests {
         })
         .await
         .expect("audit worker never retried after lock_timeout");
+        if let Some(drain) = &drain {
+            assert_eq!(drain.snapshot().background_inflight, 1);
+            assert!(!drain.snapshot().safe_to_stop);
+        }
 
         match held {
             HeldAuditLock::AuditChain => {
@@ -3131,6 +3379,18 @@ pub(crate) mod tests {
             .await
             .expect("audit worker did not finish after lock release")
             .expect("audit worker task panicked");
+        if let Some(drain) = drain {
+            let snapshot = drain.snapshot();
+            assert_eq!(snapshot.background_inflight, 0);
+            assert!(
+                snapshot.safe_to_stop,
+                "audit join must precede safe-to-stop"
+            );
+            assert!(!snapshot
+                .blocking_workers
+                .iter()
+                .any(|fault| fault == "unresolved-background"));
+        }
 
         let rows: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM audit_log WHERE community_id = $1 AND object_id = $2",
@@ -3159,9 +3419,16 @@ pub(crate) mod tests {
         #[tokio::test]
         #[ignore = "requires Postgres"]
         async fn audit_worker_retries_lock_timeout_until_original_entry_is_appended_once() {
-            super::audit_worker_retries_lock_timeout_until_original_entry_is_appended_once().await;
+            super::audit_worker_retries_lock_timeout_until_original_entry_is_appended_once(false)
+                .await;
         }
 
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn deployment_audit_worker_holds_descendant_through_real_append_and_join() {
+            super::audit_worker_retries_lock_timeout_until_original_entry_is_appended_once(true)
+                .await;
+        }
         #[tokio::test]
         #[ignore = "requires Postgres"]
         async fn audit_worker_retries_admission_lock_timeout_until_original_entry_is_appended_once()
@@ -3175,6 +3442,107 @@ pub(crate) mod tests {
         async fn audit_worker_retries_statement_timeout_until_original_entry_is_appended_once() {
             super::audit_worker_retries_statement_timeout_until_original_entry_is_appended_once()
                 .await;
+        }
+    }
+
+    fn deployment_audit_entry() -> buzz_audit::NewAuditEntry {
+        buzz_audit::NewAuditEntry {
+            community_id: CommunityId::from_uuid(Uuid::new_v4()),
+            action: buzz_audit::AuditAction::EventCreated,
+            actor_pubkey: None,
+            object_id: None,
+            detail: serde_json::json!({}),
+        }
+    }
+
+    #[tokio::test]
+    async fn deployment_invalidation_and_disconnect_own_detached_publication() {
+        use crate::deploy_drain::WorkKind;
+        let base = test_state().await;
+        let mut state = (*base).clone();
+        Arc::make_mut(&mut state.config).deploy_control_token =
+            Some(crate::config::DeployControlToken::from_secret("a".repeat(64)).unwrap());
+        state.redis_pool.close();
+        let tenant =
+            TenantContext::resolved(CommunityId::from_uuid(Uuid::new_v4()), "drain.example");
+        let parent = state.deploy_drain.try_admit_root(WorkKind::Http).unwrap();
+        parent.with_context(|| {
+            state.invalidate_membership(&tenant, Uuid::new_v4(), &[7; 32]);
+            state.disconnect_pubkey_clusterwide(&tenant, &[7; 32], &"0".repeat(64), "test");
+        });
+        assert_eq!(state.deploy_drain.snapshot().background_inflight, 2);
+        let op = Uuid::new_v4();
+        let boot = state.deploy_drain.begin(op).unwrap().boot_id;
+        state
+            .deploy_drain
+            .fence_http(op, boot, "test-edge-retired")
+            .unwrap();
+        parent.complete();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while state.deploy_drain.snapshot().background_inflight != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(state
+            .deploy_drain
+            .snapshot()
+            .blocking_workers
+            .iter()
+            .any(|name| name == "unresolved-background"));
+    }
+
+    #[tokio::test]
+    async fn deployment_audit_queue_retains_accepted_work_until_append_finishes() {
+        use crate::deploy_drain::{DrainController, WorkKind};
+
+        let drain = DrainController::new();
+        let parent = drain.try_admit_root(WorkKind::Http).unwrap();
+        let (queue, mut receiver) = AuditQueue::channel(Some(drain.clone()));
+        let operation = Uuid::new_v4();
+        let boot = drain.begin(operation).unwrap().boot_id;
+        drain.fence_http(operation, boot, "qualified-edge").unwrap();
+        parent
+            .scope(queue.send(deployment_audit_entry()))
+            .await
+            .unwrap();
+        parent.complete();
+        assert_eq!(drain.snapshot().background_inflight, 1);
+        let accepted = receiver.recv().await.unwrap();
+        assert_eq!(drain.snapshot().background_inflight, 1);
+        assert!(!drain.snapshot().safe_to_stop);
+        accepted.finish(true);
+        assert!(drain.snapshot().safe_to_stop);
+    }
+
+    #[tokio::test]
+    async fn deployment_audit_failed_send_or_append_never_reports_safe() {
+        use crate::deploy_drain::{DrainController, WorkKind};
+
+        for closed in [false, true] {
+            let drain = DrainController::new();
+            let parent = drain.try_admit_root(WorkKind::Http).unwrap();
+            let (queue, mut receiver) = AuditQueue::channel(Some(drain.clone()));
+            if closed {
+                receiver.close();
+            }
+            let sent = parent.scope(queue.send(deployment_audit_entry())).await;
+            assert_eq!(sent.is_err(), closed);
+            if !closed {
+                receiver.recv().await.unwrap().finish(false);
+            }
+            parent.complete();
+            let operation = Uuid::new_v4();
+            let boot = drain.begin(operation).unwrap().boot_id;
+            drain.fence_http(operation, boot, "qualified-edge").unwrap();
+            let snapshot = drain.snapshot();
+            assert_eq!(snapshot.background_inflight, 0);
+            assert!(!snapshot.safe_to_stop);
+            assert!(snapshot
+                .blocking_workers
+                .iter()
+                .any(|fault| fault == "unresolved-background"));
         }
     }
 

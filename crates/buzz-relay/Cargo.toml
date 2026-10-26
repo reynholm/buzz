@@ -72,6 +72,7 @@ buzz-media = { workspace = true }
 s3 = { version = "0.37", package = "rust-s3", default-features = false, features = ["tokio-rustls-tls", "fail-on-err", "tags"] }
 tempfile = "3"
 bytes = "1"
+http-body = "1"
 infer = "0.19"
 sha2            = { workspace = true }
 hmac            = { workspace = true }
@@ -101,7 +102,6 @@ ring = "0.17"
 # `use_pem` enables EncodingKey::from_ec_pem for minting ES256 test assertions
 # in settings_tests.rs (key-pairing build_router tests).
 jsonwebtoken = { version = "10.4.0", default-features = false, features = ["aws_lc_rs", "use_pem"] }
-http-body = "1"
 http-body-util = "0.1"
 buzz-core = { workspace = true, features = ["test-utils"] }
 buzz-auth = { workspace = true, features = ["dev", "test-utils"] }

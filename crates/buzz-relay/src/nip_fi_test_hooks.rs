@@ -154,6 +154,10 @@ make_hook!(req_registration_hook, before_req_registration);
 make_hook!(count_query_hook, before_count_query);
 make_hook!(liveness_req_hook, before_liveness_req);
 make_hook!(observer_event_hook, before_observer_event);
+// Deployment witnesses park the actual detached post-commit task, before its
+// first side effect and after dispatch, without changing production execution.
+make_hook!(deploy_post_commit_hook, before_deploy_post_commit);
+make_hook!(deploy_post_commit_done_hook, after_deploy_post_commit);
 // `before_req_history` / `before_search_query`: fire inside the read-only
 // delivery raced against gate cancellation in `handle_req`, after the permit
 // (and, for REQ, registration). Stalling here stands in for a stalled read.

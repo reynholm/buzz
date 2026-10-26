@@ -29,47 +29,56 @@ const LEASE_SECS: i64 = 30;
 /// Rows claimed per tick.
 const BATCH_SIZE: i64 = 16;
 
-/// Run the admin outbox delivery worker. Never returns; intended for
-/// `tokio::spawn`.
-pub async fn run(state: Arc<AppState>) {
-    let worker_id = format!("admin-outbox-{}", Uuid::new_v4());
-    info!(worker_id = %worker_id, "Admin outbox worker started");
-
-    let mut idle_delay = Duration::from_millis(500);
-
-    loop {
-        let lease_until = Utc::now() + chrono::Duration::seconds(LEASE_SECS);
-        let batch = match state
-            .db
-            .claim_pending_admin_outbox_batch(&worker_id, lease_until, BATCH_SIZE)
-            .await
-        {
-            Ok(rows) => rows,
-            Err(e) => {
-                error!(worker_id = %worker_id, "Admin outbox claim failed: {e}");
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                continue;
+/// Run the leased worker; register before spawn and join admitted batches on drain.
+pub fn run(state: Arc<AppState>) -> impl std::future::Future<Output = ()> {
+    let lifecycle = state.deployment_worker("admin-outbox");
+    async move {
+        let worker_id = format!("admin-outbox-{}", Uuid::new_v4());
+        let mut idle_delay = Duration::from_millis(500);
+        loop {
+            let batch = lifecycle
+                .batch(async {
+                    let lease_until = Utc::now() + chrono::Duration::seconds(LEASE_SECS);
+                    let rows = state
+                        .db
+                        .claim_pending_admin_outbox_batch(&worker_id, lease_until, BATCH_SIZE)
+                        .await
+                        .map_err(|e| {
+                            error!(worker_id = %worker_id, "Worker claim failed: {e}");
+                        })?;
+                    if rows.is_empty() {
+                        let delay = idle_delay;
+                        idle_delay = (idle_delay * 2).min(Duration::from_secs(10));
+                        return Ok(delay);
+                    }
+                    idle_delay = Duration::from_millis(500);
+                    let mut complete = true;
+                    for row in rows {
+                        complete &= deliver_one(&state, &row).await;
+                    }
+                    if complete {
+                        Ok(Duration::ZERO)
+                    } else {
+                        Err(())
+                    }
+                })
+                .await;
+            let Some(result) = batch else { break };
+            if lifecycle
+                .idle(tokio::time::sleep(result.unwrap_or(Duration::from_secs(5))))
+                .await
+                .is_none()
+            {
+                break;
             }
-        };
-
-        if batch.is_empty() {
-            // Back off exponentially when idle, capped at 10 s.
-            tokio::time::sleep(idle_delay).await;
-            idle_delay = (idle_delay * 2).min(Duration::from_secs(10));
-            continue;
         }
-
-        idle_delay = Duration::from_millis(500);
-
-        for row in batch {
-            deliver_one(&state, &row).await;
-        }
+        lifecycle.finish();
     }
 }
 
 /// Attempt to deliver one outbox row and update its state.
 /// Made pub(crate) for integration tests.
-pub(crate) async fn deliver_one(state: &Arc<AppState>, row: &OutboxRecord) {
+pub(crate) async fn deliver_one(state: &Arc<AppState>, row: &OutboxRecord) -> bool {
     let result = match row.task_type.as_str() {
         "tombstone" => deliver_tombstone(state, row).await,
         "system_message" => deliver_system_message(state, row).await,
@@ -92,6 +101,7 @@ pub(crate) async fn deliver_one(state: &Arc<AppState>, row: &OutboxRecord) {
                         task_type = %row.task_type,
                         "Outbox row delivered"
                     );
+                    true
                 }
                 Ok(false) => {
                     // Ownership was lost before we could mark delivered (lease expired,
@@ -101,9 +111,11 @@ pub(crate) async fn deliver_one(state: &Arc<AppState>, row: &OutboxRecord) {
                         outbox_id = %row.id,
                         "Outbox mark_delivered: ownership lost (stale worker), stopping"
                     );
+                    false
                 }
                 Err(e) => {
                     warn!(outbox_id = %row.id, "mark_delivered failed: {e}");
+                    false
                 }
             }
         }
@@ -130,6 +142,7 @@ pub(crate) async fn deliver_one(state: &Arc<AppState>, row: &OutboxRecord) {
                     error!(outbox_id = %row.id, "fail_outbox_row DB call failed: {db_err}");
                 }
             }
+            false
         }
     }
 }

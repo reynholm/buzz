@@ -588,7 +588,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/Cargo.lock`
 
-Lock patched native dependencies, including emSign TLS verification and trust stores, the immutable MeshLLM and NetEq compatibility pins, maintained Opus bindings and updated Tauri utilities; retain target-specific Windows updater constraints explicitly; include ctutils 0.4.4 for RUSTSEC-2026-0385.
+Lock patched native dependencies, including emSign TLS verification and trust stores, the immutable MeshLLM and NetEq compatibility pins, maintained Opus bindings and updated Tauri utilities; retain target-specific Windows updater constraints explicitly; include ctutils >= 0.4.4 for RUSTSEC-2026-0385.
 
 New module: `false`.
 
@@ -2711,7 +2711,7 @@ New module: `false`.
 
 ## `Cargo.lock`
 
-Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils 0.4.4 for RUSTSEC-2026-0385. Upgrade the gateway P-256 graph to crypto-bigint 0.7.6 for RUSTSEC-2026-0387.
+Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils >= 0.4.4 for RUSTSEC-2026-0385. Upgrade the gateway P-256 graph to crypto-bigint 0.7.6 for RUSTSEC-2026-0387.
 
 New module: `false`.
 
@@ -8223,7 +8223,7 @@ New module: `false`.
 
 ## `docker-compose.yml`
 
-Retain bundled MinIO and mc until the separate object-storage migration is accepted.
+Use pinned Silo and mc for local development, matching the harness and deployment templates while preserving existing storage names and volumes; keep the separate cached MinIO CI fixture.
 
 New module: `false`.
 
@@ -8753,3 +8753,298 @@ New module: `false`.
 
 - Required symbol: `Latest keyboard-follow reply`
 - Verify: `cd desktop && pnpm test:e2e:smoke messaging.spec.ts`
+
+## `.env.example`
+
+Document optional bounded database pools for relay overlap
+
+New module: `false`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-admin/Cargo.toml`
+
+Dependencies for bounded migration CLI tests
+
+New module: `false`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-admin/src/main.rs`
+
+Bounded migration CLI and effective timeout evidence
+
+New module: `false`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-admin/tests/postgres_migration_timeouts.rs`
+
+Exercise migration locks, statement timeout and cancellation against PostgreSQL
+
+New module: `true`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-db/src/lib.rs`
+
+Export the bounded migration timeout interface
+
+New module: `false`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/git/deploy.rs`
+
+Connect deployment lifecycle ownership to the existing relay or workflow path
+
+New module: `true`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/git/external_infra/deploy.rs`
+
+Verify accepted-work drain and descendant completion
+
+New module: `true`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/git/hook.rs`
+
+Connect deployment lifecycle ownership to the existing relay or workflow path
+
+New module: `false`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/git/mod.rs`
+
+Connect deployment lifecycle ownership to the existing relay or workflow path
+
+New module: `false`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/git/policy.rs`
+
+Connect deployment lifecycle ownership to the existing relay or workflow path
+
+New module: `false`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/git/read_lifetime.rs`
+
+Connect deployment lifecycle ownership to the existing relay or workflow path
+
+New module: `true`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/api/media_deploy_postgres.rs`
+
+Verify accepted-work drain and descendant completion
+
+New module: `true`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/audio/postgres_deploy_tests.rs`
+
+Verify accepted-work drain and descendant completion
+
+New module: `true`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/background.rs`
+
+Track post-commit dispatch and dependent effects until completion
+
+New module: `true`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/deploy_drain.rs`
+
+Private per-boot admission fence and transitive accepted-work accounting
+
+New module: `true`.
+
+- Required symbol: `pub fn fence_http(`
+- Required symbol: `pub struct WorkGuard`
+- Required symbol: `pub enum DrainPhase`
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/deploy_runtime.rs`
+
+Retain dependency readers and audit until accepted work and workers finish
+
+New module: `true`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/handlers/command_executor.rs`
+
+Connect deployment lifecycle ownership to the existing relay or workflow path
+
+New module: `false`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/handlers/side_effects.rs`
+
+Connect deployment lifecycle ownership to the existing relay or workflow path
+
+New module: `false`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/handlers/workflows_deploy_postgres.rs`
+
+Verify accepted-work drain and descendant completion
+
+New module: `true`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/operator_listener.rs`
+
+Connect deployment lifecycle ownership to the existing relay or workflow path
+
+New module: `false`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/readiness.rs`
+
+Connect deployment lifecycle ownership to the existing relay or workflow path
+
+New module: `false`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-relay/tests/deploy_drain.rs`
+
+Verify accepted-work drain and descendant completion
+
+New module: `true`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-relay/tests/postgres_deploy_drain.rs`
+
+Verify accepted-work drain and descendant completion
+
+New module: `true`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-test-client/Cargo.toml`
+
+Verify accepted-work drain and descendant completion
+
+New module: `false`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-test-client/src/bin/blue_green_probe.rs`
+
+Signed cross-color traffic, reconnect and replay verification within principal quotas
+
+New module: `true`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-workflow/src/lib.rs`
+
+Connect deployment lifecycle ownership to the existing relay or workflow path
+
+New module: `false`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-workflow/src/lifecycle.rs`
+
+Keep accepted workflow executions owned through finalization
+
+New module: `true`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `crates/buzz-workflow/tests/lifecycle.rs`
+
+Verify accepted-work drain and descendant completion
+
+New module: `true`.
+
+- Verify: `just test`
+- Verify: `just ci`
+
+## `CONTRIBUTING.md`
+
+Document Silo development storage and preservation of existing local datasets and compatible service names.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `README.md`
+
+Describe Silo as the bundled object store for development and deployment.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `deploy/charts/buzz/README.md`
+
+Name the existing bundled Silo server consistently while preserving the minio chart API.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `deploy/charts/buzz/values.yaml`
+
+Describe the bundled Silo quickstart in comments without changing chart values.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `deploy/compose/README.md`
+
+Name the existing bundled Silo dependency consistently.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`

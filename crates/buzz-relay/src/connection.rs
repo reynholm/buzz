@@ -745,6 +745,7 @@ async fn handle_active_connection(
         // on). Finish it before application cleanup so nothing is half-retired.
         if let Some(task) = in_flight {
             if let Err(error) = task.await {
+                state.deploy_drain.record_fault("websocket-frame-failed");
                 warn!(conn_id = %conn.conn_id, "interrupted frame handler failed: {error}");
             }
         }
@@ -1275,7 +1276,7 @@ async fn run_frame(
     frame: impl std::future::Future<Output = ()> + Send + 'static,
     cancel: &CancellationToken,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    let mut frame = Box::pin(frame);
+    let mut frame = Box::pin(crate::deploy_drain::preserve_context(frame));
     tokio::select! {
         biased;
         () = &mut frame => None,
@@ -1330,11 +1331,19 @@ async fn handle_text_message(text: String, conn: Arc<ConnectionState>, state: Ar
             // AUTH remains inline so only one frame can race the connection's
             // pending lifecycle, but cancellation can preempt dependency waits.
             let span = tracing::info_span!("ws.auth", conn_id = %conn.conn_id);
-            tokio::select! {
-                biased;
-                _ = conn.cancel.cancelled() => {}
-                _ = handlers::auth::handle_auth(event, Arc::clone(&conn), Arc::clone(&state))
-                    .instrument(span) => {}
+            let authenticate =
+                handlers::auth::handle_auth(event, Arc::clone(&conn), Arc::clone(&state))
+                    .instrument(span);
+            if state.config.deploy_control_token.is_some() {
+                // run_frame releases the socket promptly and joins this accepted
+                // handler. Do not cancel an in-progress authentication mutation.
+                authenticate.await;
+            } else {
+                tokio::select! {
+                    biased;
+                    _ = conn.cancel.cancelled() => {}
+                    _ = authenticate => {}
+                }
             }
         }
         ClientMessage::Event(event) => {
@@ -1360,11 +1369,12 @@ async fn handle_text_message(text: String, conn: Arc<ConnectionState>, state: Ar
                 event_id = tracing::field::Empty,
                 kind = tracing::field::Empty,
             );
+            let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);
             tokio::spawn(
-                async move {
+                crate::deploy_drain::run_accepted(work, async move {
                     handlers::event::handle_event(event, conn, state).await;
                     drop(permit);
-                }
+                })
                 .instrument(span),
             );
         }
@@ -1386,11 +1396,12 @@ async fn handle_text_message(text: String, conn: Arc<ConnectionState>, state: Ar
                 }
             };
             let span = tracing::info_span!("ws.req", conn_id = %conn.conn_id, sub_id = %sub_id);
+            let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);
             tokio::spawn(
-                async move {
+                crate::deploy_drain::run_accepted(work, async move {
                     handlers::req::handle_req(sub_id, filters, before_ids, conn, state).await;
                     drop(permit);
-                }
+                })
                 .instrument(span),
             );
         }
@@ -1408,11 +1419,12 @@ async fn handle_text_message(text: String, conn: Arc<ConnectionState>, state: Ar
                 }
             };
             let span = tracing::info_span!("ws.count", conn_id = %conn.conn_id, sub_id = %sub_id);
+            let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);
             tokio::spawn(
-                async move {
+                crate::deploy_drain::run_accepted(work, async move {
                     handlers::count::handle_count(sub_id, filters, conn, state).await;
                     drop(permit);
-                }
+                })
                 .instrument(span),
             );
         }
@@ -1456,6 +1468,99 @@ pub(crate) mod tests {
     use tokio::net::TcpListener;
     use tokio::sync::Notify;
     use tokio_tungstenite::{connect_async, tungstenite::Message};
+
+    #[tokio::test]
+    async fn deployment_interrupted_frame_preserves_parent_for_late_children() {
+        use crate::deploy_drain::{DrainController, WorkKind};
+        let drain = DrainController::new();
+        let parent = drain.try_admit_root(WorkKind::WebSocket).unwrap();
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let release = Arc::new(tokio::sync::Notify::new());
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let task = parent
+            .scope(super::run_frame(
+                {
+                    let release = release.clone();
+                    let drain = drain.clone();
+                    async move {
+                        release.notified().await;
+                        let child = drain.admit_current_child(WorkKind::Background);
+                        let accepted = child.is_ok();
+                        if let Ok(child) = child {
+                            child.complete();
+                        }
+                        tx.send(accepted).unwrap();
+                    }
+                },
+                &cancel,
+            ))
+            .await
+            .unwrap();
+        let operation = uuid::Uuid::new_v4();
+        let boot = drain.begin(operation).unwrap().boot_id;
+        drain.fence_http(operation, boot, "test-retired").unwrap();
+        release.notify_one();
+        task.await.unwrap();
+        assert!(
+            rx.await.unwrap(),
+            "rescheduled accepted frame lost its parent context"
+        );
+        parent.complete();
+        assert!(drain.snapshot().safe_to_stop);
+    }
+
+    #[tokio::test]
+    async fn deployment_message_tasks_are_owned_before_spawn_and_outlive_socket() {
+        use crate::deploy_drain::WorkKind;
+        let event = EventBuilder::new(Kind::TextNote, "drain")
+            .sign_with_keys(&Keys::generate())
+            .unwrap();
+        for raw in [
+            serde_json::json!(["EVENT", event]).to_string(),
+            r#"["REQ","drain",{"kinds":[1]}]"#.to_string(),
+            r#"["COUNT","drain",{"kinds":[1]}]"#.to_string(),
+        ] {
+            let base = crate::state::tests::test_state().await;
+            let mut state = (*base).clone();
+            Arc::make_mut(&mut state.config).deploy_control_token =
+                Some(crate::config::DeployControlToken::from_secret("a".repeat(64)).unwrap());
+            let state = Arc::new(state);
+            let drain = state.deploy_drain.clone();
+            let parent = drain.try_admit_root(WorkKind::WebSocket).unwrap();
+            let fixture = test_conn(
+                AuthState::Pending {
+                    challenge: "drain".into(),
+                    started_at: Instant::now(),
+                },
+                None,
+            );
+            parent
+                .scope(handle_text_message(raw.clone(), fixture.conn, state))
+                .await;
+            let pending = drain.snapshot();
+            let op = Uuid::new_v4();
+            let boot = drain.begin(op).unwrap().boot_id;
+            drain.fence_http(op, boot, "test-edge-retired").unwrap();
+            parent.complete();
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while drain.snapshot().background_inflight != 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            assert_eq!(
+                pending.background_inflight, 1,
+                "message must own work before its task runs: {raw}"
+            );
+            assert!(!drain
+                .snapshot()
+                .blocking_workers
+                .iter()
+                .any(|fault| fault == "unattributed-work" || fault == "unresolved-background"));
+        }
+    }
 
     /// A test connection together with the receiving end of each outbound queue.
     pub(crate) struct TestConn {
