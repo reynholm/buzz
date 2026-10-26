@@ -170,6 +170,9 @@ wrapper to remain an ancestor. Registered services remain traversal roots;
 subsequent tool children still hold the worker. Resolving an observed process
 into the same registered service does not invent a background completion. A
 different process instance reusing an old task PID still collects that task.
+Completion evidence also survives an intermediate snapshot containing only an
+unregistered service: registering that service later still queues the completed
+task exactly once in its original session.
 
 Native Codex servers are discovered through the adapter's CLI with bounded time
 and output. A controlled Codex stdio proxy preserves their registered launches
@@ -180,6 +183,25 @@ failed discovery emits a warning and leaves unknown processes protected. These
 native hooks are exercised with codex-acp 2.1.1; an adapter changing its CLI or
 app-server methods needs its own acceptance run. Windows keeps its existing
 process-lifecycle behavior.
+
+Native discovery owns a separate Unix process group. Timeout, excess output,
+failed or malformed output, successful discovery with lingering descendants,
+and cancellation must retire the discovery processes. The `mcp_discovery`
+integration test runs the actual `models` command with a local adapter and
+observes both child and grandchild exit; the cancellation test aborts the
+production configuration-discovery future. Cleanup has a separate bounded
+verification deadline and cannot be accepted as successful discovery on error.
+Cancellation signals the group from its drop guard; its regression observes
+descendant exit after cancellation rather than claiming an awaited cleanup
+acknowledgment. Containment covers the inherited process group used by the
+supported adapter and bundled CLI. A descendant deliberately creating a new
+session with `setsid` escapes this boundary; these tests do not attest cleanup
+of such daemonized processes.
+
+Sprig routes the two internal MCP transport commands when invoked by its target
+name, as Linux `current_exe()` resolves the ACP personality symlink. Run the
+complete `cargo test --locked -p sprig` package on Linux to exercise both the
+registered injected transport and native Codex proxy through the real binary.
 
 Run the package suite normally. The `mcp_service` integration test additionally
 requires Node.js and npm on PATH and starts a real `npm start` service with no

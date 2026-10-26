@@ -5495,14 +5495,14 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/pool/background_work.rs`
 
-Retain collection authority in the original worker/session, poll child exit independently of pool sleep, and compose stable-key final-report instructions. Release uncertainty-only holds without inventing collection; retain observed exit evidence across Unknown.
+Retain collection authority in the original worker/session, poll child exit independently of pool sleep, and compose stable-key final-report instructions. Release uncertainty-only holds without inventing collection; retain observed exit evidence across Unknown. Preserve completed-task evidence across service-only snapshots and remove only proven service instances.
 
 New module: `true`.
 
 - Required symbol: `pub(crate) struct RuntimeHold`
 - Required symbol: `pub fn queue_finished_background_work`
 - Required symbol: `pub(super) fn followup_prompt`
-- Required symbol: `if hold.blocking_pids.is_empty() && !hold.collection_pending {`
+- Required symbol: `agent.acp.observed_background_instances.is_empty()`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `followup_prompt`; exact call `background_work::followup_prompt(batch.channel_id, continuation, &ctx.cwd)`; behavior test `background_managed_delivery_key_stays_on_collection_across_error_and_new_message`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_managed_delivery_key_stays_on_collection_across_error_and_new_message -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool/background_work.rs` → `contains`; exact call `!self.retire_on_return.contains(&index)`; behavior test `retirement_targets_include_checked_out_copies_and_block_idle_claims`; verify `cargo test -p buzz-acp --lib retirement_targets_include_checked_out_copies_and_block_idle_claims -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `refresh_runtime_hold`; exact call `self.refresh_runtime_hold(&mut agent);`; behavior test `background_unknown_then_empty_releases_hold_without_inventing_collection`; verify `cargo test -p buzz-acp --lib background_unknown_then_empty_releases_hold_without_inventing_collection -- --test-threads=1`
@@ -9085,6 +9085,7 @@ Preserve service launch provenance, nonblocking process polling, fair capacity d
 New module: `true`.
 
 - Invocation: `crates/buzz-acp/src/mcp_service/codex.rs` → `install`; exact call `super::codex_proxy::install(registry, adapter, launch, registered)`; behavior test `real_codex_native_mcp_config_survives_injected_server_configuration`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test --locked -p buzz-acp --lib real_codex_native_mcp_config -- --ignored --test-threads=1`
+- Invocation: `crates/buzz-acp/src/mcp_service/codex.rs` → `output`; exact call `super::discovery::output(discovery)`; behavior test `native_discovery_retires_descendants_on_every_output_exit`; verify `cargo test --locked -p buzz-acp --test mcp_discovery`
 - Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/mcp_service/codex_proxy.rs`
@@ -9129,6 +9130,7 @@ New module: `true`.
 - Required symbol: `unavailable_oldest_scope_does_not_block_available_held_owner`
 - Required symbol: `newly_registered_service_does_not_invent_collection_or_hide_reused_work_pid`
 - Required symbol: `checked_restart_of_held_scope_releases_slot_and_retains_ordinary_input`
+- Required symbol: `completed_work_survives_a_later_service_only_snapshot`
 - Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/tests/fixtures/late_service/package.json`
@@ -9156,3 +9158,48 @@ New module: `true`.
 - Required symbol: `real_npm_service_registers_before_tools_and_excludes_actual_work`
 - Required symbol: `pipelined_large_messages_keep_both_stdio_directions_progressing`
 - Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/mcp_service/discovery.rs`
+
+Own bounded native discovery process groups across output, timeout and cancellation, and verify cleanup before returning.
+
+New module: `true`.
+
+- Required symbol: `async fn output`
+- Required symbol: `async fn retire`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/tests/mcp_discovery.rs`
+
+Exercise native discovery cleanup through the actual models command and observe child and grandchild exit.
+
+New module: `true`.
+
+- Required symbol: `native_discovery_retires_descendants_on_every_output_exit`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/sprig/Cargo.toml`
+
+Use existing workspace test dependencies for real multicall MCP transport coverage.
+
+New module: `false`.
+
+- Verify: `cargo test --locked -p sprig`
+
+## `crates/sprig/src/main.rs`
+
+Route ACP internal MCP self-launch commands after Linux resolves the personality symlink to the Sprig target.
+
+New module: `false`.
+
+- Verify: `cargo test --locked -p sprig`
+
+## `crates/sprig/tests/mcp_personalities.rs`
+
+Exercise injected MCP registration and native configuration forwarding through the actual Sprig target.
+
+New module: `true`.
+
+- Required symbol: `multicall_target_runs_injected_mcp_transport`
+- Required symbol: `multicall_target_runs_native_codex_proxy`
+- Verify: `cargo test --locked -p sprig`

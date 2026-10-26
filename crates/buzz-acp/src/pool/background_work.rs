@@ -183,6 +183,16 @@ impl AgentPool {
                                 }))
                     });
                 }
+                // Keep completion evidence across intermediate snapshots. Only
+                // proven service instances can be removed from this history;
+                // an exited task must survive while another service initializes.
+                agent
+                    .acp
+                    .observed_background_instances
+                    .retain(|pid, instance| {
+                        !(tree.is_registered_service(*pid)
+                            && tree.process_instance(*pid) == Some(instance))
+                    });
                 let mut pids: Vec<_> = children.iter().copied().collect();
                 pids.sort_unstable();
                 let descriptions: Vec<_> = pids
@@ -342,7 +352,12 @@ impl AgentPool {
         let Some(hold) = self.runtime_holds.get(&index) else {
             return;
         };
-        if hold.blocking_pids.is_empty() && !hold.collection_pending {
+        if hold.blocking_pids.is_empty()
+            && !hold.collection_pending
+            && self.agents[index]
+                .as_ref()
+                .is_none_or(|agent| agent.acp.observed_background_instances.is_empty())
+        {
             // Unknown discovery held this worker, but no actual work was observed.
             self.runtime_holds.remove(&index);
             return;

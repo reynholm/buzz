@@ -54,15 +54,9 @@ pub(crate) async fn wrap_native_config(
             discovery.env_remove(key);
         }
     }
-    let output = tokio::task::spawn_blocking(move || {
-        crate::process_tree::bounded_output(
-            discovery,
-            std::time::Duration::from_secs(3),
-            1024 * 1024,
-        )
-    })
-    .await?
-    .context("effective native MCP configuration discovery failed")?;
+    let output = super::discovery::output(discovery)
+        .await
+        .context("effective native MCP configuration discovery failed")?;
     let servers: Vec<Value> = serde_json::from_str(&output)?;
     let registered = rewrite_native_servers(registry, &mut config, &servers)?;
     super::codex_proxy::install(registry, adapter, launch, registered)
@@ -127,6 +121,56 @@ fn rewrite_native_servers(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cancelling_native_discovery_kills_its_descendant() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::Duration;
+        let directory = tempfile::tempdir().unwrap();
+        let adapter = directory.path().join("codex-acp");
+        let marker = directory.path().join("pid");
+        std::fs::write(&adapter, r#"#!/usr/bin/env python3
+import os, pathlib, subprocess, time
+child = subprocess.Popen(['/bin/sleep', '60'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+pathlib.Path(os.environ['DISCOVERY_CHILD']).write_text(str(child.pid))
+time.sleep(60)
+"#).unwrap();
+        std::fs::set_permissions(&adapter, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut launch = tokio::process::Command::new(&adapter);
+        launch.env("DISCOVERY_CHILD", &marker);
+        let task = tokio::spawn(async move {
+            let registry = ServiceRegistry::new("/bin/wrapper".into()).unwrap();
+            wrap_native_config(&registry, adapter.to_str().unwrap(), &mut launch).await
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while std::fs::read_to_string(&marker)
+                .unwrap_or_default()
+                .is_empty()
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let pid =
+            nix::unistd::Pid::from_raw(std::fs::read_to_string(marker).unwrap().parse().unwrap());
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        let gone = tokio::time::timeout(Duration::from_secs(2), async {
+            while nix::sys::signal::kill(pid, None) != Err(nix::errno::Errno::ESRCH) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok();
+        if !gone {
+            let _ = nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGKILL);
+        }
+        assert!(
+            gone,
+            "cancelling startup must kill the discovery descendant"
+        );
+    }
 
     #[test]
     fn native_server_overrides_preserve_environment_and_policy() {

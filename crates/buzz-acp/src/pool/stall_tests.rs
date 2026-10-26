@@ -97,6 +97,57 @@ async fn newly_registered_service_does_not_invent_collection_or_hide_reused_work
 }
 
 #[tokio::test]
+async fn completed_work_survives_a_later_service_only_snapshot() {
+    let original = scope();
+    let mut pool = AgentPool::from_slots(vec![Some(worker(0).await)]);
+    bind(&mut pool, &original, 0);
+    let mut agent = pool.try_claim(Some(&original)).unwrap();
+    let session = agent.state.sessions[&original].clone();
+    agent.remember_background_context(&PromptSource::Channel(original.clone()), None, &session);
+    let pid = agent.acp.process_id().unwrap();
+    let census = |work: bool| {
+        let mut text = format!("{pid} 1 S Mon Oct 26 10:00:00 2026 adapter\n424242 {pid} S Mon Oct 26 10:00:01 2026 wrapper\n424243 424242 S Mon Oct 26 10:00:01 2026 node ./src/index.mjs\n");
+        if work {
+            text.push_str(&format!(
+                "424244 {pid} S Mon Oct 26 10:00:02 2026 sleep 60\n"
+            ));
+        }
+        crate::process_tree::parse_instance_snapshot(&text).unwrap()
+    };
+    let first = census(true);
+    let children = agent.acp.background_child_pids_in(&first).unwrap();
+    assert_eq!(children, HashSet::from([424242, 424244]));
+    agent.background_context.as_mut().unwrap().blocking_pids = children.clone();
+    agent.acp.return_children = Some(Some(children));
+    pool.return_agent(agent);
+    let mut queue = EventQueue::new(DedupMode::Queue);
+    let mut service_only = census(false);
+    let requests = pool.background_poll_requests();
+    pool.apply_background_snapshot(&requests, Some(&service_only), &mut queue);
+    assert!(!queue.has_pending_continuation(&original));
+    assert_eq!(
+        pool.runtime_holds[&0].blocking_pids,
+        HashSet::from([424242])
+    );
+    service_only.register_service_instances(424242, &service_only.service_instances(424242));
+    let requests = pool.background_poll_requests();
+    pool.apply_background_snapshot(&requests, Some(&service_only), &mut queue);
+    assert!(
+        queue.has_pending_continuation(&original),
+        "completed real work must still collect after the remaining service registers"
+    );
+    // Repeated polls preserve the same one-shot continuation and source session.
+    pool.apply_background_snapshot(&requests, Some(&service_only), &mut queue);
+    let collection = queue.flush_next().unwrap();
+    assert_eq!(collection.scope, original);
+    assert_eq!(
+        collection.continuation.as_ref().unwrap().session_id,
+        session
+    );
+    assert!(queue.flush_next().is_none());
+}
+
+#[tokio::test]
 async fn checked_restart_of_held_scope_releases_slot_and_retains_ordinary_input() {
     let (mut pool, mut queue, original, _dir, _ctx) = started_background_turn(0).await;
     push_new_message(&mut queue, &original);

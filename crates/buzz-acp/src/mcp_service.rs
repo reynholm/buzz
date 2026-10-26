@@ -224,6 +224,7 @@ pub(crate) async fn run(args: Vec<String>) -> Result<()> {
 
 mod codex;
 pub(crate) mod codex_proxy;
+mod discovery;
 pub(crate) use codex::wrap_native_config;
 
 #[cfg(test)]

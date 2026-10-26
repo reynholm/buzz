@@ -9875,6 +9875,9 @@ dependencies = [
  "buzz-acp",
  "buzz-agent",
  "buzz-dev-mcp",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

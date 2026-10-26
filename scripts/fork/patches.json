@@ -8348,13 +8348,13 @@
     },
     {
       "path": "crates/buzz-acp/src/pool/background_work.rs",
-      "responsibility": "Retain collection authority in the original worker/session, poll child exit independently of pool sleep, and compose stable-key final-report instructions. Release uncertainty-only holds without inventing collection; retain observed exit evidence across Unknown.",
+      "responsibility": "Retain collection authority in the original worker/session, poll child exit independently of pool sleep, and compose stable-key final-report instructions. Release uncertainty-only holds without inventing collection; retain observed exit evidence across Unknown. Preserve completed-task evidence across service-only snapshots and remove only proven service instances.",
       "is_new": true,
       "required_symbols": [
         "pub(crate) struct RuntimeHold",
         "pub fn queue_finished_background_work",
         "pub(super) fn followup_prompt",
-        "if hold.blocking_pids.is_empty() && !hold.collection_pending {"
+        "agent.acp.observed_background_instances.is_empty()"
       ],
       "invocation_seams": [
         {
@@ -11225,7 +11225,7 @@
     },
     {
       "path": "desktop/tests/e2e/session-controls.spec.ts",
-      "responsibility": "Registered thread-composer Manage context \u2192 agent \u2192 action workflow: canonical target routing, signed outcomes, draft preservation, toolbar order, keyboard/click/touch navigation, disabled-editor Compact, sibling isolation, denied/revoked access and unchanged owned activity projection. Scope the open-thread root capture/status assertion to its actual thread-head row, independently of the timeline copy. Cover context-only publication preserving a deliberately unpinned composer draft/attachment/native selection/caret, plus formatting/focus/narrow toolbar order and Space/arrow selection. Exercise reset acknowledgment separately from a generated reply or independent follow-up failure, preserving draft, signer, canonical thread and ordinary event deduplication.",
+      "responsibility": "Registered thread-composer Manage context → agent → action workflow: canonical target routing, signed outcomes, draft preservation, toolbar order, keyboard/click/touch navigation, disabled-editor Compact, sibling isolation, denied/revoked access and unchanged owned activity projection. Scope the open-thread root capture/status assertion to its actual thread-head row, independently of the timeline copy. Cover context-only publication preserving a deliberately unpinned composer draft/attachment/native selection/caret, plus formatting/focus/narrow toolbar order and Space/arrow selection. Exercise reset acknowledgment separately from a generated reply or independent follow-up failure, preserving draft, signer, canonical thread and ordinary event deduplication.",
       "is_new": true,
       "required_symbols": [
         "known_agent_without_telemetry_still_has_current_scope_controls",
@@ -13638,6 +13638,14 @@
           "invocation": "super::codex_proxy::install(registry, adapter, launch, registered)",
           "behavior_test": "real_codex_native_mcp_config_survives_injected_server_configuration",
           "verification_command": "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test --locked -p buzz-acp --lib real_codex_native_mcp_config -- --ignored --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/mcp_service/codex.rs",
+          "callee_symbol": "output",
+          "invocation": "super::discovery::output(discovery)",
+          "behavior_test": "native_discovery_retires_descendants_on_every_output_exit",
+          "verification_command": "cargo test --locked -p buzz-acp --test mcp_discovery",
+          "coverage": "The actual models command exercises bounded discovery and observes both nested descendant processes after timeout, overflow, nonzero, invalid and successful output."
         }
       ],
       "verification_commands": [
@@ -13699,7 +13707,8 @@
       "required_symbols": [
         "unavailable_oldest_scope_does_not_block_available_held_owner",
         "newly_registered_service_does_not_invent_collection_or_hide_reused_work_pid",
-        "checked_restart_of_held_scope_releases_slot_and_retains_ordinary_input"
+        "checked_restart_of_held_scope_releases_slot_and_retains_ordinary_input",
+        "completed_work_survives_a_later_service_only_snapshot"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -13737,6 +13746,64 @@
       "invocation_seams": [],
       "verification_commands": [
         "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/mcp_service/discovery.rs",
+      "responsibility": "Own bounded native discovery process groups across output, timeout and cancellation, and verify cleanup before returning.",
+      "is_new": true,
+      "required_symbols": [
+        "async fn output",
+        "async fn retire"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/tests/mcp_discovery.rs",
+      "responsibility": "Exercise native discovery cleanup through the actual models command and observe child and grandchild exit.",
+      "is_new": true,
+      "required_symbols": [
+        "native_discovery_retires_descendants_on_every_output_exit"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/sprig/Cargo.toml",
+      "responsibility": "Use existing workspace test dependencies for real multicall MCP transport coverage.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p sprig"
+      ]
+    },
+    {
+      "path": "crates/sprig/src/main.rs",
+      "responsibility": "Route ACP internal MCP self-launch commands after Linux resolves the personality symlink to the Sprig target.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p sprig"
+      ]
+    },
+    {
+      "path": "crates/sprig/tests/mcp_personalities.rs",
+      "responsibility": "Exercise injected MCP registration and native configuration forwarding through the actual Sprig target.",
+      "is_new": true,
+      "required_symbols": [
+        "multicall_target_runs_injected_mcp_transport",
+        "multicall_target_runs_native_codex_proxy"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p sprig"
       ]
     }
   ],
