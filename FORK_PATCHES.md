@@ -8783,7 +8783,7 @@ New module: `false`.
 
 ## `crates/buzz-admin/tests/postgres_migration_timeouts.rs`
 
-Exercise migration locks, statement timeout and cancellation against PostgreSQL
+Exercise migration locks, statement timeout and cancellation against PostgreSQL. Resolve the runtime CLI path when Nextest relocates a test archive.
 
 New module: `true`.
 
@@ -8975,7 +8975,7 @@ New module: `false`.
 
 ## `crates/buzz-test-client/src/bin/blue_green_probe.rs`
 
-Signed cross-color traffic, reconnect and replay verification within principal quotas
+Dispatch the deployment verifier on Unix and reject unsupported platforms without compiling Unix-only permission APIs.
 
 New module: `true`.
 
@@ -9057,3 +9057,14 @@ New module: `true`.
 
 - Required symbol: `fn restart_recent_keeps_history_across_slow_reads_partial_failure_and_recovery`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-test-client/src/bin/blue_green_probe/unix.rs`
+
+Preserve the signed channel-scoped deployment verifier with owner-only key configuration and ledger permissions on Unix.
+
+New module: `true`.
+
+- Required symbol: `pub(super) async fn main() -> Result<()>`
+- Required symbol: `os::unix::fs::{OpenOptionsExt, PermissionsExt}`
+- Verify: `cargo test -p buzz-test-client --bin blue_green_probe`
+- Verify: `just ci`
