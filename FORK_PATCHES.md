@@ -9116,7 +9116,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/pool/real_codex_stall_tests.rs`
 
-Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.
+Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage. Limit tool-inventory preflight to the validated adapter 2.2.2 status API; preserve the original bundled 2.1.1 workflow and five actual ping receipts in both profiles.
 
 New module: `true`.
 

@@ -320,7 +320,7 @@ impl AgentPool {
     }
 
     /// Synchronous fixture entry; production uses the asynchronous shared poll.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub fn queue_finished_background_work(&mut self, queue: &mut EventQueue) {
         let indexes: Vec<_> = self.runtime_holds.keys().copied().collect();
         for index in indexes {

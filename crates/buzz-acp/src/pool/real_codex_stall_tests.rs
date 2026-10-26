@@ -264,7 +264,14 @@ async fn real_codex_five_workers_late_npm_services_and_original_collection() {
             .state
             .set_scope_owner_generation(original.clone(), generation);
         agent.agent_name = "codex-acp".into();
-        wait_for_mcp_tools(&mut agent, &session, index).await;
+        // Only this validated profile exposes per-session tool counts. Adapter
+        // 2.1.1 lists injected names without counts, so retain its original
+        // provider workflow; the five actual ping receipts remain mandatory.
+        if initialized["agentInfo"]["version"].as_str() == Some("2.2.2") {
+            wait_for_mcp_tools(&mut agent, &session, index).await;
+        } else {
+            eprintln!("worker {index}: inventory preflight omitted for this adapter profile");
+        }
         prompt(&mut agent, &session, "Call the late-service ping MCP tool exactly once, then answer OK. Do not use any other tool.").await;
         timeout(Duration::from_secs(10), async {
             while std::fs::read_to_string(&starts)

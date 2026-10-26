@@ -261,10 +261,14 @@ the names `codex-acp` and `external-cli`, then run `chmod 700` on both copies. S
 `BUZZ_TEST_LAUNCHER_TRACE` to a temporary JSONL receipt file. Unset `CODEX_PATH`
 and the negative-control flag, then run the `real_codex_` command above. The
 recording fixture execs the selected actual binary; it does not substitute an
-app-server implementation. The five-worker fixture first uses the adapter's
-local `/mcp` command to require both discovered tool inventories before each
-initial model prompt; `session/new` can acknowledge asynchronous MCP startup.
-The five actual ping receipts remain required. These provider checks still
+app-server implementation. For adapter 2.2.2, identified by its initialize
+metadata, the five-worker fixture first uses the local `/mcp` command to require
+both discovered tool inventories before each initial model prompt;
+`session/new` can acknowledge asynchronous MCP startup. This preflight is
+limited to that validated status API profile. Adapter 2.1.1 with bundled Codex
+0.159.3 keeps its original provider workflow: its global `/mcp` response lists
+injected server names without tool counts and cannot prove readiness. Both
+profiles still require five actual ping receipts. These provider checks still
 require configured credentials and remain separate from human native-app
 acceptance.
 

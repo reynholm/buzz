@@ -13694,7 +13694,7 @@
     },
     {
       "path": "crates/buzz-acp/src/pool/real_codex_stall_tests.rs",
-      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage. Limit tool-inventory preflight to the validated adapter 2.2.2 status API; preserve the original bundled 2.1.1 workflow and five actual ping receipts in both profiles.",
       "is_new": true,
       "required_symbols": [
         "async fn wait_for_mcp_tools(",
