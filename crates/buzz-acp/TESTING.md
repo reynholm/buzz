@@ -266,9 +266,11 @@ The restart-status HTTP/ACP journey covers a history response taking longer
 than three seconds, failed original-assignment discovery after a successful
 recent window, complete history failure without dispatching an empty model
 prompt, and a fresh authorized restart after the relay recovers. Notices must
-be signed in the original thread. The recent window reuses one bounded newest page; forward assignment
-discovery stops once it finds the first mention. The newest page also preserves
-human language evidence when agent replies push it outside the rendered window. Later pages and all-history restarts retain the bounded full-page scan.
+be signed in the original thread. The recent window reuses one bounded newest
+page; forward assignment discovery stops once it finds the first mention.
+The newest page also preserves human language evidence when agent replies push
+it outside the rendered window. Later pages and all-history restarts retain
+the bounded full-page scan.
 
 Acquisition shares a ten-second deadline, a raw-candidate/request cap and a
 response-byte ceiling. A failed page is retried at most once within that budget.

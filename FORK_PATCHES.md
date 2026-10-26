@@ -6556,7 +6556,7 @@ New module: `true`.
 - Required symbol: `while crate::queue::format_conversation_context(context, profiles).len() > HISTORY_BYTES {`
 - Required symbol: `const RETAINED_HEAD_BYTES: usize = HISTORY_BYTES + MAX_CANDIDATES * 5;`
 - Required symbol: `pub(super) fn supplied_mention`
-- Invocation: `crates/buzz-acp/src/pool/session_history.rs` → `query_raw_bounded`; exact call `.query_raw_bounded(filters, RESPONSE_BYTES),`; behavior test `bounded_history_reader_rejects_chunked_actual_bytes_and_times_out`; verify `cargo test -p buzz-acp --lib bounded_history_reader_rejects_chunked_actual_bytes_and_times_out -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool/session_history.rs` → `query_raw_bounded_until`; exact call `.query_raw_bounded_until(filters, RESPONSE_BYTES, deadline)`; behavior test `restart_recent_keeps_history_across_slow_reads_partial_failure_and_recovery`; verify `cargo test -p buzz-acp --lib restart_recent_keeps_history_across_slow_reads_partial_failure_and_recovery -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool/session_history.rs` → `saturating_sub`; exact call `if requested > MAX_CANDIDATES.saturating_sub(self.candidates) {`; behavior test `all_history_request_budget_reserves_tail_without_overfetching_candidates`; verify `cargo test -p buzz-acp --lib all_history_request_budget_reserves_tail_without_overfetching_candidates -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool/session_history.rs` → `saturating_sub`; exact call `rendered.len().saturating_sub(empty.len()) + 5`; behavior test `all_history_many_small_messages_fit_the_actual_rendered_budget`; verify `cargo test -p buzz-acp --lib all_history_many_small_messages_fit_the_actual_rendered_budget -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool/session_history.rs` → `sort_by`; exact call `events.sort_by(|a, b| {
@@ -9048,3 +9048,12 @@ Name the existing bundled Silo dependency consistently.
 New module: `false`.
 
 - Verify: `python3 scripts/fork/sync.py validate`
+
+## `crates/buzz-acp/src/pool/restart_status_history_tests.rs`
+
+Exercise restart history acquisition across delayed relay responses, partial failures, complete unavailability and authorized recovery through the production scheduler and signed HTTP publication.
+
+New module: `true`.
+
+- Required symbol: `fn restart_recent_keeps_history_across_slow_reads_partial_failure_and_recovery`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
