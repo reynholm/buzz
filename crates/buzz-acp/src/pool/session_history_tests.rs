@@ -462,3 +462,132 @@ async fn dm_same_second_all_fits_with_older_assignment_under_real_relay_cursor()
 async fn dm_same_second_none_finds_earliest_assignment_under_real_relay_cursor() {
     dm_same_second_depth(RestartDepth::None).await;
 }
+
+#[tokio::test]
+async fn recent_history_finds_an_assignment_beyond_the_first_page_without_scanning_the_tail() {
+    let agent = nostr::Keys::generate();
+    let root = format!("{:064x}", 1);
+    let events = (1..=3000)
+        .map(|n| {
+            json!({
+                "kind":9,"id":format!("{n:064x}"),"pubkey":"a".repeat(64),
+                "created_at":1000+n,"content":format!("message {n}"),
+                "tags":if n == 70 {json!([["p",agent.public_key().to_hex()]])} else {json!([])}
+            })
+        })
+        .collect();
+    let (mut ctx, server, queries) = scripted(events).await;
+    ctx.agent_keys = agent;
+    ctx.context_message_limit = 12;
+    let (context, mention) = selected(
+        &ContextTarget::Thread(root.clone()),
+        Uuid::from_u128(42),
+        RestartDepth::Recent,
+        &ctx,
+    )
+    .await;
+    assert!(matches!(mention, Some(FirstMention::Found(_))));
+    let ConversationContext::Thread {
+        messages,
+        truncated,
+        root_present,
+        ..
+    } = context.unwrap()
+    else {
+        panic!("thread");
+    };
+    assert!(truncated && root_present);
+    assert_eq!(messages[0].event_id, root);
+    assert!(messages
+        .iter()
+        .any(|message| message.content == "message 70"));
+    assert!(messages
+        .iter()
+        .any(|message| message.content == "message 3000"));
+    assert!(
+        messages.len() <= 14,
+        "only the recent window, root and original assignment are supplied"
+    );
+    let queries = queries.lock().unwrap();
+    let scans: Vec<_> = queries
+        .iter()
+        .filter(|query| !query["depth_limit"].is_null())
+        .collect();
+    assert_eq!(
+        scans.len(),
+        2,
+        "finding the assignment ends forward discovery before the tail"
+    );
+    assert!(
+        scans[0]["limit"].as_u64().unwrap() < scans[1]["limit"].as_u64().unwrap(),
+        "later pages preserve bounded long-thread discovery capacity"
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn recent_language_survives_agent_traffic_without_supplying_excluded_human_bodies() {
+    let human = nostr::Keys::generate();
+    let agent = nostr::Keys::generate();
+    let channel = Uuid::from_u128(42);
+    let build = |key: &nostr::Keys, at: u64, text: &str, tags: Vec<nostr::Tag>| {
+        serde_json::to_value(
+            nostr::EventBuilder::new(nostr::Kind::Custom(9), text)
+                .tags(tags)
+                .custom_created_at(nostr::Timestamp::from(at))
+                .sign_with_keys(key)
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    let h = nostr::Tag::parse(["h", &channel.to_string()]).unwrap();
+    let root = build(
+        &human,
+        1,
+        "Please inspect the task",
+        vec![
+            h.clone(),
+            nostr::Tag::parse(["p", &agent.public_key().to_hex()]).unwrap(),
+        ],
+    );
+    let root_id = root["id"].as_str().unwrap().to_owned();
+    let mut events = vec![root];
+    for n in 2..=32 {
+        let (key, text) = if n == 2 {
+            (&human, "Продолжай работу, сообщи результат")
+        } else {
+            (&agent, "The task is progressing")
+        };
+        events.push(build(
+            key,
+            n,
+            text,
+            vec![
+                h.clone(),
+                nostr::Tag::parse(["e", &root_id, "", "reply"]).unwrap(),
+            ],
+        ));
+    }
+    let (mut ctx, server, _) = scripted(events).await;
+    ctx.agent_keys = agent;
+    ctx.context_message_limit = 12;
+    let (context, _, language, failed) = selected_with_language(
+        &ContextTarget::Thread(root_id),
+        channel,
+        RestartDepth::Recent,
+        &ctx,
+        &HashSet::from([human.public_key().to_hex()]),
+    )
+    .await;
+    assert!(!failed);
+    assert_eq!(
+        language, "ru",
+        "use the last trusted human prose even after a long series of agent replies"
+    );
+    let rendered = crate::queue::format_conversation_context(&context.unwrap(), None);
+    assert!(
+        !rendered.contains("Продолжай работу"),
+        "language evidence must not expand the selected history window"
+    );
+    server.abort();
+}

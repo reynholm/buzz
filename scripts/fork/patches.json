@@ -9986,11 +9986,11 @@
       "invocation_seams": [
         {
           "caller_path": "crates/buzz-acp/src/pool/session_history.rs",
-          "callee_symbol": "query_raw_bounded",
-          "invocation": ".query_raw_bounded(filters, RESPONSE_BYTES),",
-          "behavior_test": "bounded_history_reader_rejects_chunked_actual_bytes_and_times_out",
-          "verification_command": "cargo test -p buzz-acp --lib bounded_history_reader_rejects_chunked_actual_bytes_and_times_out -- --test-threads=1",
-          "coverage": "Task2 production seam; interim invalidation is not verified worker retirement or public outcome delivery."
+          "callee_symbol": "query_raw_bounded_until",
+          "invocation": ".query_raw_bounded_until(filters, RESPONSE_BYTES, deadline)",
+          "behavior_test": "restart_recent_keeps_history_across_slow_reads_partial_failure_and_recovery",
+          "verification_command": "cargo test -p buzz-acp --lib restart_recent_keeps_history_across_slow_reads_partial_failure_and_recovery -- --test-threads=1",
+          "coverage": "Exercise bounded production history acquisition through signed HTTP publication and real ACP subprocesses, including delayed bodies, partial failure, unavailable history and recovery."
         },
         {
           "caller_path": "crates/buzz-acp/src/pool/session_history.rs",
@@ -13277,7 +13277,7 @@
     },
     {
       "path": "crates/buzz-admin/tests/postgres_migration_timeouts.rs",
-      "responsibility": "Exercise migration locks, statement timeout and cancellation against PostgreSQL",
+      "responsibility": "Exercise migration locks, statement timeout and cancellation against PostgreSQL. Resolve the runtime CLI path when Nextest relocates a test archive.",
       "is_new": true,
       "required_symbols": [],
       "invocation_seams": [],
@@ -13512,7 +13512,7 @@
     },
     {
       "path": "crates/buzz-test-client/src/bin/blue_green_probe.rs",
-      "responsibility": "Signed cross-color traffic, reconnect and replay verification within principal quotas",
+      "responsibility": "Dispatch the deployment verifier on Unix and reject unsupported platforms without compiling Unix-only permission APIs.",
       "is_new": true,
       "required_symbols": [],
       "invocation_seams": [],
@@ -13916,6 +13916,32 @@
       "invocation_seams": [],
       "verification_commands": [
         "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/restart_status_history_tests.rs",
+      "responsibility": "Exercise restart history acquisition across delayed relay responses, partial failures, complete unavailability and authorized recovery through the production scheduler and signed HTTP publication.",
+      "is_new": true,
+      "required_symbols": [
+        "fn restart_recent_keeps_history_across_slow_reads_partial_failure_and_recovery"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-test-client/src/bin/blue_green_probe/unix.rs",
+      "responsibility": "Preserve the signed channel-scoped deployment verifier with owner-only key configuration and ledger permissions on Unix.",
+      "is_new": true,
+      "required_symbols": [
+        "pub(super) async fn main() -> Result<()>",
+        "os::unix::fs::{OpenOptionsExt, PermissionsExt}"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-test-client --bin blue_green_probe",
+        "just ci"
       ]
     }
   ],

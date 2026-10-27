@@ -51,7 +51,10 @@ impl Database {
     }
 
     fn child(&self, lock_ms: u32, statement_ms: u32) -> Child {
-        Command::new(env!("CARGO_BIN_EXE_buzz-admin"))
+        // Nextest supplies the relocated executable when running a test archive.
+        let binary = std::env::var_os("NEXTEST_BIN_EXE_buzz_admin")
+            .unwrap_or_else(|| env!("CARGO_BIN_EXE_buzz-admin").into());
+        Command::new(binary)
             .args([
                 "migrate",
                 "--lock-timeout-ms",

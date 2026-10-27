@@ -181,17 +181,10 @@ async fn execute(
     let humans = super::status_language::trusted_authors(&job.saved.origin.actor_pubkey, ctx).await;
     // The selected-history reader already has a bounded newest page even for
     // None. Only a language code survives evidence excluded by that policy.
-    let (mut context, mention, language) =
+    let (mut context, mention, language, history_failed) =
         session_history::selected_with_language(&target, channel_id, depth, ctx, &humans).await;
-    if depth == buzz_core::session_control::RestartDepth::Recent {
-        let recent = if ctx.context_message_limit > 0 {
-            fetch_conversation_context_for_target(channel_id, &target, ctx, false, &HashSet::new())
-                .await
-        } else {
-            None
-        };
-        merge_recent(&mut context, recent);
-    }
+    let history_unavailable =
+        history_failed && conversation_context_event_ids(context.as_ref()).is_empty();
     let pins = match &mention {
         Some(first_mention::FirstMention::Found(event)) => event["id"]
             .as_str()
@@ -202,7 +195,11 @@ async fn execute(
     session_history::enforce_render_budget(&mut context, None, &pins);
     let ids = conversation_context_event_ids(context.as_ref());
     if let Some(binding) = agent.state.status.get(&scope) {
-        let fetched = session_visibility::FetchedHistory::capture(true, context.as_ref());
+        let fetched = if history_unavailable {
+            session_visibility::FetchedHistory::Missing
+        } else {
+            session_visibility::FetchedHistory::capture(true, context.as_ref())
+        };
         binding.set_history(session_visibility::history_coverage(
             &fetched,
             context.as_ref(),
@@ -211,6 +208,10 @@ async fn execute(
             &scope,
             is_dm,
         ));
+    }
+    if history_unavailable {
+        return publish_notice(job, dispatch, ctx,
+            "The session restarted, but its conversation history could not be loaded. Your next message can retry loading the history.").await;
     }
     let standing = crate::queue::StandingContext {
         base_prompt: ctx.base_prompt.as_deref(),
@@ -339,49 +340,6 @@ pub(crate) fn reply_tags(job: &StatusJob, is_dm: bool) -> ThreadTags {
         ..Default::default()
     }
 }
-fn merge_recent(context: &mut Option<ConversationContext>, recent: Option<ConversationContext>) {
-    let Some(recent) = recent else {
-        return;
-    };
-    let (
-        Some(ConversationContext::Thread {
-            messages,
-            total,
-            truncated,
-            ..
-        })
-        | Some(ConversationContext::Dm {
-            messages,
-            total,
-            truncated,
-        }),
-        ConversationContext::Thread {
-            messages: tail,
-            total: count,
-            truncated: cut,
-            ..
-        }
-        | ConversationContext::Dm {
-            messages: tail,
-            total: count,
-            truncated: cut,
-        },
-    ) = (context.as_mut(), recent)
-    else {
-        return;
-    };
-    let mut ids: HashSet<_> = messages
-        .iter()
-        .map(|message| message.event_id.clone())
-        .collect();
-    messages.extend(
-        tail.into_iter()
-            .filter(|message| ids.insert(message.event_id.clone())),
-    );
-    messages.sort_by(|a, b| (&a.timestamp, &a.event_id).cmp(&(&b.timestamp, &b.event_id)));
-    *total = (*total).max(count).max(messages.len());
-    *truncated = *truncated || cut || *total > messages.len();
-}
 async fn publish_prepared(
     job: &mut StatusJob,
     dispatch: &crate::session_controls::ControlDispatch,
@@ -476,6 +434,15 @@ async fn publish_failure(
     dispatch: &crate::session_controls::ControlDispatch,
     ctx: &PromptContext,
 ) -> Result<(), AcpError> {
+    publish_notice(job, dispatch, ctx, "The session restarted, but I couldn't confirm its task-status reply. Your next message can continue the conversation.").await
+}
+
+async fn publish_notice(
+    job: &mut StatusJob,
+    dispatch: &crate::session_controls::ControlDispatch,
+    ctx: &PromptContext,
+    message: &str,
+) -> Result<(), AcpError> {
     if !ctx.session_controls.status_current(job, dispatch)
         || !ctx
             .session_controls
@@ -497,7 +464,13 @@ async fn publish_failure(
             "restart status feedback superseded before preparation",
         ));
     }
-    let event = build_failure_notice_event(&ctx.agent_keys, job.saved.scope.channel_id(), &reply_tags(job, is_dm), "The session restarted, but I couldn't confirm its task-status reply. Your next message can continue the conversation.").ok_or_else(|| protocol("restart status failure notice could not be signed"))?;
+    let event = build_failure_notice_event(
+        &ctx.agent_keys,
+        job.saved.scope.channel_id(),
+        &reply_tags(job, is_dm),
+        message,
+    )
+    .ok_or_else(|| protocol("restart status failure notice could not be signed"))?;
     let mut next = job.saved.clone();
     next.phase = RestartStatusPhase::Prepared;
     next.failure_notice = true;
