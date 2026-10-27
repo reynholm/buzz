@@ -2846,11 +2846,11 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/lib.rs`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Preserve the heartbeat collection call with a textual drift guard; full live-service-loop behavioral mutation coverage is not claimed. Refresh idle clocks when a non-heartbeat prompt result is handled (port of block/buzz#7173). Enable session status once per harness and retire status on owner rotate and channel removal; forward the status directory to the managed MCP server.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Preserve the heartbeat collection call with a textual drift guard; full live-service-loop behavioral mutation coverage is not claimed. Refresh idle clocks when a non-heartbeat prompt result is handled (port of block/buzz#7173). Enable session status once per harness and retire status on owner rotate and channel removal; forward the status directory to the managed MCP server. Schedule one asynchronous shared process poll, fence its application, and continue capacity dispatch across unavailable scopes. Main-loop select wiring is textually guarded; full relay-loop mutation coverage is not claimed.
 
 New module: `false`.
 
-- Required symbol: `pool.queue_finished_background_work(&mut queue);`
+- Required symbol: `process_poll.start(pool.background_poll_requests());`
 - Required symbol: `fn result_refreshes_idle_clock(source: &PromptSource) -> bool`
 - Required symbol: `mod session_status;`
 - Required symbol: `name == session_status::SESSION_STATUS_DIR_ENV`
@@ -2934,6 +2934,7 @@ New module: `false`.
             Err(error) => PromptOutcome::Error(error),
         }
         .discard_retired_output();`; behavior test `retired_adapter_death_replaces_the_worker_through_result_handling`; verify `cargo test -p buzz-acp --lib retired_adapter_death_replaces_the_worker_through_result_handling -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `prepare_background_return`; exact call `agent.prepare_background_return();`; behavior test `completed_empty_turn_prepares_observation_before_listener_return`; verify `cargo test --locked -p buzz-acp --lib completed_empty_turn_prepares_observation_before_listener_return -- --test-threads=1`
 - Verify: `just ci`
 
 ## `crates/buzz-acp/src/queue.rs`
@@ -5494,18 +5495,19 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/pool/background_work.rs`
 
-Retain collection authority in the original worker/session, poll child exit independently of pool sleep, and compose stable-key final-report instructions. Release uncertainty-only holds without inventing collection; retain observed exit evidence across Unknown.
+Retain collection authority in the original worker/session, poll child exit independently of pool sleep, and compose stable-key final-report instructions. Release uncertainty-only holds without inventing collection; retain observed exit evidence across Unknown. Preserve completed-task evidence across service-only snapshots and remove only proven service instances.
 
 New module: `true`.
 
 - Required symbol: `pub(crate) struct RuntimeHold`
 - Required symbol: `pub fn queue_finished_background_work`
 - Required symbol: `pub(super) fn followup_prompt`
-- Required symbol: `if hold.blocking_pids.is_empty() && !hold.collection_pending {`
+- Required symbol: `agent.acp.observed_background_instances.is_empty()`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `followup_prompt`; exact call `background_work::followup_prompt(batch.channel_id, continuation, &ctx.cwd)`; behavior test `background_managed_delivery_key_stays_on_collection_across_error_and_new_message`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_managed_delivery_key_stays_on_collection_across_error_and_new_message -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool/background_work.rs` → `contains`; exact call `!self.retire_on_return.contains(&index)`; behavior test `retirement_targets_include_checked_out_copies_and_block_idle_claims`; verify `cargo test -p buzz-acp --lib retirement_targets_include_checked_out_copies_and_block_idle_claims -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `refresh_runtime_hold`; exact call `self.refresh_runtime_hold(&mut agent);`; behavior test `background_unknown_then_empty_releases_hold_without_inventing_collection`; verify `cargo test -p buzz-acp --lib background_unknown_then_empty_releases_hold_without_inventing_collection -- --test-threads=1`
-- Invocation: `crates/buzz-acp/src/pool/background_work.rs` → `background_child_pids`; exact call `let Some(children) = agent.acp.background_child_pids() else {`; behavior test `background_observed_then_unknown_then_empty_collects_exactly_once`; verify `cargo test -p buzz-acp --lib background_observed_then_unknown_then_empty_collects_exactly_once -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool/background_work.rs` → `apply_background_children`; exact call `self.apply_background_children(index, children, queue);`; behavior test `background_observed_then_unknown_then_empty_collects_exactly_once`; verify `cargo test -p buzz-acp --lib background_observed_then_unknown_then_empty_collects_exactly_once -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool/background_work.rs` → `background_child_pids_in`; exact call `agent.acp.background_child_pids_in(tree)`; behavior test `current_shared_snapshot_retains_actual_work_in_its_slot`; verify `cargo test --locked -p buzz-acp --lib current_shared_snapshot_retains_actual_work_in_its_slot -- --test-threads=1`
 - Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_work_tests -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp --lib background_unknown_then_empty_releases_hold_without_inventing_collection -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp --lib background_observed_then_unknown_then_empty_collects_exactly_once -- --test-threads=1`
@@ -9048,3 +9050,180 @@ Name the existing bundled Silo dependency consistently.
 New module: `false`.
 
 - Verify: `python3 scripts/fork/sync.py validate`
+
+## `crates/buzz-acp/src/background_poll.rs`
+
+Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.
+
+New module: `true`.
+
+- Invocation: `crates/buzz-acp/src/background_poll.rs` → `spawn_blocking`; exact call `self.tasks.spawn_blocking(move || {`; behavior test `slow_snapshot_keeps_event_loop_responsive_and_allows_only_one_poll`; verify `cargo test --locked -p buzz-acp --lib slow_snapshot_keeps_event_loop_responsive_and_allows_only_one_poll -- --test-threads=1`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/background_poll_tests.rs`
+
+Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.
+
+New module: `true`.
+
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/mcp_service.rs`
+
+Register initialized service process instances and preserve independent, bounded forwarding in both stdio directions.
+
+New module: `true`.
+
+- Invocation: `crates/buzz-acp/src/mcp_service.rs` → `register_service_instances`; exact call `tree.register_service_instances(record.root, &record.instances);`; behavior test `registration_matches_worker_and_process_instance_without_hiding_work`; verify `cargo test --locked -p buzz-acp --lib registration_matches_worker_and_process_instance_without_hiding_work -- --test-threads=1`
+- Verify: `cargo test --locked -p buzz-acp --test mcp_service -- --test-threads=1`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/mcp_service/codex.rs`
+
+Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.
+
+New module: `true`.
+
+- Invocation: `crates/buzz-acp/src/mcp_service/codex.rs` → `install`; exact call `super::codex_proxy::install(registry, adapter, launch, registered)`; behavior test `real_codex_native_mcp_config_survives_injected_server_configuration`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test --locked -p buzz-acp --lib real_codex_native_mcp_config -- --ignored --test-threads=1`
+- Invocation: `crates/buzz-acp/src/mcp_service/codex.rs` → `output`; exact call `super::discovery::output(discovery)`; behavior test `native_discovery_retires_descendants_on_every_output_exit`; verify `cargo test --locked -p buzz-acp --test mcp_discovery`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/mcp_service/codex_proxy.rs`
+
+Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.
+
+New module: `true`.
+
+- Invocation: `crates/buzz-acp/src/mcp_service/codex_proxy.rs` → `apply_servers`; exact call `apply_servers(&mut request, &spec.servers)?;`; behavior test `real_codex_native_mcp_config_survives_injected_server_configuration`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo build --locked -p buzz-acp && BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test --locked -p buzz-acp --lib real_codex_native_mcp_config -- --ignored --test-threads=1`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/mcp_service_tests.rs`
+
+Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.
+
+New module: `true`.
+
+- Required symbol: `mod launcher_tests;`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/dispatch_diagnostics.rs`
+
+Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.
+
+New module: `true`.
+
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/real_codex_stall_tests.rs`
+
+Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage. Limit tool-inventory preflight to the validated adapter 2.2.2 status API; preserve the original bundled 2.1.1 workflow and five actual ping receipts in both profiles.
+
+New module: `true`.
+
+- Required symbol: `async fn wait_for_mcp_tools(`
+- Required symbol: `wait_for_mcp_tools(&mut agent, &session, index).await;`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/stall_tests.rs`
+
+Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.
+
+New module: `true`.
+
+- Required symbol: `unavailable_oldest_scope_does_not_block_available_held_owner`
+- Required symbol: `newly_registered_service_does_not_invent_collection_or_hide_reused_work_pid`
+- Required symbol: `checked_restart_of_held_scope_releases_slot_and_retains_ordinary_input`
+- Required symbol: `completed_work_survives_a_later_service_only_snapshot`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/tests/fixtures/late_service/package.json`
+
+Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.
+
+New module: `true`.
+
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/tests/fixtures/late_service/src/index.mjs`
+
+Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.
+
+New module: `true`.
+
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/tests/mcp_service.rs`
+
+Exercise real npm service provenance, actual child work, and large pipelined messages through the production stdio wrapper.
+
+New module: `true`.
+
+- Required symbol: `real_npm_service_registers_before_tools_and_excludes_actual_work`
+- Required symbol: `pipelined_large_messages_keep_both_stdio_directions_progressing`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/mcp_service/discovery.rs`
+
+Own bounded native discovery process groups across output, timeout and cancellation, and verify cleanup before returning.
+
+New module: `true`.
+
+- Required symbol: `async fn output`
+- Required symbol: `async fn retire`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/tests/mcp_discovery.rs`
+
+Exercise native discovery cleanup through the actual models command and observe child and grandchild exit.
+
+New module: `true`.
+
+- Required symbol: `native_discovery_retires_descendants_on_every_output_exit`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/sprig/Cargo.toml`
+
+Use existing workspace test dependencies for real multicall MCP transport coverage.
+
+New module: `false`.
+
+- Verify: `cargo test --locked -p sprig`
+
+## `crates/sprig/src/main.rs`
+
+Route ACP internal MCP self-launch commands after Linux resolves the personality symlink to the Sprig target.
+
+New module: `false`.
+
+- Verify: `cargo test --locked -p sprig`
+
+## `crates/sprig/tests/mcp_personalities.rs`
+
+Exercise injected MCP registration and native configuration forwarding through the actual Sprig target.
+
+New module: `true`.
+
+- Required symbol: `multicall_target_runs_injected_mcp_transport`
+- Required symbol: `multicall_target_runs_native_codex_proxy`
+- Verify: `cargo test --locked -p sprig`
+
+## `crates/buzz-acp/src/mcp_service/launcher_tests.rs`
+
+Exercise actual adapter 2.2.2 and external Codex 0.164.0 through a CODEX_PATH-preserving operator launcher, with live proxy ancestry and native/injected MCP receipts.
+
+New module: `true`.
+
+- Required symbol: `real_launcher_wrapper_preserves_proxy_and_external_cli`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+- Verify: `env -u CODEX_PATH cargo test --locked -p buzz-acp --lib real_launcher_wrapper -- --ignored --nocapture --test-threads=1`
+
+## `crates/buzz-acp/tests/fixtures/codex_launcher.py`
+
+Record launcher selection and exec the actual adapter/external CLI; reproduce inherited-proxy loss with an explicit negative-control flag.
+
+New module: `true`.
+
+- Required symbol: `selected = inherited or environment["BUZZ_TEST_LAUNCHER_FALLBACK"]`
+- Required symbol: `os.execve(target, [target, *sys.argv[1:]], environment)`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+- Verify: `env -u CODEX_PATH cargo test --locked -p buzz-acp --lib real_launcher_wrapper -- --ignored --nocapture --test-threads=1`

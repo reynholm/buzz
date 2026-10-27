@@ -11,6 +11,12 @@ mod resident_helper_tests;
 #[path = "snapshot_helper_tests.rs"]
 mod snapshot_helper_tests;
 
+#[path = "stall_tests.rs"]
+mod stall_tests;
+
+#[path = "real_codex_stall_tests.rs"]
+mod real_codex_stall_tests;
+
 async fn worker(index: usize) -> OwnedAgent {
     OwnedAgent {
         index,
@@ -505,6 +511,7 @@ async fn observed_background_exit_during_result_delivery_still_queues_collection
     })
     .await
     .unwrap();
+    agent.prepare_background_return();
     pool.return_agent(agent);
     pool.queue_finished_background_work(&mut queue);
     assert!(queue.flush_next().unwrap().continuation.is_some());

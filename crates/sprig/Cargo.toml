@@ -17,3 +17,8 @@ path = "src/main.rs"
 buzz-acp = { path = "../buzz-acp" }
 buzz-agent = { path = "../buzz-agent" }
 buzz-dev-mcp = { path = "../buzz-dev-mcp" }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tempfile = "3"
+tokio = { workspace = true }

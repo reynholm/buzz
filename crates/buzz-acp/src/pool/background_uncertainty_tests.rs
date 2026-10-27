@@ -14,6 +14,7 @@ async fn ordinary_return(
     agent.acp.background_child_snapshots = snapshots.into();
     // This is the prompt-completion observation before result delivery.
     let _ = agent.background_work_running(&source);
+    agent.prepare_background_return();
     pool.return_agent(agent);
     (pool, EventQueue::new(DedupMode::Queue), scope)
 }

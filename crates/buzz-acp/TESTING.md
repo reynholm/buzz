@@ -145,6 +145,141 @@ child running under code mode: its original worker must remain protected until
 exit, and collection must still return to the original thread. This check needs
 the rebuilt harness; source tests do not update the installed desktop app.
 
+## Saturated workers and late MCP services
+
+Capacity dispatch visits every eligible scope once per pass. An unavailable
+scope stays outside the queue until the pass ends, then returns with its event
+age and retry budget. Ready background collections retain their precedence.
+The `stall_tests` regressions cover a blocked oldest scope followed by the
+available owner of a held worker, unchanged retry exhaustion, checked retirement
+with retained ordinary input, failed discovery and stale worker/hold results.
+
+The listener launches at most one shared process enumeration on a blocking
+thread. Completion is selected separately from incoming events and controls.
+Worker instance IDs and hold epochs fence application after claim/return,
+replacement or retirement. Failed discovery retains holds. Prompt tasks prepare
+return observations before handing workers to the listener; pool return does
+not run process enumeration. `background_poll_tests` exercises a blocked
+collector on a single-thread runtime while an incoming control is received.
+
+On Unix, Codex stdio MCP launches use the harness's internal transport wrapper.
+After a successful MCP initialize, before forwarding its response, the wrapper
+registers its service process instances in a private worker-generation directory.
+Registrations compare PID, birth stamp and command and require the original
+wrapper to remain an ancestor. Registered services remain traversal roots;
+subsequent tool children still hold the worker. Resolving an observed process
+into the same registered service does not invent a background completion. A
+different process instance reusing an old task PID still collects that task.
+Completion evidence also survives an intermediate snapshot containing only an
+unregistered service: registering that service later still queues the completed
+task exactly once in its original session.
+
+Native Codex servers are discovered through the adapter's CLI with bounded time
+and output. A controlled Codex stdio proxy preserves their registered launches
+when the adapter constructs thread start/resume/fork configuration containing
+injected servers. Native environment, cwd and tool settings are retained; secrets
+stay in a private launch file instead of discovery arguments. Unsupported or
+failed discovery emits a warning and leaves unknown processes protected. These
+native hooks are exercised with codex-acp 2.1.1; an adapter changing its CLI or
+app-server methods needs its own acceptance run. Windows keeps its existing
+process-lifecycle behavior.
+
+Native discovery owns a separate Unix process group. Timeout, excess output,
+failed or malformed output, successful discovery with lingering descendants,
+and cancellation must retire the discovery processes. The `mcp_discovery`
+integration test runs the actual `models` command with a local adapter and
+observes both child and grandchild exit; the cancellation test aborts the
+production configuration-discovery future. Cleanup has a separate bounded
+verification deadline and cannot be accepted as successful discovery on error.
+Cancellation signals the group from its drop guard; its regression observes
+descendant exit after cancellation rather than claiming an awaited cleanup
+acknowledgment. Containment covers the inherited process group used by the
+supported adapter and bundled CLI. A descendant deliberately creating a new
+session with `setsid` escapes this boundary; these tests do not attest cleanup
+of such daemonized processes.
+
+Sprig routes the two internal MCP transport commands when invoked by its target
+name, as Linux `current_exe()` resolves the ACP personality symlink. Run the
+complete `cargo test --locked -p sprig` package on Linux to exercise both the
+registered injected transport and native Codex proxy through the real binary.
+
+Run the package suite normally. The `mcp_service` integration test additionally
+requires Node.js and npm on PATH and starts a real `npm start` service with no
+package download. It verifies registration before tool calls and exclusion of
+real marker-controlled work. A sequential Python stdio server additionally
+pipelines two-megabyte requests and responses through the production wrapper;
+independent input/output forwarding must keep both pipes progressing while
+the initialize response still waits for registration. For configured
+Codex/provider acceptance:
+
+```sh
+cargo build --locked -p buzz-acp
+BUZZ_TEST_BIN_DIR="$PWD/target/debug" \
+  cargo test --locked -p buzz-acp --lib real_codex_ -- --ignored --nocapture --test-threads=1
+```
+
+Set `BUZZ_TEST_CODEX_ACP` when the adapter is outside PATH. The five-worker check
+uses actual provider calls, services through npm and a missed session census.
+It verifies a sixth scope and a later original-scope request, a real child held
+for ten seconds, and production collection in the original scope. The separate
+native check combines configured and injected servers and waits for late MCP
+initialization. These checks do not publish to a relay or attest a human app
+test. Repeat the native-app workflow above with the candidate harness for that
+acceptance boundary.
+
+### Operator launcher with an external Codex CLI
+
+The separate opt-in `real_launcher_wrapper` check requires adapter **2.2.2** and
+external Codex **0.164.0**. It uses an isolated recording launcher with the
+operator contract: preserve an inherited `CODEX_PATH`, otherwise select the
+configured external CLI. It does not modify an installed launcher. Set paths to
+the actual adapter entry point and external executable, then run:
+
+```sh
+cargo build --locked -p buzz-acp
+BUZZ_TEST_BIN_DIR="$PWD/target/debug" \
+BUZZ_TEST_CODEX_ADAPTER_222=/path/to/codex-acp-2.2.2/dist/index.js \
+BUZZ_TEST_CODEX_EXTERNAL_0164=/path/to/codex-0.164.0 \
+  env -u CODEX_PATH cargo test --locked -p buzz-acp --lib real_launcher_wrapper \
+  -- --ignored --nocapture --test-threads=1
+```
+
+The test checks both wrapper fallback and an explicitly configured CLI. It
+observes the real external executable below the live MCP proxy, requires native
+and injected npm MCP initialize receipts, and rejects a false worker hold. No
+model prompt or relay publication is performed. As a negative control, set
+`BUZZ_TEST_LAUNCHER_OVERWRITE=1`: the same test must fail because the launcher
+replaces the inherited proxy path.
+
+For the existing five-worker, background-work and resume checks through this
+profile, copy `tests/fixtures/codex_launcher.py` into a temporary directory under
+the names `codex-acp` and `external-cli`, then run `chmod 700` on both copies. Set
+`BUZZ_TEST_CODEX_ACP` to that temporary `codex-acp`,
+`BUZZ_TEST_LAUNCHER_ADAPTER` to the 2.2.2 entry point,
+`BUZZ_TEST_LAUNCHER_REAL_CLI` to the external 0.164.0 executable,
+`BUZZ_TEST_LAUNCHER_FALLBACK` to the temporary `external-cli`, and
+`BUZZ_TEST_LAUNCHER_TRACE` to a temporary JSONL receipt file. Unset `CODEX_PATH`
+and the negative-control flag, then run the `real_codex_` command above. The
+recording fixture execs the selected actual binary; it does not substitute an
+app-server implementation. For adapter 2.2.2, identified by its initialize
+metadata, the five-worker fixture first uses the local `/mcp` command to require
+both discovered tool inventories before each initial model prompt;
+`session/new` can acknowledge asynchronous MCP startup. This preflight is
+limited to that validated status API profile. Adapter 2.1.1 with bundled Codex
+0.159.3 keeps its original provider workflow: its global `/mcp` response lists
+injected server names without tool counts and cannot prove readiness. Both
+profiles still require five actual ping receipts. These provider checks still
+require configured credentials and remain separate from human native-app
+acceptance.
+
+Capacity stalls log their scope, queue age, active/held/idle slots, hold reason
+and PIDs on transition and at most once per minute per scope. Process observation
+logs include only executable basenames, capped at sixteen PIDs; arguments may
+contain credentials. Slow or failed snapshots warn at most once per minute.
+Scoped `!restart`/`!rotate` remains the explicit checked recovery path for the
+old held session. No TTL silently releases or kills real work. Incoming queue
+durability across a full harness restart remains outside this change.
+
 ## Git bootstrap
 
 The credential fixture requires Git 2.46 or newer for the `authtype` credential

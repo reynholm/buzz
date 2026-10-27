@@ -10,6 +10,8 @@ mod edit_routing;
 mod engram_fetch;
 mod filter;
 mod isolated_execution;
+#[cfg(unix)]
+mod mcp_service;
 mod observer;
 mod pool;
 mod pool_lifecycle;
@@ -39,6 +41,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use acp::{AcpClient, EnvVar, McpServer};
+mod background_poll;
+
+#[cfg(all(test, unix))]
+mod background_poll_tests;
 use anyhow::{ensure, Context, Result};
 use buzz_core::kind::{
     KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_STREAM_MESSAGE,
@@ -2840,6 +2846,22 @@ mod replay_floor_tests {
 }
 
 pub fn run() -> Result<()> {
+    #[cfg(unix)]
+    if is_subcommand("__codex-service-proxy") {
+        let runtime = tokio::runtime::Runtime::new()?;
+        let result = runtime.block_on(mcp_service::codex_proxy::run(
+            std::env::args().skip(2).collect(),
+        ));
+        runtime.shutdown_timeout(Duration::from_millis(100));
+        return result;
+    }
+    #[cfg(unix)]
+    if is_subcommand("__mcp-service") {
+        let runtime = tokio::runtime::Runtime::new()?;
+        let result = runtime.block_on(mcp_service::run(std::env::args().skip(2).collect()));
+        runtime.shutdown_timeout(Duration::from_millis(100));
+        return result;
+    }
     let argv0 = std::env::args().next().unwrap_or_default();
     match std::path::Path::new(&argv0)
         .file_stem()
@@ -3294,6 +3316,7 @@ async fn run_harness(
 
     let mut background_poll = tokio::time::interval(Duration::from_secs(1));
     background_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut process_poll = background_poll::BackgroundPoll::default();
 
     // Runs at the TOP of every loop iteration via Instant check — cannot be
     // starved by the biased select. Slot refill spawns background tasks so
@@ -3380,6 +3403,7 @@ async fn run_harness(
         Wake(u32, Result<AgentPool, String>),
         HoldDeadline,
         Recovery(recovery_wake::RecoveryWake),
+        BackgroundPoll(Result<background_poll::BackgroundPollResult, tokio::task::JoinError>),
     }
 
     let (status_tx, mut status_rx) = mpsc::unbounded_channel();
@@ -3586,12 +3610,10 @@ async fn run_harness(
                         _ => std::future::pending().await,
                     }
                 } => None,
-                _ = background_poll.tick(), if background_work_pending => {
+                Some(result) = process_poll.wait() => Some(PoolEvent::BackgroundPoll(result)),
+                _ = background_poll.tick(), if background_work_pending && !process_poll.in_flight() => {
                     let _ = result_rx;
-                    pool.queue_finished_background_work(&mut queue);
-                    for (scope, tags) in dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity, observer.as_ref()) {
-                        typing_channels.insert(scope, tags);
-                    }
+                    process_poll.start(pool.background_poll_requests());
                     None
                 },
                 _ = pool::AgentPool::wait_for_hold_deadline(hold_deadline), if pool_ready => {
@@ -4230,6 +4252,35 @@ async fn run_harness(
                     observer.clone(),
                     &mut last_activity,
                 );
+                for (scope, tags) in dispatch_pending(
+                    &mut pool,
+                    &mut queue,
+                    &ctx,
+                    &mut last_activity,
+                    observer.as_ref(),
+                ) {
+                    typing_channels.insert(scope, tags);
+                }
+            }
+            Some(PoolEvent::BackgroundPoll(result)) => {
+                match result {
+                    Ok(result) => {
+                        process_poll.report(&result);
+                        tracing::debug!(
+                            snapshot_ms = result.elapsed.as_millis(),
+                            successful = result.tree.is_some(),
+                            "background process snapshot completed"
+                        );
+                        pool.apply_background_snapshot(
+                            &result.requests,
+                            result.tree.as_ref(),
+                            &mut queue,
+                        );
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "background process snapshot failed; retaining holds")
+                    }
+                }
                 for (scope, tags) in dispatch_pending(
                     &mut pool,
                     &mut queue,
@@ -5445,13 +5496,14 @@ fn dispatch_pending(
         let mut agent = match pool.try_claim(Some(&scope)) {
             Some(a) => a,
             None => {
-                let pending = queue.pending_channels();
-                tracing::debug!(pending_channels = pending, "pool_exhausted");
-                queue.requeue_preserve_timestamps(batch);
-                queue.release_unstarted(&scope);
-                break;
+                pool.report_unavailable(&batch);
+                // Keep this scope out of flush_next until the pass ends.
+                // Later scopes may still claim their own retained workers.
+                held.push(batch);
+                continue;
             }
         };
+        pool.report_available(&scope);
         // Consume a bounded hold only after a worker was actually claimed.
         // If every slot is checked out, the expired stamp remains sticky and
         // the worker-return event retries immediately instead of waiting for a
