@@ -623,6 +623,7 @@ export const ChannelPane = React.memo(function ChannelPane({
           ) : null}
           <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col">
             <MessageTimeline
+              openThreadHeadId={openThreadHeadId}
               ref={messageTimelineRef}
               channelId={activeChannel?.id}
               channelIntro={channelIntro}

@@ -3636,17 +3636,19 @@ New module: `false`.
 
 ## `desktop/playwright.config.ts`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow. Register long-thread and large-channel virtualization coverage in the smoke suite.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow. Register long-thread and large-channel virtualization coverage in the smoke suite. Register the open-thread highlight smoke spec.
 
 New module: `false`.
 
 - Required symbol: `"**/session-status.spec.ts",`
 - Required symbol: `"**/session-controls.spec.ts",`
 - Required symbol: `"**/thread-virtualization.spec.ts"`
+- Required symbol: `"**/open-thread-highlight.spec.ts",`
 - Verify: `just ci`
 - Verify: `cd desktop && pnpm test:e2e:smoke`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
+- Verify: `cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke`
 
 ## `desktop/src-tauri/icons/icon.icns`
 
@@ -4346,19 +4348,29 @@ New module: `false`.
 
 ## `desktop/src/features/messages/ui/TimelineMessageList.tsx`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Pass the open thread root id into the channel timeline.
 
 New module: `false`.
 
+- Required symbol: `openThreadHeadId={openThreadHeadId}`
+- Invocation: `desktop/src/features/messages/ui/TimelineMessageList.tsx` → `MessageRowItem`; exact call `<MessageRowItem
+              openThreadHeadId={openThreadHeadId}`; behavior test `buzz: highlights only the open root with a reply summary`; verify `cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke`
 - Verify: `just ci`
+- Verify: `cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke`
 
 ## `desktop/src/features/messages/ui/TimelineMessageRow.tsx`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Mark only the open thread root with theme-derived background and aria-current.
 
 New module: `false`.
 
+- Required symbol: `const isOpenThreadHead =`
+- Required symbol: `hoverBackground={!isOpenThreadHead}`
+- Invocation: `desktop/src/features/messages/ui/TimelineMessageRow.tsx` → `MessageRow`; exact call `<MessageRow
+        channelId={channelId}
+        hoverBackground={!isOpenThreadHead}`; behavior test `buzz: highlights an open root without replies`; verify `cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke`
 - Verify: `just ci`
+- Verify: `cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke`
 
 ## `desktop/src/features/messages/ui/submitMessageEdit.test.mjs`
 
@@ -9227,3 +9239,37 @@ New module: `true`.
 - Required symbol: `os.execve(target, [target, *sys.argv[1:]], environment)`
 - Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
 - Verify: `env -u CODEX_PATH cargo test --locked -p buzz-acp --lib real_launcher_wrapper -- --ignored --nocapture --test-threads=1`
+
+## `desktop/src/features/channels/ui/ChannelPane.tsx`
+
+Pass the open thread root id into the channel timeline.
+
+New module: `false`.
+
+- Required symbol: `openThreadHeadId={openThreadHeadId}`
+- Invocation: `desktop/src/features/channels/ui/ChannelPane.tsx` → `MessageTimeline`; exact call `<MessageTimeline
+              openThreadHeadId={openThreadHeadId}`; behavior test `buzz: highlights only the open root with a reply summary`; verify `cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke`
+- Verify: `cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke`
+
+## `desktop/src/features/messages/ui/MessageTimeline.tsx`
+
+Pass the open thread root id into the channel timeline.
+
+New module: `false`.
+
+- Required symbol: `openThreadHeadId={openThreadHeadId}`
+- Invocation: `desktop/src/features/messages/ui/MessageTimeline.tsx` → `TimelineMessageList`; exact call `<TimelineMessageList
+      openThreadHeadId={openThreadHeadId}`; behavior test `buzz: highlights only the open root with a reply summary`; verify `cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke`
+- Verify: `cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke`
+
+## `desktop/tests/e2e/open-thread-highlight.spec.ts`
+
+Verify open thread root highlighting, assistive state, and screenshots in both themes with and without replies.
+
+New module: `true`.
+
+- Required symbol: `data-open-thread-head`
+- Required symbol: `aria-current`
+- Required symbol: `buzz-dark`
+- Required symbol: `highlights only the open root with a reply summary`
+- Verify: `cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke`

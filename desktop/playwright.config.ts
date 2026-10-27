@@ -28,6 +28,7 @@ export default defineConfig({
         "**/session-controls.spec.ts",
         "**/sidebar-offcanvas-rail.spec.ts",
         "**/tooltip-semantics.spec.ts",
+        "**/open-thread-highlight.spec.ts",
         "**/search-scope-screenshots.spec.ts",
         "**/onboarding-docked-cta-screenshots.spec.ts",
         "**/identity-key-help.spec.ts",
