@@ -121,6 +121,7 @@ type MessageTimelineProps = {
   targetMessageId?: string | null;
   onTargetReached?: (messageId: string) => void;
   splitThreadPanelOpen?: boolean;
+  openThreadHeadId?: string | null;
   /** Event id of the oldest unread top-level message at channel open, or null. */
   firstUnreadMessageId?: string | null;
   /** Count of unread top-level messages at channel open. */
@@ -212,6 +213,7 @@ const MessageTimelineBase = React.forwardRef<
     targetMessageId = null,
     onTargetReached,
     splitThreadPanelOpen = false,
+    openThreadHeadId = null,
     firstUnreadMessageId = null,
     unreadCount = 0,
     threadUnreadCounts,
@@ -667,6 +669,7 @@ const MessageTimelineBase = React.forwardRef<
 
   const timelineList = showMessageList ? (
     <TimelineMessageList
+      openThreadHeadId={openThreadHeadId}
       key={scrollContainerDomKey}
       channelId={channelId}
       channelName={channelName}

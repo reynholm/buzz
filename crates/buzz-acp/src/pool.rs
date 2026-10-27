@@ -339,7 +339,8 @@ pub struct OwnedAgent {
 }
 
 mod background_work;
-pub(crate) use background_work::{ContinuationState, RuntimeHold};
+mod dispatch_diagnostics;
+pub(crate) use background_work::{BackgroundPollRequest, ContinuationState, RuntimeHold};
 pub(crate) mod compaction;
 mod first_mention;
 mod session_continuity;
@@ -431,6 +432,9 @@ pub struct AgentPool {
     /// children. Keyed by slot index. Cleared when the slot is checked out
     /// for a real prompt or when the children exit and a follow-up is sent.
     runtime_holds: HashMap<usize, RuntimeHold>,
+    runtime_hold_epochs: HashMap<usize, Uuid>,
+    blocked_scopes: HashMap<SessionScope, std::time::Instant>,
+    hold_descriptions: HashMap<usize, Vec<(u32, String)>>,
     /// Durable session records, independent of the slots (empty after sleep).
     store: Option<Arc<crate::session_store::SessionStore>>,
 }
@@ -1048,6 +1052,9 @@ impl AgentPool {
             next_scope_owner_generation: 1,
             held_since: HashMap::new(),
             runtime_holds: HashMap::new(),
+            runtime_hold_epochs: HashMap::new(),
+            blocked_scopes: HashMap::new(),
+            hold_descriptions: HashMap::new(),
             store: None,
         }
     }
@@ -1252,6 +1259,8 @@ impl AgentPool {
         mut has_pending_work: impl FnMut(&SessionScope) -> bool,
     ) {
         self.held_since.retain(|scope, _| has_pending_work(scope));
+        self.blocked_scopes
+            .retain(|scope, _| has_pending_work(scope));
     }
 
     /// Whether any idle agent already has a session for `scope`.
@@ -2571,6 +2580,7 @@ fn send_prompt_result(
             context.continuation = None;
         }
     }
+    agent.prepare_background_return();
     let _ = result_tx.send(PromptResult {
         agent,
         source,
@@ -3803,6 +3813,7 @@ pub async fn run_prompt_task(
                 // The original collection succeeded. Newly launched children,
                 // if any, form a fresh observed group in this same destination.
                 agent.background_context = None;
+                agent.acp.observed_background_instances.clear();
                 agent.remember_background_context(&source, batch.as_ref(), &session_id);
             }
             let background_running = agent.background_work_running(&source);

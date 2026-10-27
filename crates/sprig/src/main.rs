@@ -19,6 +19,10 @@ fn dispatch() -> Result<(), String> {
         }
         "buzz-agent" => buzz_agent::run().map_err(|e| e.to_string()),
         "sprig" => match std::env::args().nth(1).as_deref() {
+            // Linux current_exe() resolves the ACP personality symlink.
+            Some("__mcp-service" | "__codex-service-proxy") => {
+                buzz_acp::run().map_err(|e| e.to_string())
+            }
             Some("-V") | Some("--version") => {
                 println!("sprig {}", env!("CARGO_PKG_VERSION"));
                 Ok(())

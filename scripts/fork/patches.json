@@ -4727,10 +4727,10 @@
     },
     {
       "path": "crates/buzz-acp/src/lib.rs",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Preserve the heartbeat collection call with a textual drift guard; full live-service-loop behavioral mutation coverage is not claimed. Refresh idle clocks when a non-heartbeat prompt result is handled (port of block/buzz#7173). Enable session status once per harness and retire status on owner rotate and channel removal; forward the status directory to the managed MCP server.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Preserve the heartbeat collection call with a textual drift guard; full live-service-loop behavioral mutation coverage is not claimed. Refresh idle clocks when a non-heartbeat prompt result is handled (port of block/buzz#7173). Enable session status once per harness and retire status on owner rotate and channel removal; forward the status directory to the managed MCP server. Schedule one asynchronous shared process poll, fence its application, and continue capacity dispatch across unavailable scopes. Main-loop select wiring is textually guarded; full relay-loop mutation coverage is not claimed.",
       "is_new": false,
       "required_symbols": [
-        "pool.queue_finished_background_work(&mut queue);",
+        "process_poll.start(pool.background_poll_requests());",
         "fn result_refreshes_idle_clock(source: &PromptSource) -> bool",
         "mod session_status;",
         "name == session_status::SESSION_STATUS_DIR_ENV",
@@ -5113,6 +5113,13 @@
           "behavior_test": "retired_adapter_death_replaces_the_worker_through_result_handling",
           "verification_command": "cargo test -p buzz-acp --lib retired_adapter_death_replaces_the_worker_through_result_handling -- --test-threads=1",
           "coverage": "Task2 fix round1: preserve fatal health at stale fences and follow real relay DM ordering; fresh production-path regression and targeted mutation."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "prepare_background_return",
+          "invocation": "agent.prepare_background_return();",
+          "behavior_test": "completed_empty_turn_prepares_observation_before_listener_return",
+          "verification_command": "cargo test --locked -p buzz-acp --lib completed_empty_turn_prepares_observation_before_listener_return -- --test-threads=1"
         }
       ],
       "verification_commands": [
@@ -5992,19 +5999,21 @@
     },
     {
       "path": "desktop/playwright.config.ts",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow. Register long-thread and large-channel virtualization coverage in the smoke suite.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow. Register long-thread and large-channel virtualization coverage in the smoke suite. Register the open-thread highlight smoke spec.",
       "is_new": false,
       "required_symbols": [
         "\"**/session-status.spec.ts\",",
         "\"**/session-controls.spec.ts\",",
-        "\"**/thread-virtualization.spec.ts\""
+        "\"**/thread-virtualization.spec.ts\"",
+        "\"**/open-thread-highlight.spec.ts\","
       ],
       "invocation_seams": [],
       "verification_commands": [
         "just ci",
         "cd desktop && pnpm test:e2e:smoke",
         "CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts",
-        "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts"
+        "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts",
+        "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
       ]
     },
     {
@@ -6879,22 +6888,45 @@
     },
     {
       "path": "desktop/src/features/messages/ui/TimelineMessageList.tsx",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Pass the open thread root id into the channel timeline.",
       "is_new": false,
-      "required_symbols": [],
-      "invocation_seams": [],
+      "required_symbols": [
+        "openThreadHeadId={openThreadHeadId}"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/messages/ui/TimelineMessageList.tsx",
+          "callee_symbol": "MessageRowItem",
+          "invocation": "<MessageRowItem\n              openThreadHeadId={openThreadHeadId}",
+          "behavior_test": "buzz: highlights only the open root with a reply summary",
+          "verification_command": "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
+        }
+      ],
       "verification_commands": [
-        "just ci"
+        "just ci",
+        "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
       ]
     },
     {
       "path": "desktop/src/features/messages/ui/TimelineMessageRow.tsx",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Mark only the open thread root with theme-derived background and aria-current.",
       "is_new": false,
-      "required_symbols": [],
-      "invocation_seams": [],
+      "required_symbols": [
+        "const isOpenThreadHead =",
+        "hoverBackground={!isOpenThreadHead}"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/messages/ui/TimelineMessageRow.tsx",
+          "callee_symbol": "MessageRow",
+          "invocation": "<MessageRow\n        channelId={channelId}\n        hoverBackground={!isOpenThreadHead}",
+          "behavior_test": "buzz: highlights an open root without replies",
+          "verification_command": "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
+        }
+      ],
       "verification_commands": [
-        "just ci"
+        "just ci",
+        "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
       ]
     },
     {
@@ -8341,13 +8373,13 @@
     },
     {
       "path": "crates/buzz-acp/src/pool/background_work.rs",
-      "responsibility": "Retain collection authority in the original worker/session, poll child exit independently of pool sleep, and compose stable-key final-report instructions. Release uncertainty-only holds without inventing collection; retain observed exit evidence across Unknown.",
+      "responsibility": "Retain collection authority in the original worker/session, poll child exit independently of pool sleep, and compose stable-key final-report instructions. Release uncertainty-only holds without inventing collection; retain observed exit evidence across Unknown. Preserve completed-task evidence across service-only snapshots and remove only proven service instances.",
       "is_new": true,
       "required_symbols": [
         "pub(crate) struct RuntimeHold",
         "pub fn queue_finished_background_work",
         "pub(super) fn followup_prompt",
-        "if hold.blocking_pids.is_empty() && !hold.collection_pending {"
+        "agent.acp.observed_background_instances.is_empty()"
       ],
       "invocation_seams": [
         {
@@ -8376,11 +8408,18 @@
         },
         {
           "caller_path": "crates/buzz-acp/src/pool/background_work.rs",
-          "callee_symbol": "background_child_pids",
-          "invocation": "let Some(children) = agent.acp.background_child_pids() else {",
+          "callee_symbol": "apply_background_children",
+          "invocation": "self.apply_background_children(index, children, queue);",
           "behavior_test": "background_observed_then_unknown_then_empty_collects_exactly_once",
           "verification_command": "cargo test -p buzz-acp --lib background_observed_then_unknown_then_empty_collects_exactly_once -- --test-threads=1",
-          "coverage": "Previously observed work survives Unknown and yields exactly one original-session collection."
+          "coverage": "Shared snapshot application and local process fixtures converge on the production collection transition; unknown observations do not authorize release."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool/background_work.rs",
+          "callee_symbol": "background_child_pids_in",
+          "invocation": "agent.acp.background_child_pids_in(tree)",
+          "behavior_test": "current_shared_snapshot_retains_actual_work_in_its_slot",
+          "verification_command": "cargo test --locked -p buzz-acp --lib current_shared_snapshot_retains_actual_work_in_its_slot -- --test-threads=1"
         }
       ],
       "verification_commands": [
@@ -11211,7 +11250,7 @@
     },
     {
       "path": "desktop/tests/e2e/session-controls.spec.ts",
-      "responsibility": "Registered thread-composer Manage context \u2192 agent \u2192 action workflow: canonical target routing, signed outcomes, draft preservation, toolbar order, keyboard/click/touch navigation, disabled-editor Compact, sibling isolation, denied/revoked access and unchanged owned activity projection. Scope the open-thread root capture/status assertion to its actual thread-head row, independently of the timeline copy. Cover context-only publication preserving a deliberately unpinned composer draft/attachment/native selection/caret, plus formatting/focus/narrow toolbar order and Space/arrow selection. Exercise reset acknowledgment separately from a generated reply or independent follow-up failure, preserving draft, signer, canonical thread and ordinary event deduplication.",
+      "responsibility": "Registered thread-composer Manage context → agent → action workflow: canonical target routing, signed outcomes, draft preservation, toolbar order, keyboard/click/touch navigation, disabled-editor Compact, sibling isolation, denied/revoked access and unchanged owned activity projection. Scope the open-thread root capture/status assertion to its actual thread-head row, independently of the timeline copy. Cover context-only publication preserving a deliberately unpinned composer draft/attachment/native selection/caret, plus formatting/focus/narrow toolbar order and Space/arrow selection. Exercise reset acknowledgment separately from a generated reply or independent follow-up failure, preserving draft, signer, canonical thread and ordinary event deduplication.",
       "is_new": true,
       "required_symbols": [
         "known_agent_without_telemetry_still_has_current_scope_controls",
@@ -13563,6 +13602,320 @@
       "invocation_seams": [],
       "verification_commands": [
         "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/background_poll.rs",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/background_poll.rs",
+          "callee_symbol": "spawn_blocking",
+          "invocation": "self.tasks.spawn_blocking(move || {",
+          "behavior_test": "slow_snapshot_keeps_event_loop_responsive_and_allows_only_one_poll",
+          "verification_command": "cargo test --locked -p buzz-acp --lib slow_snapshot_keeps_event_loop_responsive_and_allows_only_one_poll -- --test-threads=1"
+        }
+      ],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/background_poll_tests.rs",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/mcp_service.rs",
+      "responsibility": "Register initialized service process instances and preserve independent, bounded forwarding in both stdio directions.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/mcp_service.rs",
+          "callee_symbol": "register_service_instances",
+          "invocation": "tree.register_service_instances(record.root, &record.instances);",
+          "behavior_test": "registration_matches_worker_and_process_instance_without_hiding_work",
+          "verification_command": "cargo test --locked -p buzz-acp --lib registration_matches_worker_and_process_instance_without_hiding_work -- --test-threads=1"
+        }
+      ],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp --test mcp_service -- --test-threads=1",
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/mcp_service/codex.rs",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/mcp_service/codex.rs",
+          "callee_symbol": "install",
+          "invocation": "super::codex_proxy::install(registry, adapter, launch, registered)",
+          "behavior_test": "real_codex_native_mcp_config_survives_injected_server_configuration",
+          "verification_command": "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test --locked -p buzz-acp --lib real_codex_native_mcp_config -- --ignored --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/mcp_service/codex.rs",
+          "callee_symbol": "output",
+          "invocation": "super::discovery::output(discovery)",
+          "behavior_test": "native_discovery_retires_descendants_on_every_output_exit",
+          "verification_command": "cargo test --locked -p buzz-acp --test mcp_discovery",
+          "coverage": "The actual models command exercises bounded discovery and observes both nested descendant processes after timeout, overflow, nonzero, invalid and successful output."
+        }
+      ],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/mcp_service/codex_proxy.rs",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/mcp_service/codex_proxy.rs",
+          "callee_symbol": "apply_servers",
+          "invocation": "apply_servers(&mut request, &spec.servers)?;",
+          "behavior_test": "real_codex_native_mcp_config_survives_injected_server_configuration",
+          "verification_command": "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo build --locked -p buzz-acp && BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test --locked -p buzz-acp --lib real_codex_native_mcp_config -- --ignored --test-threads=1"
+        }
+      ],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/mcp_service_tests.rs",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [
+        "mod launcher_tests;"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/dispatch_diagnostics.rs",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/real_codex_stall_tests.rs",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage. Limit tool-inventory preflight to the validated adapter 2.2.2 status API; preserve the original bundled 2.1.1 workflow and five actual ping receipts in both profiles.",
+      "is_new": true,
+      "required_symbols": [
+        "async fn wait_for_mcp_tools(",
+        "wait_for_mcp_tools(&mut agent, &session, index).await;"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/stall_tests.rs",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [
+        "unavailable_oldest_scope_does_not_block_available_held_owner",
+        "newly_registered_service_does_not_invent_collection_or_hide_reused_work_pid",
+        "checked_restart_of_held_scope_releases_slot_and_retains_ordinary_input",
+        "completed_work_survives_a_later_service_only_snapshot"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/tests/fixtures/late_service/package.json",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/tests/fixtures/late_service/src/index.mjs",
+      "responsibility": "Preserve service launch provenance, nonblocking process polling, fair capacity dispatch, and their regression coverage.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/tests/mcp_service.rs",
+      "responsibility": "Exercise real npm service provenance, actual child work, and large pipelined messages through the production stdio wrapper.",
+      "is_new": true,
+      "required_symbols": [
+        "real_npm_service_registers_before_tools_and_excludes_actual_work",
+        "pipelined_large_messages_keep_both_stdio_directions_progressing"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/mcp_service/discovery.rs",
+      "responsibility": "Own bounded native discovery process groups across output, timeout and cancellation, and verify cleanup before returning.",
+      "is_new": true,
+      "required_symbols": [
+        "async fn output",
+        "async fn retire"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/tests/mcp_discovery.rs",
+      "responsibility": "Exercise native discovery cleanup through the actual models command and observe child and grandchild exit.",
+      "is_new": true,
+      "required_symbols": [
+        "native_discovery_retires_descendants_on_every_output_exit"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/sprig/Cargo.toml",
+      "responsibility": "Use existing workspace test dependencies for real multicall MCP transport coverage.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p sprig"
+      ]
+    },
+    {
+      "path": "crates/sprig/src/main.rs",
+      "responsibility": "Route ACP internal MCP self-launch commands after Linux resolves the personality symlink to the Sprig target.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p sprig"
+      ]
+    },
+    {
+      "path": "crates/sprig/tests/mcp_personalities.rs",
+      "responsibility": "Exercise injected MCP registration and native configuration forwarding through the actual Sprig target.",
+      "is_new": true,
+      "required_symbols": [
+        "multicall_target_runs_injected_mcp_transport",
+        "multicall_target_runs_native_codex_proxy"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p sprig"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/mcp_service/launcher_tests.rs",
+      "responsibility": "Exercise actual adapter 2.2.2 and external Codex 0.164.0 through a CODEX_PATH-preserving operator launcher, with live proxy ancestry and native/injected MCP receipts.",
+      "is_new": true,
+      "required_symbols": [
+        "real_launcher_wrapper_preserves_proxy_and_external_cli"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1",
+        "env -u CODEX_PATH cargo test --locked -p buzz-acp --lib real_launcher_wrapper -- --ignored --nocapture --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/tests/fixtures/codex_launcher.py",
+      "responsibility": "Record launcher selection and exec the actual adapter/external CLI; reproduce inherited-proxy loss with an explicit negative-control flag.",
+      "is_new": true,
+      "required_symbols": [
+        "selected = inherited or environment[\"BUZZ_TEST_LAUNCHER_FALLBACK\"]",
+        "os.execve(target, [target, *sys.argv[1:]], environment)"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp -- --test-threads=1",
+        "env -u CODEX_PATH cargo test --locked -p buzz-acp --lib real_launcher_wrapper -- --ignored --nocapture --test-threads=1"
+      ]
+    },
+    {
+      "path": "desktop/src/features/channels/ui/ChannelPane.tsx",
+      "responsibility": "Pass the open thread root id into the channel timeline.",
+      "is_new": false,
+      "required_symbols": [
+        "openThreadHeadId={openThreadHeadId}"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/channels/ui/ChannelPane.tsx",
+          "callee_symbol": "MessageTimeline",
+          "invocation": "<MessageTimeline\n              openThreadHeadId={openThreadHeadId}",
+          "behavior_test": "buzz: highlights only the open root with a reply summary",
+          "verification_command": "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
+        }
+      ],
+      "verification_commands": [
+        "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/MessageTimeline.tsx",
+      "responsibility": "Pass the open thread root id into the channel timeline.",
+      "is_new": false,
+      "required_symbols": [
+        "openThreadHeadId={openThreadHeadId}"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/messages/ui/MessageTimeline.tsx",
+          "callee_symbol": "TimelineMessageList",
+          "invocation": "<TimelineMessageList\n      openThreadHeadId={openThreadHeadId}",
+          "behavior_test": "buzz: highlights only the open root with a reply summary",
+          "verification_command": "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
+        }
+      ],
+      "verification_commands": [
+        "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
+      ]
+    },
+    {
+      "path": "desktop/tests/e2e/open-thread-highlight.spec.ts",
+      "responsibility": "Verify open thread root highlighting, assistive state, and screenshots in both themes with and without replies.",
+      "is_new": true,
+      "required_symbols": [
+        "data-open-thread-head",
+        "aria-current",
+        "buzz-dark",
+        "highlights only the open root with a reply summary"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
       ]
     },
     {

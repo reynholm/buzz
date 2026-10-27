@@ -17,6 +17,8 @@ type ToggleReaction = (
   remove: boolean,
 ) => Promise<void>;
 
+const OPEN_THREAD_HEAD_CLASSNAME = "rounded-2xl bg-primary/10";
+
 type SystemRowProps = {
   currentPubkey?: string;
   entries?: MainTimelineEntry[];
@@ -73,6 +75,7 @@ type MessageRowItemProps = {
   isFollowedByContinuation?: boolean;
   isFollowingThreadById?: (rootId: string) => boolean;
   isUnread?: boolean;
+  openThreadHeadId?: string | null;
   playEntrance?: boolean;
   onEntranceComplete?: (messageId: string) => void;
   onDelete?: (message: TimelineMessage) => void;
@@ -105,6 +108,7 @@ export function MessageRowItem({
   isFollowedByContinuation = false,
   isFollowingThreadById,
   isUnread,
+  openThreadHeadId,
   playEntrance = false,
   onEntranceComplete,
   onDelete,
@@ -131,16 +135,22 @@ export function MessageRowItem({
   const canDelete = canManage && onDelete ? onDelete : undefined;
   const canEdit = canManage && onEdit ? onEdit : undefined;
   const effectiveThreadRootId = message.rootId ?? message.id;
+  const isOpenThreadHead =
+    Boolean(openThreadHeadId) && message.id === openThreadHeadId;
 
   if (summary && onOpenThread) {
     const isHighlighted = message.id === highlightedMessageId;
     return (
       <div
         className={cn(
-          "group/message relative mx-1 mb-1 flex flex-col gap-0 rounded-2xl px-0 py-1 transition-colors hover:bg-muted/50 focus-within:bg-muted/50",
+          "group/message relative mx-1 mb-1 flex flex-col gap-0 rounded-2xl px-0 py-1 transition-colors",
+          !isOpenThreadHead && "hover:bg-muted/50 focus-within:bg-muted/50",
           isHighlighted &&
             "-mx-4 px-4 before:absolute before:-inset-y-1.5 before:inset-x-0 before:animate-[route-target-highlight-fade_2s_ease-out_forwards] before:bg-primary/10 before:content-[''] motion-reduce:before:animate-none sm:-mx-6 sm:px-6",
+          isOpenThreadHead && OPEN_THREAD_HEAD_CLASSNAME,
         )}
+        data-open-thread-head={isOpenThreadHead ? "true" : undefined}
+        aria-current={isOpenThreadHead ? "true" : undefined}
       >
         <MessageRow
           channelId={channelId}
@@ -201,10 +211,14 @@ export function MessageRowItem({
       className={cn(
         "flex flex-col gap-1",
         isFollowedByContinuation ? "pb-0" : "pb-2.5",
+        isOpenThreadHead && OPEN_THREAD_HEAD_CLASSNAME,
       )}
+      data-open-thread-head={isOpenThreadHead ? "true" : undefined}
+      aria-current={isOpenThreadHead ? "true" : undefined}
     >
       <MessageRow
         channelId={channelId}
+        hoverBackground={!isOpenThreadHead}
         highlighted={message.id === highlightedMessageId || isSearchActive}
         huddleMemberPubkeys={huddleMemberPubkeys}
         huddleMemberPubkeysPending={huddleMemberPubkeysPending}

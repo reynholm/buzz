@@ -1,0 +1,5 @@
+{
+  "name": "late-service-fixture",
+  "private": true,
+  "scripts": { "start": "node ./src/index.mjs" }
+}

@@ -35,6 +35,7 @@ export function MessageSessionControls({
     <>
       <DropdownMenuContent {...menuPosition} align="start" className="max-w-80">
         <DropdownMenuItem
+          className="cursor-pointer data-[disabled]:cursor-default"
           disabled={action.pending}
           onSelect={(event) => {
             event.preventDefault();
@@ -51,6 +52,7 @@ export function MessageSessionControls({
         ) : null}
         <DropdownMenuSub>
           <DropdownMenuSubTrigger
+            className="cursor-pointer data-[disabled]:cursor-default"
             disabled={action.pending}
             aria-label="Restart"
             aria-describedby={`${descriptionId}-restart`}
@@ -71,7 +73,7 @@ export function MessageSessionControls({
                 disabled={action.pending}
                 aria-label="From scratch"
                 aria-describedby={`${descriptionId}-none`}
-                className="flex-col items-start gap-0.5"
+                className="cursor-pointer flex-col items-start gap-0.5 data-[disabled]:cursor-default"
                 onSelect={() => {
                   run({
                     type: "restart",
@@ -92,7 +94,7 @@ export function MessageSessionControls({
                 disabled={action.pending}
                 aria-label="Recent history"
                 aria-describedby={`${descriptionId}-recent`}
-                className="flex-col items-start gap-0.5"
+                className="cursor-pointer flex-col items-start gap-0.5 data-[disabled]:cursor-default"
                 onSelect={() => {
                   run({
                     type: "restart",
@@ -113,7 +115,7 @@ export function MessageSessionControls({
                 disabled={action.pending}
                 aria-label="Entire thread"
                 aria-describedby={`${descriptionId}-all`}
-                className="flex-col items-start gap-0.5"
+                className="cursor-pointer flex-col items-start gap-0.5 data-[disabled]:cursor-default"
                 onSelect={() => {
                   run({
                     type: "restart",
@@ -134,6 +136,7 @@ export function MessageSessionControls({
           </DropdownMenuPortal>
         </DropdownMenuSub>
         <DropdownMenuItem
+          className="cursor-pointer data-[disabled]:cursor-default"
           disabled={action.pending}
           onSelect={() => {
             run({ type: "compact", content: "!compact" });
