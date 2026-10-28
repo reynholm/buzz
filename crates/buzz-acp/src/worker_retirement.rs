@@ -5,6 +5,7 @@ use crate::acp::TerminationReport;
 pub(crate) struct RetirementReturn {
     pub report: TerminationReport,
     pub retained: Option<OwnedAgent>,
+    pub crash_recovery: bool,
 }
 
 struct RetirementGuard {
@@ -12,16 +13,27 @@ struct RetirementGuard {
     tx: mpsc::Sender<RespawnResult>,
     agent: Option<OwnedAgent>,
     sent: bool,
+    crash_recovery: bool,
 }
 
 impl RetirementGuard {
     fn send(&mut self, result: Result<(AcpClient, u32, String)>, report: TerminationReport) {
+        if self.crash_recovery {
+            if let Some(work) = self
+                .agent
+                .as_ref()
+                .and_then(|agent| agent.acp.logical_work())
+            {
+                work.retired(report == TerminationReport::Clean);
+            }
+        }
         let message = RespawnResult {
             index: self.index,
             result,
             retirement: Some(RetirementReturn {
                 report,
                 retained: self.agent.take(),
+                crash_recovery: self.crash_recovery,
             }),
         };
         match self.tx.try_send(message) {
@@ -41,6 +53,96 @@ impl Drop for RetirementGuard {
                 TerminationReport::Unverified,
             );
         }
+    }
+}
+
+/// Crash recovery owns the original until checked termination. A circuit-open
+/// slot still retires its old worker; it never silently drops that obligation.
+pub(crate) fn recover_kimi(
+    agent: OwnedAgent,
+    config: &Config,
+    delay: Option<Duration>,
+    tx: &mpsc::Sender<RespawnResult>,
+    tasks: &mut tokio::task::JoinSet<()>,
+    observer: Option<observer::ObserverHandle>,
+) {
+    let work = agent.acp.logical_work().cloned();
+    if let Some(work) = &work {
+        work.require_retirement();
+    }
+    let index = agent.index;
+    let mut guard = RetirementGuard {
+        index,
+        tx: tx.clone(),
+        agent: Some(agent),
+        sent: false,
+        crash_recovery: true,
+    };
+    let command = config.agent_command.clone();
+    let args = config.agent_args.clone();
+    let env = config.persona_env_vars.clone();
+    let has_codex = config.has_generated_codex_config;
+    tasks.spawn(async move {
+        let report = match guard.agent.as_mut() {
+            Some(agent) => agent.acp.terminate().await,
+            None => TerminationReport::Unverified,
+        };
+        if let Some(work) = &work {
+            work.retired(report == TerminationReport::Clean);
+        }
+        if report != TerminationReport::Clean {
+            guard.send(
+                Err(anyhow::anyhow!("crashed Kimi retirement unconfirmed")),
+                report,
+            );
+            return;
+        }
+        guard.agent.take();
+        let Some(delay) = delay else {
+            guard.send(Err(anyhow::anyhow!("Kimi crash circuit is open")), report);
+            return;
+        };
+        tokio::time::sleep(delay).await;
+        let result = spawn_and_init(&command, &args, &env, has_codex, index, observer).await;
+        guard.send(result, report);
+    });
+}
+
+/// Stop finished/cancelled/expired background work even without another event
+/// or a new mention. Replacement is gated by the same checked-stop boundary.
+pub(crate) fn retire_finished_kimi_background(
+    pool: &mut AgentPool,
+    config: &Config,
+    circuits: &mut [SlotCircuit],
+    tx: &mpsc::Sender<RespawnResult>,
+    tasks: &mut tokio::task::JoinSet<()>,
+    observer: Option<observer::ObserverHandle>,
+) {
+    for (index, scope) in pool.expired_kimi_background_workers() {
+        if circuits[index].respawn_in_flight {
+            continue;
+        }
+        let Some(mut agent) = pool.take_retirement_target(index, &HashSet::from([scope]), true)
+        else {
+            continue;
+        };
+        if let Some(work) = agent.acp.logical_work() {
+            if !work.cancelled() {
+                work.effect_started("background-result-unconfirmed");
+                work.human_required("external_effect_uncertain");
+            }
+        }
+        agent.state.invalidate_all();
+        pool.mark_retire_on_return(index);
+        circuits[index].respawn_in_flight = true;
+        recover_kimi(
+            agent,
+            config,
+            Some(Duration::ZERO),
+            tx,
+            tasks,
+            observer.clone(),
+        );
     }
 }
 
@@ -73,6 +175,7 @@ pub(crate) fn drive(
             tx: tx.clone(),
             agent,
             sent: false,
+            crash_recovery: false,
         };
         let command = config.agent_command.clone();
         let args = config.agent_args.clone();
@@ -130,7 +233,9 @@ pub(crate) fn finish(
     let Some(retirement) = result.retirement.take() else {
         return false;
     };
-    if retirement.report != TerminationReport::Clean || result.result.is_err() {
+    if retirement.report != TerminationReport::Clean
+        || (result.result.is_err() && !retirement.crash_recovery)
+    {
         parked.insert(result.index, retirement.retained);
         controls.retirement_report(
             result.index,
@@ -230,6 +335,7 @@ mod tests {
         let signal = entered.clone();
         let task = tokio::spawn(async move {
             let mut guard = RetirementGuard {
+                crash_recovery: false,
                 index: 0,
                 tx,
                 agent: Some(agent),

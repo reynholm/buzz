@@ -467,9 +467,9 @@ pub enum MessagesCmd {
         /// Original channel UUID
         #[arg(long)]
         channel: String,
-        /// Original parent event ID
+        /// Original parent event ID; omit for a top-level report
         #[arg(long)]
-        reply_to: String,
+        reply_to: Option<String>,
         /// Final report text; '-' reads stdin on the first delivery
         #[arg(long)]
         content: String,

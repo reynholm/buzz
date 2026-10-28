@@ -10,6 +10,7 @@ mod edit_routing;
 mod engram_fetch;
 mod filter;
 mod isolated_execution;
+mod managed_work;
 #[cfg(unix)]
 mod mcp_service;
 mod observer;
@@ -890,6 +891,9 @@ impl QueuedNormalListenerEvent {
             &self.steer_event.reply_route(),
             self.channel_is_dm,
         );
+        if queue.has_logical_work_in_flight(&self.scope) && !same_reply_route {
+            return;
+        }
         let native_attempted = matches!(signal, ControlSignal::Steer)
             && same_reply_route
             && try_native_steer(
@@ -3191,6 +3195,10 @@ async fn run_harness(
     let dedup_mode = config.dedup_mode;
     let mut queue =
         EventQueue::new(dedup_mode).with_in_flight_deadline(config.max_turn_duration_secs);
+    if config::normalize_agent_command_identity(&config.agent_command) == "kimi" {
+        queue =
+            queue.with_kimi_recovery(config.kimi_recovery.clone(), &current_working_directory()?);
+    }
 
     // Online means the harness can receive work, not merely that its socket is
     // connected. Publishing after channel subscriptions gives desktop callers
@@ -3427,6 +3435,14 @@ async fn run_harness(
             &mut respawn_tasks,
             observer.clone(),
         );
+        worker_retirement::retire_finished_kimi_background(
+            &mut pool,
+            config,
+            &mut crash_history,
+            &respawn_tx,
+            &mut respawn_tasks,
+            observer.clone(),
+        );
         for publication in ctx
             .session_controls
             .take_publications_up_to(128usize.saturating_sub(result_publications.len()))
@@ -3538,6 +3554,10 @@ async fn run_harness(
         } else {
             None
         };
+        let retry_at = retry_at
+            .into_iter()
+            .chain(queue.next_work_terminal_deadline())
+            .min();
         let maintenance_at = pool_ready.then_some(last_maintenance + maintenance_interval);
 
         // Borrow result_rx and join_set simultaneously via split-borrow helper.
@@ -3833,6 +3853,21 @@ async fn run_harness(
                                 // contain "!shutdown" from a non-owner.
                             }
 
+                            if let Some(decision)=acp::kimi_permission::owner_decision(&buzz_event.event,&pubkey_hex,owner_cache.get())
+                                .filter(|_|config::normalize_agent_command_identity(&config.agent_command)=="kimi") {
+                                let scope=scope::SessionScope::derive(config.session_policy,buzz_event.channel_id,
+                                    is_dm_channel(buzz_event.channel_id,&ctx.channel_info).await,&buzz_event.event);
+                                let tags=queue::parse_thread_tags(&buzz_event.event);
+                                if !pool.permission_decision(&scope,&tags,decision) {
+                                    let rest=ctx.rest_client.clone();
+                                    let channel=buzz_event.channel_id;
+                                    tokio::spawn(async move {
+                                        pool::post_failure_notice(&rest,channel,&tags,"That permission request is no longer pending in this thread. No action was approved; inspect the current request before replying again.").await;
+                                    });
+                                }
+                                continue;
+                            }
+
                             // Mirrors !shutdown: kind:9, content "!cancel", from
                             // owner, mentions THIS agent. Must be BEFORE
                             // queue.push() — the event content is moved by push.
@@ -3912,6 +3947,7 @@ async fn run_harness(
                                         let command_id = job.origin.command_event_id.clone();
                                         match ctx.session_controls.restart(job) {
                                             Ok(true) => {
+                                                queue.cancel_logical_work(&scope);
                                                 queue.remove_continuation(&scope);
                                                 typing_channels.remove(&scope);
                                                 pool::session_visibility::retire_scope(ctx.session_status.as_ref(), &scope);
@@ -4833,11 +4869,16 @@ fn signal_in_flight_task(
             return false;
         }
         if matches!(mode, ControlSignal::Steer | ControlSignal::Interrupt)
-            && meta
-                .recoverable_batch
-                .as_ref()
-                .and_then(|batch| batch.continuation.as_ref())
-                .is_some_and(|continuation| continuation.ordinary_preempted)
+            && meta.recoverable_batch.as_ref().is_some_and(|batch| {
+                batch
+                    .continuation
+                    .as_ref()
+                    .is_some_and(|continuation| continuation.ordinary_preempted)
+                    || batch
+                        .work
+                        .as_ref()
+                        .is_some_and(|work| work.ordinary_preempted)
+            })
         {
             // Keep queued traffic for the next foreground turn. Repeated ordinary
             // cancellation must not reset the collection's deadline indefinitely.
@@ -4876,9 +4917,10 @@ fn handle_owner_cancel_for_scope(
             );
         }
     }
+    let logical_pending = queue.cancel_logical_work(scope);
     let background_pending = cancel_background_collection_for_scope(pool, queue, scope);
     let fired = signal_in_flight_task_for_scope(pool, scope, ControlSignal::Cancel);
-    if !fired && !background_pending && !status_pending {
+    if !fired && !background_pending && !status_pending && !logical_pending {
         tracing::warn!(channel_id = %scope.channel_id(), scope = %scope.telemetry_label(),
             "!cancel received but no in-flight task — no-op");
     }
@@ -4934,11 +4976,16 @@ fn signal_in_flight_task_for_scope(
 
     if let Some(meta) = entry {
         if matches!(mode, ControlSignal::Steer | ControlSignal::Interrupt)
-            && meta
-                .recoverable_batch
-                .as_ref()
-                .and_then(|batch| batch.continuation.as_ref())
-                .is_some_and(|continuation| continuation.ordinary_preempted)
+            && meta.recoverable_batch.as_ref().is_some_and(|batch| {
+                batch
+                    .continuation
+                    .as_ref()
+                    .is_some_and(|continuation| continuation.ordinary_preempted)
+                    || batch
+                        .work
+                        .as_ref()
+                        .is_some_and(|work| work.ordinary_preempted)
+            })
         {
             return false;
         }
@@ -5235,6 +5282,7 @@ mod try_native_steer_fallback_log_tests {
         pool.task_map_mut().insert(
             abort.id(),
             TaskMeta {
+                permission_tx: None,
                 agent_index: 0,
                 channel_id: Some(busy_scope.channel_id()),
                 scope: Some(busy_scope),
@@ -5424,6 +5472,27 @@ fn dispatch_pending(
         };
         let channel_id = batch.channel_id;
         let scope = batch.scope.clone();
+        if let Some(work) = &batch.work {
+            if work.cancelled() {
+                queue.mark_complete(&scope);
+                continue;
+            }
+            if work.remaining().is_zero() || work.retirement_unverified() {
+                let reason = if work.retirement_unverified() {
+                    work.human_required("retirement_unverified");
+                    "Kimi's old execution could not be confirmed stopped. Inspect the process and external action before continuing; replacement was blocked."
+                } else {
+                    "Kimi recovery reached its time budget. Verify the current result before starting another request."
+                };
+                spawn_failure_notice(Some(&ctx.rest_client), &batch, reason.into());
+                queue.mark_complete(&scope);
+                continue;
+            }
+            if work.awaiting_retirement() {
+                held.push(batch);
+                continue;
+            }
+        }
         if ctx.session_controls.retirement_pending(&scope)
             || ctx.session_controls.status_pending(&scope)
             || (ctx.session_controls.compact_pending(&scope) && batch.continuation.is_none())
@@ -5554,13 +5623,18 @@ fn dispatch_pending(
             .set_scope_owner_generation(scope.clone(), owner_generation);
         if let Some(continuation) = &mut batch.continuation {
             continuation.generation = owner_generation;
+            if continuation.crash_recovery {
+                continuation.worker_index = agent.index;
+            }
         }
-        let recoverable_batch =
-            if matches!(ctx.dedup_mode, DedupMode::Queue) || batch.continuation.is_some() {
-                Some(batch.clone())
-            } else {
-                None
-            };
+        let recoverable_batch = if matches!(ctx.dedup_mode, DedupMode::Queue)
+            || batch.continuation.is_some()
+            || batch.work.is_some()
+        {
+            Some(batch.clone())
+        } else {
+            None
+        };
 
         agent.state.control_dispatch = Some(ctx.session_controls.capture(&scope));
         let result_tx = pool.result_tx();
@@ -5579,6 +5653,8 @@ fn dispatch_pending(
         let (tx, rx) = tokio::sync::mpsc::channel::<pool::SteerRequest>(1);
         agent.acp.install_steer_rx(rx);
         let steer_tx = Some(tx);
+        let (permission_tx, permission_rx) = tokio::sync::mpsc::channel(16);
+        agent.acp.install_permission_decisions(permission_rx);
 
         // Prompt text is now built inside run_prompt_task (needs async for
         // context fetching). Pass None for prompt_text; batch carries the data.
@@ -5607,6 +5683,7 @@ fn dispatch_pending(
         pool.task_map_mut().insert(
             abort_handle.id(),
             pool::TaskMeta {
+                permission_tx: Some(permission_tx),
                 agent_index,
                 channel_id: Some(channel_id),
                 scope: Some(scope.clone()),
@@ -5661,6 +5738,9 @@ fn dispatch_pending(
 /// drop a user message, which is worse than a false negative (extra retries on
 /// an auth error). Both patterns are therefore chosen for high precision.
 fn is_auth_error(error: &acp::AcpError) -> bool {
+    if let acp::AcpError::KimiFailure(failure) = error {
+        return failure.class == acp::kimi_recovery::FailureClass::Authentication;
+    }
     let acp::AcpError::AgentError { message, .. } = error else {
         return false;
     };
@@ -5702,9 +5782,61 @@ fn spawn_failure_notice(
     batch: &FlushBatch,
     content: String,
 ) {
+    let unresolved_background = batch
+        .work
+        .as_ref()
+        .is_some_and(|work| batch.continuation.is_some() && !work.publication_revoked());
+    if unresolved_background {
+        if let Some(work) = &batch.work {
+            work.human_required("external_effect_uncertain");
+        }
+    }
+    if let Some(work) = &batch.work {
+        // Terminality must not depend on availability of the notice transport.
+        work.finish();
+    }
     let Some(rest) = rest_client else {
         return;
     };
+    if let Some(work) = &batch.work {
+        let content = if unresolved_background {
+            format!("The background result is still unverified. Check the existing task and its output before retrying. {content}")
+        } else {
+            content
+        };
+        let work = work.clone();
+        let rest = rest.clone();
+        tokio::spawn(async move {
+            if let Ok(Some(_)) = managed_work::confirmed_report(&rest, &work).await {
+                work.transition("completed", "managed_report_already_confirmed");
+                return;
+            }
+            match managed_work::publish_terminal(&rest, &work, &content).await {
+                Ok(event) => {
+                    let own_notice =
+                        managed_work::terminal_content_matches(&rest, &work, &content).await;
+                    let (state, reason) = match own_notice {
+                        Ok(false) => ("completed", "original_managed_report_confirmed"),
+                        Ok(true) if work.needs_human() => (
+                            "waiting_human",
+                            work.human_reason().unwrap_or("terminal_report_confirmed"),
+                        ),
+                        Ok(true) => ("failed", "terminal_report_confirmed"),
+                        Err(_) => ("waiting_human", "delivery_receipt_unverified"),
+                    };
+                    work.transition(state, reason);
+                    tracing::info!(work=%work.delivery_key, event, "managed terminal report confirmed")
+                }
+                Err(reason) => {
+                    if !work.publication_revoked() {
+                        work.transition("waiting_human", "managed_delivery_unconfirmed");
+                    }
+                    tracing::warn!(work=%work.delivery_key, reason, "managed terminal report unconfirmed")
+                }
+            }
+        });
+        return;
+    }
     let Some(last) = batch.events.last().cloned() else {
         if let Some(continuation) = &batch.continuation {
             let rest = rest.clone();
@@ -5768,6 +5900,17 @@ fn handle_prompt_result(
     if let Some(dispatch) = result.agent.state.control_dispatch.take() {
         dispatch.finish();
     }
+    if result
+        .batch
+        .as_ref()
+        .and_then(|batch| batch.work.as_ref())
+        .is_some_and(queue::LogicalWork::cancelled)
+    {
+        result.agent.state.invalidate(&result.source);
+        result.agent.finish_background_collection();
+        result.batch = None;
+        result.outcome = result.outcome.discard_retired_output();
+    }
     let before = pool.task_map().len();
     let agent_index = result.agent.index;
     // Continuations always have a recovery token at dispatch. Explicit owner
@@ -5825,17 +5968,97 @@ fn handle_prompt_result(
     // branch below records what actually happened; only the hard-timeout
     // match arm in the death_message construction reads it.
     let mut hard_timeout_fate_suffix: Option<&'static str> = None;
+    let deliberate_retirement = pool.needs_retirement(&result.agent);
+
+    if result.agent.acp.is_kimi() && result.outcome.requires_retirement() {
+        pool.mark_retire_on_return(agent_index);
+        if let Some(work) = result.agent.acp.logical_work() {
+            work.require_retirement();
+        }
+        if let Some(batch) = &mut result.batch {
+            if let Some(work) = &batch.work {
+                work.require_retirement();
+                if let Some(continuation) = &mut batch.continuation {
+                    continuation.crash_recovery = true;
+                    continuation.work = Some(work.clone());
+                }
+            }
+        }
+    }
 
     // Requeue BEFORE mark_complete: requeue() sets retry_after with a future
     // deadline, and mark_complete() checks for it to decide whether to preserve
     // retry_counts. If mark_complete runs first, retry_counts is cleared and
     // every retry starts at attempt 1 — defeating exponential backoff and
     // dead-letter protection.
-    if let Some(batch) = result.batch.take() {
+    if let Some(mut batch) = result.batch.take() {
+        if let Some(work) = &batch.work {
+            let live_background =
+                result
+                    .agent
+                    .acp
+                    .return_children
+                    .as_ref()
+                    .is_some_and(|children| {
+                        children.as_ref().map_or_else(
+                            || {
+                                !batch
+                                    .continuation
+                                    .as_ref()
+                                    .is_some_and(|continuation| continuation.background_ready)
+                            },
+                            |children| !children.is_empty(),
+                        )
+                    });
+            if live_background {
+                if result.outcome.requires_retirement() {
+                    work.effect_started("background-result-unconfirmed");
+                } else if let Some(continuation) = result
+                    .agent
+                    .background_context
+                    .as_ref()
+                    .and_then(|hold| hold.continuation.clone())
+                {
+                    let mut continuation = continuation;
+                    continuation.background_ready = false;
+                    batch.continuation = Some(continuation);
+                }
+            }
+        }
+        if let Some(work) = &mut batch.work {
+            work.recovery_reason = Some(match &result.outcome {
+                PromptOutcome::Error(acp::AcpError::KimiFailure(failure)) => failure.class.label(),
+                PromptOutcome::AgentExited => "child_exited",
+                PromptOutcome::Timeout(_) => "turn_timeout",
+                PromptOutcome::ProjectContextIndeterminate(_) => "project_context",
+                _ => "execution_failure",
+            });
+        }
         // Don't requeue batches for channels the agent was removed from —
         // those events are stale and should be silently dropped.
         if !removed_channels.contains(&batch.channel_id) {
             if matches!(
+                result.outcome,
+                PromptOutcome::Error(acp::AcpError::DeliveryJournalUnavailable)
+            ) {
+                if let Some(work) = &batch.work {
+                    work.human_required("delivery_journal_unverified");
+                }
+                spawn_failure_notice(rest_client, &batch, "The managed report journal could not be verified. Inspect its delivery status before continuing; no provider action was retried.".into());
+            } else if batch
+                .work
+                .as_ref()
+                .is_some_and(|work| work.uncertain_effects())
+                || matches!(
+                    result.outcome,
+                    PromptOutcome::Error(acp::AcpError::EffectUncertain)
+                )
+            {
+                if let Some(work) = &batch.work {
+                    work.human_required("external_effect_uncertain");
+                }
+                spawn_failure_notice(rest_client, &batch, "Kimi stopped with an external action whose result is uncertain. Verify the action and its output before continuing; no automatic replay was started.".into());
+            } else if matches!(
                 result.outcome,
                 PromptOutcome::Cancelled | PromptOutcome::CancelDrainTimeout(_)
             ) {
@@ -5894,6 +6117,52 @@ fn handle_prompt_result(
                 } else {
                     hard_timeout_fate_suffix = Some(" — requeued for retry (recently active)");
                 }
+            } else if matches!(
+                &result.outcome,
+                PromptOutcome::Error(
+                    acp::AcpError::WorkDeadline
+                        | acp::AcpError::WorkDeadlinePoisoned
+                        | acp::AcpError::WorkCancelledPoisoned
+                )
+            ) {
+                spawn_failure_notice(rest_client,&batch,"Kimi recovery reached its time budget. Check the work's current result before retrying explicitly.".into());
+            } else if matches!(
+                &result.outcome,
+                PromptOutcome::Error(acp::AcpError::PermissionConflict)
+            ) {
+                if let Some(work) = &batch.work {
+                    work.human_required("permission_identity_conflict");
+                }
+                spawn_failure_notice(rest_client,&batch,"Kimi reused a permission request identity. Check the action's result before continuing; no further automatic permission was granted.".into());
+            } else if matches!(
+                &result.outcome,
+                PromptOutcome::Error(acp::AcpError::PermissionViewUnavailable)
+            ) {
+                if let Some(work) = &batch.work {
+                    work.human_required("permission_activity_unavailable");
+                }
+                spawn_failure_notice(rest_client, &batch, "Kimi could not show its exact permission request. No action was approved. Enable owner activity (--relay-observer), then retry when the request can be inspected.".into());
+            } else if matches!(
+                &result.outcome,
+                PromptOutcome::Error(
+                    acp::AcpError::PermissionRequired | acp::AcpError::PermissionDecisionTimeout
+                )
+            ) {
+                if let Some(work) = &batch.work {
+                    work.human_required("permission_decision_required");
+                }
+                spawn_failure_notice(rest_client,&batch,"Kimi needs an explicit human permission decision. The pending request was not approved. Inspect the activity and retry the work explicitly when ready.".into());
+            } else if matches!(&result.outcome, PromptOutcome::Error(acp::AcpError::KimiFailure(failure)) if !failure.class.is_transient())
+            {
+                let reason = match &result.outcome {
+                    PromptOutcome::Error(acp::AcpError::KimiFailure(failure)) => match failure.class {
+                        acp::kimi_recovery::FailureClass::Authentication => "Kimi authentication failed. Sign in to the configured CLI and retry the request.",
+                        acp::kimi_recovery::FailureClass::Configuration => "Kimi configuration failed. Check the configured model and endpoint, then retry the request.",
+                        _ => "Kimi reported an unclassified failure. Check the provider status and retry explicitly when safe.",
+                    },
+                    _ => "Kimi could not complete the request.",
+                };
+                spawn_failure_notice(rest_client, &batch, reason.into());
             } else if matches!(
                 &result.outcome,
                 PromptOutcome::Error(acp::AcpError::AgentError { code: -32002, message })
@@ -6017,7 +6286,7 @@ fn handle_prompt_result(
         }
     };
 
-    if pool.needs_retirement(&result.agent) {
+    if deliberate_retirement {
         pool.return_for_retirement(result.agent);
         return LoopAction::Continue;
     }
@@ -6030,7 +6299,35 @@ fn handle_prompt_result(
                 outcome = outcome_label,
                 "agent_returned"
             );
+            let work = result.agent.acp.logical_work().cloned();
             pool.return_agent(result.agent);
+            if let (Some(work), Some(rest)) = (work, rest_client) {
+                if !work.cancelled() && !pool.has_background_collection_for_scope(&work.scope) {
+                    let rest = rest.clone();
+                    tokio::spawn(async move {
+                        match managed_work::confirmed_report(&rest, &work).await {
+                            Ok(Some(_)) => {
+                                work.finish();
+                                work.transition("completed", "managed_report_confirmed");
+                            }
+                            _ => {
+                                work.human_required("managed_report_unconfirmed");
+                                let batch = FlushBatch {
+                                    channel_id: work.scope.channel_id(),
+                                    scope: work.scope.clone(),
+                                    events: work.original_events.as_ref().clone(),
+                                    cancelled_events: vec![],
+                                    cancel_reason: None,
+                                    continuation: None,
+                                    work: Some(work),
+                                };
+                                spawn_failure_notice(Some(&rest), &batch,
+                                    "Kimi ended its turn without a confirmed managed final report. Verify the existing result before continuing; the task was not automatically replayed.".into());
+                            }
+                        }
+                    });
+                }
+            }
         }
         // Fatal outcomes: the agent subprocess is dead or poisoned — respawn it.
         PromptOutcome::AgentExited | PromptOutcome::Timeout(_) => {
@@ -6158,12 +6455,20 @@ fn handle_prompt_result(
             let is_transport_error = matches!(
                 e,
                 acp::AcpError::Io(_)
+                    | acp::AcpError::WorkDeadlinePoisoned
+                    | acp::AcpError::WorkCancelledPoisoned
+                    | acp::AcpError::PermissionProgressTimeout
+                    | acp::AcpError::PermissionConflict
+                    | acp::AcpError::PermissionRequired
+                    | acp::AcpError::PermissionViewUnavailable
+                    | acp::AcpError::PermissionDecisionTimeout
                     | acp::AcpError::WriteTimeout(_)
                     | acp::AcpError::Timeout(_)
                     | acp::AcpError::Protocol(_)
             );
             let error_code = match &e {
                 acp::AcpError::AgentError { code, .. } => Some(*code),
+                acp::AcpError::KimiFailure(failure) => Some(failure.code),
                 _ => None,
             };
             if is_transport_error {
@@ -6206,6 +6511,7 @@ fn handle_prompt_result(
             }
         }
     }
+    pool.protect_background_work(queue);
     LoopAction::Continue
 }
 
@@ -6441,6 +6747,7 @@ fn dispatch_heartbeat(
     pool.task_map_mut().insert(
         abort_handle.id(),
         pool::TaskMeta {
+            permission_tx: None,
             agent_index,
             channel_id: None,
             scope: None,
@@ -6573,6 +6880,24 @@ fn spawn_respawn_task(
     observer: Option<observer::ObserverHandle>,
 ) -> bool {
     let index = old_agent.index;
+
+    if old_agent.acp.is_kimi() {
+        let delay = match slot.record_crash() {
+            CrashVerdict::CircuitOpen => None,
+            CrashVerdict::HalfOpenProbe => Some(Duration::ZERO),
+            CrashVerdict::Respawn(delay) => Some(delay),
+        };
+        slot.respawn_in_flight = true;
+        worker_retirement::recover_kimi(
+            old_agent,
+            config,
+            delay,
+            respawn_tx,
+            respawn_tasks,
+            observer,
+        );
+        return true;
+    }
 
     // Circuit breaker: record crash, decide whether to respawn.
     let delay = match slot.record_crash() {
@@ -7258,6 +7583,7 @@ mod owner_control_command_tests {
         pool.task_map_mut().insert(
             abort_handle.id(),
             pool::TaskMeta {
+                permission_tx: None,
                 agent_index: 0,
                 channel_id: Some(channel_id),
                 scope: Some(scope::SessionScope::Conversation { channel_id }),
@@ -7305,6 +7631,7 @@ mod owner_control_command_tests {
         pool.task_map_mut().insert(
             abort_handle.id(),
             pool::TaskMeta {
+                permission_tx: None,
                 agent_index,
                 channel_id: Some(scope.channel_id()),
                 scope: Some(scope),
@@ -10716,6 +11043,7 @@ mod build_mcp_servers_tests {
 
     pub(super) fn test_config() -> Config {
         Config {
+            kimi_recovery: crate::queue::RecoveryPolicy::default(),
             keys: nostr::Keys::generate(),
             relay_url: "ws://localhost:3000".into(),
             agent_command: "goose".into(),
@@ -11351,6 +11679,7 @@ mod edit_native_steer_tests {
         pool.task_map_mut().insert(
             task.id(),
             pool::TaskMeta {
+                permission_tx: None,
                 agent_index: 0,
                 channel_id: Some(channel_id),
                 scope: Some(scope.clone()),
@@ -11857,6 +12186,7 @@ mod error_outcome_emission_tests {
 
     pub(super) fn test_config() -> Config {
         Config {
+            kimi_recovery: crate::queue::RecoveryPolicy::default(),
             keys: nostr::Keys::generate(),
             relay_url: "ws://localhost:3000".into(),
             // `true` exits cleanly, so the async respawn fails fast and
@@ -11973,6 +12303,7 @@ mod error_outcome_emission_tests {
         pool.task_map_mut().insert(
             task_id,
             crate::pool::TaskMeta {
+                permission_tx: None,
                 agent_index: 0,
                 channel_id: source.channel_id(),
                 scope,
@@ -12067,6 +12398,7 @@ mod error_outcome_emission_tests {
         pool.task_map_mut().insert(
             task_id,
             crate::pool::TaskMeta {
+                permission_tx: None,
                 agent_index: 0,
                 channel_id: Some(channel_id),
                 scope: Some(scope::SessionScope::Conversation { channel_id }),
@@ -12149,6 +12481,7 @@ mod error_outcome_emission_tests {
         pool.task_map_mut().insert(
             task_id,
             crate::pool::TaskMeta {
+                permission_tx: None,
                 agent_index: 0,
                 channel_id: Some(channel_id),
                 scope: Some(scope::SessionScope::Conversation { channel_id }),
@@ -12273,6 +12606,7 @@ mod error_outcome_emission_tests {
         pool.task_map_mut().insert(
             task_id,
             crate::pool::TaskMeta {
+                permission_tx: None,
                 agent_index: 0,
                 channel_id: Some(channel_id),
                 scope: Some(scope::SessionScope::Conversation { channel_id }),
@@ -12344,6 +12678,7 @@ mod error_outcome_emission_tests {
         pool.task_map_mut().insert(
             task_id,
             crate::pool::TaskMeta {
+                permission_tx: None,
                 agent_index: 0,
                 channel_id: None,
                 scope: None,
@@ -12426,6 +12761,7 @@ mod error_outcome_emission_tests {
         pool.task_map_mut().insert(
             task_id,
             crate::pool::TaskMeta {
+                permission_tx: None,
                 agent_index: 0,
                 channel_id: Some(channel_id),
                 scope: Some(scope::SessionScope::Conversation { channel_id }),
@@ -12522,6 +12858,7 @@ mod error_outcome_emission_tests {
         pool.task_map_mut().insert(
             abort_handle.id(),
             crate::pool::TaskMeta {
+                permission_tx: None,
                 agent_index: 0,
                 channel_id: Some(channel_id),
                 scope: Some(scope.clone()),
@@ -12624,6 +12961,7 @@ mod error_outcome_emission_tests {
             pool.task_map_mut().insert(
                 task_id,
                 crate::pool::TaskMeta {
+                    permission_tx: None,
                     agent_index: 0,
                     channel_id: None,
                     scope: None,
@@ -12702,6 +13040,7 @@ mod error_outcome_emission_tests {
                 .unwrap();
             let __cid = Uuid::new_v4();
             FlushBatch {
+                work: None,
                 continuation: None,
                 channel_id: __cid,
                 scope: scope::SessionScope::Conversation { channel_id: __cid },
@@ -12725,6 +13064,7 @@ mod error_outcome_emission_tests {
             pool.task_map_mut().insert(
                 task_id,
                 crate::pool::TaskMeta {
+                    permission_tx: None,
                     agent_index: 0,
                     channel_id: None,
                     scope: None,
@@ -12815,6 +13155,7 @@ mod error_outcome_emission_tests {
                 .sign_with_keys(&keys)
                 .unwrap();
             FlushBatch {
+                work: None,
                 continuation: None,
                 channel_id,
                 scope: scope::SessionScope::Conversation { channel_id },
@@ -12837,6 +13178,7 @@ mod error_outcome_emission_tests {
             pool.task_map_mut().insert(
                 task_id,
                 crate::pool::TaskMeta {
+                    permission_tx: None,
                     agent_index: 0,
                     channel_id: None,
                     scope: None,
@@ -12917,6 +13259,7 @@ mod error_outcome_emission_tests {
         pool.task_map_mut().insert(
             task_id,
             crate::pool::TaskMeta {
+                permission_tx: None,
                 agent_index: 0,
                 channel_id: None,
                 scope: None,
@@ -12941,6 +13284,7 @@ mod error_outcome_emission_tests {
         let mut respawn_tasks = tokio::task::JoinSet::new();
         let observer = ObserverHandle::in_process();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id,
             scope: scope::SessionScope::Conversation { channel_id },
@@ -13018,6 +13362,7 @@ mod error_outcome_emission_tests {
         pool.task_map_mut().insert(
             task_id,
             crate::pool::TaskMeta {
+                permission_tx: None,
                 agent_index: 0,
                 channel_id: None,
                 scope: None,
@@ -13041,6 +13386,7 @@ mod error_outcome_emission_tests {
         let mut respawn_tasks = tokio::task::JoinSet::new();
         let observer = ObserverHandle::in_process();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id,
             scope: scope::SessionScope::Conversation { channel_id },
@@ -13125,6 +13471,7 @@ mod error_outcome_emission_tests {
         );
         let channel_id = Uuid::new_v4();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id,
             scope: scope::SessionScope::Conversation { channel_id },
@@ -13144,6 +13491,7 @@ mod error_outcome_emission_tests {
         pool.task_map_mut().insert(
             task_id,
             crate::pool::TaskMeta {
+                permission_tx: None,
                 agent_index: 0,
                 channel_id: None,
                 scope: None,
@@ -13289,6 +13637,7 @@ mod error_outcome_emission_tests {
         pool.task_map_mut().insert(
             task_id,
             crate::pool::TaskMeta {
+                permission_tx: None,
                 agent_index: 0,
                 channel_id: None,
                 scope: None,
@@ -13403,6 +13752,7 @@ mod error_outcome_emission_tests {
             .sign_with_keys(&Keys::generate())
             .unwrap();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id,
             scope: session_scope.clone(),
@@ -13427,6 +13777,7 @@ mod error_outcome_emission_tests {
         pool.task_map_mut().insert(
             task_id,
             crate::pool::TaskMeta {
+                permission_tx: None,
                 agent_index: 0,
                 channel_id: Some(channel_id),
                 scope: Some(session_scope.clone()),
@@ -13561,6 +13912,7 @@ mod error_outcome_emission_tests {
             .unwrap();
         let channel_id = uuid::Uuid::new_v4();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id,
             scope: scope::SessionScope::Conversation { channel_id },
@@ -13586,6 +13938,7 @@ mod error_outcome_emission_tests {
         pool.task_map_mut().insert(
             task_id,
             crate::pool::TaskMeta {
+                permission_tx: None,
                 agent_index: 0,
                 channel_id: None,
                 scope: None,
@@ -13670,6 +14023,7 @@ mod error_outcome_emission_tests {
         };
         let channel_id = uuid::Uuid::new_v4();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id,
             scope: scope::SessionScope::Conversation { channel_id },
@@ -13697,6 +14051,7 @@ mod error_outcome_emission_tests {
         pool.task_map_mut().insert(
             task_id,
             crate::pool::TaskMeta {
+                permission_tx: None,
                 agent_index: 0,
                 channel_id: None,
                 scope: None,
@@ -13952,6 +14307,7 @@ mod error_outcome_emission_tests {
             .unwrap();
         let channel_id = uuid::Uuid::new_v4();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id,
             scope: scope::SessionScope::Conversation { channel_id },
@@ -13971,6 +14327,7 @@ mod error_outcome_emission_tests {
         pool.task_map_mut().insert(
             task_id,
             crate::pool::TaskMeta {
+                permission_tx: None,
                 agent_index: 0,
                 channel_id: None,
                 scope: None,

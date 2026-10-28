@@ -414,3 +414,12 @@ incomplete. Complete failure reports that history could not be loaded and
 leaves the provider session available for the next ordinary turn. The test
 uses real local HTTP responses and ACP subprocesses, without contacting a
 provider or changing an installed application.
+
+## Kimi logical-work recovery
+
+See [KIMI_RECOVERY.md](KIMI_RECOVERY.md) for the configured retry/approval limits,
+production-seam checks, managed delivery boundary and the separate single-agent
+provider and human-client acceptance runbook. Kimi's original work receives its
+managed key before the first attempt; it retains it through background collection
+and checked child-crash recovery. Other adapters keep the background-only
+managed-publication behavior described above.

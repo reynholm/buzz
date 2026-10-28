@@ -17,7 +17,8 @@ for line in sys.stdin:
         caps = req['params']['clientCapabilities']
         air = caps.get('_meta', {}).get('jetbrains', {}).get('air', {})
         typed = air.get('version') == 1 and 'sessionFailure' in air.get('capabilities', [])
-        result = {'protocolVersion': 2, 'agentInfo': {'name': '@agentclientprotocol/codex-acp', 'version': '2'}}
+        name = 'Kimi Code CLI' if os.environ.get('KIMI_IDENTITY') else '@agentclientprotocol/codex-acp'
+        result = {'protocolVersion': 2, 'agentInfo': {'name': name, 'version': 'synthetic'}}
     elif method == 'session/new':
         result = {'sessionId': 'provider-session'}
     elif method == 'session/prompt':
@@ -34,7 +35,7 @@ for line in sys.stdin:
         if typed and text not in ('success', 'legacy'):
             failure = {'id': 'turn:error', 'revision': 1, 'category': 'access' if text == 'auth' else 'service',
                        'severity': 'warning' if text == 'warning' else 'error',
-                       'title': 'stream disconnected before completion', 'actions': ['login'] if text == 'auth' else ['retry']}
+                       'title': os.environ.get('FAILURE_TITLE', 'stream disconnected before completion'), 'actions': ['login'] if text == 'auth' else ['retry']}
             result['_meta'] = {'jetbrains': {'air': {'version': 1, 'sessionFailure': failure}}}
             if text == 'malformed':
                 del failure['severity']
@@ -129,4 +130,67 @@ async fn provider_failure_metadata_cannot_silently_claim_success_when_invalid() 
         ));
     }
     client.shutdown().await;
+}
+
+// Synthetic Kimi compatibility coverage of the existing negotiated Air seam.
+// No Kimi failure result was captured in the provider probes.
+#[tokio::test]
+async fn kimi_negotiated_failure_result_uses_safe_positive_classification() {
+    use super::kimi_recovery::FailureClass;
+    for (text, title, expected) in [
+        (
+            "network",
+            "OAuthConnectionError: connection timed out",
+            FailureClass::OAuthConnection,
+        ),
+        (
+            "network",
+            "OAuthError: Unable to acquire OAuth refresh lock",
+            FailureClass::OAuthRefreshLock,
+        ),
+        (
+            "network",
+            "unknown must-not-log-secret",
+            FailureClass::Unknown,
+        ),
+        (
+            "auth",
+            "OAuthConnectionError: connection timed out",
+            FailureClass::Authentication,
+        ),
+    ] {
+        let mut client = AcpClient::spawn(
+            "python3",
+            &["-u".into(), "-c".into(), ADAPTER.into()],
+            &[
+                ("KIMI_IDENTITY".into(), "1".into()),
+                ("FAILURE_TITLE".into(), title.into()),
+            ],
+            false,
+        )
+        .await
+        .unwrap();
+        client.initialize().await.unwrap();
+        client
+            .session_new("/tmp", vec![], None, None)
+            .await
+            .unwrap();
+        let observer = crate::observer::ObserverHandle::in_process();
+        client.set_observer(Some(observer.clone()), 0);
+        let result = prompt(&mut client, text).await;
+        client.shutdown().await;
+        let error = result.unwrap_err();
+        assert!(!format!("{error:?}").contains("must-not-log-secret"));
+        assert!(
+            matches!(error, AcpError::KimiFailure(ref failure) if failure.class == expected),
+            "{error:?}"
+        );
+        for event in observer.snapshot() {
+            assert!(
+                !event.payload.to_string().contains("must-not-log-secret"),
+                "{}",
+                event.kind
+            );
+        }
+    }
 }

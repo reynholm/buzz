@@ -748,3 +748,16 @@ export function describeRawEvent(event: ObserverEvent): string {
   }
   return method ?? event.kind;
 }
+
+export function stringifyPayload(value: unknown) {
+  try {
+    return JSON.stringify(value, null, 2) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+export function rawPayloadTitle(payload: unknown) {
+  const record = asRecord(payload);
+  return asString(record.method) ?? asString(record.type) ?? "raw_json_rpc";
+}

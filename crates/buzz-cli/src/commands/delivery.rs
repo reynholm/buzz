@@ -226,14 +226,20 @@ fn read(dir: &Path) -> Result<Journal, CliError> {
                 .map_err(error)?
                 .to_string()
                 != record.channel
-            || markers.reply.as_deref() != Some(&record.parent)
+            || if record.parent.is_empty() {
+                record.event.tags.iter().any(|tag| tag.as_slice()[0] == "e")
+            } else {
+                markers.reply.as_deref() != Some(&record.parent)
+            }
             || !tag("h", &record.channel)
             || !tag("buzz-delivery", &record.key)
         {
             return Err(error("record identity, signature or route is invalid"));
         }
         validate::validate_content_size(&record.event.content)?;
-        validate::validate_hex64(&record.parent)?;
+        if !record.parent.is_empty() {
+            validate::validate_hex64(&record.parent)?;
+        }
     }
     journal.version = 2;
     Ok(journal)
@@ -342,7 +348,11 @@ pub(super) async fn deliver(
         .map_err(|_| CliError::Usage("--delivery-key must be a UUID".into()))?
         .to_string();
     let channel = validate::parse_uuid(channel)?.to_string();
-    let parent = validate::parse_event_id(parent)?.to_hex();
+    let parent = if parent.is_empty() {
+        String::new()
+    } else {
+        validate::parse_event_id(parent)?.to_hex()
+    };
     let dir: PathBuf = directory
         .map(Path::to_owned)
         .unwrap_or_else(|| PathBuf::from(".buzz-deliveries"));
@@ -376,11 +386,13 @@ pub(super) async fn deliver(
                 "1024-record capacity reached; pending records are retained",
             ));
         }
-        let parent_event = messages::fetch_event(client, &parent).await?;
-        if messages::channel_id_from_event(&parent, &parent_event)?.to_string() != channel {
-            return Err(CliError::Conflict(
-                "reply parent belongs to another channel".into(),
-            ));
+        if !parent.is_empty() {
+            let parent_event = messages::fetch_event(client, &parent).await?;
+            if messages::channel_id_from_event(&parent, &parent_event)?.to_string() != channel {
+                return Err(CliError::Conflict(
+                    "reply parent belongs to another channel".into(),
+                ));
+            }
         }
         let event = messages::prepare_message(
             client,
@@ -388,7 +400,7 @@ pub(super) async fn deliver(
                 channel_id: channel.clone(),
                 content: content.into(),
                 kind: Some(9),
-                reply_to: Some(parent.clone()),
+                reply_to: (!parent.is_empty()).then(|| parent.clone()),
                 broadcast: false,
                 files: vec![],
                 mentions,

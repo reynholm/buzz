@@ -7,6 +7,8 @@
 //! 3. [`AcpClient::session_new`] — create session with MCP server config
 
 mod claude_context;
+mod kimi_diagnostics;
+pub(crate) mod kimi_permission;
 pub(crate) mod launch;
 mod provider_failure;
 mod restart_status;
@@ -129,7 +131,42 @@ pub enum AcpError {
 
     #[error("Agent reported error (code {code}): {message}")]
     AgentError { code: i64, message: String },
+
+    #[error("{0}")]
+    KimiFailure(kimi_recovery::KimiFailure),
+
+    #[error("Logical work recovery deadline exhausted")]
+    WorkDeadline,
+
+    #[error("Logical work deadline expired during execution; checked retirement required")]
+    WorkDeadlinePoisoned,
+
+    #[error("Explicit cancellation interrupted execution; checked retirement required")]
+    WorkCancelledPoisoned,
+
+    #[error("An external action may have run; a human must verify its result before continuation")]
+    EffectUncertain,
+
+    #[error("Managed report journal cannot be verified; inspect delivery before continuation")]
+    DeliveryJournalUnavailable,
+
+    #[error("Kimi permission request identity was reused; a human must check the action")]
+    PermissionConflict,
+
+    #[error("Kimi made no tool progress after its permission response")]
+    PermissionProgressTimeout,
+
+    #[error("A human permission decision is required")]
+    PermissionRequired,
+
+    #[error("The human permission decision deadline expired")]
+    PermissionDecisionTimeout,
+
+    #[error("Owner activity must be enabled to inspect the exact permission request")]
+    PermissionViewUnavailable,
 }
+
+pub(crate) mod kimi_recovery;
 
 /// Build an [`AcpError::AgentError`] from a JSON-RPC error object,
 /// preserving the numeric code. When the `message` field is missing or
@@ -143,6 +180,22 @@ fn agent_error_from_json(error: &serde_json::Value) -> AcpError {
     };
     AcpError::AgentError { code, message }
 }
+
+#[cfg(all(test, unix))]
+#[path = "acp/kimi_diagnostics_tests.rs"]
+mod kimi_diagnostics_tests;
+
+#[cfg(all(test, unix))]
+#[path = "acp/kimi_recovery_tests.rs"]
+mod kimi_recovery_tests;
+
+#[cfg(all(test, unix))]
+#[path = "acp/kimi_permission_tests.rs"]
+mod kimi_permission_tests;
+
+#[cfg(all(test, unix))]
+#[path = "acp/kimi_manual_permission_tests.rs"]
+mod kimi_manual_permission_tests;
 
 fn build_initialize_params() -> serde_json::Value {
     serde_json::json!({
@@ -160,6 +213,9 @@ fn build_initialize_params() -> serde_json::Value {
 /// One `AcpClient` per agent process. Multiple sessions can be created on the
 /// same client via repeated calls to [`session_new`](AcpClient::session_new).
 pub struct AcpClient {
+    /// Configured or initialized adapter identity; never inferred from an error.
+    kimi: bool,
+    kimi_permissions: kimi_permission::PermissionState,
     status_capture: Option<restart_status::StatusCapture>,
     termination: terminate::TerminationState,
     #[cfg(test)]
@@ -691,6 +747,8 @@ impl AcpClient {
             .ok_or_else(|| AcpError::Protocol("failed to open agent stdout".into()))?;
 
         Ok(Self {
+            kimi: crate::config::normalize_agent_command_identity(command) == "kimi",
+            kimi_permissions: Default::default(),
             termination: terminate::TerminationState::default(),
             #[cfg(test)]
             background_child_snapshots: std::collections::VecDeque::new(),
@@ -778,15 +836,45 @@ impl AcpClient {
         &mut self,
         tree: &crate::process_tree::ProcessTree,
     ) -> Option<HashSet<u32>> {
-        let Some(pid) = self.process_id() else {
-            return Some(HashSet::new());
+        // Previously observed work remains ours after adapter reaping only
+        // while both PID birth and command still match the same native snapshot.
+        let tracked: HashSet<u32> = if self.kimi {
+            self.observed_background_instances
+                .iter()
+                .filter_map(|(pid, instance)| {
+                    (tree.process_instance(*pid) == Some(instance)
+                        && !tree.is_registered_service(*pid))
+                    .then_some(*pid)
+                })
+                .collect()
+        } else {
+            HashSet::new()
         };
+        let changed_command = self.kimi
+            && self
+                .observed_background_instances
+                .iter()
+                .any(|(pid, expected)| {
+                    tree.process_instance(*pid)
+                        .is_some_and(|current| current.same_birth(expected) && current != expected)
+                });
+        let Some(pid) = self.process_id() else {
+            return if tracked.is_empty() && changed_command {
+                None
+            } else {
+                Some(tracked)
+            };
+        };
+        #[cfg(unix)]
+        if let Some(snapshot) = tree.retirement_snapshot() {
+            self.retain_kimi_retirement_evidence(pid, snapshot);
+        }
         let live = tree.descendant_pids(pid);
         self.resident_pids.retain(|pid| live.contains(pid));
         let mut pending = vec![pid];
         let mut visited = HashSet::new();
-        let mut blocking = HashSet::new();
-        let mut uncertain = false;
+        let mut blocking = tracked;
+        let mut uncertain = changed_command;
         while let Some(parent) = pending.pop() {
             if !visited.insert(parent) {
                 continue;
@@ -814,9 +902,16 @@ impl AcpClient {
             for pid in &blocking {
                 if self.observed_background_instances.len() < 4096 {
                     if let Some(instance) = tree.process_instance(*pid) {
-                        self.observed_background_instances
-                            .entry(*pid)
-                            .or_insert_with(|| instance.clone());
+                        if self.kimi {
+                            // The current rooted classification proves this live
+                            // instance; a legitimate exec can update its command.
+                            self.observed_background_instances
+                                .insert(*pid, instance.clone());
+                        } else {
+                            self.observed_background_instances
+                                .entry(*pid)
+                                .or_insert_with(|| instance.clone());
+                        }
                     }
                 }
             }
@@ -899,6 +994,10 @@ impl AcpClient {
         // on ACP v2 ahead of the upstream ACP RFD. Revisit when that RFD merges.
         let params = build_initialize_params();
         let result = self.send_request("initialize", params).await?;
+        self.kimi |= result
+            .pointer("/agentInfo/name")
+            .and_then(serde_json::Value::as_str)
+            == Some("Kimi Code CLI");
         self.steering_supported = result
             .pointer("/_meta/steering/supported")
             .and_then(|v| v.as_bool())
@@ -907,8 +1006,76 @@ impl AcpClient {
             .pointer("/agentCapabilities/sessionCapabilities/resume")
             .is_some_and(serde_json::Value::is_object);
         self.capture_startup_children();
-        tracing::debug!(target: "acp::init", "initialize response: {result}");
+        self.capture_kimi_retirement_evidence().await;
+        if self.kimi {
+            tracing::debug!(target: "acp::init", resume_supported=self.resume_supported, "Kimi initialized");
+        } else {
+            tracing::debug!(target: "acp::init", "initialize response: {result}");
+        }
         Ok(result)
+    }
+
+    fn decode_agent_error(&self, error: &serde_json::Value) -> AcpError {
+        if self.kimi {
+            let failure = kimi_recovery::KimiFailure::from_json(error);
+            self.observe_kimi_failure(&failure, "json_rpc_error");
+            AcpError::KimiFailure(failure)
+        } else {
+            agent_error_from_json(error)
+        }
+    }
+
+    fn observe_kimi_failure(&self, failure: &kimi_recovery::KimiFailure, source: &str) {
+        self.observe("provider_failure", serde_json::json!({
+            "adapter":"kimi", "source":source, "code":failure.code, "errorType":failure.error_type,
+            "status":failure.status, "class":failure.class.label(),
+            "transient":failure.class.is_transient(), "processGeneration":self.process_instance,
+        }));
+    }
+
+    fn observe_incoming(&mut self, msg: &serde_json::Value, wire: &str) {
+        self.observe_kimi_permission_progress(msg);
+        // The initialize reply can identify Kimi before initialize() returns.
+        let kimi_frame = self.kimi
+            || msg
+                .pointer("/result/agentInfo/name")
+                .and_then(serde_json::Value::as_str)
+                == Some("Kimi Code CLI");
+        if kimi_frame {
+            self.trace_kimi_wire("←", msg);
+        }
+        if self.kimi {
+            if let Some(error) = msg.get("error") {
+                let failure = kimi_recovery::KimiFailure::from_json(error);
+                let safe = serde_json::json!({"jsonrpc":"2.0","id":msg.get("id"),"error":{
+                    "code":failure.code,"message":failure.to_string(),"data":{
+                        "name":failure.error_type,"status":failure.status,"class":failure.class.label()
+                    }
+                }});
+                self.observe("acp_read", safe);
+                return;
+            }
+            if msg
+                .pointer("/result/_meta/jetbrains/air/sessionFailure")
+                .is_some()
+            {
+                let diagnostic = match provider_failure::check_kimi_response(&msg["result"]) {
+                    Err(AcpError::KimiFailure(failure)) => serde_json::json!({
+                        "class":failure.class.label(), "errorType":failure.error_type,
+                        "transient":failure.class.is_transient(),
+                    }),
+                    _ => serde_json::json!({"redacted":true}),
+                };
+                let mut safe = msg.clone();
+                safe["result"]["_meta"]["jetbrains"]["air"]["sessionFailure"] = diagnostic;
+                self.observe("acp_read", safe);
+                return;
+            }
+        }
+        if !kimi_frame {
+            tracing::debug!(target:"acp::wire", "← {wire}");
+        }
+        self.observe("acp_read", msg.clone());
     }
 
     /// Send the ACP `authenticate` request for an adapter-advertised method.
@@ -1155,6 +1322,7 @@ impl AcpClient {
         max_duration: std::time::Duration,
     ) -> Result<StopReason, AcpError> {
         self.begin_claude_context_turn(session_id);
+        self.capture_kimi_retirement_evidence().await;
         let params = build_prompt_params(session_id, prompt_blocks);
         let hard_deadline = tokio::time::Instant::now() + max_duration;
         self.current_hard_deadline = Some(hard_deadline);
@@ -1169,6 +1337,10 @@ impl AcpClient {
         let id = self.next_id;
         self.next_id += 1;
 
+        if self.kimi {
+            self.kimi_permissions.begin(session_id, id, idle_timeout);
+        }
+
         let msg = serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -1176,10 +1348,13 @@ impl AcpClient {
             "params": params,
         });
 
-        tracing::debug!(target: "acp::wire", "→ {}", &serde_json::to_string(&msg).unwrap_or_default());
+        self.trace_outgoing(&msg, false);
         if let Err(e) = self.write_ndjson(&msg).await {
             self.last_prompt_id = None;
             self.current_hard_deadline = None;
+            if self.kimi {
+                self.finish_kimi_permissions("prompt_write_failed");
+            }
             return Err(e);
         }
 
@@ -1207,9 +1382,20 @@ impl AcpClient {
             Err(_) => {
                 self.last_prompt_id = None;
                 self.current_hard_deadline = None;
+                if self.kimi {
+                    self.pending_permission_id = None;
+                    self.permission_responded = false;
+                }
             }
         }
         let parsed = result.and_then(|result| self.parse_prompt_response(session_id, &result));
+        if self.kimi {
+            self.finish_kimi_permissions(if parsed.is_ok() {
+                "prompt_completed"
+            } else {
+                "prompt_failed"
+            });
+        }
         if !matches!(parsed, Ok(StopReason::EndTurn)) {
             self.reset_claude_context(session_id, Some(false));
         }
@@ -1502,6 +1688,9 @@ impl AcpClient {
         }
 
         // Step 2: send session/cancel notification (no id)
+        if self.kimi {
+            self.finish_kimi_permissions("cancelled");
+        }
         self.session_cancel(session_id).await?;
         tracing::info!(target: "acp::cancel", "sent session/cancel for {session_id}");
         // Use a fixed 30s idle timeout during cleanup — the cancel notification
@@ -1569,7 +1758,7 @@ impl AcpClient {
             "params": params,
         });
 
-        tracing::debug!(target: "acp::wire", "→ {}", &serde_json::to_string(&msg).unwrap_or_default());
+        self.trace_outgoing(&msg, false);
 
         // Wrap write + read in a single timeout so a hung agent can't block forever.
         // We cannot use an async block that borrows `self` mutably across two awaits
@@ -1634,7 +1823,7 @@ impl AcpClient {
             "params": params,
         });
 
-        tracing::debug!(target: "acp::wire", "→ (notification) {}", &serde_json::to_string(&msg).unwrap_or_default());
+        self.trace_outgoing(&msg, true);
         self.write_ndjson(&msg).await?;
         Ok(())
     }
@@ -1695,8 +1884,7 @@ impl AcpClient {
             if self.consume_claude_context_frame(&msg) {
                 continue;
             }
-            tracing::debug!(target: "acp::wire", "← {trimmed}");
-            self.observe("acp_read", msg.clone());
+            self.observe_incoming(&msg, trimmed);
 
             // Check if this is a response to our expected request (has matching id
             // AND no `method` field — a `method` field means it's an agent-initiated
@@ -1704,7 +1892,7 @@ impl AcpClient {
             if let Some(id) = msg.get("id") {
                 if *id == serde_json::json!(expected_id) && msg.get("method").is_none() {
                     if let Some(error) = msg.get("error") {
-                        return Err(agent_error_from_json(error));
+                        return Err(self.decode_agent_error(error));
                     }
                     return Ok(msg["result"].clone());
                 }
@@ -1736,7 +1924,11 @@ impl AcpClient {
                             // agent process is dead and continuing would hang.
                             self.write_ndjson(&err_resp).await?;
                         }
-                        tracing::debug!(target: "acp::wire", "ignoring unknown method: {other}");
+                        if self.kimi {
+                            tracing::debug!(target: "acp::wire", "ignoring unknown Kimi method");
+                        } else {
+                            tracing::debug!(target: "acp::wire", "ignoring unknown method: {other}");
+                        }
                     }
                 }
             }
@@ -1812,10 +2004,18 @@ impl AcpClient {
             // Determine which deadline fires first BEFORE sleeping — this is
             // the classification we'll use on timeout, immune to scheduler jitter.
             let idle_fires_first = idle_deadline < hard_deadline;
-            let next_deadline = if idle_fires_first {
+            let regular_deadline = if idle_fires_first {
                 idle_deadline
             } else {
                 hard_deadline
+            };
+            let permission_deadline = self.kimi_permissions.progress_deadline();
+            let permission_fires_first = self.kimi
+                && permission_deadline.is_some_and(|deadline| deadline <= regular_deadline);
+            let next_deadline = if permission_fires_first {
+                permission_deadline.unwrap_or(regular_deadline)
+            } else {
+                regular_deadline
             };
 
             // Pre-select deadline check — required by Max's review. Under
@@ -1833,7 +2033,9 @@ impl AcpClient {
                     // normal dispatch handles redelivery).
                     let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
                 }
-                if idle_fires_first {
+                if permission_fires_first {
+                    return Err(AcpError::PermissionProgressTimeout);
+                } else if idle_fires_first {
                     tracing::warn!("idle timeout ({idle_timeout:?}) — no agent activity");
                     return Err(AcpError::IdleTimeout(idle_timeout));
                 } else {
@@ -1921,11 +2123,7 @@ impl AcpClient {
                                 "method": method,
                                 "params": params,
                             });
-                            tracing::debug!(
-                                target: "acp::wire",
-                                "→ {}",
-                                serde_json::to_string(&msg).unwrap_or_default()
-                            );
+                            self.trace_outgoing(&msg, false);
                             match self.write_ndjson(&msg).await {
                                 Ok(()) => {
                                     pending_steer = Some((id, transport, req.ack_tx));
@@ -1954,7 +2152,9 @@ impl AcpClient {
                     if let Some((_, _, ack_tx)) = pending_steer.take() {
                         let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
                     }
-                    if idle_fires_first {
+                    if permission_fires_first {
+                        return Err(AcpError::PermissionProgressTimeout);
+                    } else if idle_fires_first {
                         tracing::warn!("idle timeout ({idle_timeout:?}) — no agent activity");
                         return Err(AcpError::IdleTimeout(idle_timeout));
                     } else {
@@ -2020,8 +2220,7 @@ impl AcpClient {
                     if self.consume_claude_context_frame(&msg) {
                         continue;
                     }
-                    tracing::debug!(target: "acp::wire", "← {trimmed}");
-                    self.observe("acp_read", msg.clone());
+                    self.observe_incoming(&msg, trimmed);
 
                     let activity_now = Instant::now();
                     idle_deadline = activity_now + idle_timeout;
@@ -2047,7 +2246,11 @@ impl AcpClient {
                                             .get("code")
                                             .and_then(|c| c.as_i64())
                                             .unwrap_or(-1);
-                                        let message = error.to_string();
+                                        let message = if self.kimi {
+                                            self.decode_agent_error(error).to_string()
+                                        } else {
+                                            error.to_string()
+                                        };
                                         crate::pool::SteerAck::Err(
                                             crate::pool::SteerError::AgentError { code, message },
                                         )
@@ -2098,7 +2301,7 @@ impl AcpClient {
                                             Some(_) => {
                                                 let renew_now = Instant::now();
                                                 let new_deadline = renew_now + max_duration;
-                                                if new_deadline > hard_deadline {
+                                                if !self.kimi && new_deadline > hard_deadline {
                                                     hard_deadline = new_deadline;
                                                     self.current_hard_deadline = Some(new_deadline);
                                                     tracing::info!(
@@ -2115,11 +2318,20 @@ impl AcpClient {
                                                 // `failed` not `"failed"`;
                                                 // fall back to the JSON for a
                                                 // non-string value.
-                                                let reported = match msg.pointer("/result/outcome")
-                                                {
-                                                    None => "<absent>".to_string(),
-                                                    Some(serde_json::Value::String(s)) => s.clone(),
-                                                    Some(other) => other.to_string(),
+                                                let reported = if self.kimi {
+                                                    if msg.pointer("/result/outcome").is_none() {
+                                                        "<absent>".to_string()
+                                                    } else {
+                                                        "<unrecognized>".to_string()
+                                                    }
+                                                } else {
+                                                    match msg.pointer("/result/outcome") {
+                                                        None => "<absent>".to_string(),
+                                                        Some(serde_json::Value::String(s)) => {
+                                                            s.clone()
+                                                        }
+                                                        Some(other) => other.to_string(),
+                                                    }
                                                 };
                                                 tracing::warn!(
                                                     "steer rejected: {ACP_STEER_METHOD} returned \
@@ -2144,7 +2356,7 @@ impl AcpClient {
                                         let _ = ack_tx
                                             .send(crate::pool::SteerAck::PromptCompletedNeutral);
                                     }
-                                    return Err(agent_error_from_json(error));
+                                    return Err(self.decode_agent_error(error));
                                 }
                                 if let Some((_, _, ack_tx)) = pending_steer.take() {
                                     let _ =
@@ -2192,7 +2404,11 @@ impl AcpClient {
                                     // agent process is dead and continuing would hang.
                                     self.write_ndjson(&err_resp).await?;
                                 }
-                                tracing::debug!(target: "acp::wire", "ignoring unknown method: {other}");
+                                if self.kimi {
+                                    tracing::debug!(target: "acp::wire", "ignoring unknown Kimi method");
+                                } else {
+                                    tracing::debug!(target: "acp::wire", "ignoring unknown method: {other}");
+                                }
                             }
                         }
                     }
@@ -2242,6 +2458,18 @@ impl AcpClient {
         if update_type == "available_commands_update" {
             if let Some(session) = session_id {
                 self.compactions.advertise(session, update);
+            }
+        }
+        // Free text remains in the owner's encrypted activity, not plaintext logs.
+        if self.kimi {
+            match update_type {
+                "tool_call" => return true,
+                "agent_message_chunk"
+                | "agent_thought_chunk"
+                | "tool_call_update"
+                | "plan"
+                | "available_commands_update" => return false,
+                _ => {}
             }
         }
         match update_type {
@@ -2314,10 +2542,12 @@ impl AcpClient {
                 if let Some(goose_meta) = meta {
                     match goose_meta.get("activeRunId") {
                         Some(serde_json::Value::String(run_id)) => {
-                            tracing::debug!(
-                                target: "acp::update",
-                                "session_info_update: activeRunId={run_id}"
-                            );
+                            if !self.kimi {
+                                tracing::debug!(
+                                    target: "acp::update",
+                                    "session_info_update: activeRunId={run_id}"
+                                );
+                            }
                             self.active_run_id = Some(run_id.clone());
                         }
                         Some(serde_json::Value::Null) => {
@@ -2339,7 +2569,11 @@ impl AcpClient {
             }
             "keepalive" => false,
             other => {
-                tracing::debug!(target: "acp::update", "session/update: {other}");
+                if self.kimi {
+                    tracing::debug!(target: "acp::update", "unrecognized Kimi session update");
+                } else {
+                    tracing::debug!(target: "acp::update", "session/update: {other}");
+                }
                 false
             }
         }
@@ -2431,15 +2665,20 @@ impl AcpClient {
     /// The request `id` is stored as `serde_json::Value` to support both numeric
     /// and string IDs per JSON-RPC 2.0.
     async fn handle_permission_request(&mut self, msg: &serde_json::Value) -> Result<(), AcpError> {
+        if self.kimi && self.status_capture.is_none() {
+            return self.handle_kimi_permission_request(msg).await;
+        }
         // Extract id as a Value — JSON-RPC 2.0 allows both numeric and string IDs.
         let id = msg
             .get("id")
             .cloned()
             .ok_or_else(|| AcpError::Protocol("permission request missing id".into()))?;
 
-        if self.status_capture.as_ref().is_some_and(|capture| {
-            msg["params"]["sessionId"].as_str() == Some(capture.session.as_str())
-        }) {
+        if (self.kimi && self.status_capture.is_some())
+            || self.status_capture.as_ref().is_some_and(|capture| {
+                msg["params"]["sessionId"].as_str() == Some(capture.session.as_str())
+            })
+        {
             if let Some(capture) = &mut self.status_capture {
                 capture.invalid = true;
             }
@@ -2540,7 +2779,16 @@ impl AcpClient {
             }
         }
         if stop_reason == StopReason::EndTurn {
-            provider_failure::check_response(result)?;
+            if self.is_kimi() {
+                if let Err(error) = provider_failure::check_kimi_response(result) {
+                    if let AcpError::KimiFailure(failure) = &error {
+                        self.observe_kimi_failure(failure, "air_v1_session_failure");
+                    }
+                    return Err(error);
+                }
+            } else {
+                provider_failure::check_response(result)?;
+            }
         }
         Ok(stop_reason)
     }

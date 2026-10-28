@@ -530,6 +530,7 @@ async fn busy_one_shot_already_consumed_keeps_restart_gate_and_newer_queue() {
     pool.task_map_mut().insert(
         handle.id(),
         crate::pool::TaskMeta {
+            permission_tx: None,
             agent_index: 1,
             channel_id: Some(scope.channel_id()),
             scope: Some(scope.clone()),
@@ -721,6 +722,7 @@ async fn late_cancelled_result_cannot_requeue_old_batch_after_restart() {
     pool.task_map_mut().insert(
         id,
         crate::pool::TaskMeta {
+            permission_tx: None,
             agent_index: 0,
             channel_id: Some(scope.channel_id()),
             scope: Some(scope.clone()),
@@ -1177,6 +1179,7 @@ async fn retired_worker_health_is_preserved(mode: &str) {
     pool.task_map_mut().insert(
         task_id,
         crate::pool::TaskMeta {
+            permission_tx: None,
             agent_index: 0,
             channel_id: Some(scope.channel_id()),
             scope: Some(scope.clone()),

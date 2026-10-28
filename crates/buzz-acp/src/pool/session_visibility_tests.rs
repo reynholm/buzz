@@ -284,6 +284,7 @@ fn thread_of(channel_id: Uuid, root: &nostr::Event) -> SessionScope {
 
 fn batch(scope: &SessionScope, event: nostr::Event) -> FlushBatch {
     FlushBatch {
+        work: None,
         continuation: None,
         channel_id: scope.channel_id(),
         scope: scope.clone(),

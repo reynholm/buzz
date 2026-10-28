@@ -157,6 +157,13 @@ impl SessionState {
         if matches!(
             error,
             AcpError::Io(_)
+                | AcpError::WorkDeadlinePoisoned
+                | AcpError::WorkCancelledPoisoned
+                | AcpError::PermissionProgressTimeout
+                | AcpError::PermissionConflict
+                | AcpError::PermissionRequired
+                | AcpError::PermissionViewUnavailable
+                | AcpError::PermissionDecisionTimeout
                 | AcpError::WriteTimeout(_)
                 | AcpError::Timeout(_)
                 | AcpError::Protocol(_)

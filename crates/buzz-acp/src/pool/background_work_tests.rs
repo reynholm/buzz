@@ -18,9 +18,16 @@ mod stall_tests;
 mod real_codex_stall_tests;
 
 async fn worker(index: usize) -> OwnedAgent {
+    owned_worker(
+        index,
+        AcpClient::spawn("cat", &[], &[], false).await.unwrap(),
+    )
+}
+
+fn owned_worker(index: usize, acp: AcpClient) -> OwnedAgent {
     OwnedAgent {
         index,
-        acp: AcpClient::spawn("cat", &[], &[], false).await.unwrap(),
+        acp,
         state: SessionState::default(),
         model_capabilities: None,
         desired_model: None,
@@ -92,6 +99,7 @@ async fn background_hold_does_not_arm_an_unserviceable_fork_deadline() {
     pool.task_map.insert(
         handle.id(),
         TaskMeta {
+            permission_tx: None,
             agent_index: 0,
             channel_id: Some(Uuid::new_v4()),
             scope: Some(scope()),
@@ -126,57 +134,9 @@ async fn background_hold_does_not_arm_an_unserviceable_fork_deadline() {
     drop(busy);
 }
 
-// The child exits only when the test creates a marker. This exercises actual
-// process enumeration without scheduler-dependent sleep durations.
-const ADAPTER: &str = r#"
-import json, os, subprocess, sys, threading, time
-child = None
-cancelled = threading.Event()
-write_lock = threading.Lock()
-def respond(req, result=None, error=None):
-    reply = {'jsonrpc': '2.0', 'id': req['id']}
-    reply['error' if error else 'result'] = error if error else result
-    with write_lock:
-        print(json.dumps(reply), flush=True)
-def prompt(req):
-    text = str(req['params']['prompt'])
-    collecting = 'background child process' in text
-    if collecting:
-        open(os.path.join(os.path.dirname(sys.argv[1]), 'collection-started'), 'w').close()
-        while os.path.exists(os.path.join(os.path.dirname(sys.argv[1]), 'block-collection')) and not cancelled.is_set():
-            time.sleep(.01)
-        if os.path.exists(os.path.join(os.path.dirname(sys.argv[1]), 'fail-collection')):
-            respond(req, error={'code': -32000, 'message': 'controlled collection failure'})
-            return
-    if collecting and cancelled.is_set():
-        open(os.path.join(os.path.dirname(sys.argv[1]), 'cancel-received'), 'w').close()
-        while os.path.exists(os.path.join(os.path.dirname(sys.argv[1]), 'hold-cancel-ack')):
-            time.sleep(.01)
-    next_group = os.path.join(os.path.dirname(sys.argv[1]), 'next-group')
-    if collecting and os.path.exists(next_group):
-        os.remove(next_group)
-        program = 'import os,sys,time\nwhile not os.path.exists(sys.argv[1]): time.sleep(.01)'
-        subprocess.Popen([sys.executable, '-c', program, os.path.join(os.path.dirname(sys.argv[1]), 'finish-next')])
-    respond(req, {'stopReason': 'cancelled' if cancelled.is_set() else 'end_turn'})
-for line in sys.stdin:
-    req = json.loads(line)
-    with open(sys.argv[2], 'a') as log:
-        log.write(line)
-    if req['method'] == 'initialize':
-        respond(req, {'protocolVersion': 1, 'agentCapabilities': {}})
-    elif req['method'] == 'session/new':
-        respond(req, {'sessionId': 'original-session'})
-    elif req['method'] == 'session/prompt':
-        if child is None:
-            program = 'import os,sys,time\nwhile not os.path.exists(sys.argv[1]): time.sleep(.01)'
-            child = subprocess.Popen([sys.executable, '-c', program, sys.argv[1]])
-        cancelled.clear()
-        threading.Thread(target=prompt, args=(req,)).start()
-    elif req['method'] == 'session/cancel':
-        cancelled.set()
-    elif 'id' in req:
-        respond(req, {})
-"#;
+#[path = "background_adapter_fixture.rs"]
+mod adapter_fixture;
+use adapter_fixture::background_adapter;
 
 pub(crate) async fn started_background_turn(
     max_turns: u32,
@@ -193,6 +153,7 @@ pub(crate) async fn started_background_turn(
             channel_id: Uuid::new_v4(),
         },
         false,
+        false,
     )
     .await
 }
@@ -201,6 +162,7 @@ async fn started_background_turn_in_scope(
     max_turns: u32,
     scope: SessionScope,
     dm: bool,
+    kimi: bool,
 ) -> (
     AgentPool,
     EventQueue,
@@ -215,7 +177,7 @@ async fn started_background_turn_in_scope(
         &[
             "-u".into(),
             "-c".into(),
-            ADAPTER.into(),
+            background_adapter(kimi),
             dir.path().join("finish").to_string_lossy().into(),
             dir.path().join("requests").to_string_lossy().into(),
         ],
@@ -230,6 +192,15 @@ async fn started_background_turn_in_scope(
         .sign_with_keys(&Keys::generate())
         .unwrap();
     let mut queue = EventQueue::new(DedupMode::Queue);
+    if kimi {
+        queue = queue.with_kimi_recovery(
+            crate::queue::RecoveryPolicy {
+                delays: vec![Duration::from_millis(1)],
+                ..Default::default()
+            },
+            dir.path().to_str().unwrap(),
+        );
+    }
     queue.push(QueuedEvent {
         channel_id: scope.channel_id(),
         scope: scope.clone(),
@@ -239,6 +210,9 @@ async fn started_background_turn_in_scope(
         edit: None,
     });
     let mut ctx = tests::make_prompt_context_no_owner();
+    if kimi {
+        ctx.permission_mode = crate::config::PermissionMode::BypassPermissions;
+    }
     // Deterministic local relay rejection: no network retries or credentials.
     // Missing optional channel/profile metadata is allowed; an authoritative
     // project lookup on known metadata will exercise the failure path below.
@@ -303,6 +277,7 @@ async fn started_background_turn_in_scope(
     pool.task_map.clear();
     queue.mark_complete(&scope);
     pool.return_agent(result.agent);
+    pool.protect_background_work(&mut queue);
     assert!(pool.has_runtime_hold());
     (pool, queue, scope, dir, ctx)
 }
@@ -589,6 +564,9 @@ pub(crate) fn apply_result(
     );
 }
 
+#[path = "kimi_background_tests.rs"]
+mod kimi_background_tests;
+
 fn last_prompt(dir: &tempfile::TempDir) -> serde_json::Value {
     std::fs::read_to_string(dir.path().join("requests"))
         .unwrap()
@@ -616,7 +594,7 @@ async fn background_ready_collection_survives_message_in_channel_thread_and_dm()
         ),
     ] {
         let (mut pool, mut queue, scope, dir, ctx) =
-            started_background_turn_in_scope(0, scope, dm).await;
+            started_background_turn_in_scope(0, scope, dm, false).await;
         let original = pool.runtime_holds[&0]
             .continuation
             .as_ref()
@@ -1125,7 +1103,7 @@ async fn background_lost_prompt_task_releases_pool_side_hold_before_respawn() {
 async fn background_observer_cancel_after_ordinary_control_never_resumes_collection() {
     for ordinary in [ControlSignal::Steer, ControlSignal::Interrupt] {
         let (mut pool, mut queue, scope, dir, ctx) =
-            started_background_turn_in_scope(0, scope(), false).await;
+            started_background_turn_in_scope(0, scope(), false, false).await;
         finish_child(&mut pool, &mut queue, &dir).await;
         std::fs::write(dir.path().join("block-collection"), "wait").unwrap();
         std::fs::write(dir.path().join("hold-cancel-ack"), "wait").unwrap();

@@ -11,6 +11,14 @@ struct Failure {
 }
 
 pub(super) fn check_response(result: &serde_json::Value) -> Result<(), AcpError> {
+    check_response_for_adapter(result, false)
+}
+
+pub(super) fn check_kimi_response(result: &serde_json::Value) -> Result<(), AcpError> {
+    check_response_for_adapter(result, true)
+}
+
+fn check_response_for_adapter(result: &serde_json::Value, kimi: bool) -> Result<(), AcpError> {
     let Some(air) = result.pointer("/_meta/jetbrains/air") else {
         return Ok(());
     };
@@ -29,6 +37,14 @@ pub(super) fn check_response(result: &serde_json::Value) -> Result<(), AcpError>
         "error" if !failure.title.trim().is_empty() => {
             let auth_required = failure.category == "access"
                 && failure.actions.iter().any(|action| action == "login");
+            if kimi {
+                return Err(AcpError::KimiFailure(
+                    super::kimi_recovery::KimiFailure::from_session_failure(
+                        failure.title.trim(),
+                        auth_required,
+                    ),
+                ));
+            }
             // Preserve useful provider context without allowing a large wire
             // payload to multiply into queue logs and retry-exhaustion notices.
             let title: String = failure.title.trim().chars().take(2048).collect();

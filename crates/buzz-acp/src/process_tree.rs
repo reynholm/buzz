@@ -90,6 +90,8 @@ pub fn parse_ps_line(line: &str) -> Option<(u32, u32, String)> {
 /// A single process snapshot, shared across a complete classification pass.
 #[derive(Default)]
 pub struct ProcessTree {
+    #[cfg(unix)]
+    retirement: Option<retirement::RetirementSnapshot>,
     children: HashMap<u32, Vec<ChildProcess>>,
     resident_helpers: HashSet<u32>,
     snapshot_helpers: HashSet<u32>,
@@ -106,7 +108,19 @@ pub(crate) struct ProcessInstance {
     command: String,
 }
 
+impl ProcessInstance {
+    /// Exec changes a command without creating a new PID birth.
+    pub(crate) fn same_birth(&self, other: &Self) -> bool {
+        self.birth == other.birth
+    }
+}
+
 impl ProcessTree {
+    /// Process-group proof from the same native enumeration as classification.
+    #[cfg(unix)]
+    pub(crate) fn retirement_snapshot(&self) -> Option<&retirement::RetirementSnapshot> {
+        self.retirement.as_ref()
+    }
     /// Executable basename only: arguments can contain credentials or task data.
     pub(crate) fn safe_command(&self, pid: u32) -> String {
         self.children
@@ -260,16 +274,35 @@ impl ProcessTree {
 pub fn snapshot() -> Option<ProcessTree> {
     let mut command = tokio::process::Command::new("/bin/ps");
     command
-        .args(["-ww", "-axo", "pid=,ppid=,stat=,lstart=,command="])
+        .args(["-ww", "-axo", "pid=,ppid=,pgid=,stat=,lstart=,command="])
         .env("LC_ALL", "C");
     let output = bounded_output(
         command,
         std::time::Duration::from_millis(250),
         4 * 1024 * 1024,
     )?;
-    let tree = parse_instance_snapshot(&output)?;
+    let tree = parse_native_snapshot(&output)?;
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let tree = codex_helpers::classify(tree);
+    Some(tree)
+}
+
+#[cfg(unix)]
+fn parse_native_snapshot(output: &str) -> Option<ProcessTree> {
+    let retirement = retirement::RetirementSnapshot::parse_instances(output)?;
+    let mut normalized = String::new();
+    for line in output.lines().filter(|line| !line.trim().is_empty()) {
+        let mut fields = line.split_whitespace();
+        let pid = fields.next()?;
+        let parent = fields.next()?;
+        fields.next()?.parse::<u32>().ok()?;
+        normalized.push_str(&format!(
+            "{pid} {parent} {}\n",
+            fields.collect::<Vec<_>>().join(" ")
+        ));
+    }
+    let mut tree = parse_instance_snapshot(&normalized)?;
+    tree.retirement = Some(retirement);
     Some(tree)
 }
 

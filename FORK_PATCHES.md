@@ -2762,7 +2762,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/acp.rs`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Route standard usage_update occupancy to the status binding of its own session ID; the harness owns BUZZ_SESSION_STATUS_DIR in adapter spawns. Negotiate structured terminal provider failures and propagate them through the existing queue retry and authentication paths.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Route standard usage_update occupancy to the status binding of its own session ID; the harness owns BUZZ_SESSION_STATUS_DIR in adapter spawns. Negotiate structured terminal provider failures and propagate them through the existing queue retry and authentication paths. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `false`.
 
@@ -2784,7 +2784,13 @@ New module: `false`.
 - Invocation: `crates/buzz-acp/src/acp.rs` → `prepare_new`; exact call `self.compactions.prepare_new();`; behavior test `compact_uses_pre_ack_new_session_advertisement_after_ordinary_completion`; verify `cargo test --locked -p buzz-acp --lib compact_uses_pre_ack_new_session_advertisement_after_ordinary_completion -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `complete_new`; exact call `self.compactions.complete_new(generation, returned_session);`; behavior test `failed_or_malformed_new_response_cannot_adopt_pre_ack_advertisement`; verify `cargo test --locked -p buzz-acp --lib failed_or_malformed_new_response_cannot_adopt_pre_ack_advertisement -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `check_response`; exact call `provider_failure::check_response(result)?;`; behavior test `provider_failure_is_an_application_error_and_same_pipe_can_retry`; verify `cargo test -p buzz-acp --lib provider_failure -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `trace_outgoing`; exact call `self.trace_outgoing(&msg, false);`; behavior test `kimi_plaintext_logs_keep_structure_without_copying_private_request_content`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `decode_agent_error`; exact call `return Err(self.decode_agent_error(error));`; behavior test `kimi_structured_failure_survives_generic_rpc_message_without_secret_logging`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `handle_kimi_permission_request`; exact call `return self.handle_kimi_permission_request(msg).await;`; behavior test `kimi_permission_from_another_session_is_never_approved`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `trace_outgoing`; exact call `self.trace_outgoing(&msg, false);
+                            match self.write_ndjson(&msg).await {`; behavior test `kimi_native_steer_keeps_safe_logs_and_ack_variants`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 - Verify: `just ci`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/acp/launch.rs`
 
@@ -2820,13 +2826,14 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/config.rs`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `false`.
 
 - Required symbol: `BUZZ_ACP_SESSION_STORE_DIR`
 - Required symbol: `BUZZ_ACP_NO_SESSION_RESUME`
 - Verify: `just ci`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/edit_routing.rs`
 
@@ -2846,7 +2853,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/lib.rs`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Preserve the heartbeat collection call with a textual drift guard; full live-service-loop behavioral mutation coverage is not claimed. Refresh idle clocks when a non-heartbeat prompt result is handled (port of block/buzz#7173). Enable session status once per harness and retire status on owner rotate and channel removal; forward the status directory to the managed MCP server. Schedule one asynchronous shared process poll, fence its application, and continue capacity dispatch across unavailable scopes. Main-loop select wiring is textually guarded; full relay-loop mutation coverage is not claimed.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Preserve the heartbeat collection call with a textual drift guard; full live-service-loop behavioral mutation coverage is not claimed. Refresh idle clocks when a non-heartbeat prompt result is handled (port of block/buzz#7173). Enable session status once per harness and retire status on owner rotate and channel removal; forward the status directory to the managed MCP server. Schedule one asynchronous shared process poll, fence its application, and continue capacity dispatch across unavailable scopes. Main-loop select wiring is textually guarded; full relay-loop mutation coverage is not claimed. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `false`.
 
@@ -2894,10 +2901,11 @@ New module: `false`.
                                         &mut pool, &mut queue, &ctx.session_controls, &scope, observer.as_ref(),
                                     );`; behavior test `uncertain_owner_cancel_has_no_chat_sender_and_fences_held_feedback`; verify `cargo test -p buzz-acp --lib uncertain_owner_cancel_has_no_chat_sender_and_fences_held_feedback -- --test-threads=1`
 - Verify: `just ci`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/pool.rs`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Expose already-known DM metadata for display-only restart activity routing.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Expose already-known DM metadata for display-only restart activity routing. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `false`.
 
@@ -2935,15 +2943,18 @@ New module: `false`.
         }
         .discard_retired_output();`; behavior test `retired_adapter_death_replaces_the_worker_through_result_handling`; verify `cargo test -p buzz-acp --lib retired_adapter_death_replaces_the_worker_through_result_handling -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `prepare_background_return`; exact call `agent.prepare_background_return();`; behavior test `completed_empty_turn_prepares_observation_before_listener_return`; verify `cargo test --locked -p buzz-acp --lib completed_empty_turn_prepares_observation_before_listener_return -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `confirmed_report`; exact call `crate::managed_work::confirmed_report(&ctx.rest_client, work).await`; behavior test `kimi_confirmed_report_prevents_any_new_provider_rpc`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 - Verify: `just ci`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/queue.rs`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `false`.
 
 - Verify: `just ci`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/recovery_wake.rs`
 
@@ -5480,11 +5491,12 @@ New module: `false`.
 
 ## `crates/buzz-acp/TESTING.md`
 
-Document original-session collection, bounded ordinary preemption and bundled agent/MCP/CLI delivery runtime fixtures.
+Document original-session collection, bounded ordinary preemption and bundled agent/MCP/CLI delivery runtime fixtures. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `false`.
 
 - Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/acp/process_tracking_tests.rs`
 
@@ -5507,7 +5519,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/pool/background_work.rs`
 
-Retain collection authority in the original worker/session, poll child exit independently of pool sleep, and compose stable-key final-report instructions. Release uncertainty-only holds without inventing collection; retain observed exit evidence across Unknown. Preserve completed-task evidence across service-only snapshots and remove only proven service instances.
+Retain collection authority in the original worker/session, poll child exit independently of pool sleep, and compose stable-key final-report instructions. Release uncertainty-only holds without inventing collection; retain observed exit evidence across Unknown. Preserve completed-task evidence across service-only snapshots and remove only proven service instances. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
@@ -5523,26 +5535,29 @@ New module: `true`.
 - Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_work_tests -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp --lib background_unknown_then_empty_releases_hold_without_inventing_collection -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp --lib background_observed_then_unknown_then_empty_collects_exactly_once -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/pool/background_work_tests.rs`
 
-Production-dispatch local-process regressions for route/session retention, collection progress under repeated preemption, cancellation, rotation and lost-task cleanup.
+Production-dispatch local-process regressions for route/session retention, collection progress under repeated preemption, cancellation, rotation and lost-task cleanup. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
 - Required symbol: `background_collection_completes_under_repeated_ordinary_preemption`
 - Required symbol: `background_explicit_cancel_after_ordinary_control_never_resumes_collection`
 - Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_work_tests -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/pool/delivery_runtime_tests.rs`
 
-Run actual bundled agent, MCP and CLI processes against a signature-checking mock relay: application-error replay, lost acknowledgments, process restart and concurrency; not real-relay evidence.
+Run actual bundled agent, MCP and CLI processes against a signature-checking mock relay: application-error replay, lost acknowledgments, process restart and concurrency; not real-relay evidence. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
 - Required symbol: `managed_runtime_bundled_agent_publication_then_application_error_retries_one_event`
 - Required symbol: `managed_runtime_killed_after_relay_acceptance_replays_on_new_process`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp managed_runtime_ -- --ignored --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/pool/pi_prompt_tests.rs`
 
@@ -5556,7 +5571,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/process_tree.rs`
 
-Bounded process snapshots and resident-helper classification; macOS/Linux executable confirmation releases completed Codex turns while preserving actual child work. Exact Codex default Bash snapshots remain transient bookkeeping; their ordinary descendants and launchers remain work. Scoped missing executable evidence remains uncertainty while definite descendants remain observable.
+Bounded process snapshots and resident-helper classification; macOS/Linux executable confirmation releases completed Codex turns while preserving actual child work. Exact Codex default Bash snapshots remain transient bookkeeping; their ordinary descendants and launchers remain work. Scoped missing executable evidence remains uncertainty while definite descendants remain observable. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
@@ -5574,6 +5589,7 @@ New module: `true`.
 - Invocation: `crates/buzz-acp/src/acp.rs` → `is_resident_helper`; exact call `self.resident_pids.contains(&child.pid) || tree.is_resident_helper(child)`; behavior test `work_under_late_codex_host_holds_slot_until_child_exits`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `startup_resident_pids`; exact call `self.resident_pids.extend(tree.startup_resident_pids(pid));`; behavior test `codex_snapshot_child_work_survives_late_and_session_capture`; verify `cargo test -p buzz-acp --lib snapshot_helper_tests -- --test-threads=1`
 - Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp process_tree -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/process_tree/snapshot_tests.rs`
 
@@ -5587,7 +5603,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/queue/background.rs`
 
-Keep background collection separate from ordinary messages with stable delivery UUID, original thread/session ownership, finite retries and bounded ordinary preemption.
+Keep background collection separate from ordinary messages with stable delivery UUID, original thread/session ownership, finite retries and bounded ordinary preemption. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
@@ -5596,6 +5612,7 @@ New module: `true`.
 - Required symbol: `background_managed_delivery_key_stays_on_collection_across_error_and_new_message`
 - Invocation: `crates/buzz-acp/src/queue.rs` → `enqueue_continuation`; exact call `self.enqueue_continuation(batch.scope, continuation);`; behavior test `background_collection_completes_under_repeated_ordinary_preemption`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_collection_completes_under_repeated_ordinary_preemption -- --test-threads=1`
 - Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-cli/Cargo.toml`
 
@@ -5608,7 +5625,7 @@ New module: `false`.
 
 ## `crates/buzz-cli/TESTING.md`
 
-Specify managed publisher scope, journal durability and retention, recovery opt-in/upgrade requirements and real versus mock-relay checks. Document session-status enrichment, its absence/failure behavior and its automated checks. Document mixed PDF, ZIP and Markdown attachment checks and authenticated byte comparisons. Document blank message rejection, edit stdin behavior, attachment-only sends and binary regressions.
+Specify managed publisher scope, journal durability and retention, recovery opt-in/upgrade requirements and real versus mock-relay checks. Document session-status enrichment, its absence/failure behavior and its automated checks. Document mixed PDF, ZIP and Markdown attachment checks and authenticated byte comparisons. Document blank message rejection, edit stdin behavior, attachment-only sends and binary regressions. Kimi recovery: support stable managed-report routes and logical-work visibility without changing other adapter policies.
 
 New module: `false`.
 
@@ -5616,10 +5633,11 @@ New module: `false`.
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
 - Verify: `cargo test -p buzz-cli session_status -- --test-threads=1`
 - Verify: `cargo test -p buzz-cli`
+- Verify: `cargo test --locked -p buzz-cli`
 
 ## `crates/buzz-cli/src/commands/delivery.rs`
 
-Lock, validate and fsync a bounded original-report journal before submission; refresh signed recovery stamps and persist only verified canonical receipts while preserving original evidence.
+Lock, validate and fsync a bounded original-report journal before submission; refresh signed recovery stamps and persist only verified canonical receipts while preserving original evidence. Kimi recovery: support stable managed-report routes and logical-work visibility without changing other adapter policies.
 
 New module: `true`.
 
@@ -5631,21 +5649,22 @@ New module: `true`.
 - Invocation: `crates/buzz-cli/src/commands/messages.rs` → `deliver`; exact call `super::delivery::deliver(
                 client,
                 &channel,
-                &reply_to,
+                reply_to.as_deref().unwrap_or_default(),
                 &content,
                 &delivery_key,
                 journal_dir.as_deref(),
                 mentions,
-            )`; behavior test `managed_same_key_changed_text_returns_first_signed_delivery`; verify `cargo test -p buzz-cli managed_same_key_changed_text_returns_first_signed_delivery -- --test-threads=1`
+            )`; behavior test `managed_top_level_route_is_immutable_and_does_not_invent_a_thread`; verify `cargo test --locked -p buzz-cli`
 - Invocation: `crates/buzz-cli/src/commands/delivery.rs` → `submit_event`; exact call `write(&dir, &journal)?;
     let result = client
         .submit_event(submission)`; behavior test `managed_same_key_changed_text_returns_first_signed_delivery`; verify `cargo test -p buzz-cli managed_same_key_changed_text_returns_first_signed_delivery -- --test-threads=1`
 - Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
+- Verify: `cargo test --locked -p buzz-cli`
 
 ## `crates/buzz-cli/src/commands/messages.rs`
 
-Expose messages deliver and preserve original route, stable UUID and signed callback mentions without suppressing ordinary progress or explicit edits. Attach the sender's own best-effort session status to newly prepared kind-9 messages before signing, in the shared send/first-deliver preparation. Emit generic attachments as filename links rather than image markup. Reject blank send, first delivery, edit and diff bodies before building events; preserve attachment-only sends and resolve edit stdin before validation.
+Expose messages deliver and preserve original route, stable UUID and signed callback mentions without suppressing ordinary progress or explicit edits. Attach the sender's own best-effort session status to newly prepared kind-9 messages before signing, in the shared send/first-deliver preparation. Emit generic attachments as filename links rather than image markup. Reject blank send, first delivery, edit and diff bodies before building events; preserve attachment-only sends and resolve edit stdin before validation. Kimi recovery: support stable managed-report routes and logical-work visibility without changing other adapter policies.
 
 New module: `false`.
 
@@ -5667,6 +5686,7 @@ New module: `false`.
 - Verify: `cargo test -p buzz-cli mention -- --test-threads=1`
 - Verify: `cargo test -p buzz-cli session_status -- --test-threads=1`
 - Verify: `cargo test -p buzz-cli`
+- Verify: `cargo test --locked -p buzz-cli`
 
 ## `crates/buzz-cli/src/commands/mod.rs`
 
@@ -5681,7 +5701,7 @@ New module: `false`.
 
 ## `crates/buzz-cli/src/delivery_tests.rs`
 
-Production CLI regressions for same-key replay, namespace/route integrity, concurrency, durable ancestor links, bounded retention/retries and legacy wrapper rejection. Shares its mock relay (palette, upload and HTTP-error modes) with session-status regressions.
+Production CLI regressions for same-key replay, namespace/route integrity, concurrency, durable ancestor links, bounded retention/retries and legacy wrapper rejection. Shares its mock relay (palette, upload and HTTP-error modes) with session-status regressions. Kimi recovery: support stable managed-report routes and logical-work visibility without changing other adapter policies.
 
 New module: `true`.
 
@@ -5690,6 +5710,7 @@ New module: `true`.
 - Required symbol: `managed_existing_nested_directory_requires_ancestor_link_sync_before_publication`
 - Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
 - Verify: `cargo test -p buzz-cli session_status -- --test-threads=1`
+- Verify: `cargo test --locked -p buzz-cli`
 
 ## `crates/buzz-cli/src/error.rs`
 
@@ -5702,7 +5723,7 @@ New module: `false`.
 
 ## `crates/buzz-cli/src/lib.rs`
 
-Define messages deliver arguments and compile production-publisher regression tests. Configure the client with the harness-advertised session-status directory and compile session-status regressions. Compile the attachment formatter and production upload regressions. Document stdin support for message edits.
+Define messages deliver arguments and compile production-publisher regression tests. Configure the client with the harness-advertised session-status directory and compile session-status regressions. Compile the attachment formatter and production upload regressions. Document stdin support for message edits. Kimi recovery: support stable managed-report routes and logical-work visibility without changing other adapter policies.
 
 New module: `false`.
 
@@ -5716,6 +5737,7 @@ New module: `false`.
 - Verify: `cargo test -p buzz-cli session_status -- --test-threads=1`
 - Verify: `cargo test -p buzz-cli --test session_status_env`
 - Verify: `cargo test -p buzz-cli`
+- Verify: `cargo test --locked -p buzz-cli`
 
 ## `crates/buzz-cli/src/client.rs`
 
@@ -6020,7 +6042,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/pool/resident_helper_tests.rs`
 
-Real local ACP/process regressions for sixth-thread admission, nested child exit and original-session collection on macOS/Linux; Linux executable unlink and symlink boundaries.
+Real local ACP/process regressions for sixth-thread admission, nested child exit and original-session collection on macOS/Linux; Linux executable unlink and symlink boundaries. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
@@ -6031,6 +6053,7 @@ New module: `true`.
 - Required symbol: `symlink_named_codex_host_does_not_hide_ordinary_work`
 - Required symbol: `unlinked_codex_host_does_not_retain_finished_turn`
 - Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `desktop/src/features/messages/lib/useComposerAutofocus.ts`
 
@@ -6109,7 +6132,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/pool/session_continuity.rs`
 
-Resume or create provider sessions through bounded claim/RPC/commit rounds and preserve delivery state. Retire status generations on the existing discard and depart paths. Keep acquisition fallback exhaustive for the store control error vocabulary.
+Resume or create provider sessions through bounded claim/RPC/commit rounds and preserve delivery state. Retire status generations on the existing discard and depart paths. Keep acquisition fallback exhaustive for the store control error vocabulary. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
@@ -6127,10 +6150,11 @@ New module: `true`.
 - Invocation: `crates/buzz-acp/src/pool/session_continuity.rs` → `recycled_reason`; exact call `ctx.session_controls.recycled_reason(scope)`; behavior test `checked_retirement_neighbors_resume_or_start_new_with_recycled_reason`; verify `cargo test -p buzz-acp --lib checked_retirement_neighbors_resume_or_start_new_with_recycled_reason -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp --lib retired_successful_acquisition_keeps_worker_health_and_fences_old_state -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/pool/session_continuity_tests.rs`
 
-Production acquisition, delivery delta, rotation, crash and idle-sleep persistence regressions. Supply default new control fields in existing legacy-record fixtures.
+Production acquisition, delivery delta, rotation, crash and idle-sleep persistence regressions. Supply default new control fields in existing legacy-record fixtures. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
@@ -6143,6 +6167,7 @@ New module: `true`.
 - Required symbol: `acquisition_resumes_canonical_same_community_after_restart`
 - Required symbol: `failed_channel_removal_during_sleep_never_resumes_after_readd`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/pool/first_mention.rs`
 
@@ -6395,7 +6420,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/pool/session_visibility_tests.rs`
 
-Production run_prompt_task status lifecycle, usage routing, history coverage and spawn/MCP environment regressions.
+Production run_prompt_task status lifecycle, usage routing, history coverage and spawn/MCP environment regressions. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
@@ -6414,6 +6439,7 @@ New module: `true`.
 - Required symbol: `every_spawn_path_and_managed_mcp_get_the_current_status_dir`
 - Required symbol: `fallback_codes_outside_the_allowlist_become_unknown`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/runtime.rs`
 
@@ -6592,11 +6618,12 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/pool/session_control_runtime_tests.rs`
 
-Production-seam regressions for authorized session controls and bounded selected history
+Production-seam regressions for authorized session controls and bounded selected history Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/pool/session_control_history_tests.rs`
 
@@ -6627,7 +6654,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/acp/terminate.rs`
 
-Checked bounded Unix process-group and Windows contained-job retirement
+Checked bounded Unix process-group and Windows contained-job retirement Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
@@ -6639,7 +6666,9 @@ New module: `true`.
 - Invocation: `crates/buzz-acp/src/acp/terminate.rs` → `verified_groups`; exact call `let mut groups = first.verified_groups(&last, pid, own_group);`; behavior test `checked_termination_kills_snapshotted_separate_shell_group`; verify `cargo test -p buzz-acp --lib checked_termination_kills_snapshotted_separate_shell_group -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/acp/terminate.rs` → `probe_alive`; exact call `probe_alive(killpg(Pid::from_raw(group), None))`; behavior test `permission_denied_process_group_is_alive`; verify `cargo test -p buzz-acp --lib permission_denied_process_group_is_alive -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/acp/terminate.rs` → `worker_present`; exact call `snapshot().await.filter(|tree| tree.worker_present(pid))`; behavior test `checked_termination_missing_worker_in_initial_snapshot_never_starts`; verify `cargo test -p buzz-acp --lib checked_termination_missing_worker_in_initial_snapshot_never_starts -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp/terminate.rs` → `covers_observed`; exact call `first.covers_observed(&last, pid, &self.observed_background_instances)`; behavior test `kimi_missing_observed_descendant_proof_blocks_a_clean_retirement`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/acp/terminate_tests.rs`
 
@@ -6651,7 +6680,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/process_tree/retirement.rs`
 
-Bounded PGID snapshots and escaped-process identity validation
+Bounded PGID snapshots and escaped-process identity validation Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
@@ -6659,14 +6688,16 @@ New module: `true`.
 - Required symbol: `fn verified_groups`
 - Required symbol: `fn snapshot()`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/process_tree/retirement_tests.rs`
 
-Process-group parsing, harness exclusion and PID identity regressions
+Process-group parsing, harness exclusion and PID identity regressions Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/pool/session_retirement.rs`
 
@@ -6683,11 +6714,12 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/pool/session_retirement_tests.rs`
 
-Pool reservation, foreign foreground/background and task-return retirement regressions
+Pool reservation, foreign foreground/background and task-return retirement regressions Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/pool/session_retirement_runtime_tests.rs`
 
@@ -6745,7 +6777,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/worker_retirement.rs`
 
-Nonblocking checked worker replacement and retained ownership on uncertainty Explicitly drain parked and cancellation-returned original ownership at orderly shutdown using retained checked evidence.
+Nonblocking checked worker replacement and retained ownership on uncertainty Explicitly drain parked and cancellation-returned original ownership at orderly shutdown using retained checked evidence. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
@@ -6763,6 +6795,7 @@ New module: `true`.
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp --lib retirement_shutdown_retries_original_parked_after_snapshot_failure -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp --lib retirement_shutdown_drains_original_returned_by_aborted_guard -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/session_controls/orphans.rs`
 
@@ -6786,11 +6819,12 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/pool/session_retirement_review_tests.rs`
 
-Actual executor no-resume neighbor race and panic escaped-group false-Clean regressions
+Actual executor no-resume neighbor race and panic escaped-group false-Clean regressions Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/acp/windows_retirement_tests.rs`
 
@@ -6802,11 +6836,12 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/pool/portable_retirement_tests.rs`
 
-Portable actual fake-ACP all-target controller/store/foreign-return gates
+Portable actual fake-ACP all-target controller/store/foreign-return gates Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
 - Verify: `python3 scripts/fork/sync.py validate`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `scripts/check-acp-retirement.py`
 
@@ -7142,13 +7177,14 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/pool/compaction_runtime_tests.rs`
 
-Exercise authorized controller admission, exact-owner scheduling, lazy wake, collection protection, bounded pending work and lifecycle termination. Regress actual cached-worker control-dispatch observer envelope routing.
+Exercise authorized controller admission, exact-owner scheduling, lazy wake, collection protection, bounded pending work and lifecycle termination. Regress actual cached-worker control-dispatch observer envelope routing. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
 - Required symbol: `compact_cached_worker_replaces_previous_observer_scope`
 - Required symbol: `mod resume_policy_tests;`
 - Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/pool/compaction_resume_policy_tests.rs`
 
@@ -7193,7 +7229,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/control_tasks.rs`
 
-Dispatch typed control tasks through shared worker ownership and retirement, with separate result accounting and completion activity.
+Dispatch typed control tasks through shared worker ownership and retirement, with separate result accounting and completion activity. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
@@ -7205,6 +7241,7 @@ New module: `true`.
 - Invocation: `crates/buzz-acp/src/control_tasks.rs` → `run_compaction_task`; exact call `run_compaction_task(agent, job, ctx_clone, control_rx).await`; behavior test `compact_waits_for_exact_busy_owner_without_cancel_or_fork`; verify `cargo test --locked -p buzz-acp --lib compact_waits_for_exact_busy_owner_without_cancel_or_fork -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/control_tasks.rs` → `run_compaction_task`; exact call `run_compaction_task(agent, job, ctx_clone, control_rx).await`; behavior test `compact_valid_admission_crosses_wire_expiry_while_waiting_for_owner`; verify `cargo test --locked -p buzz-acp --lib compact_valid_admission_crosses_wire_expiry_while_waiting_for_owner -- --test-threads=1`
 - Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/session_controls/receipt_writes.rs`
 
@@ -7413,24 +7450,27 @@ New module: `true`.
 
 ## `desktop/src/features/agents/ui/agentSessionTranscript.ts`
 
-Consume the typed compaction lifecycle projection in actual incremental and rebuilt transcripts.
+Consume the typed compaction lifecycle projection in actual incremental and rebuilt transcripts. Kimi recovery: support stable managed-report routes and logical-work visibility without changing other adapter policies.
 
 New module: `false`.
 
 - Required symbol: `compactions: emptyCompactionActivityState(),`
 - Required symbol: `updateType !== "compaction_update"`
 - Invocation: `desktop/src/features/agents/ui/agentSessionTranscript.ts` → `processCompactionActivity`; exact call `processCompactionActivity(d.compactions, event, d.items)`; behavior test `production transcript mutates one compaction row to failed`; verify `node --import ./desktop/test-loader.mjs --experimental-strip-types --test desktop/src/features/agents/ui/agentSessionCompaction.test.mjs desktop/src/features/agents/observerCompaction.test.mjs`
+- Invocation: `desktop/src/features/agents/ui/agentSessionTranscript.ts` → `workStateTranscriptItem`; exact call `const workItem = workStateTranscriptItem(event, d.itemsById);`; behavior test `logical work states remain visible after the provider turn ends`; verify `pnpm --dir desktop test`
 - Verify: `node --import ./desktop/test-loader.mjs --experimental-strip-types --test desktop/src/features/agents/ui/agentSessionCompaction.test.mjs desktop/src/features/agents/observerCompaction.test.mjs`
+- Verify: `pnpm --dir desktop test`
 
 ## `desktop/src/features/agents/ui/agentSessionTypes.ts`
 
-Carry typed compaction state on existing lifecycle items and a scoped legacy-hook correlation key.
+Carry typed compaction state on existing lifecycle items and a scoped legacy-hook correlation key. Kimi recovery: support stable managed-report routes and logical-work visibility without changing other adapter policies.
 
 New module: `false`.
 
 - Required symbol: `compaction?: CompactionActivity;`
 - Required symbol: `compactionScope?: string;`
 - Verify: `node --import ./desktop/test-loader.mjs --experimental-strip-types --test desktop/src/features/agents/ui/agentSessionCompaction.test.mjs desktop/src/features/agents/observerCompaction.test.mjs`
+- Verify: `pnpm --dir desktop test`
 
 ## `desktop/src/features/agents/ui/agentSessionCompaction.test.mjs`
 
@@ -7545,7 +7585,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/worker_retirement_shutdown_tests.rs`
 
-Production orderly-shutdown regressions for parked originals, abort guard returns and reused original retirement evidence.
+Production orderly-shutdown regressions for parked originals, abort guard returns and reused original retirement evidence. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
@@ -7557,6 +7597,7 @@ New module: `true`.
 - Verify: `cargo test -p buzz-acp --lib retirement_shutdown_drains_original_returned_by_aborted_guard -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp --lib retirement_shutdown_reuses_original_evidence_after_parent_reaped -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp --lib retirement_shutdown_retains_uncertain_original_without_fabricating_clean -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/pool/background_uncertainty_tests.rs`
 
@@ -7960,7 +8001,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/status_tasks.rs`
 
-Typed finite-priority restart-status scheduling without human queue mutation or unrelated-scope blocking. Maintain ordinary scoped typing activity through the status turn and clear only its scope on completion.
+Typed finite-priority restart-status scheduling without human queue mutation or unrelated-scope blocking. Maintain ordinary scoped typing activity through the status turn and clear only its scope on completion. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
@@ -7976,6 +8017,7 @@ New module: `true`.
         );`; behavior test `checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap`; verify `cargo test -p buzz-acp --lib checked_restart_depths_publish_one_signed_status_and_resume_without_bootstrap -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/status_tasks.rs` → `typing_channels.remove`; exact call `typing_channels.remove(&result.job.saved.scope);`; behavior test `restart_status_completion_clears_only_its_own_activity`; verify `cargo test -p buzz-acp --lib restart_status_completion_clears_only_its_own_activity -- --test-threads=1`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/pool/restart_status.rs`
 
@@ -8157,21 +8199,23 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/acp/provider_failure.rs`
 
-Translate negotiated Air v1 terminal provider failures into bounded, classified ACP application errors
+Translate negotiated Air v1 terminal provider failures into bounded, classified ACP application errors Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
 - Required symbol: `pub(super) fn check_response(`
 - Verify: `cargo test -p buzz-acp --lib provider_failure -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/acp/provider_failure_tests.rs`
 
-Exercise provider failure negotiation, error propagation, recovery, cancellation and authentication over real ACP subprocess pipes
+Exercise provider failure negotiation, error propagation, recovery, cancellation and authentication over real ACP subprocess pipes Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
 
 New module: `true`.
 
 - Required symbol: `async fn provider_failure_is_an_application_error_and_same_pipe_can_retry(`
 - Verify: `cargo test -p buzz-acp --lib provider_failure -- --test-threads=1`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/pool/provider_failure_tests.rs`
 
@@ -9293,3 +9337,212 @@ New module: `true`.
 - Required symbol: `os::unix::fs::{OpenOptionsExt, PermissionsExt}`
 - Verify: `cargo test -p buzz-test-client --bin blue_green_probe`
 - Verify: `just ci`
+
+## `crates/buzz-acp/KIMI_RECOVERY.md`
+
+Document bounded logical-work recovery, permission decisions, uncertain effects, managed delivery and provider acceptance boundaries
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/src/acp/kimi_diagnostics.rs`
+
+Project Kimi plaintext wire diagnostics to bounded structural fields while preserving the owner-encrypted concrete request view
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/src/acp/kimi_diagnostics_tests.rs`
+
+Cover Kimi logical-work, permission, retirement or managed-delivery invariants through production seams and deterministic peers
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/src/acp/kimi_manual_permission_tests.rs`
+
+Cover Kimi logical-work, permission, retirement or managed-delivery invariants through production seams and deterministic peers
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/src/acp/kimi_permission.rs`
+
+Bind actual Kimi permission requests to active prompt, generation and offered options; bound decision, pipe write and post-response progress
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/src/acp/kimi_permission/controls.rs`
+
+Validate owner-signed, command-first permission decisions against the current route and random request token
+
+New module: `true`.
+
+- Required symbol: `return Err(AcpError::PermissionViewUnavailable);`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/src/acp/kimi_permission_tests.rs`
+
+Cover Kimi logical-work, permission, retirement or managed-delivery invariants through production seams and deterministic peers
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/src/acp/kimi_recovery.rs`
+
+Preserve safe structured Kimi error identity with positive transient classification and authentication precedence
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/src/acp/kimi_recovery_tests.rs`
+
+Cover Kimi logical-work, permission, retirement or managed-delivery invariants through production seams and deterministic peers
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/src/acp/kimi_retirement_tests.rs`
+
+Cover Kimi logical-work, permission, retirement or managed-delivery invariants through production seams and deterministic peers
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/src/config/kimi_recovery.rs`
+
+Parse and bound configurable Kimi retry counts, delays, work budget and permission deadlines
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/src/managed_work.rs`
+
+Verify bounded signed delivery-journal snapshots and publish terminal notices through the original CLI delivery key and route
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/src/managed_work_tests.rs`
+
+Cover Kimi logical-work, permission, retirement or managed-delivery invariants through production seams and deterministic peers
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/src/pool/background_adapter_fixture.rs`
+
+Share deterministic background ACP peers while keeping provider observations separate from synthetic failures
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/src/pool/kimi_background_tests.rs`
+
+Cover Kimi logical-work, permission, retirement or managed-delivery invariants through production seams and deterministic peers
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/src/pool/kimi_controls.rs`
+
+Deliver permission decisions only to the current task, scope, route and control generation
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/src/pool/kimi_runtime_tests.rs`
+
+Cover Kimi logical-work, permission, retirement or managed-delivery invariants through production seams and deterministic peers
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/src/queue/recovery.rs`
+
+Retain original logical work, delivery identity, bounded independent jitter and revocation across retry and collection
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/src/queue/recovery_observer.rs`
+
+Emit safe logical-work state transitions correlated with the original route and publication identity
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/src/queue/recovery_state.rs`
+
+Track shared cancellation, terminality and uncertain external effects without claiming tool exactly-once execution
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/src/queue/recovery_tests.rs`
+
+Cover Kimi logical-work, permission, retirement or managed-delivery invariants through production seams and deterministic peers
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/test-fixtures/kimi/README.md`
+
+Distinguish normalized observed permission frames from synthetic OAuth and permission fault regressions
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `crates/buzz-acp/test-fixtures/kimi/permission_request.json`
+
+Preserve the normalized observed Kimi permission option IDs and request shape without credentials
+
+New module: `true`.
+
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+
+## `desktop/src/features/agents/ui/agentSessionTranscriptHelpers.ts`
+
+Keep pure transcript payload helpers separate from state dispatch within the repository file-size limit
+
+New module: `false`.
+
+- Verify: `pnpm --dir desktop test`
+
+## `desktop/src/features/agents/ui/agentWorkStateTranscript.test.mjs`
+
+Cover visible logical-work states, stable cards, stale updates and rejection of unsafe diagnostic reasons
+
+New module: `true`.
+
+- Verify: `pnpm --dir desktop test`
+
+## `desktop/src/features/agents/ui/agentWorkStateTranscript.ts`
+
+Render bounded known logical-work states and safe reasons while rejecting stale sequence updates
+
+New module: `true`.
+
+- Verify: `pnpm --dir desktop test`

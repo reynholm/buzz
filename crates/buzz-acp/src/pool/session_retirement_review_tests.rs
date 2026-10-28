@@ -166,6 +166,7 @@ async fn retirement_foreground_panic_cannot_attest_replacement_or_forget_origina
     pool.task_map_mut().insert(
         abort.id(),
         crate::pool::TaskMeta {
+            permission_tx: None,
             agent_index: 0,
             channel_id: Some(scope.channel_id()),
             scope: Some(scope.clone()),

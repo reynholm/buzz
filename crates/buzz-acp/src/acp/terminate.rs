@@ -1,5 +1,8 @@
 //! Checked, bounded retirement, separate from crash/shutdown cleanup.
 use super::AcpClient;
+#[cfg(all(test, unix))]
+#[path = "kimi_retirement_tests.rs"]
+mod kimi_retirement_tests;
 #[cfg(unix)]
 use std::time::Duration;
 
@@ -26,6 +29,8 @@ pub enum TerminationReport {
 #[derive(Default)]
 pub(super) struct TerminationState {
     pub(super) checked: bool,
+    #[cfg(unix)]
+    evidence_incomplete: bool,
     #[cfg(windows)]
     pub(super) windows: super::windows_job::Retirement,
     #[cfg(unix)]
@@ -35,6 +40,45 @@ pub(super) struct TerminationState {
 }
 
 impl AcpClient {
+    /// Retain evidence while the owned Kimi leader is alive. After EOF it may
+    /// already have been reaped, which cannot establish descendant ownership.
+    pub(super) async fn capture_kimi_retirement_evidence(&mut self) {
+        #[cfg(unix)]
+        if self.kimi {
+            if let Some(pid) = self.child.id() {
+                let snapshot =
+                    tokio::task::spawn_blocking(crate::process_tree::retirement::snapshot)
+                        .await
+                        .ok()
+                        .flatten();
+                if let Some(tree) = snapshot {
+                    self.retain_kimi_retirement_evidence(pid, &tree);
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    pub(super) fn retain_kimi_retirement_evidence(
+        &mut self,
+        pid: u32,
+        tree: &crate::process_tree::retirement::RetirementSnapshot,
+    ) {
+        if !self.kimi || !tree.worker_present(pid) {
+            return;
+        }
+        let previous = self
+            .termination
+            .evidence
+            .as_ref()
+            .filter(|(worker, _)| *worker == pid)
+            .map(|(_, tree)| tree);
+        match tree.retain_owned(previous, pid) {
+            Some(owned) => self.termination.evidence = Some((pid, owned)),
+            None => self.termination.evidence_incomplete = true,
+        }
+    }
+
     /// Retire this worker without claiming success until its work has stopped.
     /// On uncertainty the caller must retain this client and keep dispatch gated.
     pub async fn terminate(&mut self) -> TerminationReport {
@@ -74,6 +118,9 @@ impl AcpClient {
         use nix::unistd::getpgrp;
         use tokio::time::{sleep, Instant};
         self.termination.checked = true;
+        if self.termination.evidence_incomplete {
+            return TerminationReport::Unverified;
+        }
         let own_group = getpgrp().as_raw() as u32;
         if self.termination.evidence.is_none() {
             let Some(pid) = self.child.id().filter(|pid| *pid > 1 && *pid != own_group) else {
@@ -111,6 +158,9 @@ impl AcpClient {
         let Some(last) = snapshot().await else {
             return TerminationReport::Unverified;
         };
+        if self.kimi && !first.covers_observed(&last, pid, &self.observed_background_instances) {
+            return TerminationReport::Unverified;
+        }
         let mut groups = first.verified_groups(&last, pid, own_group);
         groups.retain(|group| !self.termination.gone_groups.contains(group));
         if group_gone {

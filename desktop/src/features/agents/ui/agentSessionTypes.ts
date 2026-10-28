@@ -110,6 +110,8 @@ export type TranscriptItem =
       text: string;
       /** Resolved outcome for permission items (e.g. "Approved (allow_once)", "Denied (reject_once)", "Cancelled"). */
       outcome?: string;
+      /** Harness sequence for a logical-work state, independent of ACP turns. */
+      workSequence?: number;
       compaction?: CompactionActivity;
       timestamp: string;
       descriptor?: AgentActivityDescriptor;

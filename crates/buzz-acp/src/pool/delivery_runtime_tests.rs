@@ -224,6 +224,78 @@ fn binaries() -> PathBuf {
 }
 
 #[tokio::test]
+#[ignore = "requires rebuilt buzz CLI; BUZZ_TEST_BIN_DIR"]
+async fn kimi_managed_terminal_preserves_pending_success_and_confirms_its_receipt() {
+    use crate::{
+        config::DedupMode,
+        queue::{QueuedEvent, RecoveryPolicy},
+    };
+    let relay = MockRelay::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let scope = SessionScope::Conversation {
+        channel_id: relay.channel,
+    };
+    let mut queue = EventQueue::new(DedupMode::Queue)
+        .with_kimi_recovery(RecoveryPolicy::default(), dir.path().to_str().unwrap());
+    queue.push(QueuedEvent {
+        channel_id: relay.channel,
+        scope,
+        event: relay.parent.clone(),
+        prompt_tag: "test".into(),
+        received_at: std::time::Instant::now(),
+        edit: None,
+    });
+    let mut work = queue.flush_next().unwrap().work.unwrap();
+    work.journal_dir = dir.path().to_owned();
+    let mut ctx = tests::make_prompt_context_no_owner();
+    ctx.rest_client.base_url = relay.url.clone();
+    ctx.rest_client.keys = relay.keys.clone();
+    relay.losses.store(3, Ordering::SeqCst);
+    let first = relay
+        .command(
+            &binaries().join("buzz"),
+            dir.path(),
+            work.delivery_key,
+            "finished before the model crashed",
+        )
+        .output()
+        .await
+        .unwrap();
+    assert_eq!(first.status.code(), Some(2));
+    assert_eq!(
+        crate::managed_work::confirmed_report(&ctx.rest_client, &work)
+            .await
+            .unwrap(),
+        None
+    );
+    work.finish();
+    let event = crate::managed_work::publish_terminal_using(
+        &binaries().join("buzz"),
+        &ctx.rest_client,
+        &work,
+        "a later model error must not replace the first report",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        crate::managed_work::confirmed_report(&ctx.rest_client, &work)
+            .await
+            .unwrap(),
+        Some(event)
+    );
+    let reports = relay.readback().await;
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].content, "finished before the model crashed");
+    work.thread_tags.root_event_id = Some("b".repeat(64));
+    work.thread_tags.parent_event_id = Some("b".repeat(64));
+    assert!(
+        crate::managed_work::confirmed_report(&ctx.rest_client, &work)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
 #[ignore = "requires rebuilt buzz CLI, buzz-agent and buzz-dev-mcp; BUZZ_TEST_BIN_DIR"]
 async fn managed_runtime_body_loss_and_process_restart_replay_saved_bytes() {
     let relay = MockRelay::start().await;
@@ -467,6 +539,9 @@ async fn managed_runtime_bundled_agent_publication_then_application_error_retrie
         .state
         .set_scope_owner_generation(scope.clone(), generation);
     let continuation = RuntimeContinuation {
+        work: None,
+        crash_recovery: false,
+        background_ready: true,
         delivery_key: Uuid::new_v4(),
         ordinary_preempted: false,
         worker_index: 0,

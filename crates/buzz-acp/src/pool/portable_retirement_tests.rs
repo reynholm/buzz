@@ -198,6 +198,7 @@ async fn portable_retirement_foreign_foreground_reservation_waits_for_return() {
     pool.task_map.insert(
         handle.id(),
         TaskMeta {
+            permission_tx: None,
             agent_index: 0,
             channel_id: Some(foreign.channel_id()),
             scope: Some(foreign),

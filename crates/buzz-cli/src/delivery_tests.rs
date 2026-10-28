@@ -235,6 +235,45 @@ async fn managed_same_key_changed_text_returns_first_signed_delivery() {
 }
 
 #[tokio::test]
+async fn managed_top_level_route_is_immutable_and_does_not_invent_a_thread() {
+    let (r, url, dir) = fixture().await;
+    let key = Uuid::new_v4().to_string();
+    let make = |text: &str| {
+        let cli = parse_args([
+            "buzz",
+            "messages",
+            "deliver",
+            "--delivery-key",
+            &key,
+            "--journal-dir",
+            dir.path().to_str().unwrap(),
+            "--channel",
+            &r.channel,
+            "--content",
+            text,
+        ])
+        .expect("managed top-level reports need no reply parent");
+        let Cmd::Messages(command) = cli.command else {
+            panic!("messages command")
+        };
+        command
+    };
+    let client = BuzzClient::new(url, r.keys.clone(), None, None).unwrap();
+    commands::messages::dispatch(make("first"), &client, &OutputFormat::Json)
+        .await
+        .unwrap();
+    commands::messages::dispatch(make("changed"), &client, &OutputFormat::Json)
+        .await
+        .unwrap();
+    let events = r.events.lock().unwrap().clone();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].content, "first");
+    assert!(!events[0].tags.iter().any(|tag| tag.as_slice()[0] == "e"));
+    let wrong = deliver(&r, client.relay_url(), dir.path(), &key, "wrong thread").await;
+    assert_eq!(wrong, 5);
+}
+
+#[tokio::test]
 async fn managed_equal_text_distinct_keys_have_distinct_signed_events() {
     let (r, url, dir) = fixture().await;
     for _ in 0..2 {

@@ -18,6 +18,7 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::filter::SubscriptionRule;
+mod kimi_recovery;
 
 /// Default idle timeout (seconds) when neither `--idle-timeout` nor the
 /// deprecated `--turn-timeout` is set.
@@ -248,6 +249,8 @@ pub struct AuthenticateArgs {
     after_help = "Commands: run (one local task), models, auth-methods, authenticate.\nUse buzz-acp <COMMAND> --help. With no command, start the conversational service."
 )]
 pub struct CliArgs {
+    #[command(flatten)]
+    pub kimi_recovery: kimi_recovery::KimiRecoveryArgs,
     #[arg(long, env = "BUZZ_RELAY_URL", default_value = "ws://localhost:3000")]
     pub relay_url: String,
 
@@ -556,6 +559,7 @@ pub struct ChannelFilter {
 
 #[derive(Debug)]
 pub struct Config {
+    pub kimi_recovery: crate::queue::RecoveryPolicy,
     pub keys: Keys,
     pub relay_url: String,
     pub agent_command: String,
@@ -1199,6 +1203,7 @@ impl Config {
         validate_multiple_event_handling(args.multiple_event_handling, args.dedup)?;
 
         let config = Config {
+            kimi_recovery: args.kimi_recovery.policy()?,
             keys,
             relay_url: args.relay_url,
             agent_command,
@@ -1587,6 +1592,7 @@ mod tests {
     /// Build a minimal Config for testing without CLI parsing.
     fn test_config(mode: SubscribeMode) -> Config {
         Config {
+            kimi_recovery: crate::queue::RecoveryPolicy::default(),
             keys: nostr::Keys::generate(),
             relay_url: "ws://localhost:3000".into(),
             agent_command: "goose".into(),
@@ -3286,6 +3292,68 @@ channels = "ALL"
             violations.is_empty(),
             "Found secret-bearing env args without hide_env_values=true. \
              Add `hide_env_values = true` to each: {violations:?}"
+        );
+    }
+}
+#[test]
+fn kimi_recovery_cli_profile_is_configurable_and_rejects_unbounded_values() {
+    let key = "0000000000000000000000000000000000000000000000000000000000000001";
+    let parsed = CliArgs::try_parse_from([
+        "buzz-acp",
+        "--private-key",
+        key,
+        "--agent-command",
+        "kimi",
+        "--kimi-recovery-retries",
+        "2",
+        "--kimi-recovery-delays",
+        "1,3",
+        "--kimi-recovery-budget",
+        "60",
+        "--kimi-approval-progress-timeout",
+        "10",
+        "--kimi-approval-decision-timeout",
+        "13",
+    ]);
+    assert!(
+        parsed.is_ok(),
+        "Kimi retry settings must be accepted: {parsed:?}"
+    );
+    let config = Config::from_args(parsed.unwrap()).unwrap();
+    assert_eq!(config.kimi_recovery.max_retries, 2);
+    assert_eq!(
+        config.kimi_recovery.delays,
+        [
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_secs(3)
+        ]
+    );
+    assert_eq!(
+        config.kimi_recovery.total_budget,
+        std::time::Duration::from_secs(60)
+    );
+    assert_eq!(
+        config.kimi_recovery.approval_progress_timeout,
+        std::time::Duration::from_secs(10)
+    );
+    assert_eq!(
+        config.kimi_recovery.approval_decision_timeout,
+        std::time::Duration::from_secs(13)
+    );
+    for (flag, value) in [
+        ("--kimi-recovery-retries", "17"),
+        ("--kimi-recovery-delays", "601"),
+        ("--kimi-recovery-budget", "0"),
+        ("--kimi-approval-progress-timeout", "0"),
+        ("--kimi-approval-progress-timeout", "2000"),
+        ("--kimi-approval-decision-timeout", "0"),
+        ("--kimi-approval-decision-timeout", "86401"),
+    ] {
+        let args =
+            CliArgs::try_parse_from(["buzz-acp", "--private-key", key, flag, value]).unwrap();
+        assert!(
+            Config::from_args(args).is_err(),
+            "must reject {flag}={value}"
         );
     }
 }

@@ -247,6 +247,9 @@ async fn compact_protects_background_collection_and_pending_blocks_idle() {
         .state
         .scope_owner_generations[&scope()];
     let continuation = crate::queue::RuntimeContinuation {
+        work: None,
+        crash_recovery: false,
+        background_ready: true,
         delivery_key: Uuid::new_v4(),
         ordinary_preempted: false,
         worker_index: 0,
@@ -623,6 +626,7 @@ async fn compact_actual_panic_terminalizes_started_without_ordinary_retry() {
     pool.task_map_mut().insert(
         handle.id(),
         crate::pool::TaskMeta {
+            permission_tx: None,
             agent_index: 0,
             channel_id: Some(scope().channel_id()),
             scope: Some(scope()),

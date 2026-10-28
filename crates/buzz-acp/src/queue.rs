@@ -26,6 +26,12 @@ use crate::scope::SessionScope;
 
 mod background;
 pub(crate) use background::RuntimeContinuation;
+mod recovery;
+pub(crate) use recovery::{LogicalWork, RecoveryPolicy};
+
+#[cfg(test)]
+#[path = "queue/recovery_tests.rs"]
+mod recovery_tests;
 
 /// Maximum events queued per session scope before oldest events are dropped.
 ///
@@ -267,6 +273,8 @@ pub enum CancelReason {
 /// A batch of events to prompt the agent with.
 #[derive(Debug, Clone)]
 pub struct FlushBatch {
+    /// Stable Kimi logical work, absent for other adapters.
+    pub work: Option<LogicalWork>,
     /// A background result to collect in its original provider session.
     pub continuation: Option<RuntimeContinuation>,
     pub channel_id: Uuid,
@@ -332,6 +340,11 @@ pub struct FlushBatch {
 ///     else: push_front with original received_at, set exponential backoff retry_after with jitter
 /// ```
 pub struct EventQueue {
+    recovery_policy: Option<(RecoveryPolicy, std::path::PathBuf)>,
+    recovery_batches: HashMap<SessionScope, FlushBatch>,
+    in_flight_work: HashMap<SessionScope, LogicalWork>,
+    // Weak handles keep terminal CLI publication revocable after mark_complete.
+    revocable_work: HashMap<Uuid, (SessionScope, recovery::WorkRevocation)>,
     continuations: HashMap<SessionScope, RuntimeContinuation>,
     continuation_retry_after: HashMap<SessionScope, Instant>,
     continuation_retry_counts: HashMap<SessionScope, u32>,
@@ -382,6 +395,10 @@ impl EventQueue {
     /// derive the deadline from the configured `max_turn_duration`.
     pub fn new(dedup_mode: DedupMode) -> Self {
         Self {
+            recovery_policy: None,
+            recovery_batches: HashMap::new(),
+            in_flight_work: HashMap::new(),
+            revocable_work: HashMap::new(),
             continuations: HashMap::new(),
             continuation_retry_after: HashMap::new(),
             continuation_retry_counts: HashMap::new(),
@@ -455,6 +472,16 @@ impl EventQueue {
             return false;
         }
         let channel_id = event.channel_id;
+        let protected: usize = self
+            .recovery_batches
+            .iter()
+            .filter(|(scope, _)| scope.channel_id() == channel_id)
+            .map(|(_, batch)| batch.events.len() + batch.cancelled_events.len())
+            .sum();
+        if protected >= MAX_PENDING_PER_CHANNEL {
+            tracing::warn!(channel_id=%channel_id,"logical recovery backlog is full; rejecting new queued input");
+            return false;
+        }
         let scope = event.scope.clone();
         let queue = self.queues.entry(scope.clone()).or_default();
         // Enforce per-scope depth cap: drop oldest in this partition.
@@ -480,7 +507,13 @@ impl EventQueue {
             .iter()
             .filter(|(s, _)| s.channel_id() == channel_id)
             .map(|(_, q)| q.len())
-            .sum()
+            .sum::<usize>()
+            + self
+                .recovery_batches
+                .iter()
+                .filter(|(scope, _)| scope.channel_id() == channel_id)
+                .map(|(_, batch)| batch.events.len() + batch.cancelled_events.len())
+                .sum::<usize>()
     }
 
     /// Drop the globally-oldest queued event(s) across a channel's scopes until
@@ -523,7 +556,9 @@ impl EventQueue {
         let expired: Vec<SessionScope> = self
             .in_flight_deadlines
             .iter()
-            .filter(|(_, deadline)| now >= **deadline)
+            .filter(|(scope, deadline)| {
+                now >= **deadline && !self.in_flight_work.contains_key(*scope)
+            })
             .map(|(scope, _)| scope.clone())
             .collect();
         for scope in expired {
@@ -550,8 +585,11 @@ impl EventQueue {
 
         // Ready collection precedes ordinary traffic so continuous messages
         // cannot starve it. A collection in backoff leaves messages eligible.
-        if let Some(batch) = self.flush_continuation() {
+        if let Some(batch) = self.flush_logical_retry() {
             return Some(batch);
+        }
+        if let Some(batch) = self.flush_continuation() {
+            return Some(self.attach_logical_work(batch));
         }
 
         // Find the scope whose head event has the oldest received_at,
@@ -562,6 +600,11 @@ impl EventQueue {
             .filter(|(scope, q)| {
                 !q.is_empty()
                     && !self.in_flight_scopes.contains(scope)
+                    && !self.recovery_batches.contains_key(*scope)
+                    && self
+                        .continuations
+                        .get(*scope)
+                        .is_none_or(|continuation| continuation.work.is_none())
                     && self.retry_after.get(scope).is_none_or(|&t| t <= now)
             })
             .min_by_key(|(_, q)| q.front().unwrap().received_at)
@@ -590,14 +633,16 @@ impl EventQueue {
                         self.in_flight_batch_sizes
                             .insert(scope.clone(), cancelled.len());
                         self.record_in_flight_reply_route(&scope, &cancelled);
-                        return Some(FlushBatch {
+                        let batch = FlushBatch {
+                            work: None,
                             continuation: None,
                             channel_id: scope.channel_id(),
                             scope,
                             events: cancelled,
                             cancelled_events: vec![],
                             cancel_reason,
-                        });
+                        };
+                        return Some(self.attach_logical_work(batch));
                     }
                     None => return None,
                 }
@@ -639,14 +684,16 @@ impl EventQueue {
             self.cancel_reasons.remove(&scope)
         };
 
-        Some(FlushBatch {
+        let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id,
             scope,
             events,
             cancelled_events,
             cancel_reason,
-        })
+        };
+        Some(self.attach_logical_work(batch))
     }
 
     /// Earliest retry throttle for queued work not already in flight.
@@ -673,6 +720,24 @@ impl EventQueue {
                     })
                     .map(|(_, &deadline)| deadline),
             )
+            .chain(
+                self.recovery_batches
+                    .iter()
+                    .filter(|(scope, _)| !self.in_flight_scopes.contains(*scope))
+                    .filter_map(|(_, batch)| {
+                        batch
+                            .work
+                            .as_ref()
+                            .filter(|work| {
+                                !work.awaiting_retirement()
+                                    && batch
+                                        .continuation
+                                        .as_ref()
+                                        .is_none_or(|continuation| continuation.background_ready)
+                            })
+                            .and_then(|work| work.next_attempt)
+                    }),
+            )
             .min()
     }
 
@@ -688,6 +753,7 @@ impl EventQueue {
     /// Also cleans up any already-expired `retry_after` entry.
     pub fn mark_complete<K: IntoScope>(&mut self, scope: K) {
         let scope = scope.into_scope();
+        self.in_flight_work.remove(&scope);
         let collecting = self.in_flight_continuations.remove(&scope);
         self.in_flight_scopes.remove(&scope);
         self.in_flight_deadlines.remove(&scope);
@@ -720,6 +786,7 @@ impl EventQueue {
     /// Release a flushed batch that never started. Waiting for capacity is not
     /// a successful attempt and must not reset the bounded retry budget.
     pub(crate) fn release_unstarted(&mut self, scope: &SessionScope) {
+        self.in_flight_work.remove(scope);
         self.in_flight_scopes.remove(scope);
         self.in_flight_deadlines.remove(scope);
         self.in_flight_batch_sizes.remove(scope);
@@ -759,6 +826,9 @@ impl EventQueue {
     /// Note: does NOT remove from `in_flight_channels` — caller must call
     /// `mark_complete` separately.
     pub fn requeue(&mut self, batch: FlushBatch) -> Option<FlushBatch> {
+        if batch.work.is_some() {
+            return self.requeue_logical_work(batch);
+        }
         let channel_id = batch.channel_id;
         let scope = batch.scope.clone();
         let collecting = batch.continuation.is_some();
@@ -869,6 +939,12 @@ impl EventQueue {
     /// Does NOT set `retry_after`. Does NOT remove from `in_flight_scopes` —
     /// caller must call `mark_complete` separately.
     pub fn requeue_preserve_timestamps(&mut self, batch: FlushBatch) {
+        if batch.work.is_some() {
+            self.recovery_batches
+                .entry(batch.scope.clone())
+                .or_insert(batch);
+            return;
+        }
         let channel_id = batch.channel_id;
         let scope = batch.scope.clone();
         if let Some(continuation) = batch.continuation {
@@ -928,6 +1004,10 @@ impl EventQueue {
     /// the generic queue — they are stored separately and merged by
     /// `flush_next()`. No retry throttle, no backoff.
     pub fn requeue_as_cancelled(&mut self, batch: FlushBatch, reason: CancelReason) {
+        if batch.work.is_some() {
+            self.merge_logical_control(batch, reason);
+            return;
+        }
         if let Some(mut continuation) = batch.continuation {
             continuation.ordinary_preempted = true;
             self.enqueue_continuation(batch.scope, continuation);
@@ -954,7 +1034,9 @@ impl EventQueue {
         let expired: Vec<SessionScope> = self
             .in_flight_deadlines
             .iter()
-            .filter(|(_, deadline)| now >= **deadline)
+            .filter(|(scope, deadline)| {
+                now >= **deadline && !self.in_flight_work.contains_key(*scope)
+            })
             .map(|(scope, _)| scope.clone())
             .collect();
         for scope in expired {
@@ -977,10 +1059,27 @@ impl EventQueue {
             self.recover_withheld_for_expired_scope(&scope);
         }
 
-        self.has_ready_continuation()
+        self.recovery_batches.iter().any(|(scope, batch)| {
+            !self.in_flight_scopes.contains(scope)
+                && batch.work.as_ref().is_some_and(|work| {
+                    work.remaining().is_zero()
+                        || work.retirement_unverified()
+                        || (!work.awaiting_retirement()
+                            && work.next_attempt.is_none_or(|next| next <= now)
+                            && batch
+                                .continuation
+                                .as_ref()
+                                .is_none_or(|continuation| continuation.background_ready))
+                })
+        }) || self.has_ready_continuation()
             || self.queues.iter().any(|(scope, q)| {
                 !q.is_empty()
                     && !self.in_flight_scopes.contains(scope)
+                    && !self.recovery_batches.contains_key(scope)
+                    && self
+                        .continuations
+                        .get(scope)
+                        .is_none_or(|continuation| continuation.work.is_none())
                     && self.retry_after.get(scope).is_none_or(|&t| t <= now)
             })
             || self
@@ -1007,6 +1106,9 @@ impl EventQueue {
     /// and `withheld_native_steer` events. Read-only (no in-flight expiry) —
     /// in-flight liveness is gated separately by [`has_in_flight`](Self::has_in_flight).
     pub fn has_undispatched_work(&self) -> bool {
+        if !self.recovery_batches.is_empty() {
+            return true;
+        }
         if self
             .continuations
             .keys()
@@ -1044,7 +1146,8 @@ impl EventQueue {
     /// path, so the dispatch loop uses this seam to prune orphaned holds before
     /// scheduling their deadline wakeups.
     pub(crate) fn has_pending_scope(&self, scope: &SessionScope) -> bool {
-        self.continuations.contains_key(scope)
+        self.recovery_batches.contains_key(scope)
+            || self.continuations.contains_key(scope)
             || self
                 .queues
                 .get(scope)
@@ -1086,8 +1189,30 @@ impl EventQueue {
     /// steers — so the caller can clean up any 👀 added at queue-push time.
     /// Edits report their original message (see [`reaction_target_id`]).
     pub fn drain_channel(&mut self, channel_id: Uuid) -> Vec<String> {
-        self.continuations
-            .retain(|scope, _| scope.channel_id() != channel_id);
+        self.revoke_work_publication(|scope| scope.channel_id() == channel_id);
+        for (scope, work) in &self.in_flight_work {
+            if scope.channel_id() == channel_id {
+                work.cancel();
+            }
+        }
+        self.recovery_batches.retain(|scope, batch| {
+            if scope.channel_id() != channel_id {
+                return true;
+            }
+            if let Some(work) = &batch.work {
+                work.cancel();
+            }
+            false
+        });
+        self.continuations.retain(|scope, continuation| {
+            if scope.channel_id() != channel_id {
+                return true;
+            }
+            if let Some(work) = &continuation.work {
+                work.cancel();
+            }
+            false
+        });
         self.continuation_retry_after
             .retain(|s, _| s.channel_id() != channel_id);
         self.continuation_retry_counts
@@ -1915,12 +2040,17 @@ pub fn reply_anchor_is_trigger(
     let Some(last_event) = batch.events.last() else {
         return false;
     };
-    let thread_tags = last_event.routing_thread_tags();
-    let routing_event_id = last_event.routing_event_id();
+    let route_event = batch
+        .work
+        .as_ref()
+        .and_then(|work| work.original_events.last())
+        .unwrap_or(last_event);
+    let thread_tags = route_event.routing_thread_tags();
+    let routing_event_id = route_event.routing_event_id();
     !is_dm
         && thread_tags.root_event_id.is_some()
         && resolve_reply_anchor(
-            &last_event.event.pubkey.to_hex(),
+            &route_event.event.pubkey.to_hex(),
             &thread_tags,
             &routing_event_id,
             profile_lookup,
@@ -2475,14 +2605,23 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
     };
     // An edit routes through its original message: the edit's own bare `e`
     // tag is not a thread link, and the edit event is not a visible row.
-    let thread_tags = last_event.routing_thread_tags();
-    let routing_event_id = last_event.routing_event_id();
+    let route_event = batch
+        .work
+        .as_ref()
+        .and_then(|work| work.original_events.last())
+        .unwrap_or(last_event);
+    let thread_tags = route_event.routing_thread_tags();
+    let routing_event_id = route_event.routing_event_id();
     let is_dm = args
         .channel_info
         .map(|ci| ci.channel_type == "dm")
         .unwrap_or(false);
 
     let mut sections: Vec<String> = Vec::with_capacity(7);
+    if let Some(work) = &batch.work {
+        let _ = work.is_dm.set(is_dm);
+        sections.push(work.managed_instruction());
+    }
 
     // Standing context — base prompt, persona, team instructions, core memory
     // and canvas. Modern agents received all of it via the system role in
@@ -2514,7 +2653,7 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
     // `ReplyRoute::accepts_steer` mirrors this DM rule, and
     // `reply_anchor_is_trigger` reports the agent↔agent thread anchor to the
     // native-steer guard; keep them in sync.
-    let sender_pubkey = last_event.event.pubkey.to_hex();
+    let sender_pubkey = route_event.event.pubkey.to_hex();
     let reply_anchor = if is_dm {
         thread_tags
             .root_event_id
@@ -3219,6 +3358,7 @@ mod tests {
             .unwrap_or_else(|_| event.pubkey.to_hex());
 
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -3252,6 +3392,7 @@ mod tests {
     fn make_merged_batch(reason: Option<CancelReason>) -> FlushBatch {
         let ch = Uuid::new_v4();
         FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -3393,6 +3534,7 @@ mod tests {
         // Multi-event header path must also branch on reason.
         let ch = Uuid::new_v4();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -3455,6 +3597,7 @@ mod tests {
         let _steering_id = steering.id.to_hex();
 
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -3630,6 +3773,7 @@ mod tests {
         let e3 = make_event("third message");
 
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -3675,6 +3819,7 @@ mod tests {
         let event = make_event("hello");
 
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -3701,6 +3846,7 @@ mod tests {
         let ch = Uuid::new_v4();
         let event = make_event("hi");
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -3736,6 +3882,7 @@ mod tests {
         let ch = Uuid::new_v4();
         let event = make_event("hi");
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -3769,6 +3916,7 @@ mod tests {
         let ch = Uuid::new_v4();
         let event = make_event("hi");
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -3799,6 +3947,7 @@ mod tests {
         let event = make_event("hello");
 
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -3826,6 +3975,7 @@ mod tests {
         let event = make_event("hello");
 
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -3890,6 +4040,7 @@ mod tests {
         // evicting real channel history sooner.
         let ch = Uuid::new_v4();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -3946,6 +4097,7 @@ mod tests {
         let event = make_event("hello");
 
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -3987,6 +4139,7 @@ mod tests {
         let ch = Uuid::new_v4();
         let event = make_event("hello");
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -4250,6 +4403,7 @@ mod tests {
         let ch = Uuid::new_v4();
         let scope = conv(ch);
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: scope.clone(),
@@ -4582,6 +4736,7 @@ mod tests {
         let ch = Uuid::new_v4();
         let event = make_event("hello");
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -4618,6 +4773,7 @@ mod tests {
         let ch = Uuid::new_v4();
         let event = make_event("hey");
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -4668,6 +4824,7 @@ mod tests {
             for is_dm in [false, true] {
                 for (event, is_reply) in [(&top, false), (&reply, true)] {
                     let batch = FlushBatch {
+                        work: None,
                         continuation: None,
                         channel_id,
                         scope: SessionScope::derive(policy, channel_id, is_dm, event),
@@ -4752,6 +4909,7 @@ mod tests {
             ]],
         );
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -4781,6 +4939,7 @@ mod tests {
             vec![vec!["e".into(), root.clone(), "".into(), "reply".into()]],
         );
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -4917,6 +5076,7 @@ mod tests {
         };
 
         let mixed_batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -4943,6 +5103,7 @@ mod tests {
         assert!(mixed_prompt.contains("buzz messages thread"));
 
         let same_thread_batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -4972,6 +5133,7 @@ mod tests {
         let ch = Uuid::new_v4();
         let event = make_event("ok do that");
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -5031,6 +5193,7 @@ mod tests {
         );
         let author_hex = event.pubkey.to_hex();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -5240,6 +5403,7 @@ mod tests {
             received_at: Instant::now(),
         };
         let batch = |events| FlushBatch {
+            work: None,
             channel_id: ch,
             scope: conv(ch),
             events,
@@ -5307,6 +5471,7 @@ mod tests {
             ]],
         );
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -5380,6 +5545,7 @@ mod tests {
             ]],
         );
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -5416,6 +5582,7 @@ mod tests {
     fn test_format_prompt_empty_dm_delta_distinguishes_trigger_only_from_delivered() {
         let ch = Uuid::new_v4();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -5469,6 +5636,7 @@ mod tests {
         let ch = Uuid::new_v4();
         let event = make_event("hey there");
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -5514,6 +5682,7 @@ mod tests {
         let event = make_event("test");
         let event_id = event.id.to_hex();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -5541,6 +5710,7 @@ mod tests {
         let hex = event.pubkey.to_hex();
         let npub = event.pubkey.to_bech32().unwrap();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -5567,6 +5737,7 @@ mod tests {
         // Kind 9 (stream message) — tags were previously stripped.
         let event = make_event_with_tags("hello", vec![vec!["h".into(), ch.to_string()]]);
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -5999,6 +6170,7 @@ mod tests {
             vec![vec!["e".into(), root_id.clone(), "".into(), "reply".into()]],
         );
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -6044,6 +6216,7 @@ mod tests {
         );
         let event_id = event.id.to_hex();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -6083,6 +6256,7 @@ mod tests {
         let event = make_event("hello world");
         let event_id = event.id.to_hex();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -6115,6 +6289,7 @@ mod tests {
         let ch = Uuid::new_v4();
         let event = make_event("hey there");
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -6162,6 +6337,7 @@ mod tests {
         );
         let event_id = event.id.to_hex();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -6201,6 +6377,7 @@ mod tests {
             vec![vec!["e".into(), root_id.clone(), "".into(), "reply".into()]],
         );
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -6239,6 +6416,7 @@ mod tests {
             vec![vec!["e".into(), root_id.clone(), "".into(), "reply".into()]],
         );
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -6280,6 +6458,7 @@ mod tests {
         let plain = make_event("latest top-level");
         let plain_id = plain.id.to_hex();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -6318,6 +6497,7 @@ mod tests {
     fn make_single_batch(content: &str) -> FlushBatch {
         let channel_id = Uuid::new_v4();
         FlushBatch {
+            work: None,
             continuation: None,
             channel_id,
             scope: conv(channel_id),
@@ -6623,6 +6803,7 @@ mod tests {
         let canvas = "[Channel Canvas]\nCanvas revision (event ID): abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234\nLast modified: 2024-01-15T10:30:00+00:00\nFetch current content with: buzz canvas get --channel 00f1ccaf-1506-4dd7-9a0e-fa67e9e486ae";
         let ch = Uuid::new_v4();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -6655,6 +6836,7 @@ mod tests {
         let canvas = "[Channel Canvas]\nCanvas revision (event ID): abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234\nLast modified: 2024-01-15T10:30:00+00:00\nFetch current content with: buzz canvas get --channel 00f1ccaf-1506-4dd7-9a0e-fa67e9e486ae";
         let ch = Uuid::new_v4();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -6686,6 +6868,7 @@ mod tests {
     fn test_format_prompt_no_canvas_produces_no_canvas_section() {
         let ch = Uuid::new_v4();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),
@@ -6933,6 +7116,7 @@ mod tests {
     fn one_event_batch(event: Event, edit: Option<ResolvedEdit>) -> FlushBatch {
         let channel_id = Uuid::new_v4();
         FlushBatch {
+            work: None,
             continuation: None,
             channel_id,
             scope: conv(channel_id),
@@ -7343,6 +7527,7 @@ mod tests {
 
     fn description_batch(ch: Uuid, event: Event) -> FlushBatch {
         FlushBatch {
+            work: None,
             continuation: None,
             channel_id: ch,
             scope: conv(ch),

@@ -20,6 +20,8 @@ import { classifyTool } from "./agentSessionToolClassifier";
 import { asRecord, asString, titleCase } from "./agentSessionUtils";
 import {
   describeTurnStarted,
+  stringifyPayload,
+  rawPayloadTitle,
   describeSessionResolved,
   extractBlockText,
   extractContentText,
@@ -33,6 +35,7 @@ import {
   parseSystemPromptSections,
 } from "./agentSessionTranscriptHelpers";
 import { friendlyTurnErrorCopy } from "../lib/friendlyAgentLastError";
+import { workStateTranscriptItem } from "./agentWorkStateTranscript";
 
 export { describeRawEvent } from "./agentSessionTranscriptHelpers";
 
@@ -172,14 +175,6 @@ function maybeNostrEventId(id: string | null | undefined) {
   return id && /^[0-9a-fA-F]{64}$/.test(id) ? id : null;
 }
 
-function stringifyPayload(value: unknown) {
-  try {
-    return JSON.stringify(value, null, 2) ?? String(value);
-  } catch {
-    return String(value);
-  }
-}
-
 function describePermissionRequest(payload: Record<string, unknown>) {
   const params = asRecord(payload.params);
   const title =
@@ -279,11 +274,6 @@ function describeFreeformStatus(payload: Record<string, unknown>) {
   const text = asString(payload.text) ?? asString(payload.message);
   if (!title || !text) return null;
   return { statusType: statusType ?? title.toLowerCase(), title, text };
-}
-
-function rawPayloadTitle(payload: unknown) {
-  const record = asRecord(payload);
-  return asString(record.method) ?? asString(record.type) ?? "raw_json_rpc";
 }
 
 type TranscriptItemContext = {
@@ -724,7 +714,11 @@ export function processTranscriptEvent(
     sessionId: event.sessionId ?? d.latestSessionId,
   };
 
-  if (event.kind === "raw_json_rpc") {
+  const workItem = workStateTranscriptItem(event, d.itemsById);
+  if (workItem) {
+    if (d.itemsById.has(workItem.id)) replaceItem(d, workItem.id, workItem);
+    else pushItem(d, workItem);
+  } else if (event.kind === "raw_json_rpc") {
     upsertMetadata(
       d,
       `raw-json-rpc:${ch}:${event.seq}`,

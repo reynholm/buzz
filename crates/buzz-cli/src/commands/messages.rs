@@ -943,7 +943,7 @@ pub async fn dispatch(
             let output = super::delivery::deliver(
                 client,
                 &channel,
-                &reply_to,
+                reply_to.as_deref().unwrap_or_default(),
                 &content,
                 &delivery_key,
                 journal_dir.as_deref(),

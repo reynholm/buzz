@@ -69,6 +69,8 @@ pub struct SuccessfulSteerDelivery {
 }
 
 pub struct TaskMeta {
+    /// Owner decisions for one prompt's pending Kimi permission request.
+    pub permission_tx: Option<mpsc::Sender<crate::acp::kimi_permission::PermissionDecision>>,
     pub agent_index: usize,
     pub channel_id: Option<Uuid>,
     /// Session scope of the in-flight turn (mid-turn steer/signal routing and
@@ -340,6 +342,7 @@ pub struct OwnedAgent {
 
 mod background_work;
 mod dispatch_diagnostics;
+mod kimi_controls;
 pub(crate) use background_work::{BackgroundPollRequest, ContinuationState, RuntimeHold};
 pub(crate) mod compaction;
 mod first_mention;
@@ -786,6 +789,27 @@ pub enum PromptOutcome {
 }
 
 impl PromptOutcome {
+    pub(crate) fn requires_retirement(&self) -> bool {
+        matches!(
+            self,
+            Self::AgentExited
+                | Self::Timeout(_)
+                | Self::CancelDrainTimeout(_)
+                | Self::Error(
+                    AcpError::Io(_)
+                        | AcpError::WriteTimeout(_)
+                        | AcpError::Timeout(_)
+                        | AcpError::Protocol(_)
+                        | AcpError::WorkDeadlinePoisoned
+                        | AcpError::WorkCancelledPoisoned
+                        | AcpError::PermissionProgressTimeout
+                        | AcpError::PermissionConflict
+                        | AcpError::PermissionRequired
+                        | AcpError::PermissionViewUnavailable
+                        | AcpError::PermissionDecisionTimeout
+                )
+        )
+    }
     /// Remove obsolete task output without erasing worker-health evidence needed
     /// by the main loop's existing crash/transport recovery paths.
     pub(crate) fn discard_retired_output(self) -> Self {
@@ -801,6 +825,13 @@ impl PromptOutcome {
             | Self::CancelDrainTimeout(_)
             | Self::Error(
                 AcpError::Io(_)
+                | AcpError::WorkDeadlinePoisoned
+                | AcpError::WorkCancelledPoisoned
+                | AcpError::PermissionProgressTimeout
+                | AcpError::PermissionConflict
+                | AcpError::PermissionRequired
+                | AcpError::PermissionViewUnavailable
+                | AcpError::PermissionDecisionTimeout
                 | AcpError::WriteTimeout(_)
                 | AcpError::Timeout(_)
                 | AcpError::Protocol(_),
@@ -2027,6 +2058,7 @@ pub(crate) async fn run_isolated_prompt(
     max_duration: Duration,
     active_session: &mut Option<String>,
 ) -> Result<StopReason, AcpError> {
+    agent.acp.configure_kimi_policy(ctx.permission_mode);
     let core = if ctx.memory_enabled {
         if let Some(owner) = &ctx.agent_owner_pubkey {
             tokio::time::timeout(
@@ -2575,7 +2607,16 @@ fn send_prompt_result(
         (outcome, batch)
     };
     agent.acp.clear_steer_rx();
-    if !matches!(outcome, PromptOutcome::Ok(_)) && !agent.has_background_collection() {
+    // Kimi's first application error may follow a successful background launch.
+    // Keep the origin through return-time discovery; the handler must collect
+    // that result instead of replaying the foreground launch.
+    let kimi_work = agent.acp.is_kimi()
+        && agent
+            .acp
+            .logical_work()
+            .is_some_and(|work| !work.cancelled());
+    if !matches!(outcome, PromptOutcome::Ok(_)) && !agent.has_background_collection() && !kimi_work
+    {
         if let Some(context) = &mut agent.background_context {
             context.continuation = None;
         }
@@ -2613,10 +2654,85 @@ pub async fn run_prompt_task(
     turn_id: String,
     prompt_routing: crate::queue::PromptRouting,
 ) {
+    agent
+        .acp
+        .configure_kimi_work(batch.as_ref().and_then(|batch| batch.work.as_ref()), None);
+    let source = batch.as_ref().map_or(PromptSource::Heartbeat, |batch| {
+        PromptSource::Channel(batch.scope.clone())
+    });
+    let saved_batch = batch.clone();
+    if let Some(work) = batch.as_ref().and_then(|batch| batch.work.as_ref()) {
+        work.bind_observer(
+            agent.acp.observer_handle(),
+            agent.index,
+            agent.acp.process_instance,
+        );
+        if !work.cancelled() {
+            work.transition("running", "execution_started");
+        }
+    }
+    let work = batch
+        .as_ref()
+        .and_then(|batch| batch.work.as_ref())
+        .cloned();
+    // Borrow the worker into execution. Expiring startup or context fetches
+    // must return the very same process for checked retirement, never drop its
+    // ownership and admit another attempt while it might still be executing.
+    let execution = run_prompt_execution(
+        &mut agent,
+        batch,
+        prompt_text,
+        ctx,
+        control_rx,
+        turn_id.clone(),
+        prompt_routing,
+    );
+    let (returned, cancelled) = match work {
+        Some(work) => tokio::select! {
+            biased;
+            returned = tokio::time::timeout_at(work.deadline.into(), execution) => (returned.ok(), false),
+            _ = work.cancelled_signal() => (None, true),
+        },
+        None => (Some(execution.await), false),
+    };
+    let (outcome, batch) = returned.unwrap_or_else(|| {
+        let error = if cancelled {
+            AcpError::WorkCancelledPoisoned
+        } else {
+            AcpError::WorkDeadlinePoisoned
+        };
+        agent.state.invalidate_after_error(&source, &error);
+        (
+            PromptOutcome::Error(error),
+            if cancelled { None } else { saved_batch },
+        )
+    });
+    send_prompt_result(&result_tx, &turn_id, agent, source, outcome, batch);
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_prompt_execution(
+    agent: &mut OwnedAgent,
+    batch: Option<FlushBatch>,
+    prompt_text: Option<String>,
+    ctx: Arc<PromptContext>,
+    control_rx: Option<tokio::sync::oneshot::Receiver<ControlSignal>>,
+    turn_id: String,
+    prompt_routing: crate::queue::PromptRouting,
+) -> (PromptOutcome, Option<FlushBatch>) {
+    agent.acp.configure_kimi_policy(ctx.permission_mode);
     let source = match &batch {
         Some(batch) => PromptSource::Channel(batch.scope.clone()),
         None => PromptSource::Heartbeat,
     };
+    if let Some(work) = batch.as_ref().and_then(|batch| batch.work.as_ref()) {
+        if work.cancelled() {
+            return (PromptOutcome::Cancelled, None);
+        }
+        if work.remaining().is_zero() {
+            return (PromptOutcome::Error(AcpError::WorkDeadline), batch);
+        }
+    }
     if let Some(scope) = source.scope() {
         if agent.state.control_dispatch.is_none() {
             agent.state.control_dispatch = Some(ctx.session_controls.capture(scope));
@@ -2707,6 +2823,31 @@ pub async fn run_prompt_task(
         .unwrap_or_default();
     let _reaction_guard = ReactionGuard::new(ctx.rest_client.clone(), reaction_ids.clone());
 
+    if let Some(work) = batch.as_ref().and_then(|batch| batch.work.as_ref()) {
+        match crate::managed_work::confirmed_report(&ctx.rest_client, work).await {
+            Ok(Some(event)) => {
+                agent.acp.observe(
+                    "managed_delivery_confirmed",
+                    serde_json::json!({
+                        "workId":work.delivery_key, "deliveryKey":work.delivery_key,
+                        "eventId":event, "attempt":work.attempt,
+                    }),
+                );
+                agent.finish_background_collection();
+                work.finish();
+                work.transition("completed", "managed_report_confirmed");
+                return (PromptOutcome::Ok(StopReason::EndTurn), None);
+            }
+            Ok(None) => {}
+            Err(_) => {
+                return (
+                    PromptOutcome::Error(AcpError::DeliveryJournalUnavailable),
+                    batch,
+                )
+            }
+        }
+    }
+
     // Resolve project authority exactly once, before any ACP session creation or
     // initial-message delivery. An indeterminate result is a local relay-state
     // outcome: fail closed and preserve the batch without poisoning the healthy
@@ -2720,15 +2861,10 @@ pub async fn run_prompt_task(
                     "project context is indeterminate; requeueing turn before ACP session creation: {}",
                     error.0
                 );
-                send_prompt_result(
-                    &result_tx,
-                    &turn_id,
-                    agent,
-                    source,
+                return (
                     PromptOutcome::ProjectContextIndeterminate(error.0),
                     requeue_batch_if_queue(&ctx, batch),
                 );
-                return;
             }
         },
         PromptSource::Heartbeat => None,
@@ -2743,6 +2879,21 @@ pub async fn run_prompt_task(
     let prompt_is_dm = resolved_channel_info
         .as_ref()
         .is_some_and(|info| info.channel_type == "dm");
+    if let Some(batch) = &batch {
+        if let Some(work) = &batch.work {
+            let _ = work.is_dm.set(prompt_is_dm);
+        }
+        agent.acp.configure_kimi_work(
+            batch.work.as_ref(),
+            Some(crate::acp::kimi_permission::PermissionNotice {
+                rest: ctx.rest_client.clone(),
+                channel: batch.channel_id,
+                tags: batch.reply_tags(),
+            }),
+        );
+    } else {
+        agent.acp.configure_kimi_work(None, None);
+    }
     let initial_message_pending = ctx.initial_message.is_some()
         && matches!(&source, PromptSource::Channel(scope) if !agent.state.sessions.contains_key(scope));
     if !initial_message_pending {
@@ -2907,7 +3058,7 @@ pub async fn run_prompt_task(
                 // canonical root prefix so sibling sessions are distinguishable.
                 // DMs, unresolved, and unnamed channels omit the channel name.
                 match session_continuity::acquire_session(
-                    &mut agent,
+                    agent,
                     &ctx,
                     agent_core.as_deref(),
                     NewSessionChannelContext {
@@ -2928,15 +3079,7 @@ pub async fn run_prompt_task(
                             .as_ref()
                             .is_some_and(|dispatch| !dispatch.current())
                         {
-                            send_prompt_result(
-                                &result_tx,
-                                &turn_id,
-                                agent,
-                                source,
-                                PromptOutcome::Cancelled,
-                                None,
-                            );
-                            return;
+                            return (PromptOutcome::Cancelled, None);
                         }
                         tracing::info!(
                             target: "pool::session",
@@ -2951,6 +3094,14 @@ pub async fn run_prompt_task(
                         agent.state.sessions.insert(scope.clone(), sid.clone());
                         agent.publish_session_start(status_runtime, scope, &sid, &start);
                         let resumed = start.is_resumed();
+                        if !resumed
+                            && batch
+                                .as_ref()
+                                .and_then(|batch| batch.work.as_ref())
+                                .is_some_and(|work| work.attempt > 0 && work.observed_effects())
+                        {
+                            return (PromptOutcome::Error(AcpError::EffectUncertain), batch);
+                        }
                         session_start = Some(start);
                         if !resumed {
                             agent
@@ -2970,28 +3121,15 @@ pub async fn run_prompt_task(
                     }
                     Err(AcpError::AgentExited) => {
                         agent.state.invalidate_all();
-                        send_prompt_result(
-                            &result_tx,
-                            &turn_id,
-                            agent,
-                            source,
+                        return (
                             PromptOutcome::AgentExited,
                             requeue_batch_if_queue(&ctx, batch),
                         );
-                        return;
                     }
                     Err(e) => {
                         // Session creation failed; pending canvas was never committed,
                         // so the next retry will re-fetch a fresh revision.
-                        send_prompt_result(
-                            &result_tx,
-                            &turn_id,
-                            agent,
-                            source,
-                            PromptOutcome::Error(e),
-                            requeue_batch_if_queue(&ctx, batch),
-                        );
-                        return;
+                        return (PromptOutcome::Error(e), requeue_batch_if_queue(&ctx, batch));
                     }
                 }
             }
@@ -3001,7 +3139,7 @@ pub async fn run_prompt_task(
                 (sid.clone(), false)
             } else {
                 match create_session_and_apply_model(
-                    &mut agent,
+                    agent,
                     &ctx,
                     None,
                     NewSessionChannelContext {
@@ -3027,26 +3165,10 @@ pub async fn run_prompt_task(
                     }
                     Err(AcpError::AgentExited) => {
                         agent.state.invalidate_all();
-                        send_prompt_result(
-                            &result_tx,
-                            &turn_id,
-                            agent,
-                            source,
-                            PromptOutcome::AgentExited,
-                            None,
-                        );
-                        return;
+                        return (PromptOutcome::AgentExited, None);
                     }
                     Err(e) => {
-                        send_prompt_result(
-                            &result_tx,
-                            &turn_id,
-                            agent,
-                            source,
-                            PromptOutcome::Error(e),
-                            None,
-                        );
-                        return;
+                        return (PromptOutcome::Error(e), None);
                     }
                 }
             }
@@ -3152,15 +3274,10 @@ pub async fn run_prompt_task(
                 }
                 Err(AcpError::AgentExited) => {
                     agent.state.invalidate_all();
-                    send_prompt_result(
-                        &result_tx,
-                        &turn_id,
-                        agent,
-                        source,
+                    return (
                         PromptOutcome::AgentExited,
                         requeue_batch_if_queue(&ctx, batch),
                     );
-                    return;
                 }
                 Err(AcpError::IdleTimeout(_)) => {
                     tracing::warn!(
@@ -3188,15 +3305,10 @@ pub async fn run_prompt_task(
                         }
                         Err(AcpError::AgentExited) => {
                             agent.state.invalidate_all();
-                            send_prompt_result(
-                                &result_tx,
-                                &turn_id,
-                                agent,
-                                source,
+                            return (
                                 PromptOutcome::AgentExited,
                                 requeue_batch_if_queue(&ctx, batch),
                             );
-                            return;
                         }
                         Err(e) => {
                             tracing::error!(
@@ -3206,15 +3318,10 @@ pub async fn run_prompt_task(
                             agent.state.invalidate_after_error(&source, &e);
                         }
                     }
-                    send_prompt_result(
-                        &result_tx,
-                        &turn_id,
-                        agent,
-                        source,
+                    return (
                         PromptOutcome::Timeout(TimeoutKind::Idle),
                         requeue_batch_if_queue(&ctx, batch),
                     );
-                    return;
                 }
                 Err(AcpError::HardTimeout { silence }) => {
                     let recently_active = silence < RECENT_ACTIVITY_WINDOW;
@@ -3224,15 +3331,10 @@ pub async fn run_prompt_task(
                         ctx.max_turn_duration.as_secs()
                     );
                     agent.state.invalidate_all();
-                    send_prompt_result(
-                        &result_tx,
-                        &turn_id,
-                        agent,
-                        source,
+                    return (
                         PromptOutcome::Timeout(TimeoutKind::Hard { recently_active }),
                         requeue_batch_if_queue(&ctx, batch),
                     );
-                    return;
                 }
                 Err(e) => {
                     tracing::error!(
@@ -3240,15 +3342,7 @@ pub async fn run_prompt_task(
                         "initial_message failed for channel {cid}: {e} — invalidating session"
                     );
                     agent.state.invalidate_after_error(&source, &e);
-                    send_prompt_result(
-                        &result_tx,
-                        &turn_id,
-                        agent,
-                        source,
-                        PromptOutcome::Error(e),
-                        requeue_batch_if_queue(&ctx, batch),
-                    );
-                    return;
+                    return (PromptOutcome::Error(e), requeue_batch_if_queue(&ctx, batch));
                 }
             }
         }
@@ -3491,15 +3585,10 @@ pub async fn run_prompt_task(
         // Should not happen — batch is None only for heartbeats which have prompt_text.
         // Return the agent to the pool to prevent a permanent slot leak.
         tracing::error!("run_prompt_task: no batch and no prompt_text — returning agent");
-        send_prompt_result(
-            &result_tx,
-            &turn_id,
-            agent,
-            source,
+        return (
             PromptOutcome::Error(AcpError::Protocol("no batch and no prompt_text".into())),
             None,
         );
-        return;
     };
 
     if agent
@@ -3508,15 +3597,7 @@ pub async fn run_prompt_task(
         .as_ref()
         .is_some_and(|dispatch| !dispatch.current())
     {
-        send_prompt_result(
-            &result_tx,
-            &turn_id,
-            agent,
-            source,
-            PromptOutcome::Cancelled,
-            None,
-        );
-        return;
+        return (PromptOutcome::Cancelled, None);
     }
     // 💬 — fire-and-forget so the prompt fires immediately.
     // The guard's cleanup (spawned on drop) removes 💬 after the turn completes.
@@ -3579,6 +3660,19 @@ pub async fn run_prompt_task(
     // the main loop can cancel, interrupt, or rotate it. Heartbeats
     // (control_rx=None) take the simple await path — they are not controllable.
     //
+    let turn_budget = batch
+        .as_ref()
+        .and_then(|batch| batch.work.as_ref())
+        .map(|work| work.remaining().min(ctx.max_turn_duration))
+        .unwrap_or(ctx.max_turn_duration);
+    if let Some(work) = batch.as_ref().and_then(|batch| batch.work.as_ref()) {
+        agent
+            .acp
+            .configure_kimi_progress(work.policy.approval_progress_timeout);
+    }
+    if turn_budget.is_zero() {
+        return (PromptOutcome::Error(AcpError::WorkDeadline), batch);
+    }
     let prompt_result = match control_rx {
         None => {
             // Heartbeat / non-cancellable path.
@@ -3588,7 +3682,7 @@ pub async fn run_prompt_task(
                     &session_id,
                     &prompt_blocks,
                     ctx.idle_timeout,
-                    ctx.max_turn_duration,
+                    turn_budget,
                 ) => result,
             }
         }
@@ -3599,7 +3693,7 @@ pub async fn run_prompt_task(
                     &session_id,
                     &prompt_blocks,
                     ctx.idle_timeout,
-                    ctx.max_turn_duration,
+                    turn_budget,
                 ) => result,
                 mode = rx => {
                     let control_signal = mode.unwrap_or(ControlSignal::Cancel);
@@ -3647,15 +3741,8 @@ pub async fn run_prompt_task(
                                     Some(buzz_core::agent_turn_metric::StopReason::Cancelled),
                                 )
                                 .await;
-                                send_prompt_result(
-                                    &result_tx,
-                                    &turn_id,
-                                    agent,
-                                    source,
-                                    PromptOutcome::Cancelled,
-                                    retry_batch,
-                                );
-                                return;
+                                return (PromptOutcome::Cancelled, retry_batch);
+
                             }
                             Err(error) => {
                                 // Single production arm: classify the error→outcome
@@ -3683,15 +3770,8 @@ pub async fn run_prompt_task(
                                     Some(buzz_core::agent_turn_metric::StopReason::Error),
                                 )
                                 .await;
-                                send_prompt_result(
-                                    &result_tx,
-                                    &turn_id,
-                                    agent,
-                                    source,
-                                    failure.outcome,
-                                    failure.retry_batch,
-                                );
-                                return;
+                                return (failure.outcome, failure.retry_batch);
+
                             }
                         }
                     } else {
@@ -3730,7 +3810,7 @@ pub async fn run_prompt_task(
                                 if let Some(dispatch) = &agent.state.control_dispatch { dispatch.foreground_success(); }
                             }
                             record_scope_delivery_success(
-                                &mut agent,
+                                agent,
                                 scope.clone(),
                                 standing_sent,
                                 &pending_delivered_event_ids,
@@ -3752,15 +3832,8 @@ pub async fn run_prompt_task(
                             Some(buzz_core::agent_turn_metric::StopReason::EndTurn),
                         )
                         .await;
-                        send_prompt_result(
-                            &result_tx,
-                            &turn_id,
-                            agent,
-                            source,
-                            PromptOutcome::Ok(StopReason::EndTurn),
-                            None, // turn succeeded — batch was processed, no requeue
-                        );
-                        return;
+                        return (PromptOutcome::Ok(StopReason::EndTurn), None);
+
                     }
                 }
             }
@@ -3778,8 +3851,7 @@ pub async fn run_prompt_task(
             Err(error) => PromptOutcome::Error(error),
         }
         .discard_retired_output();
-        send_prompt_result(&result_tx, &turn_id, agent, source, outcome, None);
-        return;
+        return (outcome, None);
     }
     match prompt_result {
         Ok(stop_reason) => {
@@ -3796,7 +3868,7 @@ pub async fn run_prompt_task(
                     }
                 }
                 record_scope_delivery_success(
-                    &mut agent,
+                    agent,
                     scope.clone(),
                     standing_sent,
                     &pending_delivered_event_ids,
@@ -3874,14 +3946,7 @@ pub async fn run_prompt_task(
             )
             .await;
 
-            send_prompt_result(
-                &result_tx,
-                &turn_id,
-                agent,
-                source,
-                PromptOutcome::Ok(stop_reason),
-                None,
-            );
+            (PromptOutcome::Ok(stop_reason), None)
         }
         Err(AcpError::AgentExited) => {
             tracing::error!(target: "pool::prompt", "agent {} exited during prompt", agent.index);
@@ -3896,14 +3961,10 @@ pub async fn run_prompt_task(
                 Some(buzz_core::agent_turn_metric::StopReason::Error),
             )
             .await;
-            send_prompt_result(
-                &result_tx,
-                &turn_id,
-                agent,
-                source,
+            (
                 PromptOutcome::AgentExited,
                 requeue_batch_if_queue(&ctx, batch),
-            );
+            )
         }
         Err(AcpError::IdleTimeout(_)) => {
             tracing::warn!(
@@ -3930,14 +3991,10 @@ pub async fn run_prompt_task(
                     .await;
                     // Timeout triggers respawn in handle_prompt_result —
                     // session state will be discarded with the old agent.
-                    send_prompt_result(
-                        &result_tx,
-                        &turn_id,
-                        agent,
-                        source,
+                    (
                         PromptOutcome::Timeout(TimeoutKind::Idle),
                         requeue_batch_if_queue(&ctx, batch),
-                    );
+                    )
                 }
                 Err(AcpError::AgentExited) => {
                     tracing::error!(
@@ -3956,14 +4013,10 @@ pub async fn run_prompt_task(
                         Some(buzz_core::agent_turn_metric::StopReason::Error),
                     )
                     .await;
-                    send_prompt_result(
-                        &result_tx,
-                        &turn_id,
-                        agent,
-                        source,
+                    (
                         PromptOutcome::AgentExited,
                         requeue_batch_if_queue(&ctx, batch),
-                    );
+                    )
                 }
                 Err(e) => {
                     tracing::error!(
@@ -3981,14 +4034,10 @@ pub async fn run_prompt_task(
                         Some(buzz_core::agent_turn_metric::StopReason::Error),
                     )
                     .await;
-                    send_prompt_result(
-                        &result_tx,
-                        &turn_id,
-                        agent,
-                        source,
+                    (
                         PromptOutcome::Timeout(TimeoutKind::Idle),
                         requeue_batch_if_queue(&ctx, batch),
-                    );
+                    )
                 }
             }
         }
@@ -4010,21 +4059,17 @@ pub async fn run_prompt_task(
                 Some(buzz_core::agent_turn_metric::StopReason::Error),
             )
             .await;
-            send_prompt_result(
-                &result_tx,
-                &turn_id,
-                agent,
-                source,
+            (
                 PromptOutcome::Timeout(TimeoutKind::Hard { recently_active }),
                 requeue_batch_if_queue(&ctx, batch),
-            );
+            )
         }
         Err(e) => {
             tracing::error!(target: "pool::prompt", "session_prompt error: {e}");
             // AgentError means the agent caught a problem before mutating
             // session state (e.g. bad LLM response). The session is healthy —
             // don't invalidate it. Other errors may have corrupted state.
-            if !matches!(e, AcpError::AgentError { .. }) {
+            if !matches!(e, AcpError::AgentError { .. } | AcpError::KimiFailure(_)) {
                 agent.state.invalidate_after_error(&source, &e);
             }
             let usage = agent.acp.take_turn_usage();
@@ -4037,14 +4082,7 @@ pub async fn run_prompt_task(
                 Some(buzz_core::agent_turn_metric::StopReason::Error),
             )
             .await;
-            send_prompt_result(
-                &result_tx,
-                &turn_id,
-                agent,
-                source,
-                PromptOutcome::Error(e),
-                requeue_batch_if_queue(&ctx, batch),
-            );
+            (PromptOutcome::Error(e), requeue_batch_if_queue(&ctx, batch))
         }
     }
     // _reaction_guard drops here → spawns clear_reactions for all exit paths.
@@ -5322,7 +5360,7 @@ fn parse_nostr_dm_response(json: serde_json::Value, limit: u32) -> Option<Conver
 fn requeue_batch_if_queue(ctx: &PromptContext, batch: Option<FlushBatch>) -> Option<FlushBatch> {
     if batch
         .as_ref()
-        .is_some_and(|batch| batch.continuation.is_some())
+        .is_some_and(|batch| batch.continuation.is_some() || batch.work.is_some())
     {
         return batch;
     }
@@ -7409,6 +7447,7 @@ pub(crate) mod tests {
         let author_hex = event.pubkey.to_hex();
         let channel_id = Uuid::new_v4();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id,
             scope: SessionScope::Conversation { channel_id },
@@ -7539,6 +7578,7 @@ pub(crate) mod tests {
             let mut observer_rx = observer.subscribe();
             agent.acp.set_observer(Some(observer.clone()), 0);
             let batch = FlushBatch {
+                work: None,
                 continuation: None,
                 channel_id,
                 scope,
@@ -7787,6 +7827,7 @@ done"#
                 .unwrap();
             let event_id = event.id.to_hex();
             let batch = FlushBatch {
+                work: None,
                 continuation: None,
                 channel_id,
                 scope: SessionScope::Conversation { channel_id },
@@ -7990,6 +8031,7 @@ done"#
             ctx
         };
         let first_batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id,
             scope: scope.clone(),
@@ -8003,6 +8045,7 @@ done"#
             cancel_reason: None,
         };
         let follow_up_batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id,
             scope: scope.clone(),
@@ -8097,6 +8140,7 @@ done"#
             .sign_with_keys(&keys)
             .unwrap();
         let merged_batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id,
             scope: SessionScope::Conversation { channel_id },
@@ -8115,6 +8159,7 @@ done"#
             cancel_reason: Some(crate::queue::CancelReason::Steer),
         };
         let next_batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id,
             scope: SessionScope::Conversation { channel_id },
@@ -8275,6 +8320,7 @@ done"#
             .sign_with_keys(&keys)
             .unwrap();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id,
             scope: SessionScope::Conversation { channel_id },
@@ -8558,6 +8604,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         )
         .expect("root remains after trigger deduplication");
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id,
             scope: SessionScope::Thread {
@@ -8616,6 +8663,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         )
         .expect("earlier DM remains after trigger deduplication");
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id,
             scope: SessionScope::Conversation { channel_id },
@@ -8858,6 +8906,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
 
     fn batch_with_scope(scope: SessionScope, event: nostr::Event) -> FlushBatch {
         FlushBatch {
+            work: None,
             continuation: None,
             channel_id: scope.channel_id(),
             scope,
@@ -9104,6 +9153,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         pool.task_map_mut().insert(
             abort.id(),
             TaskMeta {
+                permission_tx: None,
                 agent_index,
                 channel_id: Some(busy_scope.channel_id()),
                 scope: Some(busy_scope),
@@ -9628,6 +9678,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             .sign_with_keys(&keys)
             .unwrap();
         FlushBatch {
+            work: None,
             continuation: None,
             channel_id,
             scope: SessionScope::Conversation { channel_id },
@@ -10317,6 +10368,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         pool.task_map_mut().insert(
             abort.id(),
             TaskMeta {
+                permission_tx: None,
                 agent_index: 0,
                 channel_id: Some(scope.channel_id()),
                 scope: Some(scope),
@@ -11576,6 +11628,7 @@ done"#
             .unwrap();
         let event_id = event.id.to_hex();
         let batch = FlushBatch {
+            work: None,
             continuation: None,
             channel_id,
             scope: conv(channel_id),

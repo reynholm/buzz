@@ -68,6 +68,7 @@ pub(crate) fn dispatch(
         pool.task_map_mut().insert(
             handle.id(),
             pool::TaskMeta {
+                permission_tx: None,
                 agent_index: index,
                 channel_id: Some(scope.channel_id()),
                 scope: Some(scope),

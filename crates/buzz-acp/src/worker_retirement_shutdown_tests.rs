@@ -55,6 +55,7 @@ async fn retirement_shutdown_retries_original_parked_after_snapshot_failure() {
         index: 0,
         result: Err(anyhow::anyhow!("initial checked retirement unconfirmed")),
         retirement: Some(RetirementReturn {
+            crash_recovery: false,
             report: TerminationReport::Unverified,
             retained: Some(agent),
         }),
@@ -86,6 +87,7 @@ async fn retirement_shutdown_drains_original_returned_by_aborted_guard() {
     let mut tasks = tokio::task::JoinSet::new();
     tasks.spawn(async move {
         let mut guard = RetirementGuard {
+            crash_recovery: false,
             index: 0,
             tx,
             agent: Some(agent),

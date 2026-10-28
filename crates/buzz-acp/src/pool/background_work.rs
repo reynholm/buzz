@@ -15,6 +15,9 @@ pub(super) fn followup_prompt(
     continuation: &RuntimeContinuation,
     cwd: &str,
 ) -> String {
+    if let Some(work) = &continuation.work {
+        return format!("{FOLLOWUP_PROMPT}\n{}", work.managed_instruction());
+    }
     let journal = std::path::Path::new(cwd).join(".buzz-deliveries");
     let parent = continuation
         .thread_tags
@@ -68,7 +71,12 @@ impl OwnedAgent {
             blocking_pids: HashSet::new(),
             collection_pending: false,
             continuation: Some(RuntimeContinuation {
-                delivery_key: Uuid::new_v4(),
+                work: batch.and_then(|batch| batch.work.clone()),
+                crash_recovery: false,
+                background_ready: true,
+                delivery_key: batch
+                    .and_then(|batch| batch.work.as_ref())
+                    .map_or_else(Uuid::new_v4, |work| work.delivery_key),
                 ordinary_preempted: false,
                 worker_index: self.index,
                 session_id: session_id.to_owned(),
@@ -129,6 +137,40 @@ pub(crate) struct BackgroundPollRequest {
 }
 
 impl AgentPool {
+    /// Logical deadlines and explicit cancellation also govern idle background
+    /// holds; retaining a child must not turn its work into an infinite wait.
+    pub(crate) fn expired_kimi_background_workers(&self) -> Vec<(usize, SessionScope)> {
+        self.runtime_holds
+            .iter()
+            .filter_map(|(index, hold)| {
+                let agent = self.agents.get(*index)?.as_ref()?;
+                let work = agent.acp.logical_work()?;
+                (agent.acp.is_kimi() && (work.cancelled() || work.remaining().is_zero()))
+                    .then(|| (*index, hold.scope.clone()))
+            })
+            .collect()
+    }
+
+    pub(crate) fn protect_background_work(&self, queue: &mut EventQueue) {
+        for hold in self.runtime_holds.values() {
+            if let Some(continuation) = hold.continuation.as_ref().filter(|continuation| {
+                continuation
+                    .work
+                    .as_ref()
+                    .is_some_and(|work| !work.cancelled())
+            }) {
+                let mut continuation = continuation.clone();
+                continuation.background_ready = hold.collection_pending;
+                if !hold.collection_pending {
+                    if let Some(work) = &continuation.work {
+                        work.transition("waiting_background", "child_running");
+                    }
+                }
+                queue.enqueue_continuation(hold.scope.clone(), continuation);
+            }
+        }
+    }
+
     pub(crate) fn background_poll_requests(&self) -> Vec<BackgroundPollRequest> {
         self.runtime_holds
             .keys()
@@ -266,6 +308,23 @@ impl AgentPool {
         scope: &SessionScope,
         continuation: &RuntimeContinuation,
     ) -> ContinuationState {
+        if continuation.crash_recovery {
+            return match &continuation.work {
+                Some(work)
+                    if work.scope == *scope
+                        && work.delivery_key == continuation.delivery_key
+                        && !work.cancelled()
+                        && !work.retirement_unverified() =>
+                {
+                    if work.awaiting_retirement() {
+                        ContinuationState::Busy
+                    } else {
+                        ContinuationState::Ready
+                    }
+                }
+                _ => ContinuationState::Stale,
+            };
+        }
         match self.agents.get(continuation.worker_index) {
             Some(Some(agent)) if self.continuation_matches(agent, scope, continuation) => {
                 if self.runtime_claim_allowed(agent.index, Some(scope)) {

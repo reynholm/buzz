@@ -10,7 +10,7 @@ use std::time::Duration;
 /// resume, `RESUME_ERROR=1` answers resume with -32002, `DELAY=<secs>` delays
 /// every session/new and session/resume answer.
 const ADAPTER: &str = r#"
-import json, os, sys, time
+import json, os, subprocess, sys, time
 log = open(os.environ['LOG'], 'a', buffering=1)
 delay = float(os.environ.get('DELAY', '0'))
 created = 0
@@ -28,6 +28,8 @@ for line in sys.stdin:
     if method == 'initialize':
         caps = {'sessionCapabilities': {'resume': {}}} if os.environ.get('RESUME_CAP') == '1' else {}
         reply['result'] = {'protocolVersion': 1, 'agentCapabilities': caps}
+        if os.environ.get('KIMI_IDENTITY') == '1':
+            reply['result']['agentInfo'] = {'name':'Kimi Code CLI','version':'synthetic-recovery'}
     elif method == 'session/new':
         if os.environ.get('CHECK_STATUS_STARTED_ROOT'):
             import pathlib
@@ -73,6 +75,15 @@ for line in sys.stdin:
             continue
         prompt_count += 1
         session = req['params']['sessionId']
+        if os.environ.get('BACKGROUND_MARKER') and prompt_count == 1:
+            program = 'import os,sys,time\nwhile not os.path.exists(sys.argv[1]): time.sleep(.01)'
+            subprocess.Popen([sys.executable,'-c',program,os.environ['BACKGROUND_MARKER']], stdout=subprocess.DEVNULL)
+            for status in ['in_progress','completed']:
+                print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':session,'update':{'sessionUpdate':'tool_call_update','toolCallId':'background-one','kind':'execute','status':status}}}),flush=True)
+        if os.environ.get('EFFECT_MARKER'):
+            with open(os.environ['EFFECT_MARKER'],'a') as out: out.write('performed\n')
+            for status in ['in_progress','failed']:
+                print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':session,'update':{'sessionUpdate':'tool_call_update','toolCallId':'effect-one','kind':'execute','status':status}}}),flush=True)
         if os.environ.get('STATUS_WRONG_SESSION'):
             session = 'another-session'
         if os.environ.get('STATUS_USAGE'):
@@ -91,6 +102,7 @@ for line in sys.stdin:
                 out.write(json.dumps(req['params']) + '\n')
         if str(prompt_count) == os.environ.get('FAIL_PROMPT'):
             reply['error'] = {'code': int(os.environ.get('FAIL_PROMPT_CODE','-32000')), 'message': 'deliberate prompt failure'}
+            if os.environ.get('KIMI_ERROR'): reply['error'] = json.loads(os.environ['KIMI_ERROR'])
         else:
             reply['result'] = {'stopReason': os.environ.get('STATUS_STOP','end_turn')}
     else:
@@ -734,6 +746,7 @@ fn mention(keys: &Keys, channel_id: Uuid, root: Option<&str>, text: &str) -> nos
 
 fn batch(scope: &SessionScope, event: nostr::Event) -> FlushBatch {
     FlushBatch {
+        work: None,
         continuation: None,
         channel_id: scope.channel_id(),
         scope: scope.clone(),
@@ -1385,6 +1398,9 @@ async fn failed_channel_removal_during_sleep_never_resumes_after_readd() {
 
 #[path = "session_control_runtime_tests.rs"]
 mod control_tests;
+
+#[path = "kimi_runtime_tests.rs"]
+mod kimi_runtime_tests;
 
 #[path = "session_retirement_tests.rs"]
 mod retirement_tests;

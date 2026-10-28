@@ -5,6 +5,10 @@ use super::*;
 /// Authority and reply destination of a background task's original session.
 #[derive(Clone, Debug)]
 pub(crate) struct RuntimeContinuation {
+    pub work: Option<LogicalWork>,
+    /// Set only after an interrupted prompt requires checked crash retirement.
+    pub crash_recovery: bool,
+    pub background_ready: bool,
     /// Stable random identity of this group's managed final report.
     pub delivery_key: Uuid,
     /// One ordinary cancellation is allowed; its retry must get an execution window.
@@ -19,6 +23,9 @@ pub(crate) struct RuntimeContinuation {
 impl FlushBatch {
     /// Reply destination, including batches containing only a continuation.
     pub(crate) fn reply_tags(&self) -> ThreadTags {
+        if let Some(work) = &self.work {
+            return work.reply_tags();
+        }
         self.events
             .last()
             .map(|event| {
@@ -41,6 +48,24 @@ impl EventQueue {
         scope: SessionScope,
         continuation: RuntimeContinuation,
     ) {
+        if let Some(batch) = self.recovery_batches.get_mut(&scope) {
+            if let Some(pending) = batch
+                .continuation
+                .as_mut()
+                .filter(|pending| pending.delivery_key == continuation.delivery_key)
+            {
+                pending.background_ready |= continuation.background_ready;
+                return;
+            }
+        }
+        if let Some(pending) = self
+            .continuations
+            .get_mut(&scope)
+            .filter(|pending| pending.delivery_key == continuation.delivery_key)
+        {
+            pending.background_ready |= continuation.background_ready;
+            return;
+        }
         self.continuations.entry(scope).or_insert(continuation);
     }
 
@@ -52,6 +77,10 @@ impl EventQueue {
 
     pub(crate) fn has_pending_continuation(&self, scope: &SessionScope) -> bool {
         self.continuations.contains_key(scope)
+            || self
+                .recovery_batches
+                .get(scope)
+                .is_some_and(|batch| batch.continuation.is_some())
     }
 
     pub(super) fn flush_continuation(&mut self) -> Option<FlushBatch> {
@@ -59,8 +88,13 @@ impl EventQueue {
         let scope = self
             .continuations
             .iter()
-            .filter(|(scope, _)| {
+            .filter(|(scope, continuation)| {
                 !self.in_flight_scopes.contains(*scope)
+                    && (continuation.background_ready
+                        || continuation
+                            .work
+                            .as_ref()
+                            .is_some_and(|work| work.remaining().is_zero()))
                     && self
                         .continuation_retry_after
                         .get(*scope)
@@ -86,20 +120,27 @@ impl EventQueue {
                 },
             );
         }
-        Some(FlushBatch {
+        let work = continuation.work.clone();
+        Some(self.attach_logical_work(FlushBatch {
+            work,
             channel_id: scope.channel_id(),
             scope,
             events: Vec::new(),
             cancelled_events: Vec::new(),
             cancel_reason: None,
             continuation: Some(continuation),
-        })
+        }))
     }
 
     pub(super) fn has_ready_continuation(&self) -> bool {
         let now = Instant::now();
-        self.continuations.keys().any(|scope| {
+        self.continuations.iter().any(|(scope, continuation)| {
             !self.in_flight_scopes.contains(scope)
+                && (continuation.background_ready
+                    || continuation
+                        .work
+                        .as_ref()
+                        .is_some_and(|work| work.remaining().is_zero()))
                 && self
                     .continuation_retry_after
                     .get(scope)
@@ -115,6 +156,9 @@ mod tests {
 
     fn continuation() -> RuntimeContinuation {
         RuntimeContinuation {
+            work: None,
+            crash_recovery: false,
+            background_ready: true,
             delivery_key: Uuid::new_v4(),
             ordinary_preempted: false,
             worker_index: 0,

@@ -75,6 +75,7 @@ async fn retirement_background_deadline_cannot_take_foreground_worker() {
     pool.task_map.insert(
         handle.id(),
         TaskMeta {
+            permission_tx: None,
             agent_index: 0,
             channel_id: Some(a.channel_id()),
             scope: Some(a.clone()),
@@ -119,6 +120,9 @@ async fn retirement_background_release_avoids_unclaimable_collection() {
             scope: a.clone(),
             blocking_pids: HashSet::from([123]),
             continuation: Some(crate::queue::RuntimeContinuation {
+                work: None,
+                crash_recovery: false,
+                background_ready: true,
                 delivery_key: Uuid::new_v4(),
                 ordinary_preempted: false,
                 worker_index: 0,
@@ -152,6 +156,7 @@ async fn retirement_return_boundary_bypasses_crash_budget_for_fatal_old_outcome(
     pool.task_map.insert(
         handle.id(),
         TaskMeta {
+            permission_tx: None,
             agent_index: 0,
             channel_id: Some(a.channel_id()),
             scope: Some(a.clone()),

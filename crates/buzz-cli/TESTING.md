@@ -850,3 +850,17 @@ reply in a thread, then read the reply back with
 `buzz messages thread --channel "$CHANNEL_ID" --event "$REPLY_ID" | jq '.[].tags'`
 and expect both tags. Stop the harness and send again with the same
 environment: expect no status tags and a normal publication.
+
+### Managed top-level reports
+
+`messages deliver --reply-to` is optional for a top-level channel/DM report.
+Omitting it prepares an event without `e` tags and records an empty parent in the
+existing journal format. Retry with the identical key, channel, omitted parent
+and journal directory. Adding/changing a parent or channel for an existing key
+is a route conflict; it cannot redirect the saved report. Thread reports still
+validate that their supplied parent belongs to the original channel.
+
+Use the complete `cargo test --locked -p buzz-cli` package to cover both route
+forms and the original pending/confirmed delivery regressions. The harness
+canary must use the candidate CLI beside the candidate harness so fallback
+notices and provider reports use the same delivery contract.
