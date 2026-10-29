@@ -170,6 +170,31 @@ async fn started_background_turn_in_scope(
     tempfile::TempDir,
     Arc<PromptContext>,
 ) {
+    started_background_turn_with_assignment(
+        max_turns,
+        scope,
+        dm,
+        kimi,
+        None,
+        "start background work",
+    )
+    .await
+}
+
+async fn started_background_turn_with_assignment(
+    max_turns: u32,
+    scope: SessionScope,
+    dm: bool,
+    kimi: bool,
+    root: Option<&str>,
+    assignment: &str,
+) -> (
+    AgentPool,
+    EventQueue,
+    SessionScope,
+    tempfile::TempDir,
+    Arc<PromptContext>,
+) {
     let dir = tempfile::tempdir().unwrap();
     let mut agent = worker(0).await;
     agent.acp = AcpClient::spawn(
@@ -188,9 +213,11 @@ async fn started_background_turn_in_scope(
     .unwrap();
     agent.acp.initialize().await.unwrap();
     let mut pool = AgentPool::from_slots(vec![Some(agent), Some(worker(1).await)]);
-    let event = EventBuilder::new(Kind::Custom(9), "start background work")
-        .sign_with_keys(&Keys::generate())
-        .unwrap();
+    let mut event = EventBuilder::new(Kind::Custom(9), assignment);
+    if let Some(root) = root {
+        event = event.tag(nostr::Tag::parse(["e", root, "", "reply"]).unwrap());
+    }
+    let event = event.sign_with_keys(&Keys::generate()).unwrap();
     let mut queue = EventQueue::new(DedupMode::Queue);
     if kimi {
         queue = queue.with_kimi_recovery(

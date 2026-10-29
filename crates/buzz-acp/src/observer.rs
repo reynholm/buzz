@@ -100,6 +100,32 @@ impl ObserverHandle {
         }
     }
 
+    /// Check that the complete event can reach the encrypted owner feed.
+    /// Reserve the widest sequence and timestamp so later emission cannot
+    /// cross the publisher's plaintext cap and silently trim consent details.
+    pub(crate) fn can_publish_intact(
+        &self,
+        kind: &str,
+        agent_index: Option<usize>,
+        context: &ObserverContext,
+        payload: &serde_json::Value,
+    ) -> bool {
+        let event = ObserverEvent {
+            seq: u64::MAX,
+            timestamp: chrono::DateTime::<chrono::Utc>::MAX_UTC
+                .to_rfc3339_opts(chrono::SecondsFormat::Nanos, false),
+            kind: kind.into(),
+            agent_index,
+            channel_id: context.channel_id.clone(),
+            session_id: context.session_id.clone(),
+            turn_id: context.turn_id.clone(),
+            started_at: context.started_at.clone(),
+            payload: payload.clone(),
+        };
+        serde_json::to_vec(&event)
+            .is_ok_and(|encoded| encoded.len() <= buzz_core::observer::OBSERVER_MAX_PLAINTEXT_LEN)
+    }
+
     /// Emit a local observer event.
     pub fn emit(
         &self,

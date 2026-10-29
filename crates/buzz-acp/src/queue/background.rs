@@ -108,18 +108,7 @@ impl EventQueue {
         self.in_flight_deadlines
             .insert(scope.clone(), now + self.in_flight_deadline);
         self.in_flight_batch_sizes.insert(scope.clone(), 0);
-        if let Some(root) = &continuation.thread_tags.root_event_id {
-            self.in_flight_reply_routes.insert(
-                scope.clone(),
-                InFlightReplyRoute {
-                    route: ReplyRoute {
-                        root_event_id: Some(root.to_ascii_lowercase()),
-                        thread: root.to_ascii_lowercase(),
-                    },
-                    prompt: PromptRouting::default(),
-                },
-            );
-        }
+        self.record_continuation_reply_route(&scope, &continuation);
         let work = continuation.work.clone();
         Some(self.attach_logical_work(FlushBatch {
             work,
@@ -130,6 +119,40 @@ impl EventQueue {
             cancel_reason: None,
             continuation: Some(continuation),
         }))
+    }
+
+    /// Preserve the original reply route even for an event-free collection.
+    /// An unthreaded DM has no root tag and keeps the original event's DM route.
+    pub(super) fn record_continuation_reply_route(
+        &mut self,
+        scope: &SessionScope,
+        continuation: &RuntimeContinuation,
+    ) {
+        let route = continuation
+            .thread_tags
+            .root_event_id
+            .as_ref()
+            .map(|root| ReplyRoute {
+                root_event_id: Some(root.to_ascii_lowercase()),
+                thread: root.to_ascii_lowercase(),
+            })
+            .or_else(|| {
+                continuation
+                    .work
+                    .as_ref()?
+                    .original_events
+                    .last()
+                    .map(BatchEvent::reply_route)
+            });
+        if let Some(route) = route {
+            self.in_flight_reply_routes.insert(
+                scope.clone(),
+                InFlightReplyRoute {
+                    route,
+                    prompt: PromptRouting::default(),
+                },
+            );
+        }
     }
 
     pub(super) fn has_ready_continuation(&self) -> bool {

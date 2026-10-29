@@ -1402,6 +1402,9 @@ mod control_tests;
 #[path = "kimi_runtime_tests.rs"]
 mod kimi_runtime_tests;
 
+#[path = "kimi_permission_crash_tests.rs"]
+mod kimi_permission_crash_tests;
+
 #[path = "session_retirement_tests.rs"]
 mod retirement_tests;
 

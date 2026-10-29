@@ -4769,7 +4769,8 @@
         "mod session_status;",
         "name == session_status::SESSION_STATUS_DIR_ENV",
         "ctx.session_controls.compact_pending(&scope) && batch.continuation.is_none()",
-        "fn handle_owner_cancel_for_scope"
+        "fn handle_owner_cancel_for_scope",
+        "mod permission_view_tests;"
       ],
       "invocation_seams": [
         {
@@ -5005,7 +5006,9 @@
       "is_new": false,
       "required_symbols": [
         "pub(crate) fn discard_retired_output(self) -> Self",
-        "pub(crate) fn is_known_dm("
+        "pub(crate) fn is_known_dm(",
+        "if b.continuation.is_none() {",
+        "hold.collection_pending = true;"
       ],
       "invocation_seams": [
         {
@@ -5163,6 +5166,13 @@
           "behavior_test": "kimi_confirmed_report_prevents_any_new_provider_rpc",
           "verification_command": "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4",
           "coverage": "Production-boundary regression; local deterministic ACP peers or signed mock relay are not provider or human acceptance."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/pool.rs",
+          "callee_symbol": "collection_prompt_batch",
+          "invocation": ".and_then(background_work::collection_prompt_batch);",
+          "behavior_test": "kimi_collection_dm_listener_interrupt_delivers_correction",
+          "verification_command": "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1"
         }
       ],
       "verification_commands": [
@@ -8425,7 +8435,8 @@
         "pub(crate) struct RuntimeHold",
         "pub fn queue_finished_background_work",
         "pub(super) fn followup_prompt",
-        "agent.acp.observed_background_instances.is_empty()"
+        "agent.acp.observed_background_instances.is_empty()",
+        "pub(super) fn collection_prompt_batch("
       ],
       "invocation_seams": [
         {
@@ -8588,7 +8599,8 @@
       "required_symbols": [
         "pub(crate) struct RuntimeContinuation",
         "pub ordinary_preempted: bool",
-        "background_managed_delivery_key_stays_on_collection_across_error_and_new_message"
+        "background_managed_delivery_key_stays_on_collection_across_error_and_new_message",
+        "pub(super) fn record_continuation_reply_route("
       ],
       "invocation_seams": [
         {
@@ -8598,6 +8610,13 @@
           "behavior_test": "background_collection_completes_under_repeated_ordinary_preemption",
           "verification_command": "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_collection_completes_under_repeated_ordinary_preemption -- --test-threads=1",
           "coverage": "A2_RED.log and A2_BACKGROUND_GREEN.log preserve behavioral RED/GREEN for bounded ordinary interruption; text seam mutation is separate evidence."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/queue/background.rs",
+          "callee_symbol": "record_continuation_reply_route",
+          "invocation": "self.record_continuation_reply_route(&scope, &continuation);",
+          "behavior_test": "kimi_collection_top_level_dm_listener_interrupt_delivers_correction",
+          "verification_command": "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1"
         }
       ],
       "verification_commands": [
@@ -9454,7 +9473,8 @@
         "idle_worker_transport_death_keeps_session_resumable",
         "acquisition_does_not_resume_another_community_or_agent",
         "acquisition_resumes_canonical_same_community_after_restart",
-        "failed_channel_removal_during_sleep_never_resumes_after_readd"
+        "failed_channel_removal_during_sleep_never_resumes_after_readd",
+        "mod kimi_permission_crash_tests;"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -14091,9 +14111,18 @@
       "responsibility": "Validate owner-signed, command-first permission decisions against the current route and random request token",
       "is_new": true,
       "required_symbols": [
-        "return Err(AcpError::PermissionViewUnavailable);"
+        "return Err(AcpError::PermissionViewUnavailable);",
+        "exited = self.child.wait() => {"
       ],
-      "invocation_seams": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/acp/kimi_permission/controls.rs",
+          "callee_symbol": "can_publish_intact",
+          "invocation": "!observer.can_publish_intact(",
+          "behavior_test": "kimi_manual_permission_requires_unabridged_published_owner_view",
+          "verification_command": "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1"
+        }
+      ],
       "verification_commands": [
         "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4"
       ]
@@ -14213,7 +14242,15 @@
       "responsibility": "Retain original logical work, delivery identity, bounded independent jitter and revocation across retry and collection",
       "is_new": true,
       "required_symbols": [],
-      "invocation_seams": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/queue/recovery.rs",
+          "callee_symbol": "record_continuation_reply_route",
+          "invocation": "self.record_continuation_reply_route(&scope, continuation);",
+          "behavior_test": "kimi_collection_crash_retry_listener_interrupt_delivers_correction",
+          "verification_command": "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1"
+        }
+      ],
       "verification_commands": [
         "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4"
       ]
@@ -14296,6 +14333,42 @@
       "invocation_seams": [],
       "verification_commands": [
         "pnpm --dir desktop test"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/observer.rs",
+      "responsibility": "Bound complete manual-consent views by the same serialized plaintext cap as the encrypted telemetry publisher, including envelope and escaping overhead",
+      "is_new": false,
+      "required_symbols": [
+        "pub(crate) fn can_publish_intact("
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/permission_view_tests.rs",
+      "responsibility": "Exercise real ACP permissions through production telemetry queue, trimming, signing and encryption; deny manual approval of clipped Bash, Write, patch, escaped and aggregate payloads",
+      "is_new": true,
+      "required_symbols": [
+        "async fn kimi_manual_permission_requires_unabridged_published_owner_view()"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/kimi_permission_crash_tests.rs",
+      "responsibility": "Recover the same logical work after child death during manual permission; require checked retirement and reject retired decision tokens",
+      "is_new": true,
+      "required_symbols": [
+        "async fn kimi_manual_permission_child_exit_recovers_same_work_and_rejects_retired_vote()"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1"
       ]
     }
   ],

@@ -162,7 +162,7 @@ pub enum AcpError {
     #[error("The human permission decision deadline expired")]
     PermissionDecisionTimeout,
 
-    #[error("Owner activity must be enabled to inspect the exact permission request")]
+    #[error("The complete permission request is unavailable in owner Activity")]
     PermissionViewUnavailable,
 }
 

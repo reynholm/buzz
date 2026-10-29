@@ -59,6 +59,14 @@ including backoff, pending approval, respawn and terminal publication. A send
 already submitted can still have reached the relay; cancellation cannot undo
 an accepted event.
 
+Managed background collection uses the normal event and history formatter,
+including retained assignments and any merged correction. A fresh, permitted
+unresumed crash session receives that available context before its collection
+instruction. Collection does not pass a retained slash command to the adapter
+as a new command, and the final instruction forbids another background launch.
+The rendering batch does not replace the queue's original work or reset its
+delivery key, route, journal or remaining budget.
+
 ## Failures and uncertain effects
 
 The JSON-RPC decoder preserves only safe error name/type, numeric code/status
@@ -111,6 +119,14 @@ still be valid. The display status does not confer decision authority. A missing
 listener, failed notice or expired decision fails closed and requires explicit
 human follow-up; an old token cannot revive a cancelled request.
 
+Manual consent also requires the complete permission request and its observer
+envelope to fit the encrypted activity plaintext limit (65,535 serialized
+bytes). Requests that would be trimmed, including JSON-escaping overhead and
+aggregate fields, return `PermissionViewUnavailable` before an approval notice
+is offered. A clipped Raw ACP entry is diagnostic information, not a view that
+can authorize the unseen remainder. Automatic policies retain their explicit
+configured behavior.
+
 Decision waiting is bounded by the configured timeout and remaining turn/work
 limits. Permission writes have at most 30 seconds and are also capped by those
 limits. After a written reply, a separate progress watchdog requires correlated
@@ -119,6 +135,11 @@ tool progress or a prompt outcome, not unrelated service chatter. The initial
 4.169-second reply-to-end-turn exchange; it is not an incident-derived timeout.
 Idle-pool sleep remains blocked by an active turn, background hold or pending
 continuation/retry. This does not disable the turn/work watchdogs.
+
+The decision wait observes child exit directly and retires its vote mailbox.
+Death before a vote propagates the execution failure to checked retirement and
+the existing bounded recovery; it does not wait for the permission timeout or
+grant the action. A replacement request receives a new token.
 
 ## Reports and visible states
 

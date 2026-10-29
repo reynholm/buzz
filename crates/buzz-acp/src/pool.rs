@@ -2740,6 +2740,7 @@ async fn run_prompt_execution(
     }
     let prompt_text = batch
         .as_ref()
+        .filter(|batch| batch.work.is_none())
         .and_then(|batch| {
             batch.continuation.as_ref().map(|continuation| {
                 background_work::followup_prompt(batch.channel_id, continuation, &ctx.cwd)
@@ -3349,6 +3350,23 @@ async fn run_prompt_execution(
     }
     // Any `initial_message` setup turn is done; see `prompt_is_dm`.
     prompt_routing.record_dm(prompt_is_dm);
+    if batch
+        .as_ref()
+        .is_some_and(|batch| batch.work.is_some() && batch.continuation.is_some())
+    {
+        // Collections keep their original thread, including the first ordinary
+        // listener interruption. They never use an agent-to-agent trigger anchor.
+        prompt_routing.record_trigger_anchor(false);
+        // A replacement session owns the pending collection before its first
+        // prompt, so an ordinary interruption preserves that healthy session.
+        if let Some(hold) = &mut agent.background_context {
+            hold.collection_pending = true;
+        }
+    }
+    let collection_batch = batch
+        .as_ref()
+        .and_then(background_work::collection_prompt_batch);
+    let rendering_batch = collection_batch.as_ref().or(batch.as_ref());
 
     // When the batch is a single slash-command message (e.g. "@Eva /goal …"),
     // `slash_command` holds the bare command. It is sent as the FIRST prompt
@@ -3386,7 +3404,7 @@ async fn run_prompt_execution(
             )
         };
         vec![text]
-    } else if let Some(ref b) = batch {
+    } else if let Some(b) = rendering_batch {
         // Project authority was resolved before any ACP session boundary above;
         // reuse that exact typed result for prompt formatting.
         let channel_info = resolved_channel_info.clone();
@@ -3398,7 +3416,13 @@ async fn run_prompt_execution(
             .as_ref()
             .and_then(|dispatch| dispatch.intent.as_ref())
             .map(|intent| intent.depth);
-        let context_target = if selected_depth
+        let context_target = if let Some(root) = b
+            .continuation
+            .as_ref()
+            .and_then(|continuation| continuation.thread_tags.root_event_id.as_ref())
+        {
+            ContextTarget::Thread(root.to_ascii_lowercase())
+        } else if selected_depth
             .is_some_and(|depth| depth != buzz_core::session_control::RestartDepth::Recent)
         {
             session_history::target(b, is_dm)
@@ -3547,7 +3571,11 @@ async fn run_prompt_execution(
             .flat_map(|p| [p.display_name.as_deref(), p.nip05_handle.as_deref()])
             .flatten()
             .collect();
-        slash_command = crate::queue::slash_command_for_batch(b, &known_names);
+        // Retained collection assignments describe the existing task; a slash
+        // command must not be reissued to the adapter as a new action.
+        if b.continuation.is_none() {
+            slash_command = crate::queue::slash_command_for_batch(b, &known_names);
+        }
         if let Some(ref cmd) = slash_command {
             tracing::info!(
                 target: "pool::prompt",
@@ -3579,6 +3607,9 @@ async fn run_prompt_execution(
                 &mut sections,
                 session_continuity::format_session_marker(start, first_mention.as_ref()),
             );
+        }
+        if b.continuation.is_some() {
+            sections.push(background_work::FOLLOWUP_PROMPT.to_owned());
         }
         sections
     } else {

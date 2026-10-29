@@ -2863,6 +2863,7 @@ New module: `false`.
 - Required symbol: `name == session_status::SESSION_STATUS_DIR_ENV`
 - Required symbol: `ctx.session_controls.compact_pending(&scope) && batch.continuation.is_none()`
 - Required symbol: `fn handle_owner_cancel_for_scope`
+- Required symbol: `mod permission_view_tests;`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `result_refreshes_idle_clock`; exact call `if result_refreshes_idle_clock(&result.source) {`; behavior test `error_outcome_emission_tests::channel_result_refreshes_idle_clock_wiring`; verify `cargo test -p buzz-acp --lib error_outcome_emission_tests::channel_result_refreshes_idle_clock_wiring -- --exact`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `depart_idle_sessions`; exact call `pool.depart_idle_sessions(session_store::Departure::IdleSleep);`; behavior test `pool_sleep_marks_every_idle_session`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/lib.rs` → `restart`; exact call `match ctx.session_controls.restart(job) {`; behavior test `restart_during_delayed_acquisition_fences_old_dispatch`; verify `cargo test -p buzz-acp -- --test-threads=1`
@@ -2911,6 +2912,8 @@ New module: `false`.
 
 - Required symbol: `pub(crate) fn discard_retired_output(self) -> Self`
 - Required symbol: `pub(crate) fn is_known_dm(`
+- Required symbol: `if b.continuation.is_none() {`
+- Required symbol: `hold.collection_pending = true;`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `discard_durable`; exact call `self.discard_durable(scope);`; behavior test `invalidate_scope_writes_tombstone`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `depart_durable_all`; exact call `self.depart_durable_all(crate::session_store::Departure::WorkerCrash);`; behavior test `invalidate_all_marks_worker_crash_without_tombstone`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `persist_delivery`; exact call `self.persist_delivery(`; behavior test `delivery_success_persists_ids`; verify `cargo test -p buzz-acp -- --test-threads=1`
@@ -2944,6 +2947,7 @@ New module: `false`.
         .discard_retired_output();`; behavior test `retired_adapter_death_replaces_the_worker_through_result_handling`; verify `cargo test -p buzz-acp --lib retired_adapter_death_replaces_the_worker_through_result_handling -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `prepare_background_return`; exact call `agent.prepare_background_return();`; behavior test `completed_empty_turn_prepares_observation_before_listener_return`; verify `cargo test --locked -p buzz-acp --lib completed_empty_turn_prepares_observation_before_listener_return -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `confirmed_report`; exact call `crate::managed_work::confirmed_report(&ctx.rest_client, work).await`; behavior test `kimi_confirmed_report_prevents_any_new_provider_rpc`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `collection_prompt_batch`; exact call `.and_then(background_work::collection_prompt_batch);`; behavior test `kimi_collection_dm_listener_interrupt_delivers_correction`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1`
 - Verify: `just ci`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
@@ -5527,6 +5531,7 @@ New module: `true`.
 - Required symbol: `pub fn queue_finished_background_work`
 - Required symbol: `pub(super) fn followup_prompt`
 - Required symbol: `agent.acp.observed_background_instances.is_empty()`
+- Required symbol: `pub(super) fn collection_prompt_batch(`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `followup_prompt`; exact call `background_work::followup_prompt(batch.channel_id, continuation, &ctx.cwd)`; behavior test `background_managed_delivery_key_stays_on_collection_across_error_and_new_message`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_managed_delivery_key_stays_on_collection_across_error_and_new_message -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool/background_work.rs` → `contains`; exact call `!self.retire_on_return.contains(&index)`; behavior test `retirement_targets_include_checked_out_copies_and_block_idle_claims`; verify `cargo test -p buzz-acp --lib retirement_targets_include_checked_out_copies_and_block_idle_claims -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `refresh_runtime_hold`; exact call `self.refresh_runtime_hold(&mut agent);`; behavior test `background_unknown_then_empty_releases_hold_without_inventing_collection`; verify `cargo test -p buzz-acp --lib background_unknown_then_empty_releases_hold_without_inventing_collection -- --test-threads=1`
@@ -5610,7 +5615,9 @@ New module: `true`.
 - Required symbol: `pub(crate) struct RuntimeContinuation`
 - Required symbol: `pub ordinary_preempted: bool`
 - Required symbol: `background_managed_delivery_key_stays_on_collection_across_error_and_new_message`
+- Required symbol: `pub(super) fn record_continuation_reply_route(`
 - Invocation: `crates/buzz-acp/src/queue.rs` → `enqueue_continuation`; exact call `self.enqueue_continuation(batch.scope, continuation);`; behavior test `background_collection_completes_under_repeated_ordinary_preemption`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background_collection_completes_under_repeated_ordinary_preemption -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/queue/background.rs` → `record_continuation_reply_route`; exact call `self.record_continuation_reply_route(&scope, &continuation);`; behavior test `kimi_collection_top_level_dm_listener_interrupt_delivers_correction`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1`
 - Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background -- --test-threads=1`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
@@ -6166,6 +6173,7 @@ New module: `true`.
 - Required symbol: `acquisition_does_not_resume_another_community_or_agent`
 - Required symbol: `acquisition_resumes_canonical_same_community_after_restart`
 - Required symbol: `failed_channel_removal_during_sleep_never_resumes_after_readd`
+- Required symbol: `mod kimi_permission_crash_tests;`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
@@ -9385,6 +9393,8 @@ Validate owner-signed, command-first permission decisions against the current ro
 New module: `true`.
 
 - Required symbol: `return Err(AcpError::PermissionViewUnavailable);`
+- Required symbol: `exited = self.child.wait() => {`
+- Invocation: `crates/buzz-acp/src/acp/kimi_permission/controls.rs` → `can_publish_intact`; exact call `!observer.can_publish_intact(`; behavior test `kimi_manual_permission_requires_unabridged_published_owner_view`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/acp/kimi_permission_tests.rs`
@@ -9481,6 +9491,7 @@ Retain original logical work, delivery identity, bounded independent jitter and 
 
 New module: `true`.
 
+- Invocation: `crates/buzz-acp/src/queue/recovery.rs` → `record_continuation_reply_route`; exact call `self.record_continuation_reply_route(&scope, continuation);`; behavior test `kimi_collection_crash_retry_listener_interrupt_delivers_correction`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/queue/recovery_observer.rs`
@@ -9546,3 +9557,30 @@ Render bounded known logical-work states and safe reasons while rejecting stale 
 New module: `true`.
 
 - Verify: `pnpm --dir desktop test`
+
+## `crates/buzz-acp/src/observer.rs`
+
+Bound complete manual-consent views by the same serialized plaintext cap as the encrypted telemetry publisher, including envelope and escaping overhead
+
+New module: `false`.
+
+- Required symbol: `pub(crate) fn can_publish_intact(`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/permission_view_tests.rs`
+
+Exercise real ACP permissions through production telemetry queue, trimming, signing and encryption; deny manual approval of clipped Bash, Write, patch, escaped and aggregate payloads
+
+New module: `true`.
+
+- Required symbol: `async fn kimi_manual_permission_requires_unabridged_published_owner_view()`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/pool/kimi_permission_crash_tests.rs`
+
+Recover the same logical work after child death during manual permission; require checked retirement and reject retired decision tokens
+
+New module: `true`.
+
+- Required symbol: `async fn kimi_manual_permission_child_exit_recovers_same_work_and_rejects_retired_vote()`
+- Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1`

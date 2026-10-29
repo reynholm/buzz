@@ -114,7 +114,14 @@ impl AcpClient {
             }
             _ => {}
         }
-        if self.observer.is_none() {
+        if self.observer.as_ref().is_none_or(|observer| {
+            !observer.can_publish_intact(
+                "acp_read",
+                self.observer_agent_index,
+                &self.observer_context,
+                msg,
+            )
+        }) {
             self.permission_event(record, "decision_view_unavailable");
             return Err(AcpError::PermissionViewUnavailable);
         }
@@ -160,13 +167,28 @@ impl AcpClient {
             if self.kimi_work_cancelled() {
                 break Err(AcpError::PermissionRequired);
             }
-            match tokio::time::timeout_at(deadline, decisions.recv()).await {
-                Ok(Some(decision)) if decision.token == record.decision_token => {
-                    break Ok(decision.allow)
+            tokio::select! {
+                biased;
+                exited = self.child.wait() => {
+                    // A dead execution cannot consume this request's vote. Preserve
+                    // its transport failure so the queue uses checked retirement
+                    // before retrying work whose action was never approved.
+                    decisions.close();
+                    break Err(match exited {
+                        Ok(_) => AcpError::AgentExited,
+                        Err(error) => AcpError::Io(error),
+                    });
                 }
-                Ok(Some(_)) => self.permission_event(record, "stale_decision_ignored"),
-                Ok(None) => break Err(AcpError::PermissionRequired),
-                Err(_) => break Err(AcpError::PermissionDecisionTimeout),
+                _ = tokio::time::sleep_until(deadline) => {
+                    break Err(AcpError::PermissionDecisionTimeout);
+                }
+                decision = decisions.recv() => match decision {
+                    Some(decision) if decision.token == record.decision_token => {
+                        break Ok(decision.allow)
+                    }
+                    Some(_) => self.permission_event(record, "stale_decision_ignored"),
+                    None => break Err(AcpError::PermissionRequired),
+                }
             }
         };
         self.kimi_permissions.decisions = Some(decisions);

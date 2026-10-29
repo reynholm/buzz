@@ -287,10 +287,12 @@ impl EventQueue {
             .insert(scope.clone(), now + self.in_flight_deadline);
         self.in_flight_batch_sizes
             .insert(scope.clone(), batch.events.len());
-        if batch.continuation.is_some() {
+        if let Some(continuation) = &batch.continuation {
             self.in_flight_continuations.insert(scope.clone());
+            self.record_continuation_reply_route(&scope, continuation);
+        } else {
+            self.record_in_flight_reply_route(&scope, &batch.events);
         }
-        self.record_in_flight_reply_route(&scope, &batch.events);
         Some(self.attach_logical_work(batch))
     }
 

@@ -14,6 +14,8 @@ mod managed_work;
 #[cfg(unix)]
 mod mcp_service;
 mod observer;
+#[cfg(all(test, unix))]
+mod permission_view_tests;
 mod pool;
 mod pool_lifecycle;
 mod process_tree;
@@ -6141,7 +6143,7 @@ fn handle_prompt_result(
                 if let Some(work) = &batch.work {
                     work.human_required("permission_activity_unavailable");
                 }
-                spawn_failure_notice(rest_client, &batch, "Kimi could not show its exact permission request. No action was approved. Enable owner activity (--relay-observer), then retry when the request can be inspected.".into());
+                spawn_failure_notice(rest_client, &batch, "Kimi could not show the complete permission request in owner Activity. No action was approved. Enable Activity if it is disabled, or split an oversized action before retrying. The complete request must be available for review.".into());
             } else if matches!(
                 &result.outcome,
                 PromptOutcome::Error(

@@ -34,6 +34,34 @@ pub(super) fn followup_prompt(
     format!("{FOLLOWUP_PROMPT}\nChannel: {channel}\nReply thread: {}\nPublish the final report using this managed command (replace <FINAL_REPORT> with properly quoted text or use --content - and stdin):\n{command}\nKeep this delivery key, original route and journal directory for every retry, including after an application error. An unconfirmed managed delivery can be safely retried with the SAME key; never replace it with a fresh key or bare messages send. Replays return the first report even if the summary changes. Preserve callback notifications with --mention or ordinary @mentions. Use messages send for separate progress and messages edit for an explicit correction. Managed delivery does not cover other publishing tools.", continuation.thread_tags.root_event_id.as_deref().unwrap_or("none"))
 }
 
+/// Render retained assignments and new input without changing queue ownership.
+/// A fresh session must be able to collect the existing result without replaying
+/// the background launch; the collection instruction follows the event sections.
+pub(super) fn collection_prompt_batch(batch: &FlushBatch) -> Option<FlushBatch> {
+    batch.continuation.as_ref()?;
+    let work = batch.work.as_ref()?;
+    let mut rendered = batch.clone();
+    if rendered.events.is_empty() {
+        rendered.events = work.original_events.as_ref().clone();
+    } else {
+        let represented: HashSet<_> = rendered
+            .events
+            .iter()
+            .chain(&rendered.cancelled_events)
+            .map(|event| event.event.id)
+            .collect();
+        let mut prior: Vec<_> = work
+            .original_events
+            .iter()
+            .filter(|event| !represented.contains(&event.event.id))
+            .cloned()
+            .collect();
+        prior.append(&mut rendered.cancelled_events);
+        rendered.cancelled_events = prior;
+    }
+    Some(rendered)
+}
+
 /// A worker with live or pending background work; an invalidated origin never resumes.
 #[derive(Clone, Debug)]
 pub(crate) struct RuntimeHold {
