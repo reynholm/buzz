@@ -2711,7 +2711,7 @@ New module: `false`.
 
 ## `Cargo.lock`
 
-Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils >= 0.4.4 for RUSTSEC-2026-0385. Upgrade the gateway P-256 graph to crypto-bigint 0.7.6 for RUSTSEC-2026-0387.
+Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils >= 0.4.4 for RUSTSEC-2026-0385. Upgrade the gateway P-256 graph to crypto-bigint 0.7.6 for RUSTSEC-2026-0387. Lock patched pulldown-cmark >= 0.13.5 for RUSTSEC-2026-0414.
 
 New module: `false`.
 
@@ -3299,11 +3299,14 @@ New module: `false`.
 
 ## `crates/buzz-relay/Cargo.toml`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Require pulldown-cmark >= 0.13.5 for RUSTSEC-2026-0414 without enabling optional Markdown extensions.
 
 New module: `false`.
 
+- Required symbol: `pulldown-cmark = { version = "0.13.5", default-features = false, features = ["html"] }`
 - Verify: `just ci`
+- Verify: `cargo deny check`
+- Verify: `cargo test --locked -p buzz-relay`
 
 ## `crates/buzz-relay/src/api/admin/auth.rs`
 

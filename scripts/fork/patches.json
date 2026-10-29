@@ -4499,7 +4499,7 @@
     },
     {
       "path": "Cargo.lock",
-      "responsibility": "Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils >= 0.4.4 for RUSTSEC-2026-0385. Upgrade the gateway P-256 graph to crypto-bigint 0.7.6 for RUSTSEC-2026-0387.",
+      "responsibility": "Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils >= 0.4.4 for RUSTSEC-2026-0385. Upgrade the gateway P-256 graph to crypto-bigint 0.7.6 for RUSTSEC-2026-0387. Lock patched pulldown-cmark >= 0.13.5 for RUSTSEC-2026-0414.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -5614,12 +5614,16 @@
     },
     {
       "path": "crates/buzz-relay/Cargo.toml",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Require pulldown-cmark >= 0.13.5 for RUSTSEC-2026-0414 without enabling optional Markdown extensions.",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "pulldown-cmark = { version = \"0.13.5\", default-features = false, features = [\"html\"] }"
+      ],
       "invocation_seams": [],
       "verification_commands": [
-        "just ci"
+        "just ci",
+        "cargo deny check",
+        "cargo test --locked -p buzz-relay"
       ]
     },
     {
