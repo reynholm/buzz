@@ -6,6 +6,7 @@ import {
   syncActiveAgentTurnsFromObserver,
   getActiveTurnsForAgent,
   getActiveTurnsByChannel,
+  getActiveAgentPubkeysForThread,
   resetActiveAgentTurnsStore,
   subscribeActiveAgentTurns,
   saveActiveAgentTurnsForCommunity,
@@ -52,6 +53,126 @@ function makeEvent(overrides) {
 describe("activeAgentTurnsStore", () => {
   beforeEach(() => {
     resetActiveAgentTurnsStore();
+  });
+
+  describe("thread scope", () => {
+    it("keeps concurrent threads and channels isolated through terminal events", () => {
+      syncAgentTurnsFromEvents(AGENT.toUpperCase(), [
+        makeEvent({
+          seq: 1,
+          turnId: "a",
+          payload: { threadRootEventId: "ROOT-A" },
+        }),
+        makeEvent({
+          seq: 2,
+          turnId: "b",
+          payload: { threadRootEventId: "root-b" },
+        }),
+        makeEvent({ seq: 3, turnId: "legacy" }),
+        makeEvent({
+          seq: 4,
+          turnId: "foreign",
+          channelId: "chan-2",
+          payload: { threadRootEventId: "root-a" },
+        }),
+      ]);
+      const active = () => getActiveAgentPubkeysForThread("chan-1", "root-a");
+      assert.deepEqual(active(), [AGENT]);
+      assert.strictEqual(
+        active(),
+        active(),
+        "snapshot must be reference-stable",
+      );
+      assert.deepEqual(getActiveAgentPubkeysForThread("chan-1", "unknown"), []);
+      assert.deepEqual(getActiveAgentPubkeysForThread(null, "root-a"), []);
+      for (const [seq, kind, turnId] of [
+        [5, "turn_completed", "a"],
+        [6, "turn_error", "b"],
+      ]) {
+        syncAgentTurnsFromEvents(AGENT, [makeEvent({ seq, kind, turnId })]);
+        assert.deepEqual(
+          getActiveAgentPubkeysForThread(
+            "chan-1",
+            turnId === "a" ? "root-a" : "root-b",
+          ),
+          [],
+        );
+      }
+      assert.deepEqual(getActiveAgentPubkeysForThread("chan-2", "root-a"), [
+        AGENT,
+      ]);
+      assert.equal(
+        getActiveTurnsForAgent(AGENT).length,
+        2,
+        "legacy work remains channel-visible",
+      );
+    });
+
+    it("learns recovered thread scope from liveness and preserves it across sparse frames and restore", () => {
+      const active = () => getActiveAgentPubkeysForThread("chan-1", "root-a");
+      syncAgentTurnsFromEvents(AGENT, [makeEvent({ kind: "acp_read" })]);
+      assert.deepEqual(active(), []);
+      let notifications = 0;
+      const unsubscribe = subscribeActiveAgentTurns(() => notifications++);
+      try {
+        syncAgentTurnsFromEvents(AGENT, [
+          makeEvent({
+            seq: 2,
+            kind: "turn_liveness",
+            payload: { threadRootEventId: "root-a" },
+          }),
+        ]);
+        assert.equal(
+          notifications,
+          1,
+          "scope refinement must reach mounted thread composers",
+        );
+        assert.deepEqual(active(), [AGENT]);
+        syncAgentTurnsFromEvents(AGENT, [
+          makeEvent({ seq: 3, kind: "acp_write" }),
+          makeEvent({
+            seq: 4,
+            kind: "turn_liveness",
+            payload: { threadRootEventId: "root-b" },
+          }),
+        ]);
+        assert.deepEqual(active(), [AGENT]);
+        assert.deepEqual(
+          getActiveAgentPubkeysForThread("chan-1", "root-b"),
+          [],
+        );
+        saveActiveAgentTurnsForCommunity("thread-test");
+        resetActiveAgentTurnsStore();
+        assert.deepEqual(active(), []);
+        restoreActiveAgentTurnsForCommunity("thread-test");
+        assert.deepEqual(active(), [AGENT]);
+        clearActiveTurnsForAgent(AGENT);
+        assert.deepEqual(active(), []);
+      } finally {
+        unsubscribe();
+        clearSavedCommunitySnapshot("thread-test");
+      }
+    });
+
+    it("recovers a scoped turn directly from heartbeat and deduplicates agents", () => {
+      for (const agent of [AGENT, AGENT_2]) {
+        syncAgentTurnsFromEvents(agent, [
+          makeEvent({
+            kind: "turn_liveness",
+            payload: { threadRootEventId: "root-a" },
+          }),
+          makeEvent({
+            seq: 2,
+            turnId: "duplicate",
+            payload: { threadRootEventId: "root-a" },
+          }),
+        ]);
+      }
+      assert.deepEqual(
+        getActiveAgentPubkeysForThread("chan-1", "ROOT-A"),
+        [AGENT, AGENT_2].sort(),
+      );
+    });
   });
 
   describe("seq filtering", () => {
