@@ -72,6 +72,141 @@ async function openAgentProfile(
 test.describe("active turn badge resilience", () => {
   test.use({ viewport: { width: 1280, height: 720 } });
 
+  test("thread composer follows scoped observer work when typing disappears", async ({
+    page,
+  }, testInfo) => {
+    await installMockBridge(page, {
+      managedAgents: [
+        {
+          pubkey: AGENT_PAUL,
+          name: "Paul",
+          status: "running",
+          channelNames: ["general"],
+        },
+      ],
+    });
+    test.setTimeout(60_000);
+    // Keep real browser time: WAAPI exit animations do not follow the mock clock.
+    await page.goto("/");
+    await page.getByTestId("channel-general").click();
+    await waitForBridge(page);
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+            channelName: "general",
+          }),
+        ),
+      )
+      .toBe(true);
+    const root = await page.evaluate(
+      (pubkey) =>
+        window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+          channelName: "general",
+          pubkey,
+          content: "Investigate thread activity",
+        })?.id,
+      AGENT_PAUL,
+    );
+    if (!root) throw new Error("Missing test thread root");
+    const row = page.locator(
+      `[data-testid="message-row"][data-message-id="${root}"]`,
+    );
+    await expect(row).toBeVisible();
+    await row.hover();
+    const reply = page.getByTestId(`reply-message-${root}`);
+    await reply.focus();
+    await reply.press("Enter");
+    const composer = page.getByTestId("thread-composer-overlay");
+    await expect(composer).toBeVisible();
+    const activity = composer.getByTestId("bot-activity-composer-trigger");
+    let seq = 0;
+    const emit = async (
+      kind: string,
+      turnId: string,
+      threadRootEventId?: string,
+    ) => {
+      await page.evaluate(
+        ({ kind, turnId, threadRootEventId, seq, agentPubkey, channelId }) => {
+          window.__BUZZ_E2E_SEED_OBSERVER_EVENTS__?.({
+            agentPubkey,
+            events: [
+              {
+                seq,
+                timestamp: new Date().toISOString(),
+                kind,
+                channelId,
+                agentIndex: 0,
+                sessionId: null,
+                turnId,
+                payload: { threadRootEventId },
+              },
+            ],
+          });
+        },
+        {
+          kind,
+          turnId,
+          threadRootEventId,
+          seq: ++seq,
+          agentPubkey: AGENT_PAUL,
+          channelId: CHANNEL_GENERAL,
+        },
+      );
+    };
+    await emit("turn_started", "sibling", "ef".repeat(32));
+    await expect(page.getByTestId("channel-working-general")).toBeVisible();
+    await expect(activity).toHaveCount(0);
+    await emit("acp_read", "current");
+    await expect(activity).toHaveCount(0); // Unknown scope is channel-only.
+    await emit("turn_liveness", "current", root);
+    await expect(activity).toHaveAccessibleName(
+      "Paul is working. View activity.",
+    );
+
+    // A published reply must not clear observer work, even with no typing.
+    await page.evaluate(
+      ({ root, pubkey }) => {
+        window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+          channelName: "general",
+          pubkey,
+          parentEventId: root,
+          content: "Still investigating",
+        });
+      },
+      { root, pubkey: AGENT_PAUL },
+    );
+    await page.waitForTimeout(9_000); // Past the typing TTL.
+    await emit("turn_liveness", "current", root);
+    await expect(activity).toBeVisible();
+    await composer.screenshot({
+      path: testInfo.outputPath("thread-observer-activity.png"),
+    });
+    await page.screenshot({
+      path: testInfo.outputPath("thread-observer-activity-full.png"),
+    });
+    await emit("turn_completed", "current", root);
+    await expect(activity).toHaveCount(0);
+    await expect(page.getByTestId("channel-working-general")).toBeVisible();
+
+    // Older/remote harnesses can still show scoped typing without telemetry.
+    await page.evaluate(
+      ({ root, pubkey }) => {
+        window.__BUZZ_E2E_EMIT_MOCK_TYPING__?.({
+          channelName: "general",
+          pubkey,
+          threadHeadId: root,
+        });
+      },
+      { root, pubkey: AGENT_PAUL },
+    );
+    await expect(activity).toBeVisible();
+    await page.waitForTimeout(9_000);
+    await expect(activity).toHaveCount(0);
+    await emit("turn_error", "sibling", "ef".repeat(32));
+    await expect(page.getByTestId("channel-working-general")).toHaveCount(0);
+  });
+
   test("badges persist through an all-at-once liveness gap", async ({
     page,
   }) => {

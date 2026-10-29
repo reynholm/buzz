@@ -9297,14 +9297,20 @@ New module: `true`.
 
 ## `desktop/src/features/channels/ui/ChannelPane.tsx`
 
-Pass the open thread root id into the channel timeline.
+Pass the open thread root id into the channel timeline. Keep the thread composer activity visible from exact-thread observer turns with typing fallback.
 
 New module: `false`.
 
 - Required symbol: `openThreadHeadId={openThreadHeadId}`
 - Invocation: `desktop/src/features/channels/ui/ChannelPane.tsx` → `MessageTimeline`; exact call `<MessageTimeline
               openThreadHeadId={openThreadHeadId}`; behavior test `buzz: highlights only the open root with a reply summary`; verify `cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke`
+- Invocation: `desktop/src/features/channels/ui/ChannelPane.tsx` → `useThreadWorkingAgentPubkeys`; exact call `useThreadWorkingAgentPubkeys(
+    activeChannel?.id ?? null,
+    openThreadHeadId,
+    threadComposerBotTypingPubkeys,
+  )`; behavior test `thread composer follows scoped observer work when typing disappears`; verify `cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/active-turn-resilience.spec.ts --project=smoke`
 - Verify: `cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke`
+- Verify: `cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/active-turn-resilience.spec.ts --project=smoke`
 
 ## `desktop/src/features/messages/ui/MessageTimeline.tsx`
 
@@ -9587,3 +9593,60 @@ New module: `true`.
 
 - Required symbol: `async fn kimi_manual_permission_child_exit_recovers_same_work_and_rejects_retired_vote()`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1`
+
+## `desktop/src/features/agents/activeAgentTurnsStore.ts`
+
+Retain canonical thread roots across observer starts, heartbeat recovery, and community restore; expose stable exact-thread snapshots.
+
+New module: `false`.
+
+- Required symbol: `export function getActiveAgentPubkeysForThread(`
+- Invocation: `desktop/src/features/agents/activeAgentTurnsStore.ts` → `startTurn`; exact call `startTurn(
+          agentPubkey,
+          event.channelId,
+          event.turnId ?? `seq-${event.seq}`,
+          event.timestamp,
+          threadRootOf(event),
+        )`; behavior test `keeps concurrent threads and channels isolated through terminal events`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/activeAgentTurnsStore.test.mjs`
+- Invocation: `desktop/src/features/agents/activeAgentTurnsStore.ts` → `startTurn`; exact call `startTurn(
+    agentPubkey,
+    event.channelId,
+    event.turnId,
+    safeStartedAt,
+    threadRootOf(event),
+  )`; behavior test `recovers a scoped turn directly from heartbeat and deduplicates agents`; verify `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/activeAgentTurnsStore.test.mjs`
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/activeAgentTurnsStore.test.mjs`
+
+## `desktop/src/features/agents/agentWorkingSignal.ts`
+
+Combine exact-thread observer work with scoped typing fallback.
+
+New module: `false`.
+
+- Required symbol: `export function useThreadWorkingAgentPubkeys(`
+- Invocation: `desktop/src/features/agents/agentWorkingSignal.ts` → `getActiveAgentPubkeysForThread`; exact call `getActiveAgentPubkeysForThread(channelId, threadRootEventId)`; behavior test `thread working signal survives typing loss, follows scope changes and clears on completion`; verify `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/agents/agentWorkingSignal.jsdom-test.mjs`
+- Verify: `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/agents/agentWorkingSignal.jsdom-test.mjs`
+
+## `desktop/src/features/agents/activeAgentTurnsStore.test.mjs`
+
+Cover exact-thread lifecycle, recovery, refinement, cache stability, and community isolation.
+
+New module: `false`.
+
+- Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/activeAgentTurnsStore.test.mjs`
+
+## `desktop/src/features/agents/agentWorkingSignal.jsdom-test.mjs`
+
+Exercise subscribed thread activity through typing loss, scope changes and terminal events.
+
+New module: `true`.
+
+- Verify: `cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/agents/agentWorkingSignal.jsdom-test.mjs`
+
+## `desktop/tests/e2e/active-turn-resilience.spec.ts`
+
+Exercise thread-composer observer activity after typing expires or a reply is published, with sibling isolation and legacy typing fallback.
+
+New module: `false`.
+
+- Verify: `cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/active-turn-resilience.spec.ts --project=smoke`

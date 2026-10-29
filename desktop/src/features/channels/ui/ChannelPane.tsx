@@ -41,7 +41,10 @@ import { getThreadPanelLayout } from "@/features/channels/lib/threadPanelLayout"
 import { useThreadViewMode } from "@/features/channels/lib/threadViewModePreference";
 import { useThreadViewModeSwitch } from "@/features/channels/ui/useThreadViewModeSwitch";
 import { useFocusDrawerPresence } from "@/features/channels/ui/useFocusDrawerPresence";
-import { useChannelWorkingAgentPubkeys } from "@/features/agents/agentWorkingSignal";
+import {
+  useChannelWorkingAgentPubkeys,
+  useThreadWorkingAgentPubkeys,
+} from "@/features/agents/agentWorkingSignal";
 import { useCardMintJobs } from "@/features/agents/cardMintStore";
 import { BotActivityComposerAction } from "@/features/channels/ui/BotActivityBar";
 import { ChannelComposerActivityAccessory } from "@/features/channels/ui/ChannelComposerActivityAccessory";
@@ -345,8 +348,13 @@ export const ChannelPane = React.memo(function ChannelPane({
       selectThreadComposerBotTypingPubkeys(botTypingEntries, openThreadHeadId),
     [botTypingEntries, openThreadHeadId],
   );
+  const threadComposerWorkingBotPubkeys = useThreadWorkingAgentPubkeys(
+    activeChannel?.id ?? null,
+    openThreadHeadId,
+    threadComposerBotTypingPubkeys,
+  );
   const hasThreadComposerBotActivity =
-    threadComposerBotTypingPubkeys.length > 0;
+    threadComposerWorkingBotPubkeys.length > 0;
   const directMessageIntro = React.useMemo(
     () =>
       buildDirectMessageIntro({
@@ -899,7 +907,7 @@ export const ChannelPane = React.memo(function ChannelPane({
                       onOpenAgentSession={onOpenAgentSession}
                       openAgentSessionPubkey={openAgentSessionPubkey}
                       profiles={profiles}
-                      workingBotPubkeys={threadComposerBotTypingPubkeys}
+                      workingBotPubkeys={threadComposerWorkingBotPubkeys}
                       variant="inline"
                     />
                   ) : null

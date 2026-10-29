@@ -3,6 +3,7 @@ import * as React from "react";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import {
   type ActiveChannelTurnSummary,
+  getActiveAgentPubkeysForThread,
   getActiveTurnsByChannel,
   getActiveTurnsForAgent,
   subscribeActiveAgentTurns,
@@ -323,6 +324,24 @@ export function useChannelWorkingAgentPubkeys(
   return React.useSyncExternalStore(subscribeAgentWorkingSignal, () =>
     getWorkingAgentPubkeysForChannel(channelId),
   );
+}
+
+/** Thread-scoped observer turns with already-scoped typing as a fallback. */
+export function useThreadWorkingAgentPubkeys(
+  channelId: string | null | undefined,
+  threadRootEventId: string | null | undefined,
+  typingPubkeys: readonly string[],
+): string[] {
+  const observerPubkeys = React.useSyncExternalStore(
+    subscribeActiveAgentTurns,
+    () => getActiveAgentPubkeysForThread(channelId, threadRootEventId),
+  );
+  return React.useMemo(() => {
+    if (!channelId || !threadRootEventId) return EMPTY_PUBKEYS;
+    return [
+      ...new Set([...observerPubkeys, ...typingPubkeys].map(normalizePubkey)),
+    ].sort();
+  }, [channelId, threadRootEventId, observerPubkeys, typingPubkeys]);
 }
 
 /** Community-switch reset (see resetCommunityState in useCommunityInit). */

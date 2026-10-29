@@ -13981,7 +13981,7 @@
     },
     {
       "path": "desktop/src/features/channels/ui/ChannelPane.tsx",
-      "responsibility": "Pass the open thread root id into the channel timeline.",
+      "responsibility": "Pass the open thread root id into the channel timeline. Keep the thread composer activity visible from exact-thread observer turns with typing fallback.",
       "is_new": false,
       "required_symbols": [
         "openThreadHeadId={openThreadHeadId}"
@@ -13993,10 +13993,18 @@
           "invocation": "<MessageTimeline\n              openThreadHeadId={openThreadHeadId}",
           "behavior_test": "buzz: highlights only the open root with a reply summary",
           "verification_command": "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
+        },
+        {
+          "caller_path": "desktop/src/features/channels/ui/ChannelPane.tsx",
+          "callee_symbol": "useThreadWorkingAgentPubkeys",
+          "invocation": "useThreadWorkingAgentPubkeys(\n    activeChannel?.id ?? null,\n    openThreadHeadId,\n    threadComposerBotTypingPubkeys,\n  )",
+          "behavior_test": "thread composer follows scoped observer work when typing disappears",
+          "verification_command": "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/active-turn-resilience.spec.ts --project=smoke"
         }
       ],
       "verification_commands": [
-        "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
+        "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke",
+        "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/active-turn-resilience.spec.ts --project=smoke"
       ]
     },
     {
@@ -14373,6 +14381,83 @@
       "invocation_seams": [],
       "verification_commands": [
         "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/activeAgentTurnsStore.ts",
+      "responsibility": "Retain canonical thread roots across observer starts, heartbeat recovery, and community restore; expose stable exact-thread snapshots.",
+      "is_new": false,
+      "required_symbols": [
+        "export function getActiveAgentPubkeysForThread("
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/agents/activeAgentTurnsStore.ts",
+          "callee_symbol": "startTurn",
+          "invocation": "startTurn(\n          agentPubkey,\n          event.channelId,\n          event.turnId ?? `seq-${event.seq}`,\n          event.timestamp,\n          threadRootOf(event),\n        )",
+          "behavior_test": "keeps concurrent threads and channels isolated through terminal events",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/activeAgentTurnsStore.test.mjs"
+        },
+        {
+          "caller_path": "desktop/src/features/agents/activeAgentTurnsStore.ts",
+          "callee_symbol": "startTurn",
+          "invocation": "startTurn(\n    agentPubkey,\n    event.channelId,\n    event.turnId,\n    safeStartedAt,\n    threadRootOf(event),\n  )",
+          "behavior_test": "recovers a scoped turn directly from heartbeat and deduplicates agents",
+          "verification_command": "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/activeAgentTurnsStore.test.mjs"
+        }
+      ],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/activeAgentTurnsStore.test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/agentWorkingSignal.ts",
+      "responsibility": "Combine exact-thread observer work with scoped typing fallback.",
+      "is_new": false,
+      "required_symbols": [
+        "export function useThreadWorkingAgentPubkeys("
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/features/agents/agentWorkingSignal.ts",
+          "callee_symbol": "getActiveAgentPubkeysForThread",
+          "invocation": "getActiveAgentPubkeysForThread(channelId, threadRootEventId)",
+          "behavior_test": "thread working signal survives typing loss, follows scope changes and clears on completion",
+          "verification_command": "cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/agents/agentWorkingSignal.jsdom-test.mjs"
+        }
+      ],
+      "verification_commands": [
+        "cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/agents/agentWorkingSignal.jsdom-test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/activeAgentTurnsStore.test.mjs",
+      "responsibility": "Cover exact-thread lifecycle, recovery, refinement, cache stability, and community isolation.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test src/features/agents/activeAgentTurnsStore.test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/src/features/agents/agentWorkingSignal.jsdom-test.mjs",
+      "responsibility": "Exercise subscribed thread activity through typing loss, scope changes and terminal events.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && node --import ./test-jsdom-setup.mjs --import ./test-loader.mjs --experimental-strip-types --test-force-exit --test src/features/agents/agentWorkingSignal.jsdom-test.mjs"
+      ]
+    },
+    {
+      "path": "desktop/tests/e2e/active-turn-resilience.spec.ts",
+      "responsibility": "Exercise thread-composer observer activity after typing expires or a reply is published, with sibling isolation and legacy typing fallback.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/active-turn-resilience.spec.ts --project=smoke"
       ]
     }
   ],

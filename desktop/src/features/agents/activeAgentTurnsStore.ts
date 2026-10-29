@@ -54,6 +54,7 @@ const PRUNE_INTERVAL_MS = 5_000;
 type ActiveTurn = {
   turnId: string;
   channelId: string;
+  threadRootEventId: string | null;
   startedAt: number;
   lastActivityAt: number;
 };
@@ -98,6 +99,8 @@ const clockOffsetByAgent = new Map<string, number>();
 // Only regenerated when the underlying turn map for an agent actually changes.
 const cachedTurnSummaries = new Map<string, ActiveTurnSummary[]>();
 let cachedChannelTurnSummaries: ActiveChannelTurnSummary[] | null = null;
+const cachedThreadPubkeys = new Map<string, string[]>();
+const EMPTY_PUBKEYS: string[] = [];
 
 // Composite watermark per (agent, channel): the newest observer event
 // processed for that channel, by (timestamp, seq) ordering. An event is
@@ -144,6 +147,7 @@ let unsubscribePruneVisibility: (() => void) | null = null;
 function invalidateCache(agentKey: string) {
   cachedTurnSummaries.delete(agentKey);
   cachedChannelTurnSummaries = null;
+  cachedThreadPubkeys.clear();
 }
 
 function notifyListeners() {
@@ -174,11 +178,21 @@ function parseTimestamp(timestamp: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function threadRootOf(event: ObserverEvent): string | null {
+  const payload = event.payload;
+  if (!payload || typeof payload !== "object") return null;
+  const root = (payload as { threadRootEventId?: unknown }).threadRootEventId;
+  return typeof root === "string" && root.trim()
+    ? root.trim().toLowerCase()
+    : null;
+}
+
 function startTurn(
   agentPubkey: string,
   channelId: string,
   turnId: string,
   timestamp: string,
+  threadRootEventId: string | null,
 ) {
   const key = normalizePubkey(agentPubkey);
   let agentTurns = activeTurnsByAgent.get(key);
@@ -206,6 +220,7 @@ function startTurn(
   agentTurns.set(turnId, {
     turnId,
     channelId,
+    threadRootEventId,
     startedAt,
     lastActivityAt: Date.now(),
   });
@@ -254,7 +269,13 @@ function resurrectTurn(agentPubkey: string, event: ObserverEvent): boolean {
     frameAt !== null && startedAtMs !== null && startedAtMs <= frameAt
       ? startedAt
       : event.timestamp;
-  startTurn(agentPubkey, event.channelId, event.turnId, safeStartedAt);
+  startTurn(
+    agentPubkey,
+    event.channelId,
+    event.turnId,
+    safeStartedAt,
+    threadRootOf(event),
+  );
   return true;
 }
 
@@ -408,6 +429,7 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
           event.channelId,
           event.turnId ?? `seq-${event.seq}`,
           event.timestamp,
+          threadRootOf(event),
         );
         notifyListeners();
         return;
@@ -433,6 +455,23 @@ function processEvent(agentPubkey: string, event: ObserverEvent) {
     // raced the pause, or the lone-crash residual self-healed), resurrect it.
     case "turn_liveness": {
       const refreshed = recordActivity(agentPubkey, event.turnId ?? null);
+      // A sparse ACP frame may arrive before the start/liveness metadata.
+      // Learn its scope once; sparse or conflicting frames must not move it.
+      const turn = event.turnId
+        ? activeTurnsByAgent.get(key)?.get(event.turnId)
+        : undefined;
+      const root = threadRootOf(event);
+      if (
+        turn &&
+        turn.channelId === event.channelId &&
+        !turn.threadRootEventId &&
+        root
+      ) {
+        turn.threadRootEventId = root;
+        invalidateCache(key);
+        notifyListeners();
+        return;
+      }
       if (!refreshed && resurrectTurn(agentPubkey, event)) {
         notifyListeners();
         return;
@@ -524,6 +563,33 @@ export function getActiveTurnsForAgent(
     .sort((a, b) => a.channelId.localeCompare(b.channelId));
   cachedTurnSummaries.set(key, result);
   return result;
+}
+
+/** Exact-thread observer signal. Unknown/legacy scopes remain channel-only. */
+export function getActiveAgentPubkeysForThread(
+  channelId: string | null | undefined,
+  threadRootEventId: string | null | undefined,
+): string[] {
+  if (!channelId || !threadRootEventId) return EMPTY_PUBKEYS;
+  const root = threadRootEventId.toLowerCase();
+  const cacheKey = `${channelId}|${root}`;
+  const cached = cachedThreadPubkeys.get(cacheKey);
+  if (cached) return cached;
+
+  const pubkeys: string[] = [];
+  for (const [agentPubkey, turns] of activeTurnsByAgent) {
+    if (
+      [...turns.values()].some(
+        (turn) =>
+          turn.channelId === channelId && turn.threadRootEventId === root,
+      )
+    )
+      pubkeys.push(agentPubkey);
+  }
+  if (pubkeys.length === 0) return EMPTY_PUBKEYS;
+  pubkeys.sort();
+  cachedThreadPubkeys.set(cacheKey, pubkeys);
+  return pubkeys;
 }
 
 const EMPTY_TURNS: ActiveTurnSummary[] = [];
@@ -710,6 +776,7 @@ export function resetActiveAgentTurnsStore() {
   clockOffsetByAgent.clear();
   cachedTurnSummaries.clear();
   cachedChannelTurnSummaries = null;
+  cachedThreadPubkeys.clear();
   terminalAtByAgent.clear();
   notifyListeners();
 }
@@ -826,6 +893,7 @@ export function restoreActiveAgentTurnsForCommunity(communityId: string): void {
 
   cachedTurnSummaries.clear();
   cachedChannelTurnSummaries = null;
+  cachedThreadPubkeys.clear();
   notifyListeners();
 }
 
