@@ -6,6 +6,28 @@ code style, PR process, architecture), see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
+## Local specifications and plans
+
+Read `AGENTS.local.md` when it exists before working in this checkout.
+
+Keep task-specific specifications and design documents in `docs/local/specs/`,
+and implementation plans in `docs/local/plans/`. The repository ignores
+`/docs/local`; these working documents stay outside Git and PRs unless the
+human explicitly requests publication. Do not force-add them.
+
+This repository rule overrides skill defaults such as
+`docs/superpowers/specs/` and `docs/superpowers/plans/`, including for
+Superpowers brainstorming and writing-plans. Check this location rule before
+creating a document. When relocating a document, update its spec/plan links
+and task handoff references, then verify the new path with `git check-ignore`.
+Do not relocate existing tracked product documentation without an explicit
+request; publication of maintained product docs is a separate decision.
+
+`AGENTS.md` is the shared instruction entry point for Codex; `CLAUDE.md`
+references the same file. Keep this rule here so both agents receive it.
+
+---
+
 ## Fork: public text is in English
 
 Use this repository's native contributor workflow; do not configure or run Tempo here.
