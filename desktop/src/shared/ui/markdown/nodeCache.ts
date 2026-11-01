@@ -17,6 +17,7 @@ import remarkMentions from "@/shared/lib/remarkMentions";
 import remarkSpoilers from "@/shared/lib/remarkSpoilers";
 
 import { buzzDeepLinkUrlTransform } from "./utils";
+import { remarkMaxNestingDepth } from "./remarkMaxNestingDepth";
 
 /**
  * Parsed-markdown element cache.
@@ -70,6 +71,7 @@ export type MarkdownParseInputs = {
   customEmoji?: CustomEmoji[];
   /** Omit or true for chat-style `<br>` on every newline. */
   hardLineBreaks?: boolean;
+  maxNestingDepth?: number;
   /** Inserts the runtime-provided leading content marker during parsing. */
   leadingInlineContent?: boolean;
   mentionNames?: string[];
@@ -89,6 +91,10 @@ function listSegment(values: readonly string[] | undefined): string {
 
 function buildMarkdownElement(input: MarkdownParseInputs): React.ReactElement {
   markdownParseCount += 1;
+  // Anchor boundary hard breaks so Markdown does not discard empty edge lines.
+  let content = input.content;
+  if (/^(?:\s{2}\n)+/.test(content)) content = `\u200B${content}`;
+  if (/(?:\s{2}\n)+$/.test(content)) content = `${content}\u200B`;
   // biome-ignore lint/suspicious/noExplicitAny: PluggableList type not directly importable
   const rehypePlugins: any[] = [rehypeImageGallery];
   if (input.leadingInlineContent) {
@@ -102,9 +108,12 @@ function buildMarkdownElement(input: MarkdownParseInputs): React.ReactElement {
   // variant is `MarkdownHooks`), so this returns the parsed element tree
   // directly, which is what lets it live in a module-level cache.
   return ReactMarkdown({
-    children: input.content,
+    children: content,
     components: input.components,
     remarkPlugins: [
+      ...(input.maxNestingDepth == null
+        ? []
+        : [[remarkMaxNestingDepth, { maxDepth: input.maxNestingDepth }]]),
       remarkGfm,
       ...(input.hardLineBreaks === false ? [] : [remarkBreaks]),
       remarkSpoilers,
@@ -142,6 +151,7 @@ export function renderCachedMarkdown(
   // distinct input tuples. Content is last and needs no prefix: everything
   // before it is self-delimiting.
   const key =
+    segment(String(input.maxNestingDepth ?? "")) +
     segment(input.hardLineBreaks === false ? "soft" : "hard") +
     segment(input.variant) +
     segment(input.leadingInlineContent ? "leading" : "") +

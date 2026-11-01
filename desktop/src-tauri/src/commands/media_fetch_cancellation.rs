@@ -74,19 +74,22 @@ pub fn release_media_fetch(request_id: String) {
 }
 
 /// Fetch relay media bytes with renderer-owned cancellation.
+/// `max_bytes` can lower the image/editor cap for bounded document previews.
 #[tauri::command]
 pub async fn fetch_media_bytes(
     url: String,
     request_id: Option<String>,
+    max_bytes: Option<u64>,
     state: tauri::State<'_, AppState>,
 ) -> Result<tauri::ipc::Response, String> {
+    let cap = max_bytes
+        .unwrap_or(MAX_DOWNLOAD_BYTES)
+        .min(MAX_DOWNLOAD_BYTES);
     let cancellation = begin_media_fetch(request_id.as_deref());
     let result = async {
         let relay_base = relay_api_base_url_with_override(&state);
         validate_download_url(&url, &relay_base)?;
-        let bytes =
-            fetch_blob_bytes_with_cap(&url, &state, MAX_DOWNLOAD_BYTES, cancellation.as_ref())
-                .await?;
+        let bytes = fetch_blob_bytes_with_cap(&url, &state, cap, cancellation.as_ref()).await?;
         detect_and_validate_mime(&bytes)?;
         Ok(tauri::ipc::Response::new(bytes))
     }

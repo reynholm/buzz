@@ -3,13 +3,14 @@ import { expect, test } from "@playwright/test";
 import { installMockBridge } from "../helpers/bridge";
 
 async function seedLongThread(page: import("@playwright/test").Page) {
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () => typeof window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__ === "function",
-      ),
-    )
-    .toBe(true);
+  // Navigation can finish before asynchronous mock bootstrap. Enter the
+  // conversation and wait for its live subscription before emitting events.
+  await page.getByTestId("channel-general").click();
+  await page.waitForFunction(() =>
+    window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+      channelName: "general",
+    }),
+  );
   return page.evaluate(() => {
     const root = window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
       channelName: "general",
@@ -181,7 +182,6 @@ test("focus and split preserve reading context and interaction ownership", async
   await page.goto("/");
   const rootId = await seedLongThread(page);
 
-  await page.getByTestId("channel-general").click();
   await expectChannelHeaderUnobscured(page);
   const summary = page.locator(
     `[data-testid="message-thread-summary"][data-thread-head-id="${rootId}"]`,
@@ -290,7 +290,6 @@ test("narrow threads do not offer an unavailable layout switch", async ({
   await installMockBridge(page);
   await page.goto("/");
   const rootId = await seedLongThread(page);
-  await page.getByTestId("channel-general").click();
   const summary = page.locator(
     `[data-testid="message-thread-summary"][data-thread-head-id="${rootId}"]`,
   );

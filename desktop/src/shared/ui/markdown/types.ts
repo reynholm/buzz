@@ -80,6 +80,8 @@ export type MarkdownProps = {
    * wraps reflow with the panel instead of staying a narrow column.
    */
   hardLineBreaks?: boolean;
+  /** Bound parsed document depth before recursive transforms and rendering. */
+  maxNestingDepth?: number;
   imetaByUrl?: ImetaLookup;
   interactive?: boolean;
   /**

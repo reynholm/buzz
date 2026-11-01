@@ -17,6 +17,53 @@ const BASE = {
   variant: "i",
 };
 
+test("boundary hard breaks retain the renderer's invisible text anchors", () => {
+  const html = renderToStaticMarkup(
+    renderCachedMarkdown({
+      ...BASE,
+      content: "  \nhello  \n",
+    }),
+  );
+  assert.equal((html.match(/\u200B/g) ?? []).length, 2);
+  assert.match(html, /hello/);
+});
+
+test("document nesting is bounded before recursive transforms and DOM creation", () => {
+  assert.throws(
+    () =>
+      renderCachedMarkdown({
+        ...BASE,
+        content: `${"> ".repeat(3000)}Nested text`,
+        maxNestingDepth: 128,
+      }),
+    /Markdown nesting limit exceeded/,
+  );
+});
+
+test("nesting limits count parsed structure, allowing quote markers inside code", () => {
+  const code = `${"> ".repeat(3000)}Literal code`;
+  const element = renderCachedMarkdown({
+    ...BASE,
+    content: `\`\`\`text\n${code}\n\`\`\``,
+    maxNestingDepth: 128,
+  });
+  const html = renderToStaticMarkup(element);
+  assert.match(html, /<pre><code/);
+  assert.match(html, /Literal code/);
+  assert.doesNotMatch(html, /<blockquote>/);
+});
+
+test("a cached document cannot bypass a stricter nesting limit", () => {
+  clearMarkdownNodeCache();
+  const input = { ...BASE, content: `${"> ".repeat(8)}Quoted text` };
+  const element = renderCachedMarkdown({ ...input, maxNestingDepth: 128 });
+  assert.match(renderToStaticMarkup(element), /Quoted text/);
+  assert.throws(
+    () => renderCachedMarkdown({ ...input, maxNestingDepth: 4 }),
+    /Markdown nesting limit exceeded/,
+  );
+});
+
 test("same parse inputs return the identical cached element", () => {
   clearMarkdownNodeCache();
   const first = renderCachedMarkdown({ ...BASE });
