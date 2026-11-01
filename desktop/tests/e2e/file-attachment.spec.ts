@@ -257,6 +257,12 @@ test("Markdown preview handles retry, replacement, cancellation and oversized do
         headers: { "access-control-allow-origin": "*" },
       });
     }
+    if (url.includes("f".repeat(64))) {
+      return route.fulfill({
+        body: `${"> ".repeat(3000)}Nested text`,
+        headers: { "access-control-allow-origin": "*" },
+      });
+    }
     if (url.includes("a".repeat(64))) {
       attempts += 1;
       return route.fulfill({
@@ -301,6 +307,41 @@ test("Markdown preview handles retry, replacement, cancellation and oversized do
   const invalidCard = await emitMarkdownFile(page, "invalid.md", "c");
   await invalidCard.click();
   await expect(preview.getByRole("alert")).toContainText("UTF-8");
+  await preview.getByRole("button", { name: "Close Markdown preview" }).click();
+  const nestedCard = await emitMarkdownFile(page, "nested.md", "f", 6011);
+  await nestedCard.click();
+  await expect(preview.getByRole("alert")).toContainText(
+    "Could not render this document",
+  );
+  await expect(page.getByTestId("message-timeline")).toBeVisible();
+  await preview.getByRole("button", { name: "Download nested.md" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const downloads = window.__BUZZ_E2E_COMMAND_PAYLOADS__?.filter(
+          (entry) => entry.command === "download_file",
+        );
+        return (downloads?.at(-1)?.payload as { filename?: string })?.filename;
+      }),
+    )
+    .toBe("nested.md");
+  await page.keyboard.press("Escape");
+  await expect(preview).toHaveCount(0);
+  await expect(
+    nestedCard.getByRole("button", { name: "Preview nested.md" }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(preview.getByRole("alert")).toBeVisible();
+  await preview.getByRole("button", { name: "Close Markdown preview" }).click();
+  await expect(preview).toHaveCount(0);
+  await nestedCard.click();
+  await expect(preview.getByRole("alert")).toBeVisible();
+  await retryCard
+    .getByRole("button", { name: "Preview retry.markdown" })
+    .click();
+  await expect(
+    preview.getByRole("heading", { name: "Recovered document" }),
+  ).toBeVisible();
   await preview.getByRole("button", { name: "Close Markdown preview" }).click();
   const understatedCard = await emitMarkdownFile(page, "understated.md", "0");
   await understatedCard.click();

@@ -17,6 +17,29 @@ type PreviewState =
   | { phase: "ready"; content: string }
   | { phase: "error"; message: string; retry: boolean };
 
+// Parser/render failures belong to this document, preserving the header and chat.
+class MarkdownDocumentErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { failed: boolean }
+> {
+  override state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  override render() {
+    if (this.state.failed) {
+      return (
+        <p role="alert" className="text-sm text-muted-foreground">
+          Could not render this document. Download it to read the complete file.
+        </p>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 /** Scroll a Markdown document above the conversation without resizing it. */
 export function MarkdownAttachmentPreview({
   attachment,
@@ -163,18 +186,20 @@ export function MarkdownAttachmentPreview({
           </div>
         ) : null}
         {state.phase === "ready" ? (
-          state.content.trim() ? (
-            <Markdown
-              blockCode
-              content={state.content}
-              hardLineBreaks={false}
-              interactive={false}
-            />
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              This document is empty.
-            </p>
-          )
+          <MarkdownDocumentErrorBoundary key={`${href}:${attempt}`}>
+            {state.content.trim() ? (
+              <Markdown
+                blockCode
+                content={state.content}
+                hardLineBreaks={false}
+                interactive={false}
+              />
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                This document is empty.
+              </p>
+            )}
+          </MarkdownDocumentErrorBoundary>
         ) : null}
       </div>
     </section>

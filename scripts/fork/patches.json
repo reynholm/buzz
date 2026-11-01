@@ -13292,7 +13292,8 @@
       "responsibility": "Exercise reading-position preservation with explicit reader wheel ownership before a virtualized layout switch.",
       "is_new": false,
       "required_symbols": [
-        "new WheelEvent(\"wheel\", { bubbles: true, deltaY: -120 })"
+        "new WheelEvent(\"wheel\", { bubbles: true, deltaY: -120 })",
+        "__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -14500,12 +14501,13 @@
     },
     {
       "path": "desktop/src/shared/ui/markdown/MarkdownAttachmentPreview.tsx",
-      "responsibility": "Render a scrollable Markdown attachment with bounded UTF-8 fetch, cancellation, retry, download and keyboard close.",
+      "responsibility": "Render a scrollable Markdown attachment with bounded UTF-8 fetch, cancellation, retry, download, keyboard close and isolated document render failures.",
       "is_new": true,
       "required_symbols": [
         "MAX_PREVIEW_BYTES",
         "controller.abort()",
-        "hardLineBreaks={false}"
+        "hardLineBreaks={false}",
+        "MarkdownDocumentErrorBoundary"
       ],
       "invocation_seams": [
         {
@@ -14514,6 +14516,13 @@
           "invocation": "const bytes = await fetchMediaBytes(\n          href,\n          controller.signal,\n          MAX_PREVIEW_BYTES,\n        );",
           "behavior_test": "Markdown attachment preview formats, scrolls and closes without moving the timeline",
           "verification_command": "pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0 --grep 'Markdown attachment preview formats'"
+        },
+        {
+          "caller_path": "desktop/src/shared/ui/markdown/MarkdownAttachmentPreview.tsx",
+          "callee_symbol": "MarkdownDocumentErrorBoundary",
+          "invocation": "<MarkdownDocumentErrorBoundary key={`${href}:${attempt}`}>",
+          "behavior_test": "Markdown preview handles retry, replacement, cancellation and oversized documents",
+          "verification_command": "pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0 --grep 'Markdown preview handles'"
         }
       ],
       "verification_commands": [

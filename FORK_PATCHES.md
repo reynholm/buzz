@@ -8768,6 +8768,7 @@ Exercise reading-position preservation with explicit reader wheel ownership befo
 New module: `false`.
 
 - Required symbol: `new WheelEvent("wheel", { bubbles: true, deltaY: -120 })`
+- Required symbol: `__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-focus-mode.spec.ts`
 
 ## `desktop/src/features/messages/ui/useVirtualizedThreadAnchor.ts`
@@ -9677,18 +9678,20 @@ New module: `true`.
 
 ## `desktop/src/shared/ui/markdown/MarkdownAttachmentPreview.tsx`
 
-Render a scrollable Markdown attachment with bounded UTF-8 fetch, cancellation, retry, download and keyboard close.
+Render a scrollable Markdown attachment with bounded UTF-8 fetch, cancellation, retry, download, keyboard close and isolated document render failures.
 
 New module: `true`.
 
 - Required symbol: `MAX_PREVIEW_BYTES`
 - Required symbol: `controller.abort()`
 - Required symbol: `hardLineBreaks={false}`
+- Required symbol: `MarkdownDocumentErrorBoundary`
 - Invocation: `desktop/src/shared/ui/markdown/MarkdownAttachmentPreview.tsx` → `fetchMediaBytes`; exact call `const bytes = await fetchMediaBytes(
           href,
           controller.signal,
           MAX_PREVIEW_BYTES,
         );`; behavior test `Markdown attachment preview formats, scrolls and closes without moving the timeline`; verify `pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0 --grep 'Markdown attachment preview formats'`
+- Invocation: `desktop/src/shared/ui/markdown/MarkdownAttachmentPreview.tsx` → `MarkdownDocumentErrorBoundary`; exact call `<MarkdownDocumentErrorBoundary key={`${href}:${attempt}`}>`; behavior test `Markdown preview handles retry, replacement, cancellation and oversized documents`; verify `pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0 --grep 'Markdown preview handles'`
 - Verify: `pnpm --dir desktop test`
 - Verify: `pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0`
 
