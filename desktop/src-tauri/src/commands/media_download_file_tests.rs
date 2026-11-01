@@ -1,6 +1,7 @@
 //! Real HTTP coverage of the native FileCard fetch path before the save dialog.
-use super::{fetch_blob_bytes, fetch_blob_bytes_with_cap, MAX_DOWNLOAD_BYTES};
+use super::fetch_blob_bytes;
 use crate::app_state::{build_app_state, AppState};
+use crate::commands::media_fetch_cancellation::fetch_media_bytes;
 use axum::{
     body::{Body, Bytes},
     http::Response,
@@ -53,6 +54,35 @@ fn app_with_state(base: &str, state: AppState) -> tauri::App<tauri::test::MockRu
 }
 
 #[tokio::test]
+async fn media_preview_limit_rejects_oversize_headers_and_streams() {
+    for (size, declared_length, allowed) in [
+        (2 * MIB, true, true),
+        (2 * MIB, false, true),
+        (2 * MIB + 1, true, false),
+        (2 * MIB + 1, false, false),
+    ] {
+        let (base, server) = blob_server(size, declared_length).await;
+        let app = app_state(&base);
+        let result = fetch_media_bytes(
+            format!("{base}/media/blob.zip"),
+            None,
+            Some(2 * MIB as u64),
+            app.state::<AppState>(),
+        )
+        .await;
+        server.abort();
+        if allowed {
+            assert!(result.is_ok(), "exactly 2 MiB must remain previewable");
+        } else {
+            let error = result
+                .err()
+                .expect("oversized preview must be rejected before IPC");
+            assert!(error.contains("file too large"), "{error}");
+        }
+    }
+}
+
+#[tokio::test]
 async fn generic_download_above_fifty_mib_is_byte_exact() {
     for (size, declared_length) in [(60 * MIB, true), (60 * MIB, false), (100 * MIB, true)] {
         let (base, server) = blob_server(size, declared_length).await;
@@ -86,14 +116,15 @@ async fn image_fetch_cap_still_rejects_over_fifty_mib() {
     let (base, server) = blob_server(50 * MIB + 1, true).await;
     let app = app_state(&base);
     let state = app.state::<AppState>();
-    let error = fetch_blob_bytes_with_cap(
-        &format!("{base}/media/blob.zip"),
-        &state,
-        MAX_DOWNLOAD_BYTES,
+    let error = fetch_media_bytes(
+        format!("{base}/media/blob.zip"),
         None,
+        Some(100 * MIB as u64),
+        state,
     )
     .await
-    .unwrap_err();
+    .err()
+    .expect("renderer cannot raise the image/editor cap");
     server.abort();
     assert!(error.contains("file too large"), "{error}");
 }

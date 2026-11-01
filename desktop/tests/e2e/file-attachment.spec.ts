@@ -99,7 +99,13 @@ for (const fixture of [
     await expect(card).toHaveCount(1);
     await expect(card).toContainText(fixture.name);
     await expect(card).toContainText("123 B");
-    await card.click();
+    if (fixture.name.endsWith(".md")) {
+      await card
+        .getByRole("button", { name: `Download ${fixture.name}` })
+        .click();
+    } else {
+      await card.click();
+    }
     await expect
       .poll(() =>
         page.evaluate(() =>
@@ -120,6 +126,266 @@ for (const fixture of [
       ]);
   });
 }
+
+async function emitMarkdownFile(
+  page: Page,
+  filename: string,
+  hash: string,
+  size = 512,
+) {
+  const url = `https://mock.relay/media/${hash.repeat(64)}.bin`;
+  const id = await page.evaluate(
+    ({ filename, url, size }) => {
+      const message = window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+        channelName: "general",
+        content: `[${filename}](${url})`,
+        extraTags: [
+          [
+            "imeta",
+            `url ${url}`,
+            "m application/octet-stream",
+            `filename ${filename}`,
+            `size ${size}`,
+          ],
+        ],
+      });
+      if (!message) throw new Error("Mock attachment was not emitted");
+      return message.id;
+    },
+    { filename, url, size },
+  );
+  return page.locator(`[data-message-id="${id}"]`).getByTestId("file-card");
+}
+
+test("Markdown attachment preview formats, scrolls and closes without moving the timeline", async ({
+  page,
+}) => {
+  const markdown = `\uFEFF# Attachment document\n\nA soft\nline break.\n\n| Item | State |\n| --- | --- |\n| Preview | Ready |\n\n- [x] Reviewed\n\n\`\`\`text\ncode sample\n\`\`\`\n\n<script>window.__previewScriptRan = true</script>\n\n[Unsafe](javascript:alert(1))\n\n${"Document paragraph.\n\n".repeat(120)}`;
+  await page.route("https://mock.relay/media/*.bin", (route) =>
+    route.fulfill({
+      body: markdown,
+      contentType: "application/octet-stream",
+      headers: { "access-control-allow-origin": "*" },
+    }),
+  );
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await page.waitForFunction(() =>
+    window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+      channelName: "general",
+    }),
+  );
+  const card = await emitMarkdownFile(page, "Document.MD", "e");
+  const timeline = page.getByTestId("message-timeline");
+  const before = await timeline.boundingBox();
+  await card.click();
+  const preview = page.getByRole("region", {
+    name: "Markdown preview: Document.MD",
+  });
+  await expect(preview).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const fetch = window.__BUZZ_E2E_COMMAND_PAYLOADS__?.find(
+          (entry) => entry.command === "fetch_media_bytes",
+        );
+        return (fetch?.payload as { maxBytes?: number })?.maxBytes;
+      }),
+    )
+    .toBe(2 * 1024 * 1024);
+  await expect(
+    preview.getByRole("heading", { name: "Attachment document" }),
+  ).toBeVisible();
+  await expect(preview.getByRole("cell", { name: "Ready" })).toBeVisible();
+  await expect(preview.locator("pre")).toContainText("code sample");
+  await expect(preview.getByRole("checkbox")).toBeChecked();
+  await expect(preview.locator("script")).toHaveCount(0);
+  await expect(preview.locator('a[href^="javascript:"]')).toHaveCount(0);
+  expect(
+    await preview.getByText("A soft line break.").locator("br").count(),
+  ).toBe(0);
+  expect(await timeline.boundingBox()).toEqual(before);
+  const body = preview.getByTestId("markdown-preview-body");
+  await page.keyboard.press("Tab");
+  await expect(body).toBeFocused();
+  await body.press("End");
+  await expect
+    .poll(() => body.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
+  expect(
+    await body.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      return element.scrollTop;
+    }),
+  ).toBeGreaterThan(0);
+  await preview.getByRole("button", { name: "Download Document.MD" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.__BUZZ_E2E_COMMAND_PAYLOADS__?.filter(
+            (entry) => entry.command === "download_file",
+          ).length,
+      ),
+    )
+    .toBe(1);
+  await waitForAnimations(page);
+  await body.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await page.screenshot({ path: "test-results/markdown-preview.png" });
+  await page.keyboard.press("Escape");
+  await expect(preview).toHaveCount(0);
+  await expect(
+    card.getByRole("button", { name: "Preview Document.MD" }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(preview).toBeVisible();
+  await preview.getByRole("button", { name: "Close Markdown preview" }).click();
+  await expect(preview).toHaveCount(0);
+});
+
+test("Markdown preview handles retry, replacement, cancellation and oversized documents", async ({
+  page,
+}) => {
+  let attempts = 0;
+  await page.route("https://mock.relay/media/*.bin", async (route) => {
+    const url = route.request().url();
+    if (url.includes("0".repeat(64))) {
+      return route.fulfill({
+        body: "x".repeat(2 * 1024 * 1024 + 1),
+        headers: { "access-control-allow-origin": "*" },
+      });
+    }
+    if (url.includes("a".repeat(64))) {
+      attempts += 1;
+      return route.fulfill({
+        status: attempts === 1 ? 503 : 200,
+        body: "# Recovered document",
+        headers: { "access-control-allow-origin": "*" },
+      });
+    }
+    return route.fulfill({
+      body: Buffer.from([0xff, 0xfe]),
+      headers: { "access-control-allow-origin": "*" },
+    });
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await page.waitForFunction(() =>
+    window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+      channelName: "general",
+    }),
+  );
+  const retryCard = await emitMarkdownFile(page, "retry.markdown", "a");
+  await retryCard.click();
+  const preview = page.getByTestId("markdown-preview");
+  await expect(preview.getByRole("alert")).toBeVisible();
+  await preview.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(
+    preview.getByRole("heading", { name: "Recovered document" }),
+  ).toBeVisible();
+  await preview.getByRole("button", { name: "Close Markdown preview" }).click();
+  const largeCard = await emitMarkdownFile(
+    page,
+    "large.md",
+    "b",
+    2 * 1024 * 1024 + 1,
+  );
+  await largeCard.click();
+  await expect(preview.getByRole("alert")).toContainText("2 MiB");
+  await expect(
+    preview.getByRole("button", { name: "Download large.md" }),
+  ).toBeVisible();
+  await preview.getByRole("button", { name: "Close Markdown preview" }).click();
+  const invalidCard = await emitMarkdownFile(page, "invalid.md", "c");
+  await invalidCard.click();
+  await expect(preview.getByRole("alert")).toContainText("UTF-8");
+  await preview.getByRole("button", { name: "Close Markdown preview" }).click();
+  const understatedCard = await emitMarkdownFile(page, "understated.md", "0");
+  await understatedCard.click();
+  await expect(preview.getByRole("alert")).toContainText("2 MiB");
+  await preview.getByRole("button", { name: "Close Markdown preview" }).click();
+  const slowCard = await emitMarkdownFile(page, "slow.md", "d");
+  await page.evaluate(() => {
+    window.__BUZZ_E2E_HOLD_MEDIA_FETCHES__ = true;
+  });
+  await slowCard.click();
+  await expect(preview.getByRole("status")).toContainText("Loading");
+  await page.evaluate(() => {
+    window.__BUZZ_E2E_HOLD_MEDIA_FETCHES__ = false;
+  });
+  // The preview is non-modal: the earlier card remains usable on the left.
+  await retryCard
+    .getByRole("button", { name: "Preview retry.markdown" })
+    .click();
+  await expect(
+    preview.getByRole("heading", { name: "Recovered document" }),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.__BUZZ_E2E_MEDIA_FETCH_STATE__?.active),
+    )
+    .toBe(0);
+  await page.getByTestId("channel-random").click();
+  await expect(preview).toHaveCount(0);
+});
+
+test("Markdown preview owns Escape above a focused thread and cancels on thread navigation", async ({
+  page,
+}) => {
+  await page.route("https://mock.relay/media/*.bin", (route) =>
+    route.fulfill({
+      body: "# Thread document",
+      headers: { "access-control-allow-origin": "*" },
+    }),
+  );
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await page.waitForFunction(() =>
+    window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+      channelName: "general",
+    }),
+  );
+  const card = await emitMarkdownFile(page, "thread.md", "f");
+  const root = await card.evaluate((element) =>
+    element.closest("[data-message-id]")?.getAttribute("data-message-id"),
+  );
+  if (!root) throw new Error("Attachment row is missing");
+  await page.locator(`[data-message-id="${root}"]`).hover();
+  await page.getByTestId(`reply-message-${root}`).click();
+  await expect(page.getByTestId("message-thread-panel")).toBeVisible();
+  await page
+    .getByRole("button", { name: "Expand thread", exact: true })
+    .click();
+  const drawer = page.getByTestId("focus-thread-drawer");
+  await expect(drawer).toBeVisible();
+  const trigger = drawer.getByRole("button", {
+    name: "Preview thread.md",
+    exact: true,
+  });
+  await trigger.click();
+  const preview = page.getByTestId("markdown-preview");
+  await expect(
+    preview.getByRole("heading", { name: "Thread document" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(preview).toHaveCount(0);
+  await expect(drawer).toBeVisible();
+  await expect(trigger).toBeFocused();
+  await page.evaluate(() => {
+    window.__BUZZ_E2E_HOLD_MEDIA_FETCHES__ = true;
+  });
+  await trigger.press("Space");
+  await expect(preview.getByRole("status")).toContainText("Loading");
+  await page.goBack();
+  await expect(preview).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.__BUZZ_E2E_MEDIA_FETCH_STATE__?.active),
+    )
+    .toBe(0);
+});
 
 async function chooseLargeVideo(page: Page) {
   const [chooser] = await Promise.all([

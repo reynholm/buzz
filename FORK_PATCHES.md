@@ -3918,10 +3918,12 @@ New module: `false`.
 
 ## `desktop/src/app/AppShell.tsx`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Host the Markdown attachment preview within the conversation surface.
 
 New module: `false`.
 
+- Required symbol: `<AppMarkdownAttachmentPreviewProvider>`
+- Invocation: `desktop/src/app/AppShell.tsx` → `AppMarkdownAttachmentPreviewProvider`; exact call `<AppMarkdownAttachmentPreviewProvider>`; behavior test `Markdown attachment preview formats, scrolls and closes without moving the timeline`; verify `pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0 --grep 'Markdown attachment preview formats'`
 - Verify: `just ci`
 
 ## `desktop/src/app/useCommunityNavigationTransitions.ts`
@@ -7741,7 +7743,7 @@ New module: `true`.
 
 ## `desktop/tests/e2e/file-attachment.spec.ts`
 
-Verify Markdown and ZIP picker uploads, file-card labels and sizes, and native download filenames alongside existing attachment flows.
+Verify Markdown and ZIP picker uploads, file-card labels and sizes, and native download filenames alongside existing attachment flows. Exercise Markdown formatting, independent scrolling, native preview cap forwarding, keyboard close/focus, retry, replacement, cancellation and invalid/oversized files.
 
 New module: `false`.
 
@@ -7760,13 +7762,14 @@ New module: `false`.
 
 ## `desktop/src-tauri/src/commands/media_download_file_tests.rs`
 
-Exercise the native HTTP file fetch above 50 MiB, the 100 MiB boundary, declared and streamed oversize rejection, preserved image caps, and an opt-in real-relay hash check.
+Exercise the native HTTP file fetch above 50 MiB, the 100 MiB boundary, declared and streamed oversize rejection, preserved image caps, and an opt-in real-relay hash check. Exercise the real preview command at 2 MiB with both declared and streamed oversize rejection, and reject attempts to raise the native cap.
 
 New module: `true`.
 
 - Required symbol: `generic_download_above_fifty_mib_is_byte_exact`
 - Required symbol: `generic_download_rejects_over_hundred_mib_with_or_without_length`
 - Required symbol: `native_download_from_relay_matches_expected_sha256`
+- Required symbol: `media_preview_limit_rejects_oversize_headers_and_streams`
 - Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
 
 ## `desktop/src-tauri/src/commands/media_filename.rs`
@@ -9650,3 +9653,88 @@ Exercise thread-composer observer activity after typing expires or a reply is pu
 New module: `false`.
 
 - Verify: `cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/active-turn-resilience.spec.ts --project=smoke`
+
+## `desktop/src/app/AppMarkdownAttachmentPreviewProvider.tsx`
+
+Own a single route-scoped Markdown attachment overlay and restore focus when it closes.
+
+New module: `true`.
+
+- Required symbol: `AppMarkdownAttachmentPreviewProvider`
+- Required symbol: `MarkdownAttachmentPreviewContext.Provider`
+- Verify: `pnpm --dir desktop test`
+- Verify: `pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0`
+
+## `desktop/src/shared/context/MarkdownAttachmentPreviewContext.ts`
+
+Expose the conversation-scoped Markdown attachment preview action to file cards.
+
+New module: `true`.
+
+- Required symbol: `useOpenMarkdownAttachmentPreview`
+- Verify: `pnpm --dir desktop test`
+- Verify: `pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0`
+
+## `desktop/src/shared/ui/markdown/MarkdownAttachmentPreview.tsx`
+
+Render a scrollable Markdown attachment with bounded UTF-8 fetch, cancellation, retry, download and keyboard close.
+
+New module: `true`.
+
+- Required symbol: `MAX_PREVIEW_BYTES`
+- Required symbol: `controller.abort()`
+- Required symbol: `hardLineBreaks={false}`
+- Invocation: `desktop/src/shared/ui/markdown/MarkdownAttachmentPreview.tsx` → `fetchMediaBytes`; exact call `const bytes = await fetchMediaBytes(
+          href,
+          controller.signal,
+          MAX_PREVIEW_BYTES,
+        );`; behavior test `Markdown attachment preview formats, scrolls and closes without moving the timeline`; verify `pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0 --grep 'Markdown attachment preview formats'`
+- Verify: `pnpm --dir desktop test`
+- Verify: `pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0`
+
+## `desktop/src/shared/ui/markdown/FileCard.tsx`
+
+Preview Markdown attachments by original filename while preserving an independent native download action and generic file downloads.
+
+New module: `false`.
+
+- Required symbol: `useOpenMarkdownAttachmentPreview`
+- Required symbol: `aria-label={`Preview ${filename}`}`
+- Verify: `pnpm --dir desktop test`
+- Verify: `pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0`
+
+## `desktop/src/shared/api/tauriMedia.ts`
+
+Forward an optional lower byte cap through the cancellable raw media IPC fetch.
+
+New module: `false`.
+
+- Required symbol: `maxBytes?: number`
+- Invocation: `desktop/src/shared/api/tauriMedia.ts` → `invokeTauri`; exact call `const request = invokeTauri<ArrayBuffer>("fetch_media_bytes", {
+    maxBytes,
+    requestId,
+    url,
+  });`; behavior test `Markdown attachment preview formats, scrolls and closes without moving the timeline`; verify `pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0 --grep 'Markdown attachment preview formats'`
+- Verify: `pnpm --dir desktop test`
+- Verify: `pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0`
+
+## `desktop/src-tauri/src/commands/media_fetch_cancellation.rs`
+
+Apply caller-requested lower media byte caps while retaining the native maximum, URL validation and request cancellation.
+
+New module: `false`.
+
+- Required symbol: `max_bytes: Option<u64>`
+- Required symbol: `.min(MAX_DOWNLOAD_BYTES)`
+- Invocation: `desktop/src-tauri/src/commands/media_fetch_cancellation.rs` → `fetch_blob_bytes_with_cap`; exact call `fetch_blob_bytes_with_cap(&url, &state, cap, cancellation.as_ref())`; behavior test `media_preview_limit_rejects_oversize_headers_and_streams`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace media_preview_limit_rejects_oversize_headers_and_streams`
+- Verify: `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
+
+## `desktop/src/features/channels/ui/FocusThreadDrawer.tsx`
+
+Preserve focused thread Escape ownership beneath the Markdown document preview.
+
+New module: `false`.
+
+- Required symbol: `useMarkdownAttachmentPreviewOpen`
+- Required symbol: `if (!escapeEnabled || markdownPreviewOpen) return;`
+- Verify: `pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts thread-focus-mode.spec.ts --workers=1 --retries=0`

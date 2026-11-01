@@ -80,11 +80,13 @@ export async function pickAndUploadImage(): Promise<BlobDescriptor | null> {
  * Used by the composer image editor: wrapping the bytes in a same-origin
  * `blob:` URL gives the canvas pixel access without CORS, so the media
  * proxy needs no special headers. The Rust side enforces the same URL
- * validation and size cap as the download commands.
+ * validation and size cap as the download commands. `maxBytes` may lower
+ * that cap for document previews; it cannot raise the native maximum.
  */
 export async function fetchMediaBytes(
   url: string,
   signal?: AbortSignal,
+  maxBytes?: number,
 ): Promise<Uint8Array<ArrayBuffer>> {
   if (signal?.aborted) {
     throw new DOMException("Media fetch cancelled", "AbortError");
@@ -94,6 +96,7 @@ export async function fetchMediaBytes(
   // The Rust command replies with `tauri::ipc::Response`, so the bytes
   // arrive as a raw ArrayBuffer rather than a JSON number array.
   const request = invokeTauri<ArrayBuffer>("fetch_media_bytes", {
+    maxBytes,
     requestId,
     url,
   });
