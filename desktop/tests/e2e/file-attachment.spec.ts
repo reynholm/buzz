@@ -245,6 +245,82 @@ test("Markdown attachment preview formats, scrolls and closes without moving the
   await expect(preview).toHaveCount(0);
 });
 
+test("Markdown preview width can be dragged, reset and retained across documents", async ({
+  page,
+}) => {
+  await page.route("https://mock.relay/media/*.bin", (route) =>
+    route.fulfill({
+      body: `# Resizable document\n\n${"A paragraph.\n\n".repeat(100)}`,
+    }),
+  );
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await page.waitForFunction(() =>
+    window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+      channelName: "general",
+      kind: 9,
+      exactChannel: true,
+    }),
+  );
+  const card = await emitMarkdownFile(page, "resizable.md", "e");
+  await card.click();
+  const preview = page.getByTestId("markdown-preview");
+  await expect(
+    preview.getByRole("heading", { name: "Resizable document" }),
+  ).toBeVisible();
+  const bounds = async () => {
+    const box = await preview.boundingBox();
+    if (!box) throw new Error("Preview bounds are missing");
+    return box;
+  };
+  const initial = await bounds();
+  const handle = preview.getByRole("button", {
+    name: "Resize Markdown preview",
+    exact: true,
+  });
+  await expect(handle).toBeVisible();
+  await handle.hover();
+  await page.mouse.down();
+  await page.mouse.move(initial.x + 150, initial.y + 150, { steps: 8 });
+  await page.mouse.up();
+  await expect
+    .poll(async () => (await bounds()).width)
+    .toBeLessThan(initial.width - 100);
+  const resized = (await bounds()).width;
+  await preview.getByRole("button", { name: "Close Markdown preview" }).click();
+  await card.click();
+  await expect.poll(async () => (await bounds()).width).toBeCloseTo(resized, 0);
+  await preview.getByRole("button", { name: "Close Markdown preview" }).click();
+  const next = await emitMarkdownFile(page, "next.md", "f");
+  await next.click();
+  await expect.poll(async () => (await bounds()).width).toBeCloseTo(resized, 0);
+  await handle.dblclick();
+  await expect
+    .poll(async () => (await bounds()).width)
+    .toBeCloseTo(initial.width, 0);
+  await handle.focus();
+  await page.keyboard.press("Home");
+  await expect.poll(async () => (await bounds()).width).toBeCloseTo(320, 0);
+  await page.keyboard.press("End");
+  const parent = await preview.locator("..").boundingBox();
+  if (!parent) throw new Error("Preview container bounds are missing");
+  await expect
+    .poll(async () => (await bounds()).width)
+    .toBeCloseTo(parent.width, 0);
+  await page.keyboard.press("ArrowRight");
+  await expect
+    .poll(async () => (await bounds()).width)
+    .toBeCloseTo(parent.width - 32, 0);
+  await page.setViewportSize({ width: 600, height: 800 });
+  await expect(handle).toBeHidden();
+  await expect
+    .poll(async () => (await bounds()).width)
+    .toBeLessThanOrEqual(600);
+  await expect(
+    preview.getByRole("button", { name: "Close Markdown preview" }),
+  ).toBeVisible();
+});
+
 test("Markdown preview handles retry, replacement, cancellation and oversized documents", async ({
   page,
 }) => {
@@ -313,6 +389,7 @@ test("Markdown preview handles retry, replacement, cancellation and oversized do
   await expect(preview.getByRole("alert")).toContainText(
     "Could not render this document",
   );
+  await expect(preview.locator("blockquote")).toHaveCount(0);
   await expect(page.getByTestId("message-timeline")).toBeVisible();
   await preview.getByRole("button", { name: "Download nested.md" }).click();
   await expect

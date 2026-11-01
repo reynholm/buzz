@@ -110,6 +110,7 @@ export function markdownPropsAreEqual(
     prev.className === next.className &&
     prev.customEmoji === next.customEmoji &&
     prev.hardLineBreaks === next.hardLineBreaks &&
+    prev.maxNestingDepth === next.maxNestingDepth &&
     prev.interactive === next.interactive &&
     prev.blockCode === next.blockCode &&
     prev.mediaInset === next.mediaInset &&

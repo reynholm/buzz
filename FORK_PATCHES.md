@@ -3654,7 +3654,7 @@ New module: `false`.
 
 ## `desktop/playwright.config.ts`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow. Register long-thread and large-channel virtualization coverage in the smoke suite. Register the open-thread highlight smoke spec.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow. Register long-thread and large-channel virtualization coverage in the smoke suite. Register the open-thread highlight smoke spec. Exercise Markdown attachment previews in WebKit, including deeply nested documents and resizing.
 
 New module: `false`.
 
@@ -3662,11 +3662,13 @@ New module: `false`.
 - Required symbol: `"**/session-controls.spec.ts",`
 - Required symbol: `"**/thread-virtualization.spec.ts"`
 - Required symbol: `"**/open-thread-highlight.spec.ts",`
+- Required symbol: `name: "markdown-preview-webkit"`
 - Verify: `just ci`
 - Verify: `cd desktop && pnpm test:e2e:smoke`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
 - Verify: `cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke`
+- Verify: `pnpm --dir desktop build:e2e && pnpm --dir desktop exec playwright test --project=markdown-preview-webkit --workers=1 --retries=0`
 
 ## `desktop/src-tauri/icons/icon.icns`
 
@@ -7743,11 +7745,12 @@ New module: `true`.
 
 ## `desktop/tests/e2e/file-attachment.spec.ts`
 
-Verify Markdown and ZIP picker uploads, file-card labels and sizes, and native download filenames alongside existing attachment flows. Exercise Markdown formatting, independent scrolling, native preview cap forwarding, keyboard close/focus, retry, replacement, cancellation and invalid/oversized files.
+Verify Markdown and ZIP picker uploads, file-card labels and sizes, and native download filenames alongside existing attachment flows. Exercise Markdown formatting, independent scrolling, native preview cap forwarding, keyboard close/focus, retry, replacement, cancellation and invalid/oversized files. Cover preview width dragging, limits, reset and session retention; require nested inputs to avoid DOM construction in both browser engines.
 
 New module: `false`.
 
 - Verify: `cd desktop && pnpm test:e2e:smoke -- file-attachment.spec.ts`
+- Verify: `pnpm --dir desktop build:e2e && pnpm --dir desktop exec playwright test --project=markdown-preview-webkit --workers=1 --retries=0`
 
 ## `desktop/src-tauri/src/commands/media_download.rs`
 
@@ -9678,7 +9681,7 @@ New module: `true`.
 
 ## `desktop/src/shared/ui/markdown/MarkdownAttachmentPreview.tsx`
 
-Render a scrollable Markdown attachment with bounded UTF-8 fetch, cancellation, retry, download, keyboard close and isolated document render failures.
+Render a scrollable Markdown attachment with bounded UTF-8 fetch, cancellation, retry, download, keyboard close and isolated document render failures. Bound parsed nesting before recursive rendering and expose session-scoped width controls.
 
 New module: `true`.
 
@@ -9686,14 +9689,18 @@ New module: `true`.
 - Required symbol: `controller.abort()`
 - Required symbol: `hardLineBreaks={false}`
 - Required symbol: `MarkdownDocumentErrorBoundary`
+- Required symbol: `maxNestingDepth={128}`
+- Required symbol: `useMarkdownPreviewWidth`
 - Invocation: `desktop/src/shared/ui/markdown/MarkdownAttachmentPreview.tsx` → `fetchMediaBytes`; exact call `const bytes = await fetchMediaBytes(
           href,
           controller.signal,
           MAX_PREVIEW_BYTES,
         );`; behavior test `Markdown attachment preview formats, scrolls and closes without moving the timeline`; verify `pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0 --grep 'Markdown attachment preview formats'`
 - Invocation: `desktop/src/shared/ui/markdown/MarkdownAttachmentPreview.tsx` → `MarkdownDocumentErrorBoundary`; exact call `<MarkdownDocumentErrorBoundary key={`${href}:${attempt}`}>`; behavior test `Markdown preview handles retry, replacement, cancellation and oversized documents`; verify `pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0 --grep 'Markdown preview handles'`
+- Invocation: `desktop/src/shared/ui/markdown/MarkdownAttachmentPreview.tsx` → `useMarkdownPreviewWidth`; exact call `const width = useMarkdownPreviewWidth();`; behavior test `Markdown preview width can be dragged, reset and retained across documents`; verify `pnpm --dir desktop build:e2e && pnpm --dir desktop exec playwright test --project=markdown-preview-webkit --workers=1 --retries=0`
 - Verify: `pnpm --dir desktop test`
 - Verify: `pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0`
+- Verify: `pnpm --dir desktop build:e2e && pnpm --dir desktop exec playwright test --project=markdown-preview-webkit --workers=1 --retries=0`
 
 ## `desktop/src/shared/ui/markdown/FileCard.tsx`
 
@@ -9741,3 +9748,73 @@ New module: `false`.
 - Required symbol: `useMarkdownAttachmentPreviewOpen`
 - Required symbol: `if (!escapeEnabled || markdownPreviewOpen) return;`
 - Verify: `pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts thread-focus-mode.spec.ts --workers=1 --retries=0`
+
+## `desktop/src/shared/ui/markdown/remarkMaxNestingDepth.ts`
+
+Check parsed Markdown depth iteratively before recursive transforms or DOM construction.
+
+New module: `true`.
+
+- Required symbol: `remarkMaxNestingDepth`
+- Required symbol: `Markdown nesting limit exceeded`
+- Verify: `pnpm --dir desktop test`
+
+## `desktop/src/shared/ui/markdown/useMarkdownPreviewWidth.ts`
+
+Resize document overlays within their host, retain width per session, reset and clean up drag listeners on close.
+
+New module: `true`.
+
+- Required symbol: `useMarkdownPreviewWidth`
+- Required symbol: `cleanupRef.current?.()`
+- Required symbol: `window.sessionStorage`
+- Required symbol: `onKeyDown`
+- Verify: `pnpm --dir desktop build:e2e && pnpm --dir desktop exec playwright test --project=markdown-preview-webkit --workers=1 --retries=0`
+
+## `desktop/src/shared/ui/markdown/nodeCache.ts`
+
+Apply an optional early AST depth bound and separate cache entries by that bound.
+
+New module: `false`.
+
+- Required symbol: `remarkMaxNestingDepth`
+- Required symbol: `maxNestingDepth`
+- Required symbol: `segment(String(input.maxNestingDepth ?? ""))`
+- Verify: `pnpm --dir desktop test`
+
+## `desktop/src/shared/ui/markdown/nodeCache.test.mjs`
+
+Verify deep-document rejection, literal code preservation and cache isolation for stricter depth bounds.
+
+New module: `false`.
+
+- Required symbol: `document nesting is bounded before recursive transforms and DOM creation`
+- Required symbol: `a cached document cannot bypass a stricter nesting limit`
+- Verify: `pnpm --dir desktop test`
+
+## `desktop/src/shared/ui/markdown.tsx`
+
+Forward document-specific nesting bounds through the existing renderer.
+
+New module: `false`.
+
+- Required symbol: `maxNestingDepth`
+- Verify: `pnpm --dir desktop test`
+
+## `desktop/src/shared/ui/markdown/types.ts`
+
+Expose an optional nesting bound for document rendering.
+
+New module: `false`.
+
+- Required symbol: `maxNestingDepth?: number`
+- Verify: `pnpm --dir desktop test`
+
+## `desktop/src/shared/ui/markdownUtils.ts`
+
+Invalidate memoized Markdown when its nesting bound changes.
+
+New module: `false`.
+
+- Required symbol: `prev.maxNestingDepth === next.maxNestingDepth`
+- Verify: `pnpm --dir desktop test`

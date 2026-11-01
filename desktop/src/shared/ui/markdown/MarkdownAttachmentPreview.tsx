@@ -7,6 +7,7 @@ import { fetchMediaBytes } from "@/shared/api/tauriMedia";
 import type { MarkdownPreviewAttachment } from "@/shared/context/MarkdownAttachmentPreviewContext";
 import { Button } from "@/shared/ui/button";
 import { Markdown } from "@/shared/ui/markdown";
+import { useMarkdownPreviewWidth } from "./useMarkdownPreviewWidth";
 
 const MAX_PREVIEW_BYTES = 2 * 1024 * 1024;
 const TOO_LARGE =
@@ -52,6 +53,7 @@ export function MarkdownAttachmentPreview({
   const [state, setState] = React.useState<PreviewState>({ phase: "loading" });
   const [attempt, setAttempt] = React.useState(0);
   const closeRef = React.useRef<HTMLButtonElement>(null);
+  const width = useMarkdownPreviewWidth();
 
   React.useEffect(() => {
     closeRef.current?.focus({ preventScroll: true });
@@ -115,10 +117,23 @@ export function MarkdownAttachmentPreview({
 
   return (
     <section
+      ref={width.panelRef}
       aria-label={`Markdown preview: ${filename}`}
-      className="absolute inset-y-0 right-0 z-50 flex w-full min-w-0 flex-col border-l border-border bg-background shadow-xl sm:w-[min(42rem,calc(100%-6rem))]"
+      className="absolute inset-y-0 right-0 z-50 flex w-full min-w-0 flex-col border-l border-border bg-background shadow-xl sm:w-[var(--markdown-preview-width)]"
       data-testid="markdown-preview"
+      style={width.style}
     >
+      <button
+        aria-label="Resize Markdown preview"
+        className="group absolute inset-y-0 left-0 z-10 hidden w-3 -translate-x-1/2 cursor-col-resize touch-none sm:block"
+        onDoubleClick={width.onReset}
+        onKeyDown={width.onKeyDown}
+        onPointerDown={width.onPointerDown}
+        title="Drag to resize. Double-click to reset width. Use arrow keys, Home or End."
+        type="button"
+      >
+        <span className="absolute inset-y-0 left-1/2 w-px bg-transparent group-hover:bg-border group-focus-visible:bg-border" />
+      </button>
       <header className="flex min-h-13 shrink-0 items-center gap-2 border-b border-border px-4 py-2">
         <h2
           className="min-w-0 flex-1 truncate text-sm font-semibold"
@@ -192,6 +207,7 @@ export function MarkdownAttachmentPreview({
                 blockCode
                 content={state.content}
                 hardLineBreaks={false}
+                maxNestingDepth={128}
                 interactive={false}
               />
             ) : (

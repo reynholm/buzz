@@ -1680,6 +1680,7 @@ function MarkdownInner({
   content,
   customEmoji,
   hardLineBreaks = true,
+  maxNestingDepth,
   imetaByUrl,
   interactive = true,
   blockCode = false,
@@ -1767,21 +1768,6 @@ function MarkdownInner({
     ],
   );
 
-  let processedContent = content;
-
-  // Note: stripping the sentinel here is intentionally omitted. When
-  // configNudge !== null, selectProseOrNudge() returns null — suppressing
-  // the prose node entirely — so processedContent is never rendered and
-  // stripConfigNudgeSentinel would be dead work on that path.
-
-  if (/^(?:\s{2}\n)+/.test(processedContent)) {
-    processedContent = `\u200B${processedContent}`;
-  }
-
-  if (/(?:\s{2}\n)+$/.test(processedContent)) {
-    processedContent = `${processedContent}\u200B`;
-  }
-
   // When a config-nudge suppresses the prose (selectProseOrNudge returns
   // null), skip the parse entirely — it would be thrown away unrendered.
   const hasLeadingInlineContent = leadingInlineContent != null;
@@ -1796,9 +1782,10 @@ function MarkdownInner({
       ? renderCachedMarkdown({
           channelNames,
           components: componentSet.components,
-          content: processedContent,
+          content,
           customEmoji,
           hardLineBreaks,
+          maxNestingDepth,
           leadingInlineContent: hasLeadingInlineContent,
           mentionNames,
           searchQuery,

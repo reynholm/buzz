@@ -6058,13 +6058,14 @@
     },
     {
       "path": "desktop/playwright.config.ts",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow. Register long-thread and large-channel virtualization coverage in the smoke suite. Register the open-thread highlight smoke spec.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow. Register long-thread and large-channel virtualization coverage in the smoke suite. Register the open-thread highlight smoke spec. Exercise Markdown attachment previews in WebKit, including deeply nested documents and resizing.",
       "is_new": false,
       "required_symbols": [
         "\"**/session-status.spec.ts\",",
         "\"**/session-controls.spec.ts\",",
         "\"**/thread-virtualization.spec.ts\"",
-        "\"**/open-thread-highlight.spec.ts\","
+        "\"**/open-thread-highlight.spec.ts\",",
+        "name: \"markdown-preview-webkit\""
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -6072,7 +6073,8 @@
         "cd desktop && pnpm test:e2e:smoke",
         "CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts",
         "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts",
-        "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
+        "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke",
+        "pnpm --dir desktop build:e2e && pnpm --dir desktop exec playwright test --project=markdown-preview-webkit --workers=1 --retries=0"
       ]
     },
     {
@@ -11874,12 +11876,13 @@
     },
     {
       "path": "desktop/tests/e2e/file-attachment.spec.ts",
-      "responsibility": "Verify Markdown and ZIP picker uploads, file-card labels and sizes, and native download filenames alongside existing attachment flows. Exercise Markdown formatting, independent scrolling, native preview cap forwarding, keyboard close/focus, retry, replacement, cancellation and invalid/oversized files.",
+      "responsibility": "Verify Markdown and ZIP picker uploads, file-card labels and sizes, and native download filenames alongside existing attachment flows. Exercise Markdown formatting, independent scrolling, native preview cap forwarding, keyboard close/focus, retry, replacement, cancellation and invalid/oversized files. Cover preview width dragging, limits, reset and session retention; require nested inputs to avoid DOM construction in both browser engines.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
-        "cd desktop && pnpm test:e2e:smoke -- file-attachment.spec.ts"
+        "cd desktop && pnpm test:e2e:smoke -- file-attachment.spec.ts",
+        "pnpm --dir desktop build:e2e && pnpm --dir desktop exec playwright test --project=markdown-preview-webkit --workers=1 --retries=0"
       ]
     },
     {
@@ -14501,13 +14504,15 @@
     },
     {
       "path": "desktop/src/shared/ui/markdown/MarkdownAttachmentPreview.tsx",
-      "responsibility": "Render a scrollable Markdown attachment with bounded UTF-8 fetch, cancellation, retry, download, keyboard close and isolated document render failures.",
+      "responsibility": "Render a scrollable Markdown attachment with bounded UTF-8 fetch, cancellation, retry, download, keyboard close and isolated document render failures. Bound parsed nesting before recursive rendering and expose session-scoped width controls.",
       "is_new": true,
       "required_symbols": [
         "MAX_PREVIEW_BYTES",
         "controller.abort()",
         "hardLineBreaks={false}",
-        "MarkdownDocumentErrorBoundary"
+        "MarkdownDocumentErrorBoundary",
+        "maxNestingDepth={128}",
+        "useMarkdownPreviewWidth"
       ],
       "invocation_seams": [
         {
@@ -14523,11 +14528,19 @@
           "invocation": "<MarkdownDocumentErrorBoundary key={`${href}:${attempt}`}>",
           "behavior_test": "Markdown preview handles retry, replacement, cancellation and oversized documents",
           "verification_command": "pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0 --grep 'Markdown preview handles'"
+        },
+        {
+          "caller_path": "desktop/src/shared/ui/markdown/MarkdownAttachmentPreview.tsx",
+          "callee_symbol": "useMarkdownPreviewWidth",
+          "invocation": "const width = useMarkdownPreviewWidth();",
+          "behavior_test": "Markdown preview width can be dragged, reset and retained across documents",
+          "verification_command": "pnpm --dir desktop build:e2e && pnpm --dir desktop exec playwright test --project=markdown-preview-webkit --workers=1 --retries=0"
         }
       ],
       "verification_commands": [
         "pnpm --dir desktop test",
-        "pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0"
+        "pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0",
+        "pnpm --dir desktop build:e2e && pnpm --dir desktop exec playwright test --project=markdown-preview-webkit --workers=1 --retries=0"
       ]
     },
     {
@@ -14597,6 +14610,97 @@
       "invocation_seams": [],
       "verification_commands": [
         "pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts thread-focus-mode.spec.ts --workers=1 --retries=0"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/ui/markdown/remarkMaxNestingDepth.ts",
+      "responsibility": "Check parsed Markdown depth iteratively before recursive transforms or DOM construction.",
+      "is_new": true,
+      "required_symbols": [
+        "remarkMaxNestingDepth",
+        "Markdown nesting limit exceeded"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir desktop test"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/ui/markdown/useMarkdownPreviewWidth.ts",
+      "responsibility": "Resize document overlays within their host, retain width per session, reset and clean up drag listeners on close.",
+      "is_new": true,
+      "required_symbols": [
+        "useMarkdownPreviewWidth",
+        "cleanupRef.current?.()",
+        "window.sessionStorage",
+        "onKeyDown"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir desktop build:e2e && pnpm --dir desktop exec playwright test --project=markdown-preview-webkit --workers=1 --retries=0"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/ui/markdown/nodeCache.ts",
+      "responsibility": "Apply an optional early AST depth bound and separate cache entries by that bound.",
+      "is_new": false,
+      "required_symbols": [
+        "remarkMaxNestingDepth",
+        "maxNestingDepth",
+        "segment(String(input.maxNestingDepth ?? \"\"))"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir desktop test"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/ui/markdown/nodeCache.test.mjs",
+      "responsibility": "Verify deep-document rejection, literal code preservation and cache isolation for stricter depth bounds.",
+      "is_new": false,
+      "required_symbols": [
+        "document nesting is bounded before recursive transforms and DOM creation",
+        "a cached document cannot bypass a stricter nesting limit"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir desktop test"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/ui/markdown.tsx",
+      "responsibility": "Forward document-specific nesting bounds through the existing renderer.",
+      "is_new": false,
+      "required_symbols": [
+        "maxNestingDepth"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir desktop test"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/ui/markdown/types.ts",
+      "responsibility": "Expose an optional nesting bound for document rendering.",
+      "is_new": false,
+      "required_symbols": [
+        "maxNestingDepth?: number"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir desktop test"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/ui/markdownUtils.ts",
+      "responsibility": "Invalidate memoized Markdown when its nesting bound changes.",
+      "is_new": false,
+      "required_symbols": [
+        "prev.maxNestingDepth === next.maxNestingDepth"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir desktop test"
       ]
     }
   ],
