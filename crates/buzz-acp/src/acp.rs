@@ -10,6 +10,11 @@ mod claude_context;
 mod kimi_diagnostics;
 pub(crate) mod kimi_permission;
 pub(crate) mod launch;
+#[cfg(target_os = "linux")]
+mod linux_resources;
+#[cfg(all(test, target_os = "linux"))]
+#[path = "acp/linux_resources_tests.rs"]
+mod linux_resources_tests;
 mod provider_failure;
 mod restart_status;
 
@@ -106,6 +111,14 @@ pub enum AcpError {
 
     #[error("Agent process exited unexpectedly")]
     AgentExited,
+
+    /// The owned Linux worker cgroup recorded a kernel OOM kill.
+    #[error("Worker memory limit exceeded (scope {scope}); retry explicitly after reducing the workload")]
+    ResourceLimit { scope: String },
+
+    /// Configured process containment could not be verified.
+    #[error("Worker resource isolation failed: {0}")]
+    ResourceGuard(String),
 
     /// Internal generation cancellation; it says nothing about transport health.
     #[error("Dispatch retired by session control")]
@@ -226,6 +239,8 @@ pub struct AcpClient {
     compactions: compaction::CompactionTracker,
     /// The agent child process (kept alive to prevent zombie).
     child: Child,
+    #[cfg(target_os = "linux")]
+    resource_scope: Option<linux_resources::WorkerScope>,
     /// Sole stdin writer; None after an interrupted/failed frame closes it.
     stdin: Option<ChildStdin>,
     /// Framed reader over the agent's stdout pipe (line-oriented, bounded).
@@ -543,6 +558,15 @@ impl AcpClient {
     /// Call this when you need guaranteed cleanup — e.g., in `run_models`
     /// before process exit.
     pub async fn shutdown(&mut self) {
+        #[cfg(target_os = "linux")]
+        if let Some(scope) = &self.resource_scope {
+            if let Err(error) = scope.kill() {
+                tracing::error!(%error, "ACP resource scope cleanup failed");
+            }
+            if !scope.empty().await {
+                tracing::error!("ACP resource scope remains populated after cleanup");
+            }
+        }
         // Kill the entire process group when possible. The child was spawned
         // with process_group(0), so its PID == its PGID. Killing the group
         // ensures subprocesses (MCP servers, tool processes) are cleaned up
@@ -597,7 +621,17 @@ impl AcpClient {
         // A launch prefix may change the CLI or environment the adapter sees,
         // so the version check below could inspect the wrong binary.
         let launch_prefixed = std::env::var_os(launch::PREFIX_ENV).is_some();
-        let mut cmd = launch::command(command, args)?;
+        let cmd = launch::command(command, args)?;
+        #[cfg(not(target_os = "linux"))]
+        if std::env::var_os("BUZZ_ACP_RESOURCE_LIMITS").is_some() {
+            return Err(AcpError::ResourceGuard(
+                "Linux cgroup v2 is required".into(),
+            ));
+        }
+        #[cfg(target_os = "linux")]
+        let (mut cmd, resource_scope) = linux_resources::WorkerScope::wrap(cmd)?;
+        #[cfg(not(target_os = "linux"))]
+        let mut cmd = cmd;
         if crate::config::normalize_agent_command_identity(command) == BUZZ_PI_ACP_NAME {
             if !args.iter().any(|arg| arg == "--") {
                 cmd.arg("--");
@@ -611,9 +645,14 @@ impl AcpClient {
             .stdout(Stdio::piped())
             // Inherit stderr so agent logs are visible in the harness terminal.
             .stderr(Stdio::inherit())
-            // AcpClient owns cleanup. Tokio must not independently signal a
-            // checked retirement whose initial snapshot could not be verified.
+            // Unguarded workers retain checked process-tree retirement semantics.
             .kill_on_drop(false);
+        #[cfg(target_os = "linux")]
+        if resource_scope.is_some() {
+            // Cover cancellation while waiting for the supervisor's startup receipt.
+            // Scope ownership makes this direct-child cleanup safe on guarded paths.
+            cmd.kill_on_drop(true);
+        }
 
         // Per-persona env vars (e.g., GOOSE_PROVIDER, BUZZ_AGENT_PROVIDER).
         // For most keys, operator precedence wins: skip injection if already set
@@ -705,6 +744,8 @@ impl AcpClient {
                 _ => None,
             };
         cmd.envs(launch_env.iter().cloned());
+        // Resource scopes are owned by this harness, never nested by its tools.
+        cmd.env_remove("BUZZ_ACP_RESOURCE_LIMITS");
         cmd.env_remove(launch::PREFIX_ENV);
         #[cfg(unix)]
         let service_registry = if standard_adapter == Some(StandardAdapterKind::Codex) {
@@ -737,6 +778,16 @@ impl AcpClient {
             )
         })?;
 
+        #[cfg(target_os = "linux")]
+        if let Some(scope) = &resource_scope {
+            if let Err(error) = scope.ready(&mut child).await {
+                let _ = scope.kill();
+                let _ = child.start_kill();
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(2), child.wait()).await;
+                return Err(error);
+            }
+        }
+
         let stdin = child
             .stdin
             .take()
@@ -755,6 +806,8 @@ impl AcpClient {
             #[cfg(test)]
             process_tree_snapshots: std::collections::VecDeque::new(),
             child,
+            #[cfg(target_os = "linux")]
+            resource_scope,
             stdin: Some(stdin),
             reader: FramedRead::new(stdout, LinesCodec::new_with_max_length(MAX_LINE_SIZE)),
             next_id: 0,
@@ -784,6 +837,21 @@ impl AcpClient {
             status_capture: None,
             compactions: compaction::CompactionTracker::default(),
         })
+    }
+
+    #[cfg(all(test, target_os = "linux"))]
+    pub(crate) fn inject_unverified_resource_scope(&mut self) -> std::path::PathBuf {
+        let (scope, path) = linux_resources::WorkerScope::unverified_fixture();
+        self.resource_scope = Some(scope);
+        path
+    }
+
+    pub(crate) fn requires_checked_retirement(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        if self.resource_scope.is_some() {
+            return true;
+        }
+        self.is_kimi()
     }
 
     /// OS pid of the worker, while it is still running.
@@ -1718,15 +1786,34 @@ impl AcpClient {
     /// Bounded by a 30-second write timeout. If the agent stops reading stdin
     /// (e.g., it's stuck or dead), the write would otherwise block forever.
     async fn write_ndjson(&mut self, value: &serde_json::Value) -> Result<(), AcpError> {
+        #[cfg(target_os = "linux")]
+        if let Some(error) = self
+            .resource_scope
+            .as_ref()
+            .and_then(|scope| scope.failure())
+        {
+            return Err(error);
+        }
         const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
         let line = serde_json::to_string(value)?;
-        tokio::time::timeout(
+        let written = tokio::time::timeout(
             WRITE_TIMEOUT,
             frame_writer::write_frame(&mut self.stdin, line.as_bytes()),
         )
-        .await
-        .map_err(|_| AcpError::WriteTimeout(WRITE_TIMEOUT))?
-        .map_err(AcpError::Io)?;
+        .await;
+        // OOM can close the pipe during the write. Keep the verified terminal
+        // resource cause instead of replaying the request as a transport failure.
+        #[cfg(target_os = "linux")]
+        if let Some(error) = self
+            .resource_scope
+            .as_ref()
+            .and_then(|scope| scope.failure())
+        {
+            return Err(error);
+        }
+        written
+            .map_err(|_| AcpError::WriteTimeout(WRITE_TIMEOUT))?
+            .map_err(AcpError::Io)?;
         self.observe("acp_write", value.clone());
         Ok(())
     }
@@ -1794,7 +1881,7 @@ impl AcpClient {
             if remaining.is_zero() {
                 break;
             }
-            let read_result = tokio::time::timeout(remaining, self.reader.next()).await;
+            let read_result = tokio::time::timeout(remaining, self.next_frame()).await;
             match read_result {
                 // Timeout or stream ended — buffer is empty or agent exited.
                 Err(_) | Ok(None) => break,
@@ -1828,6 +1915,39 @@ impl AcpClient {
         Ok(())
     }
 
+    fn worker_exit_error(&self) -> AcpError {
+        #[cfg(target_os = "linux")]
+        if let Some(error) = self
+            .resource_scope
+            .as_ref()
+            .and_then(|scope| scope.failure())
+        {
+            return error;
+        }
+        AcpError::AgentExited
+    }
+
+    async fn next_frame(&mut self) -> Option<Result<String, LinesCodecError>> {
+        #[cfg(target_os = "linux")]
+        if let Some(scope) = &self.resource_scope {
+            loop {
+                if scope.failure().is_some() {
+                    return None;
+                }
+                tokio::select! {
+                    frame = self.reader.next() => {
+                        return if scope.failure().is_some() { None } else { frame };
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {
+                        // An unexpectedly dead supervisor must not leave inherited pipes hanging.
+                        if matches!(self.child.try_wait(), Ok(Some(_))) { return None; }
+                    }
+                }
+            }
+        }
+        self.reader.next().await
+    }
+
     /// Core message loop: read NDJSON lines until we get a response matching `expected_id`.
     ///
     /// While waiting, handles:
@@ -1846,8 +1966,8 @@ impl AcpClient {
             // LinesCodec::new_with_max_length enforces MAX_LINE_SIZE at the
             // read level — the buffer never grows beyond the limit, preventing
             // OOM from rogue agents writing infinite non-newline bytes.
-            let line = match self.reader.next().await {
-                None => return Err(AcpError::AgentExited),
+            let line = match self.next_frame().await {
+                None => return Err(self.worker_exit_error()),
                 Some(Err(LinesCodecError::MaxLineLengthExceeded)) => {
                     return Err(AcpError::Protocol(
                         "agent stdout line exceeded 10MB limit".into(),
@@ -2049,7 +2169,7 @@ impl AcpClient {
             // read level — the buffer never grows beyond the limit.
             let read_result = tokio::select! {
                 biased;
-                read_result = self.reader.next() => Some(read_result),
+                read_result = self.next_frame() => Some(read_result),
                 // Steer arm: gated off whenever a steer write is already in
                 // flight so we don't stack two writes against the same
                 // process. The `async { steer_rx.as_mut()?.recv().await }`
@@ -2178,7 +2298,7 @@ impl AcpClient {
                     if let Some((_, _, ack_tx)) = pending_steer.take() {
                         let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
                     }
-                    return Err(AcpError::AgentExited);
+                    return Err(self.worker_exit_error());
                 }
                 Some(Err(LinesCodecError::MaxLineLengthExceeded)) => {
                     if let Some((_, _, ack_tx)) = pending_steer.take() {
@@ -3057,8 +3177,18 @@ pub fn model_in_catalog(
         })
 }
 
+impl AcpError {
+    pub(crate) fn is_resource_failure(&self) -> bool {
+        matches!(self, Self::ResourceLimit { .. } | Self::ResourceGuard(_))
+    }
+}
+
 impl Drop for AcpClient {
     fn drop(&mut self) {
+        #[cfg(target_os = "linux")]
+        if let Some(scope) = &self.resource_scope {
+            let _ = scope.kill();
+        }
         if self.termination.checked {
             let _ = self.child.try_wait();
             return;

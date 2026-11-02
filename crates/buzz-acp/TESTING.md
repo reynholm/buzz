@@ -423,3 +423,68 @@ provider and human-client acceptance runbook. Kimi's original work receives its
 managed key before the first attempt; it retains it through background collection
 and checked child-crash recovery. Other adapters keep the background-only
 managed-publication behavior described above.
+
+## Linux worker memory containment
+
+`BUZZ_ACP_RESOURCE_LIMITS` opts a harness into cgroup v2 containment for every
+ACP worker it launches, including native CLI tools, subagents and MCP descendants.
+It requires a user systemd manager, writable `cgroup.kill`, and `/usr/bin/python3`
+(3.9 or newer). No external adapter or CLI is modified. Without the variable,
+launching remains unchanged. Configuring it on an unsupported host fails startup;
+it never falls back to an unbounded worker.
+
+The value is a JSON object with exactly these fields:
+
+```sh
+export BUZZ_ACP_RESOURCE_LIMITS='{"slice":"buzzworkers.slice","memory_high_bytes":1073741824,"memory_max_bytes":2147483648}'
+```
+
+These are example byte values, not recommended universal defaults. The slice
+must already exist immediately below the user manager, be outside the harness/desktop ancestry, have finite nonzero
+`MemoryHigh` and `MemoryMax`, and have `MemorySwapMax=0`. The worker maximum
+cannot exceed the slice maximum. Slice names use an alphanumeric stem followed
+by `.slice`. Provision the aggregate budget once as operator policy, rather than
+letting concurrent harnesses rewrite it. For an isolated temporary example:
+
+```sh
+busctl --user call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
+  org.freedesktop.systemd1.Manager StartTransientUnit 'ssa(sv)a(sa(sv))' \
+  buzzworkers.slice fail 3 \
+  MemoryHigh t 6442450944 MemoryMax t 8589934592 MemorySwapMax t 0 0
+```
+
+Measure normal worker-tree memory before selecting the actual budget, and reserve
+memory for the desktop, OS, existing services and independently limited builds.
+A worker budget includes its supervisor and every session sharing that worker.
+Work submitted to an external Docker daemon, remote host or separately managed
+service needs its own resource limits. Parent host cgroups do not constrain it.
+
+Each worker gets a uniquely owned scope outside the desktop service. A small
+bundled supervisor preserves the worker's pipes, environment and original umask,
+verifies effective limits
+before starting the adapter, preserves an OOM receipt before retiring the scope,
+and retires descendants if its harness exits. Scope cleanup includes processes
+that changed process groups. A verified OOM or loss of configured isolation is a
+terminal task failure: the affected worker is replaced, but the original request
+is not automatically replayed. Inspect partial effects and retry explicitly.
+The existing session recovery records and explicit controls remain available.
+
+Run policy and pool regressions normally, and invoke the real user-systemd checks
+explicitly on Linux:
+
+```sh
+cargo test --locked -p buzz-acp --lib linux_resources -- --test-threads=1
+cargo test --locked -p buzz-acp --lib resource_limit_dead_letters -- --test-threads=1
+cargo test --locked -p buzz-acp --lib linux_resources_ -- --ignored --test-threads=1
+cargo test --locked -p buzz-acp --lib resource_review_ -- --include-ignored --test-threads=1
+```
+
+The opt-in checks use synthetic adapters, uniquely named transient slices, finite
+worker and aggregate budgets, and temporary private receipts. They cover a native
+child allocator, aggregate exhaustion, a blocked stdin write racing OOM, refusal
+to execute when setup fails, cleanup of `setsid()` descendants, and abrupt harness
+exit. They do not call a model or publish relay messages. Run the compiled native
+checks with an additional outer memory limit and deadline; do not deliberately
+exhaust host memory. Native app acceptance remains a separate check: verify that
+a guarded worker failure leaves the UI and unrelated work usable, and that an
+explicit retry can proceed after the workload or operator budget is corrected.

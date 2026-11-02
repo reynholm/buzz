@@ -157,6 +157,8 @@ impl SessionState {
         if matches!(
             error,
             AcpError::Io(_)
+                | AcpError::ResourceLimit { .. }
+                | AcpError::ResourceGuard(_)
                 | AcpError::WorkDeadlinePoisoned
                 | AcpError::WorkCancelledPoisoned
                 | AcpError::PermissionProgressTimeout

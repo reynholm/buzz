@@ -800,6 +800,8 @@ impl PromptOutcome {
                         | AcpError::WriteTimeout(_)
                         | AcpError::Timeout(_)
                         | AcpError::Protocol(_)
+                        | AcpError::ResourceLimit { .. }
+                        | AcpError::ResourceGuard(_)
                         | AcpError::WorkDeadlinePoisoned
                         | AcpError::WorkCancelledPoisoned
                         | AcpError::PermissionProgressTimeout
@@ -825,6 +827,8 @@ impl PromptOutcome {
             | Self::CancelDrainTimeout(_)
             | Self::Error(
                 AcpError::Io(_)
+                | AcpError::ResourceLimit { .. }
+                | AcpError::ResourceGuard(_)
                 | AcpError::WorkDeadlinePoisoned
                 | AcpError::WorkCancelledPoisoned
                 | AcpError::PermissionProgressTimeout
