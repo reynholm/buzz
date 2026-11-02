@@ -113,6 +113,8 @@ pub enum AcpError {
     AgentExited,
 
     /// The owned Linux worker cgroup recorded a kernel OOM kill.
+    // Shared classification remains portable; only Linux produces kernel OOM evidence.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     #[error("Worker memory limit exceeded (scope {scope}); retry explicitly after reducing the workload")]
     ResourceLimit { scope: String },
 
