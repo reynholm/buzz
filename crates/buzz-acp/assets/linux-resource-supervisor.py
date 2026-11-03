@@ -7,9 +7,9 @@ import sys
 import time
 
 parent_umask = os.umask(0o077)
-state_file, expected_group, high, maximum, *worker = sys.argv[1:]
+state_file, expected_group, high, maximum, expected_parent, *worker = sys.argv[1:]
 state_file = pathlib.Path(state_file)
-parent = os.getppid()
+parent = int(expected_parent)
 
 
 def record(state):
@@ -48,6 +48,11 @@ try:
         return int(counters["oom_kill"])
     if oom_kills() != 0:
         raise ValueError("scope already experienced OOM")
+    # The harness may have exited before Python finished initializing.
+    if os.getppid() != parent:
+        record("parent_exited")
+        kill_group()
+        sys.exit(1)
     record("ready")
     child = subprocess.Popen(worker, umask=parent_umask)
     while True:

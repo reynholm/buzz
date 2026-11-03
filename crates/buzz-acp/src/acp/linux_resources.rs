@@ -137,6 +137,7 @@ impl WorkerScope {
             .arg(&relative)
             .arg(policy.memory_high_bytes.to_string())
             .arg(policy.memory_max_bytes.to_string())
+            .arg(std::process::id().to_string())
             .arg(command.as_std().get_program())
             .args(command.as_std().get_args());
         // The launch seam calls this before applying any environment or stdio.
