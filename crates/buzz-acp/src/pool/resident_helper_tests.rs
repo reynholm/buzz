@@ -262,3 +262,65 @@ async fn child_of_codex_host_queues_original_collection_before_releasing_slot() 
     pool.return_agent(agent);
     assert!(pool.try_claim(Some(&scope())).is_some());
 }
+
+#[tokio::test]
+async fn sleep_inhibitor_exit_never_invents_collection_but_real_work_collects_once() {
+    use crate::process_tree::ProcessTree;
+
+    for inhibitor in [
+        "990002 990001 S /usr/bin/caffeinate -is\n",
+        "990002 990001 S systemd-inhibit --what=sleep --who=Qwen Code --why=Working --mode=block sleep infinity\n990003 990002 S /usr/bin/sleep infinity\n",
+        "990002 990001 S systemd-inhibit --no-ask-password --what=sleep --who=Qwen Code --why=Working --mode=block sleep infinity\n990003 990002 S /usr/bin/sleep infinity\n",
+    ] {
+        for real_work in [false, true] {
+            let original = scope();
+            let mut pool = AgentPool::from_slots(vec![Some(worker(0).await)]);
+            bind(&mut pool, &original, 0);
+            let mut agent = pool.try_claim(Some(&original)).unwrap();
+            let worker = agent.acp.process_id().unwrap();
+            let provider = format!("990001 {worker} S node provider.js\n");
+            agent.acp.process_tree_snapshots.push_back(Some(
+                ProcessTree::from_snapshot_with_identities(&provider, None),
+            ));
+            agent.acp.capture_startup_children();
+            let session = agent.state.sessions[&original].clone();
+            let source = PromptSource::Channel(original.clone());
+            agent.remember_background_context(&source, None, &session);
+            let work = if real_work {
+                "990004 990001 S python3 task.py\n"
+            } else {
+                ""
+            };
+            for rows in [
+                format!("{provider}{inhibitor}{work}"),
+                format!("{provider}{inhibitor}{work}"),
+                provider.clone(),
+                provider.clone(),
+            ] {
+                agent.acp.process_tree_snapshots.push_back(Some(
+                    ProcessTree::from_snapshot_with_identities(&rows, None),
+                ));
+            }
+            let running = agent.background_work_running(&source);
+            agent.prepare_background_return();
+            pool.return_agent(agent);
+            let held_before_exit = pool.has_runtime_hold();
+            let mut queue = EventQueue::new(DedupMode::Queue);
+            pool.queue_finished_background_work(&mut queue);
+            pool.queue_finished_background_work(&mut queue);
+            let batch = queue.flush_next();
+            let duplicate = queue.flush_next();
+            let held_after_exit = pool.has_runtime_hold();
+            pool.agents[0].as_mut().unwrap().acp.shutdown().await;
+            assert_eq!(running, real_work, "{inhibitor}");
+            assert_eq!(held_before_exit, real_work, "{inhibitor}");
+            assert_eq!(batch.is_some(), real_work, "{inhibitor}");
+            assert_eq!(held_after_exit, real_work, "{inhibitor}");
+            assert!(duplicate.is_none());
+            if let Some(batch) = batch {
+                assert_eq!(batch.scope, original);
+                assert_eq!(batch.continuation.unwrap().session_id, session);
+            }
+        }
+    }
+}

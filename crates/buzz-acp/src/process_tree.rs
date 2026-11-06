@@ -17,7 +17,7 @@ pub struct ChildProcess {
     pub command: String,
 }
 
-/// Whether the launched executable or interpreter script identifies an MCP helper.
+/// Whether the command identifies an MCP helper or a provider sleep inhibitor.
 ///
 /// Arguments of ordinary work must not turn it into a resident just because a
 /// task mentions MCP, or a working directory happens to contain those letters.
@@ -30,6 +30,13 @@ pub fn is_resident_helper(command: &str) -> bool {
         return true;
     }
     let name = executable.rsplit('/').next().unwrap_or(executable);
+    if name == "caffeinate" {
+        // Only the provider's standalone inhibitor, never a wrapped task.
+        return parts.next() == Some("-is") && parts.next().is_none();
+    }
+    if name == "systemd-inhibit" {
+        return is_linux_sleep_inhibitor(command);
+    }
     if name == "node" || name.starts_with("python") {
         // The first non-option word is the script. Inline programs (-c/-e)
         // and interpreter flags with their own values are deliberately unknown.
@@ -38,6 +45,22 @@ pub fn is_resident_helper(command: &str) -> bool {
         }
     }
     false
+}
+
+fn is_linux_sleep_inhibitor(command: &str) -> bool {
+    let mut parts = command.split_whitespace();
+    if parts.next().and_then(|path| path.rsplit('/').next()) != Some("systemd-inhibit") {
+        return false;
+    }
+    let arguments = parts.collect::<Vec<_>>().join(" ");
+    let arguments = arguments
+        .strip_prefix("--no-ask-password ")
+        .unwrap_or(&arguments);
+    // ps flattens argv, including spaces in the provider's who/why values.
+    // Match the full option sequence and inert payload, not just the program.
+    arguments
+        .strip_prefix("--what=sleep --who=Qwen Code --why=")
+        .is_some_and(|reason| reason.ends_with(" --mode=block sleep infinity"))
 }
 
 fn helper_name(path: &str) -> bool {
@@ -225,7 +248,7 @@ impl ProcessTree {
             .collect()
     }
 
-    /// Helpers confirmed by executable identity, the MCP classifier, or a
+    /// Helpers confirmed by executable identity, the command classifier, or a
     /// launcher whose children are all helpers. A childless non-helper is work.
     pub fn is_resident_helper(&self, child: &ChildProcess) -> bool {
         self.is_snapshot_helper(child.pid) || self.is_helper_within(child, MAX_LAUNCHER_DEPTH)
@@ -235,6 +258,7 @@ impl ProcessTree {
         if self.registered_services.contains(&child.pid)
             || self.resident_helpers.contains(&child.pid)
             || is_resident_helper(&child.command)
+            || self.is_inhibitor_sleep(child)
         {
             return true;
         }
@@ -244,6 +268,24 @@ impl ProcessTree {
             && children
                 .iter()
                 .all(|grandchild| self.is_helper_within(grandchild, depth - 1))
+    }
+
+    fn is_inhibitor_sleep(&self, child: &ChildProcess) -> bool {
+        let mut parts = child.command.split_whitespace();
+        if parts.next().and_then(|path| path.rsplit('/').next()) != Some("sleep")
+            || parts.next() != Some("infinity")
+            || parts.next().is_some()
+        {
+            return false;
+        }
+        // systemd-inhibit spawns sleep rather than replacing itself. Only that
+        // direct child is bookkeeping; ordinary sleeps remain background work.
+        self.children.iter().any(|(parent, children)| {
+            children.iter().any(|candidate| candidate.pid == child.pid)
+                && self.children.values().flatten().any(|candidate| {
+                    candidate.pid == *parent && is_linux_sleep_inhibitor(&candidate.command)
+                })
+        })
     }
 
     /// Direct children in this snapshot.
@@ -519,6 +561,9 @@ mod classification_regression_tests {
 
 #[cfg(all(test, unix))]
 mod snapshot_tests;
+
+#[cfg(all(test, unix))]
+mod sleep_inhibitor_tests;
 
 #[cfg(all(test, unix))]
 mod launcher_chain_tests {
