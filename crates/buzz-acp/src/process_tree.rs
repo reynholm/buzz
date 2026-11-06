@@ -5,7 +5,8 @@
 //! worker alive. Long-lived helpers such as MCP servers must not, or a
 //! lazy pool would never sleep. Agent CLIs often start MCP servers through
 //! launcher chains (`npm exec`, `sh -c`, a node launcher script); a chain
-//! whose every leaf is a helper is a helper too.
+//! whose every leaf is an MCP helper is a helper too. A sleep inhibitor only
+//! exempts itself; it cannot prove its parent has stopped working.
 
 use std::collections::{HashMap, HashSet};
 
@@ -22,13 +23,14 @@ pub struct ChildProcess {
 /// Arguments of ordinary work must not turn it into a resident just because a
 /// task mentions MCP, or a working directory happens to contain those letters.
 pub fn is_resident_helper(command: &str) -> bool {
+    is_sleep_inhibitor(command) || is_mcp_helper(command)
+}
+
+fn is_sleep_inhibitor(command: &str) -> bool {
     let mut parts = command.split_whitespace();
     let Some(executable) = parts.next() else {
         return false;
     };
-    if helper_name(executable) {
-        return true;
-    }
     let name = executable.rsplit('/').next().unwrap_or(executable);
     if name == "caffeinate" {
         // Only the provider's standalone inhibitor, never a wrapped task.
@@ -37,6 +39,18 @@ pub fn is_resident_helper(command: &str) -> bool {
     if name == "systemd-inhibit" {
         return is_linux_sleep_inhibitor(command);
     }
+    false
+}
+
+fn is_mcp_helper(command: &str) -> bool {
+    let mut parts = command.split_whitespace();
+    let Some(executable) = parts.next() else {
+        return false;
+    };
+    if helper_name(executable) {
+        return true;
+    }
+    let name = executable.rsplit('/').next().unwrap_or(executable);
     if name == "node" || name.starts_with("python") {
         // The first non-option word is the script. Inline programs (-c/-e)
         // and interpreter flags with their own values are deliberately unknown.
@@ -249,16 +263,19 @@ impl ProcessTree {
     }
 
     /// Helpers confirmed by executable identity, the command classifier, or a
-    /// launcher whose children are all helpers. A childless non-helper is work.
+    /// launcher whose children are all MCP helpers. Sleep inhibitors exempt only
+    /// themselves: a parent can be working while keeping the machine awake.
     pub fn is_resident_helper(&self, child: &ChildProcess) -> bool {
-        self.is_snapshot_helper(child.pid) || self.is_helper_within(child, MAX_LAUNCHER_DEPTH)
+        self.is_snapshot_helper(child.pid)
+            || is_resident_helper(&child.command)
+            || self.is_inhibitor_sleep(child)
+            || self.is_helper_within(child, MAX_LAUNCHER_DEPTH)
     }
 
     fn is_helper_within(&self, child: &ChildProcess, depth: usize) -> bool {
         if self.registered_services.contains(&child.pid)
             || self.resident_helpers.contains(&child.pid)
-            || is_resident_helper(&child.command)
-            || self.is_inhibitor_sleep(child)
+            || is_mcp_helper(&child.command)
         {
             return true;
         }

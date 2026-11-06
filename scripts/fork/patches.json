@@ -8545,7 +8545,7 @@
     },
     {
       "path": "crates/buzz-acp/src/process_tree.rs",
-      "responsibility": "Bounded process snapshots and resident-helper classification; macOS/Linux executable confirmation releases completed Codex turns while preserving actual child work. Exact Codex default Bash snapshots remain transient bookkeeping; their ordinary descendants and launchers remain work. Scoped missing executable evidence remains uncertainty while definite descendants remain observable. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Exact standalone provider sleep inhibitors do not create background collection; the Linux infinite sleep is exempt only beneath its matching inhibitor parent.",
+      "responsibility": "Bounded process snapshots and resident-helper classification; macOS/Linux executable confirmation releases completed Codex turns while preserving actual child work. Exact Codex default Bash snapshots remain transient bookkeeping; their ordinary descendants and launchers remain work. Scoped missing executable evidence remains uncertainty while definite descendants remain observable. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Exact standalone provider sleep inhibitors do not create background collection; the Linux infinite sleep is exempt only beneath its matching inhibitor parent. Inhibitors never establish residency for ordinary ancestors, including across exec.",
       "is_new": true,
       "required_symbols": [
         "pub fn snapshot()",
@@ -8557,6 +8557,8 @@
         "pub(crate) fn startup_resident_pids(",
         "pub(crate) fn is_snapshot_candidate(",
         "pub(crate) fn is_uncertain_snapshot(",
+        "fn is_sleep_inhibitor(",
+        "fn is_mcp_helper(",
         "fn is_linux_sleep_inhibitor(",
         "fn is_inhibitor_sleep("
       ],
@@ -9282,7 +9284,7 @@
     },
     {
       "path": "crates/buzz-acp/src/pool/resident_helper_tests.rs",
-      "responsibility": "Real local ACP/process regressions for sixth-thread admission, nested child exit and original-session collection on macOS/Linux; Linux executable unlink and symlink boundaries. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Sleep inhibitor exit never invents a continuation; adjacent real work still collects once in its original session.",
+      "responsibility": "Real local ACP/process regressions for sixth-thread admission, nested child exit and original-session collection on macOS/Linux; Linux executable unlink and symlink boundaries. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Sleep inhibitor exit never invents a continuation; adjacent work and working ancestors retain their hold across exec and collect once in the original session after real exit.",
       "is_new": true,
       "required_symbols": [
         "six_finished_threads_reuse_five_slots_with_late_codex_hosts",

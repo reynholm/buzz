@@ -272,7 +272,14 @@ async fn sleep_inhibitor_exit_never_invents_collection_but_real_work_collects_on
         "990002 990001 S systemd-inhibit --what=sleep --who=Qwen Code --why=Working --mode=block sleep infinity\n990003 990002 S /usr/bin/sleep infinity\n",
         "990002 990001 S systemd-inhibit --no-ask-password --what=sleep --who=Qwen Code --why=Working --mode=block sleep infinity\n990003 990002 S /usr/bin/sleep infinity\n",
     ] {
-        for real_work in [false, true] {
+        for (work, inhibitor_parent, expected) in [
+            ("", "990001", HashSet::new()),
+            ("990004 990001 S python3 task.py\n", "990001", HashSet::from([990004])),
+            ("990004 990001 S /bin/bash job.sh\n", "990004", HashSet::from([990004])),
+            ("990004 990001 S python3 task.py\n", "990004", HashSet::from([990004])),
+            ("990004 990001 S /bin/sh launcher.sh\n990005 990004 S python3 task.py\n", "990005", HashSet::from([990004])),
+        ] {
+            let real_work = !expected.is_empty();
             let original = scope();
             let mut pool = AgentPool::from_slots(vec![Some(worker(0).await)]);
             bind(&mut pool, &original, 0);
@@ -286,14 +293,13 @@ async fn sleep_inhibitor_exit_never_invents_collection_but_real_work_collects_on
             let session = agent.state.sessions[&original].clone();
             let source = PromptSource::Channel(original.clone());
             agent.remember_background_context(&source, None, &session);
-            let work = if real_work {
-                "990004 990001 S python3 task.py\n"
-            } else {
-                ""
-            };
+            let inhibitor = inhibitor.replacen("990002 990001", &format!("990002 {inhibitor_parent}"), 1);
+            let after_exec = if real_work { "990004 990001 R /usr/bin/shasum -a 256 /dev/zero\n" } else { "" };
             for rows in [
                 format!("{provider}{inhibitor}{work}"),
                 format!("{provider}{inhibitor}{work}"),
+                format!("{provider}{after_exec}"),
+                format!("{provider}{after_exec}"),
                 provider.clone(),
                 provider.clone(),
             ] {
@@ -302,10 +308,19 @@ async fn sleep_inhibitor_exit_never_invents_collection_but_real_work_collects_on
                 ));
             }
             let running = agent.background_work_running(&source);
+            assert_eq!(agent.background_context.as_ref().unwrap().blocking_pids, expected, "{inhibitor}{work}");
             agent.prepare_background_return();
             pool.return_agent(agent);
             let held_before_exit = pool.has_runtime_hold();
             let mut queue = EventQueue::new(DedupMode::Queue);
+            pool.queue_finished_background_work(&mut queue);
+            pool.queue_finished_background_work(&mut queue);
+            assert!(!queue.has_pending_continuation(&original), "collection must wait for the exec'd work to exit: {inhibitor}{work}");
+            assert_eq!(pool.has_runtime_hold(), real_work);
+            if real_work {
+                assert_eq!(pool.runtime_holds[&0].blocking_pids, HashSet::from([990004]));
+                assert!(pool.try_claim(Some(&scope())).is_none());
+            }
             pool.queue_finished_background_work(&mut queue);
             pool.queue_finished_background_work(&mut queue);
             let batch = queue.flush_next();

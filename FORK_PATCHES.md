@@ -5583,7 +5583,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/process_tree.rs`
 
-Bounded process snapshots and resident-helper classification; macOS/Linux executable confirmation releases completed Codex turns while preserving actual child work. Exact Codex default Bash snapshots remain transient bookkeeping; their ordinary descendants and launchers remain work. Scoped missing executable evidence remains uncertainty while definite descendants remain observable. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Exact standalone provider sleep inhibitors do not create background collection; the Linux infinite sleep is exempt only beneath its matching inhibitor parent.
+Bounded process snapshots and resident-helper classification; macOS/Linux executable confirmation releases completed Codex turns while preserving actual child work. Exact Codex default Bash snapshots remain transient bookkeeping; their ordinary descendants and launchers remain work. Scoped missing executable evidence remains uncertainty while definite descendants remain observable. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Exact standalone provider sleep inhibitors do not create background collection; the Linux infinite sleep is exempt only beneath its matching inhibitor parent. Inhibitors never establish residency for ordinary ancestors, including across exec.
 
 New module: `true`.
 
@@ -5596,6 +5596,8 @@ New module: `true`.
 - Required symbol: `pub(crate) fn startup_resident_pids(`
 - Required symbol: `pub(crate) fn is_snapshot_candidate(`
 - Required symbol: `pub(crate) fn is_uncertain_snapshot(`
+- Required symbol: `fn is_sleep_inhibitor(`
+- Required symbol: `fn is_mcp_helper(`
 - Required symbol: `fn is_linux_sleep_inhibitor(`
 - Required symbol: `fn is_inhibitor_sleep(`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `snapshot`; exact call `crate::process_tree::snapshot()`; behavior test `prompt_work_is_tracked_under_worker_and_resident_provider`; verify `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp prompt_work_is_tracked_under_worker_and_resident_provider -- --test-threads=1`
@@ -6060,7 +6062,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/pool/resident_helper_tests.rs`
 
-Real local ACP/process regressions for sixth-thread admission, nested child exit and original-session collection on macOS/Linux; Linux executable unlink and symlink boundaries. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Sleep inhibitor exit never invents a continuation; adjacent real work still collects once in its original session.
+Real local ACP/process regressions for sixth-thread admission, nested child exit and original-session collection on macOS/Linux; Linux executable unlink and symlink boundaries. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Sleep inhibitor exit never invents a continuation; adjacent work and working ancestors retain their hold across exec and collect once in the original session after real exit.
 
 New module: `true`.
 
