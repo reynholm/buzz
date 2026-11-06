@@ -6058,13 +6058,14 @@
     },
     {
       "path": "desktop/playwright.config.ts",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow. Register long-thread and large-channel virtualization coverage in the smoke suite. Register the open-thread highlight smoke spec.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches. Register the session-status smoke spec. Register the scoped session-control smoke workflow. Register long-thread and large-channel virtualization coverage in the smoke suite. Register the open-thread highlight smoke spec. Exercise Markdown attachment previews in WebKit, including deeply nested documents and resizing.",
       "is_new": false,
       "required_symbols": [
         "\"**/session-status.spec.ts\",",
         "\"**/session-controls.spec.ts\",",
         "\"**/thread-virtualization.spec.ts\"",
-        "\"**/open-thread-highlight.spec.ts\","
+        "\"**/open-thread-highlight.spec.ts\",",
+        "name: \"markdown-preview-webkit\""
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -6072,7 +6073,8 @@
         "cd desktop && pnpm test:e2e:smoke",
         "CI=1 pnpm --dir desktop test:e2e:smoke session-controls.spec.ts session-status.spec.ts",
         "CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts",
-        "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke"
+        "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/open-thread-highlight.spec.ts --project=smoke",
+        "pnpm --dir desktop build:e2e && pnpm --dir desktop exec playwright test --project=markdown-preview-webkit --workers=1 --retries=0"
       ]
     },
     {
@@ -6387,10 +6389,20 @@
     },
     {
       "path": "desktop/src/app/AppShell.tsx",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Host the Markdown attachment preview within the conversation surface.",
       "is_new": false,
-      "required_symbols": [],
-      "invocation_seams": [],
+      "required_symbols": [
+        "<AppMarkdownAttachmentPreviewProvider>"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/app/AppShell.tsx",
+          "callee_symbol": "AppMarkdownAttachmentPreviewProvider",
+          "invocation": "<AppMarkdownAttachmentPreviewProvider>",
+          "behavior_test": "Markdown attachment preview formats, scrolls and closes without moving the timeline",
+          "verification_command": "pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0 --grep 'Markdown attachment preview formats'"
+        }
+      ],
       "verification_commands": [
         "just ci"
       ]
@@ -11864,12 +11876,13 @@
     },
     {
       "path": "desktop/tests/e2e/file-attachment.spec.ts",
-      "responsibility": "Verify Markdown and ZIP picker uploads, file-card labels and sizes, and native download filenames alongside existing attachment flows.",
+      "responsibility": "Verify Markdown and ZIP picker uploads, file-card labels and sizes, and native download filenames alongside existing attachment flows. Exercise Markdown formatting, independent scrolling, native preview cap forwarding, keyboard close/focus, retry, replacement, cancellation and invalid/oversized files. Cover preview width dragging, limits, reset and session retention; require nested inputs to avoid DOM construction in both browser engines.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
-        "cd desktop && pnpm test:e2e:smoke -- file-attachment.spec.ts"
+        "cd desktop && pnpm test:e2e:smoke -- file-attachment.spec.ts",
+        "pnpm --dir desktop build:e2e && pnpm --dir desktop exec playwright test --project=markdown-preview-webkit --workers=1 --retries=0"
       ]
     },
     {
@@ -11895,12 +11908,13 @@
     },
     {
       "path": "desktop/src-tauri/src/commands/media_download_file_tests.rs",
-      "responsibility": "Exercise the native HTTP file fetch above 50 MiB, the 100 MiB boundary, declared and streamed oversize rejection, preserved image caps, and an opt-in real-relay hash check.",
+      "responsibility": "Exercise the native HTTP file fetch above 50 MiB, the 100 MiB boundary, declared and streamed oversize rejection, preserved image caps, and an opt-in real-relay hash check. Exercise the real preview command at 2 MiB with both declared and streamed oversize rejection, and reject attempts to raise the native cap.",
       "is_new": true,
       "required_symbols": [
         "generic_download_above_fifty_mib_is_byte_exact",
         "generic_download_rejects_over_hundred_mib_with_or_without_length",
-        "native_download_from_relay_matches_expected_sha256"
+        "native_download_from_relay_matches_expected_sha256",
+        "media_preview_limit_rejects_oversize_headers_and_streams"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -13281,7 +13295,8 @@
       "responsibility": "Exercise reading-position preservation with explicit reader wheel ownership before a virtualized layout switch.",
       "is_new": false,
       "required_symbols": [
-        "new WheelEvent(\"wheel\", { bubbles: true, deltaY: -120 })"
+        "new WheelEvent(\"wheel\", { bubbles: true, deltaY: -120 })",
+        "__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -14458,6 +14473,234 @@
       "invocation_seams": [],
       "verification_commands": [
         "cd desktop && pnpm build:e2e && pnpm exec playwright test tests/e2e/active-turn-resilience.spec.ts --project=smoke"
+      ]
+    },
+    {
+      "path": "desktop/src/app/AppMarkdownAttachmentPreviewProvider.tsx",
+      "responsibility": "Own a single route-scoped Markdown attachment overlay and restore focus when it closes.",
+      "is_new": true,
+      "required_symbols": [
+        "AppMarkdownAttachmentPreviewProvider",
+        "MarkdownAttachmentPreviewContext.Provider"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir desktop test",
+        "pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/context/MarkdownAttachmentPreviewContext.ts",
+      "responsibility": "Expose the conversation-scoped Markdown attachment preview action to file cards.",
+      "is_new": true,
+      "required_symbols": [
+        "useOpenMarkdownAttachmentPreview"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir desktop test",
+        "pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/ui/markdown/MarkdownAttachmentPreview.tsx",
+      "responsibility": "Render a scrollable Markdown attachment with bounded UTF-8 fetch, cancellation, retry, download, keyboard close and isolated document render failures. Bound parsed nesting before recursive rendering and expose session-scoped width controls.",
+      "is_new": true,
+      "required_symbols": [
+        "MAX_PREVIEW_BYTES",
+        "controller.abort()",
+        "hardLineBreaks={false}",
+        "MarkdownDocumentErrorBoundary",
+        "maxNestingDepth={128}",
+        "useMarkdownPreviewWidth"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/shared/ui/markdown/MarkdownAttachmentPreview.tsx",
+          "callee_symbol": "fetchMediaBytes",
+          "invocation": "const bytes = await fetchMediaBytes(\n          href,\n          controller.signal,\n          MAX_PREVIEW_BYTES,\n        );",
+          "behavior_test": "Markdown attachment preview formats, scrolls and closes without moving the timeline",
+          "verification_command": "pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0 --grep 'Markdown attachment preview formats'"
+        },
+        {
+          "caller_path": "desktop/src/shared/ui/markdown/MarkdownAttachmentPreview.tsx",
+          "callee_symbol": "MarkdownDocumentErrorBoundary",
+          "invocation": "<MarkdownDocumentErrorBoundary key={`${href}:${attempt}`}>",
+          "behavior_test": "Markdown preview handles retry, replacement, cancellation and oversized documents",
+          "verification_command": "pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0 --grep 'Markdown preview handles'"
+        },
+        {
+          "caller_path": "desktop/src/shared/ui/markdown/MarkdownAttachmentPreview.tsx",
+          "callee_symbol": "useMarkdownPreviewWidth",
+          "invocation": "const width = useMarkdownPreviewWidth();",
+          "behavior_test": "Markdown preview width can be dragged, reset and retained across documents",
+          "verification_command": "pnpm --dir desktop build:e2e && pnpm --dir desktop exec playwright test --project=markdown-preview-webkit --workers=1 --retries=0"
+        }
+      ],
+      "verification_commands": [
+        "pnpm --dir desktop test",
+        "pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0",
+        "pnpm --dir desktop build:e2e && pnpm --dir desktop exec playwright test --project=markdown-preview-webkit --workers=1 --retries=0"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/ui/markdown/FileCard.tsx",
+      "responsibility": "Preview Markdown attachments by original filename while preserving an independent native download action and generic file downloads.",
+      "is_new": false,
+      "required_symbols": [
+        "useOpenMarkdownAttachmentPreview",
+        "aria-label={`Preview ${filename}`}"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir desktop test",
+        "pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/api/tauriMedia.ts",
+      "responsibility": "Forward an optional lower byte cap through the cancellable raw media IPC fetch.",
+      "is_new": false,
+      "required_symbols": [
+        "maxBytes?: number"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src/shared/api/tauriMedia.ts",
+          "callee_symbol": "invokeTauri",
+          "invocation": "const request = invokeTauri<ArrayBuffer>(\"fetch_media_bytes\", {\n    maxBytes,\n    requestId,\n    url,\n  });",
+          "behavior_test": "Markdown attachment preview formats, scrolls and closes without moving the timeline",
+          "verification_command": "pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0 --grep 'Markdown attachment preview formats'"
+        }
+      ],
+      "verification_commands": [
+        "pnpm --dir desktop test",
+        "pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts --workers=1 --retries=0"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/media_fetch_cancellation.rs",
+      "responsibility": "Apply caller-requested lower media byte caps while retaining the native maximum, URL validation and request cancellation.",
+      "is_new": false,
+      "required_symbols": [
+        "max_bytes: Option<u64>",
+        ".min(MAX_DOWNLOAD_BYTES)"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "desktop/src-tauri/src/commands/media_fetch_cancellation.rs",
+          "callee_symbol": "fetch_blob_bytes_with_cap",
+          "invocation": "fetch_blob_bytes_with_cap(&url, &state, cap, cancellation.as_ref())",
+          "behavior_test": "media_preview_limit_rejects_oversize_headers_and_streams",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace media_preview_limit_rejects_oversize_headers_and_streams"
+        }
+      ],
+      "verification_commands": [
+        "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace"
+      ]
+    },
+    {
+      "path": "desktop/src/features/channels/ui/FocusThreadDrawer.tsx",
+      "responsibility": "Preserve focused thread Escape ownership beneath the Markdown document preview.",
+      "is_new": false,
+      "required_symbols": [
+        "useMarkdownAttachmentPreviewOpen",
+        "if (!escapeEnabled || markdownPreviewOpen) return;"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir desktop test:e2e:smoke file-attachment.spec.ts thread-focus-mode.spec.ts --workers=1 --retries=0"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/ui/markdown/remarkMaxNestingDepth.ts",
+      "responsibility": "Check parsed Markdown depth iteratively before recursive transforms or DOM construction.",
+      "is_new": true,
+      "required_symbols": [
+        "remarkMaxNestingDepth",
+        "Markdown nesting limit exceeded"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir desktop test"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/ui/markdown/useMarkdownPreviewWidth.ts",
+      "responsibility": "Resize document overlays within their host, retain width per session, reset and clean up drag listeners on close.",
+      "is_new": true,
+      "required_symbols": [
+        "useMarkdownPreviewWidth",
+        "cleanupRef.current?.()",
+        "window.sessionStorage",
+        "onKeyDown"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir desktop build:e2e && pnpm --dir desktop exec playwright test --project=markdown-preview-webkit --workers=1 --retries=0"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/ui/markdown/nodeCache.ts",
+      "responsibility": "Apply an optional early AST depth bound and separate cache entries by that bound.",
+      "is_new": false,
+      "required_symbols": [
+        "remarkMaxNestingDepth",
+        "maxNestingDepth",
+        "segment(String(input.maxNestingDepth ?? \"\"))"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir desktop test"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/ui/markdown/nodeCache.test.mjs",
+      "responsibility": "Verify deep-document rejection, literal code preservation and cache isolation for stricter depth bounds.",
+      "is_new": false,
+      "required_symbols": [
+        "document nesting is bounded before recursive transforms and DOM creation",
+        "a cached document cannot bypass a stricter nesting limit"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir desktop test"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/ui/markdown.tsx",
+      "responsibility": "Forward document-specific nesting bounds through the existing renderer.",
+      "is_new": false,
+      "required_symbols": [
+        "maxNestingDepth"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir desktop test"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/ui/markdown/types.ts",
+      "responsibility": "Expose an optional nesting bound for document rendering.",
+      "is_new": false,
+      "required_symbols": [
+        "maxNestingDepth?: number"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir desktop test"
+      ]
+    },
+    {
+      "path": "desktop/src/shared/ui/markdownUtils.ts",
+      "responsibility": "Invalidate memoized Markdown when its nesting bound changes.",
+      "is_new": false,
+      "required_symbols": [
+        "prev.maxNestingDepth === next.maxNestingDepth"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir desktop test"
       ]
     }
   ],

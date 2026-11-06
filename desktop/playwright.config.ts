@@ -190,6 +190,14 @@ export default defineConfig({
       },
     },
     {
+      name: "markdown-preview-webkit",
+      testMatch: ["**/file-attachment.spec.ts"],
+      grep: /Markdown (attachment preview|preview)/,
+      use: {
+        ...devices["Desktop Safari"],
+      },
+    },
+    {
       name: "integration",
       testMatch: [
         "**/agents.spec.ts",

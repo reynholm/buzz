@@ -1,5 +1,6 @@
 import { motion, useReducedMotion } from "motion/react";
 import * as React from "react";
+import { useMarkdownAttachmentPreviewOpen } from "@/shared/context/MarkdownAttachmentPreviewContext";
 
 import {
   THREAD_FOCUS_DRAWER_TRAVEL_PX,
@@ -198,9 +199,10 @@ export function FocusThreadDrawer({
   const overlayRef = React.useRef<HTMLDivElement>(null);
   const previousFocusRef = React.useRef<HTMLElement | null>(null);
   const viewportRightInsetPx = useViewportRightInsetPx(overlayRef);
+  const markdownPreviewOpen = useMarkdownAttachmentPreviewOpen();
 
   React.useEffect(() => {
-    if (!escapeEnabled) return;
+    if (!escapeEnabled || markdownPreviewOpen) return;
 
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
@@ -221,7 +223,7 @@ export function FocusThreadDrawer({
     return () => {
       window.removeEventListener("keydown", handleEscape, { capture: true });
     };
-  }, [escapeEnabled, hasActiveEdit, onClose]);
+  }, [escapeEnabled, hasActiveEdit, markdownPreviewOpen, onClose]);
 
   React.useLayoutEffect(() => {
     previousFocusRef.current =
