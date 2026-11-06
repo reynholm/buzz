@@ -477,6 +477,8 @@ cargo test --locked -p buzz-acp --lib linux_resources -- --test-threads=1
 cargo test --locked -p buzz-acp --lib resource_limit_dead_letters -- --test-threads=1
 cargo test --locked -p buzz-acp --lib linux_resources_ -- --ignored --test-threads=1
 cargo test --locked -p buzz-acp --lib resource_review_ -- --include-ignored --test-threads=1
+cargo test --locked -p buzz-acp --lib resource_failure_during -- --test-threads=1
+python3 crates/buzz-acp/tests/linux_resource_supervisor_test.py
 ```
 
 The opt-in checks use synthetic adapters, uniquely named transient slices, finite
