@@ -1,6 +1,10 @@
 use super::*;
 use buzz_core::session_control::{ControlFailure, ControlResult};
 
+#[cfg(target_os = "linux")]
+#[path = "compaction_resource_tests.rs"]
+mod resource_failure_tests;
+
 async fn setup() -> (
     Fixture,
     Arc<PromptContext>,

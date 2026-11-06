@@ -4415,9 +4415,12 @@
     },
     {
       "path": ".github/workflows/_ci-desktop-macos.yml",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Pin the native macOS build to the stable macos-15 arm64 image and assert the architecture.",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "runs-on: macos-15",
+        "run: test \"$(uname -m)\" = arm64"
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "just ci"
@@ -4445,12 +4448,14 @@
     },
     {
       "path": ".github/workflows/_ci-rust.yml",
-      "responsibility": "Preserve checked ACP retirement and budget cold native Windows compilation plus the full Tauri test suite",
+      "responsibility": "Preserve checked ACP retirement and budget cold native Windows compilation plus the full Tauri test suite Pin native ACP retirement to macos-15 arm64 and give the complete unit job a 45-minute budget.",
       "is_new": false,
       "required_symbols": [
         "python scripts/check-acp-retirement.py",
         "python3 scripts/check-acp-retirement.py",
-        "timeout-minutes: 90"
+        "timeout-minutes: 90",
+        "runs-on: macos-15",
+        "timeout-minutes: 45"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -4499,7 +4504,7 @@
     },
     {
       "path": "Cargo.lock",
-      "responsibility": "Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils >= 0.4.4 for RUSTSEC-2026-0385. Upgrade the gateway P-256 graph to crypto-bigint 0.7.6 for RUSTSEC-2026-0387. Lock patched pulldown-cmark >= 0.13.5 for RUSTSEC-2026-0414.",
+      "responsibility": "Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils >= 0.4.4 for RUSTSEC-2026-0385. Upgrade the gateway P-256 graph to crypto-bigint 0.7.6 for RUSTSEC-2026-0387. Lock patched pulldown-cmark >= 0.13.5 for RUSTSEC-2026-0414. Lock patched pulldown-cmark >= 0.13.6 for RUSTSEC-2026-0433.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -4563,7 +4568,7 @@
     },
     {
       "path": "crates/buzz-acp/src/acp.rs",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Route standard usage_update occupancy to the status binding of its own session ID; the harness owns BUZZ_SESSION_STATUS_DIR in adapter spawns. Negotiate structured terminal provider failures and propagate them through the existing queue retry and authentication paths. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Route standard usage_update occupancy to the status binding of its own session ID; the harness owns BUZZ_SESSION_STATUS_DIR in adapter spawns. Negotiate structured terminal provider failures and propagate them through the existing queue retry and authentication paths. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Linux worker memory containment: opt-in cgroup v2 scope per ACP worker, terminal OOM/isolation failures without automatic replay, and checked retirement that retains ownership until cleanup is verified.",
       "is_new": false,
       "required_symbols": [
         "pub async fn session_resume(",
@@ -4573,7 +4578,13 @@
         "DispatchRetired,",
         "\"session\": {\"compaction\": {}}",
         "if update_type == \"compaction_update\"",
-        "provider_failure::check_response(result)?;"
+        "provider_failure::check_response(result)?;",
+        "ResourceLimit { scope: String },",
+        "ResourceGuard(String),",
+        "pub(crate) fn requires_checked_retirement(&self) -> bool",
+        "pub(crate) fn is_resource_failure(&self) -> bool",
+        "cmd.env_remove(\"BUZZ_ACP_RESOURCE_LIMITS\");",
+        "None => return Err(self.worker_exit_error()),"
       ],
       "invocation_seams": [
         {
@@ -4682,7 +4693,9 @@
       ],
       "verification_commands": [
         "just ci",
-        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4"
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4",
+        "cargo test --locked -p buzz-acp --lib linux_resources -- --test-threads=1",
+        "cargo test --locked -p buzz-acp --lib resource_limit_dead_letters -- --test-threads=1"
       ]
     },
     {
@@ -4761,7 +4774,7 @@
     },
     {
       "path": "crates/buzz-acp/src/lib.rs",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Preserve the heartbeat collection call with a textual drift guard; full live-service-loop behavioral mutation coverage is not claimed. Refresh idle clocks when a non-heartbeat prompt result is handled (port of block/buzz#7173). Enable session status once per harness and retire status on owner rotate and channel removal; forward the status directory to the managed MCP server. Schedule one asynchronous shared process poll, fence its application, and continue capacity dispatch across unavailable scopes. Main-loop select wiring is textually guarded; full relay-loop mutation coverage is not claimed. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Preserve the heartbeat collection call with a textual drift guard; full live-service-loop behavioral mutation coverage is not claimed. Refresh idle clocks when a non-heartbeat prompt result is handled (port of block/buzz#7173). Enable session status once per harness and retire status on owner rotate and channel removal; forward the status directory to the managed MCP server. Schedule one asynchronous shared process poll, fence its application, and continue capacity dispatch across unavailable scopes. Main-loop select wiring is textually guarded; full relay-loop mutation coverage is not claimed. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Linux worker memory containment: opt-in cgroup v2 scope per ACP worker, terminal OOM/isolation failures without automatic replay, and checked retirement that retains ownership until cleanup is verified.",
       "is_new": false,
       "required_symbols": [
         "process_poll.start(pool.background_poll_requests());",
@@ -4770,7 +4783,8 @@
         "name == session_status::SESSION_STATUS_DIR_ENV",
         "ctx.session_controls.compact_pending(&scope) && batch.continuation.is_none()",
         "fn handle_owner_cancel_for_scope",
-        "mod permission_view_tests;"
+        "mod permission_view_tests;",
+        "work.human_required(\"worker_resource_limit\");"
       ],
       "invocation_seams": [
         {
@@ -4993,22 +5007,40 @@
           "behavior_test": "uncertain_owner_cancel_has_no_chat_sender_and_fences_held_feedback",
           "verification_command": "cargo test -p buzz-acp --lib uncertain_owner_cancel_has_no_chat_sender_and_fences_held_feedback -- --test-threads=1",
           "coverage": "Production owner-command scope cancellation has no chat sender; a failed durable cancellation emits an honest existing observer control result and fences held feedback immediately."
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "requires_checked_retirement",
+          "invocation": "if result.agent.acp.requires_checked_retirement() && result.outcome.requires_retirement() {",
+          "behavior_test": "resource_limit_dead_letters_without_replaying_or_reusing_worker",
+          "verification_command": "cargo test --locked -p buzz-acp --lib resource_limit_dead_letters -- --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/lib.rs",
+          "callee_symbol": "recover_checked",
+          "invocation": "worker_retirement::recover_checked(",
+          "behavior_test": "resource_review_retains_unverified_scope_owner",
+          "verification_command": "cargo test --locked -p buzz-acp --lib resource_review_ -- --include-ignored --test-threads=1"
         }
       ],
       "verification_commands": [
         "just ci",
-        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4"
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4",
+        "cargo test --locked -p buzz-acp --lib resource_limit_dead_letters -- --test-threads=1",
+        "cargo test --locked -p buzz-acp --lib resource_review_ -- --include-ignored --test-threads=1"
       ]
     },
     {
       "path": "crates/buzz-acp/src/pool.rs",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Expose already-known DM metadata for display-only restart activity routing. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Expose already-known DM metadata for display-only restart activity routing. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Preserve terminal resource failures through idle-timeout cancellation on ordinary and bootstrap prompts.",
       "is_new": false,
       "required_symbols": [
         "pub(crate) fn discard_retired_output(self) -> Self",
         "pub(crate) fn is_known_dm(",
         "if b.continuation.is_none() {",
-        "hold.collection_pending = true;"
+        "hold.collection_pending = true;",
+        "| AcpError::ResourceLimit { .. }",
+        "if e.is_resource_failure() {"
       ],
       "invocation_seams": [
         {
@@ -5177,7 +5209,8 @@
       ],
       "verification_commands": [
         "just ci",
-        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4"
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4",
+        "cargo test --locked -p buzz-acp --lib resource_failure_during -- --test-threads=1"
       ]
     },
     {
@@ -8409,13 +8442,16 @@
     },
     {
       "path": "crates/buzz-acp/TESTING.md",
-      "responsibility": "Document original-session collection, bounded ordinary preemption and bundled agent/MCP/CLI delivery runtime fixtures. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.",
+      "responsibility": "Document original-session collection, bounded ordinary preemption and bundled agent/MCP/CLI delivery runtime fixtures. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Document opt-in Linux worker memory containment and its checks.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
         "env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp background -- --test-threads=1",
-        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4"
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4",
+        "cargo test --locked -p buzz-acp --lib linux_resources -- --test-threads=1",
+        "python3 crates/buzz-acp/tests/linux_resource_supervisor_test.py",
+        "cargo test --locked -p buzz-acp --lib resource_failure_during -- --test-threads=1"
       ]
     },
     {
@@ -9414,7 +9450,7 @@
     },
     {
       "path": "crates/buzz-acp/src/pool/session_continuity.rs",
-      "responsibility": "Resume or create provider sessions through bounded claim/RPC/commit rounds and preserve delivery state. Retire status generations on the existing discard and depart paths. Keep acquisition fallback exhaustive for the store control error vocabulary. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.",
+      "responsibility": "Resume or create provider sessions through bounded claim/RPC/commit rounds and preserve delivery state. Retire status generations on the existing discard and depart paths. Keep acquisition fallback exhaustive for the store control error vocabulary. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Invalidate sessions on terminal resource failures.",
       "is_new": true,
       "required_symbols": [
         "pub(super) async fn acquire_session(",
@@ -10190,7 +10226,7 @@
     },
     {
       "path": "crates/buzz-acp/src/acp/terminate.rs",
-      "responsibility": "Checked bounded Unix process-group and Windows contained-job retirement Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.",
+      "responsibility": "Checked bounded Unix process-group and Windows contained-job retirement Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Linux worker memory containment: opt-in cgroup v2 scope per ACP worker, terminal OOM/isolation failures without automatic replay, and checked retirement that retains ownership until cleanup is verified.",
       "is_new": true,
       "required_symbols": [
         "pub enum TerminationReport",
@@ -10242,7 +10278,8 @@
       ],
       "verification_commands": [
         "cargo test -p buzz-acp -- --test-threads=1",
-        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4"
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4",
+        "cargo test --locked -p buzz-acp --lib resource_review_ -- --include-ignored --test-threads=1"
       ]
     },
     {
@@ -10425,14 +10462,15 @@
     },
     {
       "path": "crates/buzz-acp/src/worker_retirement.rs",
-      "responsibility": "Nonblocking checked worker replacement and retained ownership on uncertainty Explicitly drain parked and cancellation-returned original ownership at orderly shutdown using retained checked evidence. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.",
+      "responsibility": "Nonblocking checked worker replacement and retained ownership on uncertainty Explicitly drain parked and cancellation-returned original ownership at orderly shutdown using retained checked evidence. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Apply checked crash recovery to every worker that requires checked retirement, including guarded workers.",
       "is_new": true,
       "required_symbols": [
         "struct RetirementReturn",
         "struct RetirementGuard",
         "fn drive(",
         "fn finish(",
-        "pub(crate) async fn shutdown("
+        "pub(crate) async fn shutdown(",
+        "pub(crate) fn recover_checked("
       ],
       "invocation_seams": [
         {
@@ -11002,7 +11040,7 @@
     },
     {
       "path": "crates/buzz-acp/src/pool/compaction.rs",
-      "responsibility": "Acquire only the exact existing provider session, persist Started before a single compact prompt, and return separately typed control health/results. Reset stale worker observer context to the admitted channel, existing provider session and command identity before resume or compact I/O. Reject disk-only targets before lazy wake when provider resume is disabled, while preserving existing in-memory compaction.",
+      "responsibility": "Acquire only the exact existing provider session, persist Started before a single compact prompt, and return separately typed control health/results. Reset stale worker observer context to the admitted channel, existing provider session and command identity before resume or compact I/O. Reject disk-only targets before lazy wake when provider resume is disabled, while preserving existing in-memory compaction. Treat resource failures as transport failures so the worker is retired, not returned to the pool.",
       "is_new": true,
       "required_symbols": [
         "pub(crate) struct ExistingSession",
@@ -11013,7 +11051,8 @@
         "let execution = tokio::time::timeout_at(job.deadline, async {",
         "job.job.origin.command_event_id.clone(),",
         "allow_disk_resume: bool,",
-        "if !allow_disk_resume {"
+        "if !allow_disk_resume {",
+        "transport_failed = error.is_resource_failure() ||"
       ],
       "invocation_seams": [
         {
@@ -11046,7 +11085,8 @@
         }
       ],
       "verification_commands": [
-        "cargo test --locked -p buzz-acp -- --test-threads=1"
+        "cargo test --locked -p buzz-acp -- --test-threads=1",
+        "cargo test --locked -p buzz-acp --lib resource_failure_during -- --test-threads=1"
       ]
     },
     {
@@ -11063,11 +11103,12 @@
     },
     {
       "path": "crates/buzz-acp/src/pool/compaction_runtime_tests.rs",
-      "responsibility": "Exercise authorized controller admission, exact-owner scheduling, lazy wake, collection protection, bounded pending work and lifecycle termination. Regress actual cached-worker control-dispatch observer envelope routing. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.",
+      "responsibility": "Exercise authorized controller admission, exact-owner scheduling, lazy wake, collection protection, bounded pending work and lifecycle termination. Regress actual cached-worker control-dispatch observer envelope routing. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Include the Linux compaction resource-failure regression.",
       "is_new": true,
       "required_symbols": [
         "compact_cached_worker_replaces_previous_observer_scope",
-        "mod resume_policy_tests;"
+        "mod resume_policy_tests;",
+        "mod resource_failure_tests;"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -12631,14 +12672,16 @@
     },
     {
       "path": "crates/buzz-acp/src/pool/provider_failure_tests.rs",
-      "responsibility": "Bind provider failure recovery to production dispatch, backoff, queue redelivery and successful delivery accounting",
+      "responsibility": "Bind provider failure recovery to production dispatch, backoff, queue redelivery and successful delivery accounting Regress terminal resource failures during idle cancellation for both prompt paths.",
       "is_new": true,
       "required_symbols": [
-        "async fn provider_failure_requeues_original_event_and_commits_only_after_recovery("
+        "async fn provider_failure_requeues_original_event_and_commits_only_after_recovery(",
+        "async fn resource_failure_during_idle_cancel_is_terminal_for_both_prompt_paths("
       ],
       "invocation_seams": [],
       "verification_commands": [
-        "cargo test -p buzz-acp --lib provider_failure -- --test-threads=1"
+        "cargo test -p buzz-acp --lib provider_failure -- --test-threads=1",
+        "cargo test --locked -p buzz-acp --lib resource_failure_during -- --test-threads=1"
       ]
     },
     {
@@ -14701,6 +14744,114 @@
       "invocation_seams": [],
       "verification_commands": [
         "pnpm --dir desktop test"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/acp/linux_resources.rs",
+      "responsibility": "Parse BUZZ_ACP_RESOURCE_LIMITS, refuse unbounded or ancestor slices, launch each worker through the bundled supervisor in an owned cgroup v2 scope, and report verified OOM or lost isolation as terminal errors.",
+      "is_new": true,
+      "required_symbols": [
+        "const SUPERVISOR: &str = include_str!(\"../../assets/linux-resource-supervisor.py\");",
+        "pub(super) struct WorkerScope",
+        "pub(super) fn wrap(command: Command) -> Result<(Command, Option<Self>), AcpError>",
+        "pub(super) async fn ready(",
+        "pub(super) fn failure(&self) -> Option<AcpError>",
+        "pub(super) fn kill(&self)",
+        "pub(super) async fn empty(&self) -> bool"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/acp.rs",
+          "callee_symbol": "wrap",
+          "invocation": "let (mut cmd, resource_scope) = linux_resources::WorkerScope::wrap(cmd)?;",
+          "behavior_test": "linux_resources_real_boundary",
+          "verification_command": "cargo test --locked -p buzz-acp --lib linux_resources_ -- --ignored --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/acp.rs",
+          "callee_symbol": "ready",
+          "invocation": "if let Err(error) = scope.ready(&mut child).await {",
+          "behavior_test": "resource_review_rejects_ancestor_before_payload",
+          "verification_command": "cargo test --locked -p buzz-acp --lib resource_review_ -- --include-ignored --test-threads=1"
+        },
+        {
+          "caller_path": "crates/buzz-acp/src/acp/terminate.rs",
+          "callee_symbol": "empty",
+          "invocation": "if scope.kill().is_err() || !scope.empty().await {",
+          "behavior_test": "resource_review_retains_unverified_scope_owner",
+          "verification_command": "cargo test --locked -p buzz-acp --lib resource_review_ -- --include-ignored --test-threads=1"
+        }
+      ],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp --lib linux_resources -- --test-threads=1",
+        "cargo test --locked -p buzz-acp --lib linux_resources_ -- --ignored --test-threads=1",
+        "cargo test --locked -p buzz-acp --lib resource_review_ -- --include-ignored --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/assets/linux-resource-supervisor.py",
+      "responsibility": "Bundled supervisor: verify cgroup membership and effective limits before exec, preserve worker stdio, environment and umask, record OOM evidence before killing the scope, and retire it when the original harness exits.",
+      "is_new": true,
+      "required_symbols": [
+        "parent_umask = os.umask(0o077)",
+        "def kill_group():",
+        "def record(state):"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-acp/src/acp/linux_resources.rs",
+          "callee_symbol": "include_str",
+          "invocation": "include_str!(\"../../assets/linux-resource-supervisor.py\")",
+          "behavior_test": "test_owner_exit_before_supervisor_initialization_refuses_payload",
+          "verification_command": "python3 crates/buzz-acp/tests/linux_resource_supervisor_test.py"
+        }
+      ],
+      "verification_commands": [
+        "python3 crates/buzz-acp/tests/linux_resource_supervisor_test.py",
+        "cargo test --locked -p buzz-acp --lib linux_resources_ -- --ignored --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/acp/linux_resources_tests.rs",
+      "responsibility": "Exercise policy validation and opt-in native user-systemd checks: worker and aggregate OOM, sibling survival, blocked writes, detached descendants, harness exit, ancestor-slice refusal and the supervisor exit race.",
+      "is_new": true,
+      "required_symbols": [
+        "fn linux_resources_policy_rejects_invalid_or_unbounded_limits()",
+        "fn linux_resources_real_boundary()",
+        "async fn linux_resources_parent_exit_retires_scope()",
+        "fn resource_review_supervisor_exit_race()",
+        "fn resource_review_rejects_ancestor_before_payload()"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp --lib linux_resources -- --test-threads=1",
+        "cargo test --locked -p buzz-acp --lib linux_resources_ -- --ignored --test-threads=1",
+        "cargo test --locked -p buzz-acp --lib resource_review_ -- --include-ignored --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/pool/compaction_resource_tests.rs",
+      "responsibility": "Regress resource failure during compaction control dispatch: retire the worker through checked retirement and never replay the command.",
+      "is_new": true,
+      "required_symbols": [
+        "async fn resource_failure_during_compaction_retires_worker_without_replay("
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-acp --lib resource_failure_during -- --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/tests/linux_resource_supervisor_test.py",
+      "responsibility": "Execute the production supervisor source against the OOM/child-exit race and harness exit before initialization.",
+      "is_new": true,
+      "required_symbols": [
+        "def test_oom_between_counter_read_and_child_poll_remains_terminal(self):",
+        "def test_owner_exit_before_supervisor_initialization_refuses_payload(self):"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 crates/buzz-acp/tests/linux_resource_supervisor_test.py"
       ]
     }
   ],

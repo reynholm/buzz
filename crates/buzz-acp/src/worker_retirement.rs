@@ -58,7 +58,7 @@ impl Drop for RetirementGuard {
 
 /// Crash recovery owns the original until checked termination. A circuit-open
 /// slot still retires its old worker; it never silently drops that obligation.
-pub(crate) fn recover_kimi(
+pub(crate) fn recover_checked(
     agent: OwnedAgent,
     config: &Config,
     delay: Option<Duration>,
@@ -92,14 +92,14 @@ pub(crate) fn recover_kimi(
         }
         if report != TerminationReport::Clean {
             guard.send(
-                Err(anyhow::anyhow!("crashed Kimi retirement unconfirmed")),
+                Err(anyhow::anyhow!("crashed worker retirement unconfirmed")),
                 report,
             );
             return;
         }
         guard.agent.take();
         let Some(delay) = delay else {
-            guard.send(Err(anyhow::anyhow!("Kimi crash circuit is open")), report);
+            guard.send(Err(anyhow::anyhow!("worker crash circuit is open")), report);
             return;
         };
         tokio::time::sleep(delay).await;
@@ -135,7 +135,7 @@ pub(crate) fn retire_finished_kimi_background(
         agent.state.invalidate_all();
         pool.mark_retire_on_return(index);
         circuits[index].respawn_in_flight = true;
-        recover_kimi(
+        recover_checked(
             agent,
             config,
             Some(Duration::ZERO),

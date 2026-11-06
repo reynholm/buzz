@@ -5972,7 +5972,7 @@ fn handle_prompt_result(
     let mut hard_timeout_fate_suffix: Option<&'static str> = None;
     let deliberate_retirement = pool.needs_retirement(&result.agent);
 
-    if result.agent.acp.is_kimi() && result.outcome.requires_retirement() {
+    if result.agent.acp.requires_checked_retirement() && result.outcome.requires_retirement() {
         pool.mark_retire_on_return(agent_index);
         if let Some(work) = result.agent.acp.logical_work() {
             work.require_retirement();
@@ -6047,6 +6047,13 @@ fn handle_prompt_result(
                     work.human_required("delivery_journal_unverified");
                 }
                 spawn_failure_notice(rest_client, &batch, "The managed report journal could not be verified. Inspect its delivery status before continuing; no provider action was retried.".into());
+            } else if matches!(&result.outcome, PromptOutcome::Error(error) if error.is_resource_failure())
+            {
+                if let Some(work) = &batch.work {
+                    work.human_required("worker_resource_limit");
+                }
+                spawn_failure_notice(rest_client, &batch,
+                    "The worker exceeded its memory budget or lost resource isolation. Check the task's current state and reduce its workload before retrying explicitly. The request was not replayed automatically.".into());
             } else if batch
                 .work
                 .as_ref()
@@ -6457,6 +6464,8 @@ fn handle_prompt_result(
             let is_transport_error = matches!(
                 e,
                 acp::AcpError::Io(_)
+                    | acp::AcpError::ResourceLimit { .. }
+                    | acp::AcpError::ResourceGuard(_)
                     | acp::AcpError::WorkDeadlinePoisoned
                     | acp::AcpError::WorkCancelledPoisoned
                     | acp::AcpError::PermissionProgressTimeout
@@ -6883,14 +6892,14 @@ fn spawn_respawn_task(
 ) -> bool {
     let index = old_agent.index;
 
-    if old_agent.acp.is_kimi() {
+    if old_agent.acp.requires_checked_retirement() {
         let delay = match slot.record_crash() {
             CrashVerdict::CircuitOpen => None,
             CrashVerdict::HalfOpenProbe => Some(Duration::ZERO),
             CrashVerdict::Respawn(delay) => Some(delay),
         };
         slot.respawn_in_flight = true;
-        worker_retirement::recover_kimi(
+        worker_retirement::recover_checked(
             old_agent,
             config,
             delay,
@@ -13996,6 +14005,149 @@ mod error_outcome_emission_tests {
             0,
             "auth error must dead-letter immediately — no events should be pending"
         );
+    }
+
+    #[tokio::test]
+    async fn resource_limit_dead_letters_without_replaying_or_reusing_worker() {
+        let keys = nostr::Keys::generate();
+        let event = nostr::EventBuilder::new(nostr::Kind::Custom(9), "test")
+            .sign_with_keys(&keys)
+            .unwrap();
+        let channel_id = uuid::Uuid::new_v4();
+        let batch = FlushBatch {
+            work: None,
+            continuation: None,
+            channel_id,
+            scope: scope::SessionScope::Conversation { channel_id },
+            events: vec![BatchEvent {
+                edit: None,
+                event,
+                prompt_tag: "test".into(),
+                received_at: std::time::Instant::now(),
+            }],
+            cancelled_events: vec![],
+            cancel_reason: None,
+        };
+
+        let auth_error = acp::AcpError::ResourceLimit {
+            scope: "fixture.scope".into(),
+        };
+
+        let agent = dummy_agent(0).await;
+        let mut pool = AgentPool::from_slots(vec![None]);
+        let task_id = pool.join_set.spawn(async {}).id();
+        pool.task_map_mut().insert(
+            task_id,
+            crate::pool::TaskMeta {
+                permission_tx: None,
+                agent_index: 0,
+                channel_id: None,
+                scope: None,
+                turn_id: "test-turn-id".to_string(),
+                recoverable_batch: None,
+                control_tx: None,
+                steer_tx: None,
+                control_dispatch: None,
+                successful_steer_deliveries: HashSet::new(),
+            },
+        );
+        let mut queue = EventQueue::new(config::DedupMode::Queue);
+        let config = test_config();
+        let mut heartbeat_in_flight = false;
+        let removed_channels = std::collections::HashSet::new();
+        let mut crash_history = vec![SlotCircuit {
+            crash_times: Vec::new(),
+            open_until: Some(std::time::Instant::now() + Duration::from_secs(300)),
+            respawn_in_flight: false,
+        }];
+        let (respawn_tx, _respawn_rx) = mpsc::channel(8);
+        let mut respawn_tasks = tokio::task::JoinSet::new();
+        let result = PromptResult {
+            agent,
+            source: PromptSource::Channel(scope::SessionScope::Conversation { channel_id }),
+            turn_id: "test-turn-id".to_string(),
+            outcome: PromptOutcome::Error(auth_error),
+            batch: Some(batch),
+        };
+        handle_prompt_result(
+            &mut pool,
+            &mut queue,
+            &config,
+            result,
+            &mut heartbeat_in_flight,
+            &removed_channels,
+            &mut crash_history,
+            &respawn_tx,
+            &mut respawn_tasks,
+            None,
+            None,
+            &mut tokio::time::Instant::now(),
+        );
+
+        assert_eq!(pool.live_count(), 0, "resource-limited worker was reused");
+        // The failed task must not replay automatically.
+        assert_eq!(
+            queue.pending_channels(),
+            0,
+            "resource failure must require an explicit retry — batch must not be requeued"
+        );
+        assert_eq!(
+            queue.queued_event_count(channel_id),
+            0,
+            "resource failure must require an explicit retry — no events should be pending"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn resource_review_retains_unverified_scope_owner() {
+        let dir = tempfile::tempdir().unwrap();
+        let replacement = dir.path().join("replacement");
+        let mut agent = dummy_agent(0).await;
+        let group = agent.acp.inject_unverified_resource_scope();
+        let mut config = test_config();
+        config.agent_command = "/usr/bin/python3".into();
+        config.agent_args = vec![
+            "-c".into(),
+            format!(
+                "import pathlib;pathlib.Path({:?}).touch()",
+                replacement.to_str().unwrap()
+            ),
+        ];
+        let mut circuit = SlotCircuit {
+            crash_times: vec![],
+            open_until: None,
+            respawn_in_flight: false,
+        };
+        let (tx, mut rx) = mpsc::channel(2);
+        let mut tasks = tokio::task::JoinSet::new();
+        assert!(spawn_respawn_task(
+            agent,
+            &config,
+            &mut circuit,
+            &tx,
+            &mut tasks,
+            None
+        ));
+        let mut result = tokio::time::timeout(Duration::from_secs(10), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            !replacement.exists(),
+            "replacement started before checked cleanup"
+        );
+        let retirement = result
+            .retirement
+            .take()
+            .expect("cleanup owner was discarded");
+        assert_eq!(retirement.report, acp::TerminationReport::Unverified);
+        let mut retained = retirement
+            .retained
+            .expect("original worker ownership was lost");
+        assert!(group.exists());
+        retained.acp.shutdown().await;
+        tasks.shutdown().await;
     }
 
     /// Run a model-not-found turn failure for `event` through

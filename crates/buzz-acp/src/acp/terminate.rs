@@ -82,6 +82,18 @@ impl AcpClient {
     /// Retire this worker without claiming success until its work has stopped.
     /// On uncertainty the caller must retain this client and keep dispatch gated.
     pub async fn terminate(&mut self) -> TerminationReport {
+        #[cfg(target_os = "linux")]
+        if let Some(scope) = &self.resource_scope {
+            self.termination.checked = true;
+            self.stdin.take();
+            if scope.kill().is_err() || !scope.empty().await {
+                return TerminationReport::Unverified;
+            }
+            return match tokio::time::timeout(Duration::from_secs(2), self.child.wait()).await {
+                Ok(Ok(_)) => TerminationReport::Clean,
+                _ => TerminationReport::Unverified,
+            };
+        }
         #[cfg(unix)]
         {
             self.terminate_with_snapshot(|| async {

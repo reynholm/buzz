@@ -800,6 +800,8 @@ impl PromptOutcome {
                         | AcpError::WriteTimeout(_)
                         | AcpError::Timeout(_)
                         | AcpError::Protocol(_)
+                        | AcpError::ResourceLimit { .. }
+                        | AcpError::ResourceGuard(_)
                         | AcpError::WorkDeadlinePoisoned
                         | AcpError::WorkCancelledPoisoned
                         | AcpError::PermissionProgressTimeout
@@ -825,6 +827,8 @@ impl PromptOutcome {
             | Self::CancelDrainTimeout(_)
             | Self::Error(
                 AcpError::Io(_)
+                | AcpError::ResourceLimit { .. }
+                | AcpError::ResourceGuard(_)
                 | AcpError::WorkDeadlinePoisoned
                 | AcpError::WorkCancelledPoisoned
                 | AcpError::PermissionProgressTimeout
@@ -3317,6 +3321,12 @@ async fn run_prompt_execution(
                                 "cancel_with_cleanup failed during initial_message timeout: {e}"
                             );
                             agent.state.invalidate_after_error(&source, &e);
+                            if e.is_resource_failure() {
+                                return (
+                                    PromptOutcome::Error(e),
+                                    requeue_batch_if_queue(&ctx, batch),
+                                );
+                            }
                         }
                     }
                     return (
@@ -4066,7 +4076,11 @@ async fn run_prompt_execution(
                     )
                     .await;
                     (
-                        PromptOutcome::Timeout(TimeoutKind::Idle),
+                        if e.is_resource_failure() {
+                            PromptOutcome::Error(e)
+                        } else {
+                            PromptOutcome::Timeout(TimeoutKind::Idle)
+                        },
                         requeue_batch_if_queue(&ctx, batch),
                     )
                 }
