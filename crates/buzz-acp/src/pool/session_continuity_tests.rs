@@ -207,6 +207,7 @@ fn ctx() -> PromptContext {
 
 fn live_session(store: &SessionStore, ctx: &PromptContext, sid: &str) -> LiveSession {
     LiveSession {
+        reply_contract: None,
         lease: Uuid::nil(),
         adapter: "fake-acp".into(),
         session_id: sid.into(),
@@ -236,6 +237,7 @@ fn channel_context(scope: &SessionScope) -> NewSessionChannelContext<'_> {
 
 fn me(store_instance: Uuid) -> ResumeContext {
     ResumeContext {
+        reply_contract: None,
         adapter: "fake-acp".into(),
         cwd: "/tmp".into(),
         model: None,
@@ -248,6 +250,7 @@ fn me(store_instance: Uuid) -> ResumeContext {
 
 fn stored(live: impl FnOnce(&mut LiveSession)) -> LoadOutcome {
     let mut session = LiveSession {
+        reply_contract: None,
         lease: Uuid::new_v4(),
         adapter: "fake-acp".into(),
         session_id: "s-1".into(),
@@ -954,6 +957,7 @@ fn thread_scope(channel: u128, root: &str) -> SessionScope {
 
 fn decision_now(fixture: &Fixture, scope: &SessionScope) -> ResumeDecision {
     let me = ResumeContext {
+        reply_contract: None,
         adapter: "fake-acp".into(),
         cwd: "/tmp".into(),
         model: None,
@@ -1413,3 +1417,27 @@ mod compaction_tests;
 
 #[path = "restart_status_runtime_tests.rs"]
 mod restart_status_tests;
+
+#[test]
+fn runtime_final_contract_revision_fences_legacy_resume_and_mode_rollback() {
+    let mut current = me(Uuid::from_u128(1));
+    current.reply_contract = Some(crate::config::ReplyContract::b24());
+    assert!(matches!(
+        resume_decision(&stored(|_| {}), &current, |_| false),
+        ResumeDecision::New {
+            reason: SessionReason::ConfigChanged
+        }
+    ));
+    let matching = stored(|live| live.reply_contract = current.reply_contract.clone());
+    assert!(matches!(
+        resume_decision(&matching, &current, |_| false),
+        ResumeDecision::Resume { .. }
+    ));
+    current.reply_contract = None;
+    assert!(matches!(
+        resume_decision(&matching, &current, |_| false),
+        ResumeDecision::New {
+            reason: SessionReason::ConfigChanged
+        }
+    ));
+}

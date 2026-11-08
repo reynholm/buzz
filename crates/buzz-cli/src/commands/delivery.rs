@@ -15,6 +15,9 @@ use std::{
 };
 use tokio::time::Instant;
 
+#[path = "delivery_runtime.rs"]
+pub(super) mod runtime;
+
 const MAX_RECORDS: usize = 1024;
 const MAX_RECORD_BYTES: usize = 512 * 1024;
 const MAX_JOURNAL_BYTES: usize = 16 * 1024 * 1024;
@@ -44,6 +47,8 @@ struct Record {
     attempts: u8,
     confirmed_at: Option<u64>,
     last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    runtime: Option<runtime::RuntimeDelivery>,
 }
 
 fn error(detail: impl std::fmt::Display) -> CliError {
@@ -179,7 +184,7 @@ fn read(dir: &Path) -> Result<Journal, CliError> {
         return Err(error("journal exceeds 16 MiB"));
     }
     let mut journal: Journal = serde_json::from_slice(&bytes).map_err(error)?;
-    if !matches!(journal.version, 1 | 2) || journal.entries.len() > MAX_RECORDS {
+    if !matches!(journal.version, 1..=3) || journal.entries.len() > MAX_RECORDS {
         return Err(error("unsupported version or record limit exceeded"));
     }
     for (id, record) in &journal.entries {
@@ -187,6 +192,12 @@ fn read(dir: &Path) -> Result<Journal, CliError> {
             return Err(error("record exceeds 512 KiB"));
         }
         record.event.verify().map_err(error)?;
+        if let Some(runtime) = &record.runtime {
+            runtime.validate()?;
+            if runtime.scope.as_deref() == Some("thread") && record.parent.is_empty() {
+                return Err(error("runtime thread scope has no original parent"));
+            }
+        }
         for extra in [
             record.recovery_candidate.as_ref(),
             record.canonical_event.as_ref(),
@@ -241,7 +252,7 @@ fn read(dir: &Path) -> Result<Journal, CliError> {
             validate::validate_hex64(&record.parent)?;
         }
     }
-    journal.version = 2;
+    journal.version = journal.version.max(2);
     Ok(journal)
 }
 
@@ -343,6 +354,8 @@ pub(super) async fn deliver(
     key: &str,
     directory: Option<&Path>,
     mentions: Vec<String>,
+    runtime_purpose: Option<&str>,
+    runtime_scope: Option<&str>,
 ) -> Result<serde_json::Value, CliError> {
     let key = uuid::Uuid::parse_str(key)
         .map_err(|_| CliError::Usage("--delivery-key must be a UUID".into()))?
@@ -353,9 +366,18 @@ pub(super) async fn deliver(
     } else {
         validate::parse_event_id(parent)?.to_hex()
     };
-    let dir: PathBuf = directory
-        .map(Path::to_owned)
-        .unwrap_or_else(|| PathBuf::from(".buzz-deliveries"));
+    if runtime_scope == Some("thread") && parent.is_empty() {
+        return Err(CliError::Usage(
+            "runtime thread scope requires an original reply parent".into(),
+        ));
+    }
+    let dir: PathBuf = directory.map(Path::to_owned).unwrap_or_else(|| {
+        PathBuf::from(if runtime_purpose.is_some() {
+            runtime::DIRECTORY
+        } else {
+            ".buzz-deliveries"
+        })
+    });
     let dir = if dir.is_absolute() {
         dir
     } else {
@@ -406,6 +428,7 @@ pub(super) async fn deliver(
                 mentions,
             },
             Some(&key),
+            runtime_purpose.is_some(),
         )
         .await?;
         journal.entries.insert(
@@ -422,21 +445,46 @@ pub(super) async fn deliver(
                 attempts: 0,
                 confirmed_at: None,
                 last_error: None,
+                runtime: runtime_purpose
+                    .map(|purpose| runtime::RuntimeDelivery::new(purpose, runtime_scope))
+                    .transpose()?,
             },
         );
+        if runtime_purpose.is_some() {
+            journal.version = 3;
+        }
         write(&dir, &journal)?;
     }
+    publish_record(client, &dir, &mut journal, &id).await
+}
+
+async fn publish_record(
+    client: &BuzzClient,
+    dir: &Path,
+    journal: &mut Journal,
+    id: &str,
+) -> Result<serde_json::Value, CliError> {
     let record = journal
         .entries
-        .get_mut(&id)
+        .get_mut(id)
         .ok_or_else(|| error("record disappeared"))?;
+    if record
+        .runtime
+        .as_ref()
+        .is_some_and(|runtime| runtime.revoked)
+    {
+        return Err(CliError::Auth(
+            "runtime publication was explicitly revoked; signed evidence retained".into(),
+        ));
+    }
+    let key = record.key.clone();
     if record.confirmed_at.is_some() {
         let chosen = match record.canonical_event.as_ref() {
             Some(stamp) => stamp.restore(&record.event).map_err(error)?,
             None => record.event.clone(),
         };
         return Ok(
-            serde_json::json!({"event_id":chosen.id.to_hex(),"accepted":true,"message":"managed delivery already confirmed","mention_pubkeys":messages::event_mention_pubkeys(&chosen)}),
+            serde_json::json!({"event_id":chosen.id.to_hex(),"accepted":true,"message":"managed delivery already confirmed","mention_pubkeys":messages::event_mention_pubkeys(&chosen),"purpose":record.runtime.as_ref().map(|r| &r.purpose)}),
         );
     }
     if record.attempts >= MAX_ATTEMPTS {
@@ -488,22 +536,23 @@ pub(super) async fn deliver(
         ));
     }
     record.attempts += 1;
-    write(&dir, &journal)?;
+    write(dir, journal)?;
     let result = client
         .submit_event(submission)
         .await
         .and_then(|raw| acknowledgment(&raw, &original, recovery));
     let record = journal
         .entries
-        .get_mut(&id)
+        .get_mut(id)
         .ok_or_else(|| error("record disappeared"))?;
     match result {
-        Ok((output, chosen)) => {
+        Ok((mut output, chosen)) => {
+            output["purpose"] = serde_json::json!(record.runtime.as_ref().map(|r| &r.purpose));
             record.canonical_event =
                 (chosen.id != record.event.id).then(|| ReportStamp::from(&chosen));
             record.confirmed_at = Some(now()?);
             record.last_error = None;
-            write(&dir, &journal)?;
+            write(dir, journal)?;
             Ok(output)
         }
         Err(e) => {
@@ -513,7 +562,7 @@ pub(super) async fn deliver(
             } else {
                 "unconfirmed; retry this same key and route"
             };
-            write(&dir, &journal)?;
+            write(dir, journal)?;
             let detail = format!(
                 "{state}: delivery {key}: {e}; signed event retained in {}",
                 dir.display()

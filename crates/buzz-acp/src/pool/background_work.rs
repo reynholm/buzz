@@ -99,11 +99,25 @@ impl OwnedAgent {
             blocking_pids: HashSet::new(),
             collection_pending: false,
             continuation: Some(RuntimeContinuation {
-                work: batch.and_then(|batch| batch.work.clone()),
+                callback_pubkeys: batch
+                    .map(|batch| {
+                        batch
+                            .work
+                            .as_ref()
+                            .map(|work| work.callback_pubkeys.clone())
+                            .unwrap_or_else(|| crate::queue::callback_pubkeys(&batch.events))
+                    })
+                    .unwrap_or_default(),
+                // Runtime receipts belong to one ended turn. Ordinary B24
+                // background ownership keeps its existing independent key.
+                work: batch
+                    .and_then(|batch| batch.work.clone())
+                    .filter(|work| !work.runtime_final),
                 crash_recovery: false,
                 background_ready: true,
                 delivery_key: batch
                     .and_then(|batch| batch.work.as_ref())
+                    .filter(|work| !work.runtime_final)
                     .map_or_else(Uuid::new_v4, |work| work.delivery_key),
                 ordinary_preempted: false,
                 worker_index: self.index,

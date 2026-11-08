@@ -107,13 +107,26 @@ impl MockRelay {
                         serde_json::json!([membership])
                     } else if filter["ids"][0] == parent_task.id.to_hex() {
                         serde_json::json!([parent_task])
-                    } else {
+                    } else if let Some(ids) = filter["ids"].as_array() {
+                        serde_json::json!(events_task
+                            .lock()
+                            .unwrap()
+                            .iter()
+                            .filter(|event| ids.iter().any(|id| id == &event.id.to_hex()))
+                            .collect::<Vec<_>>())
+                    } else if filter["kinds"][0] == 9 {
                         serde_json::json!(*events_task.lock().unwrap())
+                    } else {
+                        serde_json::json!([])
                     };
                     response(&mut socket, "200 OK", reply).await;
                 } else if route == "/events" {
                     let event: Event = serde_json::from_value(value).unwrap();
                     event.verify().unwrap();
+                    if event.kind.as_u16() != 9 {
+                        response(&mut socket, "200 OK", serde_json::json!({"accepted":true,"event_id":event.id.to_hex(),"message":"auxiliary event saved"})).await;
+                        continue;
+                    }
                     assert!(event
                         .tags
                         .iter()
@@ -539,6 +552,7 @@ async fn managed_runtime_bundled_agent_publication_then_application_error_retrie
         .state
         .set_scope_owner_generation(scope.clone(), generation);
     let continuation = RuntimeContinuation {
+        callback_pubkeys: Vec::new(),
         work: None,
         crash_recovery: false,
         background_ready: true,
@@ -620,3 +634,6 @@ async fn managed_runtime_bundled_agent_publication_then_application_error_retrie
         agent.acp.shutdown().await;
     }
 }
+
+#[path = "runtime_final_runtime_tests.rs"]
+mod runtime_final_runtime_tests;

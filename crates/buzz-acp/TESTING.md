@@ -456,3 +456,41 @@ provider and human-client acceptance runbook. Kimi's original work receives its
 managed key before the first attempt; it retains it through background collection
 and checked child-crash recovery. Other adapters keep the background-only
 managed-publication behavior described above.
+
+## Runtime final replies (verified B24 only)
+
+See [RUNTIME_FINAL.md](RUNTIME_FINAL.md) for profile/provenance gates, delivery
+outcomes, session contract revision and schema-compatible rollback. Kimi native
+and endpoint launches remain agent_tools and reject runtime_final.
+
+```sh
+cargo build --locked -p buzz-acp --bin buzz-acp -p buzz-cli --bin buzz
+BUZZ_TEST_BIN_DIR=/absolute/target/debug PATH=/absolute/target/debug:$PATH \
+  env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL \
+  -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY \
+  cargo test --locked -p buzz-acp --lib runtime_final_ \
+  -- --include-ignored --test-threads=1
+cargo test --locked -p buzz-cli --lib runtime_final -- --test-threads=1
+```
+
+The opt-in runtime journeys refuse a different CLI resolved on PATH. They drive
+production queue dispatch, ACP pipes, result handling and the actual original
+CLI against a signature-checking mock relay. The startup case launches the real
+harness and proves journal replay precedes an unavailable, upgraded provider;
+its fixture wrapper never executes a model. Journal retries and cancellation use
+saved keys with no replacement content/route input. The full native matrix and
+human acceptance remain separate, as described in RUNTIME_FINAL.md.
+
+Runtime review regressions use the same rebuilt candidate binaries and fixture
+requirements as the runtime matrix:
+
+```sh
+BUZZ_TEST_BIN_DIR="$PWD/target/debug" PATH="$PWD/target/debug:$PATH" \
+  cargo test --locked -p buzz-acp --lib runtime_review -- --include-ignored --test-threads=1
+```
+
+They drive busy model switching, interrupt/fallback steer, explicit cancel/rotate,
+interrupted background collection, a pending publication after the production
+result handler drops execution ownership, failed durable cancellation, and a
+heartbeat following a runtime turn. Heartbeats keep tool delivery and do not
+require runtime build provenance or retain captured final text.

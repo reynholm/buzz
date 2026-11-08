@@ -282,8 +282,10 @@ async fn uncertain_owner_cancel_has_no_chat_sender_and_fences_held_feedback() {
                 &mut queue,
                 &ctx.session_controls,
                 &scope,
-                Some(&observer)
-            ),
+                Some(&observer),
+                None
+            )
+            .await,
             crate::session_controls::status::StatusCancellation::Unconfirmed
         );
         assert!(!dispatch.current());

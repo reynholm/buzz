@@ -149,6 +149,9 @@ impl From<String> for SessionReason {
 /// A provider session that a later turn may resume.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LiveSession {
+    /// Acknowledged final-reply instruction contract; absent on legacy records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_contract: Option<crate::config::ReplyContract>,
     /// Ownership token, replaced by every claim.
     pub lease: Uuid,
     pub adapter: String,

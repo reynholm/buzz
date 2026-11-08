@@ -19,7 +19,10 @@ use uuid::Uuid;
 
 use crate::filter::SubscriptionRule;
 mod kimi_recovery;
+mod reply_delivery;
 pub use kimi_recovery::KimiPermissionVisibility;
+pub(crate) use reply_delivery::verify_build_file;
+pub use reply_delivery::{ReplyContract, ReplyDeliveryArgs};
 
 /// Default idle timeout (seconds) when neither `--idle-timeout` nor the
 /// deprecated `--turn-timeout` is set.
@@ -250,6 +253,8 @@ pub struct AuthenticateArgs {
     after_help = "Commands: run (one local task), models, auth-methods, authenticate.\nUse buzz-acp <COMMAND> --help. With no command, start the conversational service."
 )]
 pub struct CliArgs {
+    #[command(flatten)]
+    pub reply_delivery: ReplyDeliveryArgs,
     #[command(flatten)]
     pub kimi_recovery: kimi_recovery::KimiRecoveryArgs,
     #[arg(long, env = "BUZZ_RELAY_URL", default_value = "ws://localhost:3000")]
@@ -560,6 +565,8 @@ pub struct ChannelFilter {
 
 #[derive(Debug)]
 pub struct Config {
+    pub reply_contract: Option<ReplyContract>,
+    pub reply_build_file: Option<std::path::PathBuf>,
     pub kimi_recovery: crate::queue::RecoveryPolicy,
     pub keys: Keys,
     pub relay_url: String,
@@ -1204,6 +1211,8 @@ impl Config {
         validate_multiple_event_handling(args.multiple_event_handling, args.dedup)?;
 
         let config = Config {
+            reply_contract: args.reply_delivery.contract(&agent_command)?,
+            reply_build_file: args.reply_delivery.reply_build_file.clone(),
             kimi_recovery: args.kimi_recovery.policy()?,
             keys,
             relay_url: args.relay_url,
@@ -1593,6 +1602,8 @@ mod tests {
     /// Build a minimal Config for testing without CLI parsing.
     fn test_config(mode: SubscribeMode) -> Config {
         Config {
+            reply_contract: None,
+            reply_build_file: None,
             kimi_recovery: crate::queue::RecoveryPolicy::default(),
             keys: nostr::Keys::generate(),
             relay_url: "ws://localhost:3000".into(),
@@ -3355,6 +3366,70 @@ fn kimi_recovery_cli_profile_is_configurable_and_rejects_unbounded_values() {
         assert!(
             Config::from_args(args).is_err(),
             "must reject {flag}={value}"
+        );
+    }
+}
+
+#[test]
+fn runtime_final_cli_admits_only_explicit_verified_b24_launch() {
+    let provenance = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(provenance.path(), "0.26.7-b24.8\n").unwrap();
+    let parse = |command: &str| {
+        CliArgs::try_parse_from([
+            "buzz-acp",
+            "--private-key",
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            "--agent-command",
+            command,
+            "--reply-delivery",
+            "runtime_final",
+            "--reply-profile",
+            "b24_0_26_7_8",
+            "--reply-build-file",
+            provenance.path().to_str().unwrap(),
+        ])
+    };
+    let args = parse("b24-cowork-code-cli");
+    assert!(
+        args.is_ok(),
+        "explicit verified B24 profile must be configurable: {args:?}"
+    );
+    assert!(Config::from_args(args.unwrap()).is_ok());
+    for command in ["kimi", "/tmp/kimi", "qwen-code", "node", "goose"] {
+        assert!(
+            Config::from_args(parse(command).unwrap()).is_err(),
+            "unverified launch admitted: {command}"
+        );
+    }
+}
+
+#[test]
+fn runtime_final_build_provenance_rejects_unverified_upgrade() {
+    let provenance = tempfile::NamedTempFile::new().unwrap();
+    for version in ["0.26.7-b24.9", "0.26.7", "", "0.26.7-b24.8"] {
+        std::fs::write(provenance.path(), version).unwrap();
+        let args = CliArgs::try_parse_from([
+            "buzz-acp",
+            "--private-key",
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            "--agent-command",
+            "b24-cowork-code-cli",
+            "--reply-delivery",
+            "runtime_final",
+            "--reply-profile",
+            "b24_0_26_7_8",
+            "--reply-build-file",
+            provenance.path().to_str().unwrap(),
+        ])
+        .unwrap();
+        assert!(
+            Config::from_args(args).is_ok(),
+            "delivery-only startup must remain available after upgrades"
+        );
+        assert_eq!(
+            verify_build_file(Some(provenance.path())).is_ok(),
+            version == "0.26.7-b24.8",
+            "{version}"
         );
     }
 }

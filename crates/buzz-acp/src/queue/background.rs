@@ -5,6 +5,8 @@ use super::*;
 /// Authority and reply destination of a background task's original session.
 #[derive(Clone, Debug)]
 pub(crate) struct RuntimeContinuation {
+    /// Bounded authors from the original accepted request, independent of prose.
+    pub callback_pubkeys: Vec<String>,
     pub work: Option<LogicalWork>,
     /// Set only after an interrupted prompt requires checked crash retirement.
     pub crash_recovery: bool,
@@ -85,23 +87,22 @@ impl EventQueue {
 
     pub(super) fn flush_continuation(&mut self) -> Option<FlushBatch> {
         let now = Instant::now();
-        let scope = self
-            .continuations
-            .iter()
-            .filter(|(scope, continuation)| {
-                !self.in_flight_scopes.contains(*scope)
-                    && (continuation.background_ready
-                        || continuation
-                            .work
-                            .as_ref()
-                            .is_some_and(|work| work.remaining().is_zero()))
-                    && self
-                        .continuation_retry_after
-                        .get(*scope)
-                        .is_none_or(|deadline| *deadline <= now)
-            })
-            .min_by_key(|(_, continuation)| continuation.received_at)
-            .map(|(scope, _)| scope.clone())?;
+        let scope =
+            self.continuations
+                .iter()
+                .filter(|(scope, continuation)| {
+                    !self.in_flight_scopes.contains(*scope)
+                        && (continuation.background_ready
+                            || continuation.work.as_ref().is_some_and(|work| {
+                                !work.runtime_final && work.remaining().is_zero()
+                            }))
+                        && self
+                            .continuation_retry_after
+                            .get(*scope)
+                            .is_none_or(|deadline| *deadline <= now)
+                })
+                .min_by_key(|(_, continuation)| continuation.received_at)
+                .map(|(scope, _)| scope.clone())?;
         let continuation = self.continuations.remove(&scope)?;
         self.in_flight_continuations.insert(scope.clone());
         self.in_flight_scopes.insert(scope.clone());
@@ -163,7 +164,7 @@ impl EventQueue {
                     || continuation
                         .work
                         .as_ref()
-                        .is_some_and(|work| work.remaining().is_zero()))
+                        .is_some_and(|work| !work.runtime_final && work.remaining().is_zero()))
                 && self
                     .continuation_retry_after
                     .get(scope)
@@ -179,6 +180,7 @@ mod tests {
 
     fn continuation() -> RuntimeContinuation {
         RuntimeContinuation {
+            callback_pubkeys: Vec::new(),
             work: None,
             crash_recovery: false,
             background_ready: true,

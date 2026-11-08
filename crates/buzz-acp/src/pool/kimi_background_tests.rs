@@ -372,7 +372,9 @@ async fn exercise_collection_crash(
             &ctx.session_controls,
             &scope,
             None,
-        );
+            None,
+        )
+        .await;
         assert!(original.cancelled());
     }
     let mut returned = timeout(Duration::from_secs(10), rx.recv())
@@ -581,7 +583,9 @@ async fn kimi_cancelled_background_hold_is_checked_stopped_without_new_input() {
         &ctx.session_controls,
         &scope,
         None,
-    );
+        None,
+    )
+    .await;
     assert!(work.cancelled());
     let mut config = crate::build_mcp_servers_tests::test_config();
     config.agent_command = "python3".into();

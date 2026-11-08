@@ -17,6 +17,7 @@ pub(super) struct Relay {
     pub(super) bodies: Arc<Mutex<Vec<Vec<u8>>>>,
     /// Workspace emoji sets served for kind-30030 palette queries.
     pub(super) palette: Arc<Mutex<Vec<Event>>>,
+    pub(super) profiles: Arc<Mutex<Vec<Event>>>,
 }
 
 async fn query(
@@ -59,6 +60,10 @@ async fn query(
         return Json(serde_json::json!(*r.palette.lock().unwrap()));
     }
     if filter["kinds"][0] == 0 {
+        let profiles = r.profiles.lock().unwrap().clone();
+        if !profiles.is_empty() {
+            return Json(serde_json::json!(profiles));
+        }
         let e = EventBuilder::new(Kind::Metadata, r#"{"name":"Callback"}"#)
             .sign_with_keys(&r.keys)
             .unwrap();
@@ -136,10 +141,17 @@ pub(super) async fn fixture() -> (Relay, String, tempfile::TempDir) {
 }
 
 pub(super) async fn fixture_with_keys(keys: Keys) -> (Relay, String, tempfile::TempDir) {
+    fixture_with_parent_author(keys.clone(), keys).await
+}
+
+async fn fixture_with_parent_author(
+    keys: Keys,
+    parent_author: Keys,
+) -> (Relay, String, tempfile::TempDir) {
     let channel = "123e4567-e89b-12d3-a456-426614174000".to_string();
     let parent = EventBuilder::new(Kind::Custom(9), "original task")
         .tag(Tag::parse(["h", &channel]).unwrap())
-        .sign_with_keys(&keys)
+        .sign_with_keys(&parent_author)
         .unwrap();
     let relay = Relay {
         keys,
@@ -152,6 +164,7 @@ pub(super) async fn fixture_with_keys(keys: Keys) -> (Relay, String, tempfile::T
         events: Arc::new(Mutex::new(vec![])),
         bodies: Arc::new(Mutex::new(vec![])),
         palette: Arc::new(Mutex::new(vec![])),
+        profiles: Arc::new(Mutex::new(vec![])),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -804,4 +817,393 @@ async fn managed_expired_journal_never_treats_legacy_wrapper_ack_as_delivery() {
         .unwrap()
         .iter()
         .all(|e| u32::from(e.kind.as_u16()) == buzz_core::kind::KIND_MANAGED_DELIVERY_RECOVERY));
+}
+
+async fn runtime_dispatch(client: &BuzzClient, args: &[&str]) -> Result<(), error::CliError> {
+    let cli = parse_args(args.iter().copied()).unwrap();
+    let Cmd::Messages(command) = cli.command else {
+        panic!("messages command")
+    };
+    commands::messages::dispatch(command, client, &OutputFormat::Json).await
+}
+
+#[tokio::test]
+async fn runtime_final_cli_replay_uses_saved_bytes_and_filters_legacy_receipts() {
+    let (relay, url, dir) = fixture().await;
+    let key = uuid::Uuid::new_v4().to_string();
+    let client = BuzzClient::new(url.clone(), relay.keys.clone(), None, None).unwrap();
+    *relay.ack.lock().unwrap() = "malformed";
+    let args = [
+        "buzz",
+        "messages",
+        "deliver",
+        "--delivery-key",
+        &key,
+        "--channel",
+        &relay.channel,
+        "--reply-to",
+        &relay.parent.id.to_hex(),
+        "--journal-dir",
+        dir.path().to_str().unwrap(),
+        "--runtime-purpose",
+        "answer",
+        "--content",
+        "Which option?",
+    ];
+    assert!(runtime_dispatch(&client, &args).await.is_err());
+    let bytes = std::fs::read(dir.path().join("journal.json")).unwrap();
+    let journal: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let record = journal["entries"]
+        .as_object()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap();
+    assert_eq!(journal["version"], 3);
+    assert_eq!(record["runtime"]["purpose"], "answer");
+    assert_eq!(record["event"]["content"], "Which option?");
+    *relay.ack.lock().unwrap() = "ok";
+    let retry = [
+        "buzz",
+        "messages",
+        "delivery-retry",
+        "--delivery-key",
+        &key,
+        "--journal-dir",
+        dir.path().to_str().unwrap(),
+    ];
+    runtime_dispatch(&client, &retry).await.unwrap();
+    runtime_dispatch(&client, &retry).await.unwrap();
+    let bodies = relay.bodies.lock().unwrap().clone();
+    assert_eq!(
+        bodies.len(),
+        2,
+        "confirmed replay must suppress another submission"
+    );
+    assert_eq!(
+        bodies[0], bodies[1],
+        "ACK loss retries original signed bytes"
+    );
+    assert_eq!(relay.events.lock().unwrap().len(), 1);
+    // A v2/manual record cannot be selected through the runtime-only retry API.
+    let legacy_key = uuid::Uuid::new_v4().to_string();
+    assert_eq!(
+        deliver(&relay, &url, dir.path(), &legacy_key, "manual").await,
+        0
+    );
+    assert!(runtime_dispatch(
+        &client,
+        &[
+            "buzz",
+            "messages",
+            "delivery-retry",
+            "--delivery-key",
+            &legacy_key,
+            "--journal-dir",
+            dir.path().to_str().unwrap()
+        ]
+    )
+    .await
+    .is_err());
+}
+
+#[tokio::test]
+async fn runtime_final_cli_revocation_and_access_loss_do_not_replay_or_reroute() {
+    let (relay, url, dir) = fixture().await;
+    let client = BuzzClient::new(url, relay.keys.clone(), None, None).unwrap();
+    let key = uuid::Uuid::new_v4().to_string();
+    *relay.ack.lock().unwrap() = "malformed";
+    assert!(runtime_dispatch(
+        &client,
+        &[
+            "buzz",
+            "messages",
+            "deliver",
+            "--delivery-key",
+            &key,
+            "--channel",
+            &relay.channel,
+            "--journal-dir",
+            dir.path().to_str().unwrap(),
+            "--runtime-purpose",
+            "failure_notice",
+            "--content",
+            "No final text was available."
+        ]
+    )
+    .await
+    .is_err());
+    let retry = [
+        "buzz",
+        "messages",
+        "delivery-retry",
+        "--delivery-key",
+        &key,
+        "--journal-dir",
+        dir.path().to_str().unwrap(),
+    ];
+    *relay.member.lock().unwrap() = false;
+    assert!(runtime_dispatch(&client, &retry).await.is_err());
+    runtime_dispatch(
+        &client,
+        &[
+            "buzz",
+            "messages",
+            "delivery-revoke",
+            "--delivery-key",
+            &key,
+            "--journal-dir",
+            dir.path().to_str().unwrap(),
+        ],
+    )
+    .await
+    .unwrap();
+    *relay.member.lock().unwrap() = true;
+    assert!(runtime_dispatch(&client, &retry).await.is_err());
+    assert_eq!(relay.bodies.lock().unwrap().len(), 1);
+    let journal: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("journal.json")).unwrap()).unwrap();
+    let record = journal["entries"]
+        .as_object()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap();
+    assert_eq!(record["runtime"]["revoked"], true);
+    assert_eq!(
+        record["attempts"], 1,
+        "revocation preserves actual submission attempts"
+    );
+}
+
+#[tokio::test]
+async fn runtime_final_literal_prose_never_adds_foreign_mention_recipients() {
+    use nostr::ToBech32;
+    let delegator = Keys::generate();
+    let delegator_key = delegator.public_key().to_hex();
+    let (relay, url, dir) = fixture_with_parent_author(Keys::generate(), delegator).await;
+    relay
+        .extra_members
+        .lock()
+        .unwrap()
+        .push(delegator_key.clone());
+    let foreign = Keys::generate();
+    let foreign_key = foreign.public_key().to_hex();
+    relay
+        .extra_members
+        .lock()
+        .unwrap()
+        .push(foreign_key.clone());
+    relay.profiles.lock().unwrap().push(
+        EventBuilder::new(Kind::Metadata, r#"{"name":"Foreign"}"#)
+            .sign_with_keys(&foreign)
+            .unwrap(),
+    );
+    let client = BuzzClient::new(url.clone(), relay.keys.clone(), None, None).unwrap();
+    let text = format!(
+        "Discuss @Foreign and nostr:{} as literal references.",
+        foreign.public_key().to_bech32().unwrap()
+    );
+    for content in [&text, "The example contains @Unlisted without a recipient."] {
+        let key = Uuid::new_v4().to_string();
+        runtime_dispatch(
+            &client,
+            &[
+                "buzz",
+                "messages",
+                "deliver",
+                "--delivery-key",
+                &key,
+                "--channel",
+                &relay.channel,
+                "--reply-to",
+                &relay.parent.id.to_hex(),
+                "--journal-dir",
+                dir.path().to_str().unwrap(),
+                "--runtime-purpose",
+                "answer",
+                "--mention",
+                &delegator_key,
+                "--content",
+                content,
+            ],
+        )
+        .await
+        .unwrap();
+        let events = relay.events.lock().unwrap();
+        let event = events.last().unwrap();
+        assert_eq!(event.content, content);
+        let recipients: Vec<_> = event
+            .tags
+            .iter()
+            .filter(|tag| tag.as_slice().first().map(String::as_str) == Some("p"))
+            .map(|tag| tag.as_slice()[1].clone())
+            .collect();
+        assert_eq!(
+            recipients,
+            vec![delegator_key.clone()],
+            "only the structured original delegator callback is authorized"
+        );
+    }
+    // The ordinary agent-tools path retains its existing automatic mention behavior.
+    assert_eq!(
+        deliver(&relay, &url, dir.path(), &Uuid::new_v4().to_string(), &text).await,
+        0
+    );
+    assert!(relay
+        .events
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .tags
+        .iter()
+        .any(|tag| tag.as_slice() == ["p", foreign_key.as_str()]));
+}
+
+// Removing the saved scope/namespace checks must revoke unrelated records and
+// fail this production CLI dispatch regression.
+#[tokio::test]
+async fn runtime_final_cli_scope_revocation_preserves_other_scopes_and_namespaces() {
+    let (relay, url, dir) = fixture().await;
+    let client = BuzzClient::new(url.clone(), relay.keys.clone(), None, None).unwrap();
+    let other_keys = Keys::generate();
+    relay
+        .extra_members
+        .lock()
+        .unwrap()
+        .push(other_keys.public_key().to_hex());
+    let other_signer = BuzzClient::new(url, other_keys, None, None).unwrap();
+    let (other_relay, other_url, _) = fixture_with_keys(relay.keys.clone()).await;
+    let other_client = BuzzClient::new(other_url, relay.keys.clone(), None, None).unwrap();
+    *relay.ack.lock().unwrap() = "malformed";
+    *other_relay.ack.lock().unwrap() = "malformed";
+    let root = relay.parent.id.to_hex();
+    let other_parent = EventBuilder::new(Kind::Custom(9), "another request")
+        .tag(Tag::parse(["h", &relay.channel]).unwrap())
+        .sign_with_keys(&relay.keys)
+        .unwrap();
+    let other_root = other_parent.id.to_hex();
+    relay.events.lock().unwrap().push(other_parent);
+    let other_channel = "223e4567-e89b-12d3-a456-426614174000";
+    let cases = [
+        (
+            &client,
+            relay.channel.as_str(),
+            root.as_str(),
+            "conversation",
+        ),
+        (&client, relay.channel.as_str(), root.as_str(), "thread"),
+        (
+            &client,
+            relay.channel.as_str(),
+            other_root.as_str(),
+            "thread",
+        ),
+        (&client, other_channel, "", "conversation"),
+        (
+            &other_signer,
+            relay.channel.as_str(),
+            root.as_str(),
+            "conversation",
+        ),
+        (&other_client, relay.channel.as_str(), "", "conversation"),
+    ];
+    let mut keys = Vec::new();
+    for (owner, channel, parent, scope) in cases {
+        let key = uuid::Uuid::new_v4().to_string();
+        let mut args = vec![
+            "buzz",
+            "messages",
+            "deliver",
+            "--channel",
+            channel,
+            "--delivery-key",
+            &key,
+            "--journal-dir",
+            dir.path().to_str().unwrap(),
+            "--runtime-purpose",
+            "answer",
+            "--runtime-scope",
+            scope,
+            "--content",
+            "saved final",
+        ];
+        if !parent.is_empty() {
+            args.extend(["--reply-to", parent]);
+        }
+        assert!(runtime_dispatch(owner, &args).await.is_err());
+        keys.push(key);
+    }
+    let before = relay.bodies.lock().unwrap().len();
+    // Local durable revocation remains authorized after channel access is lost.
+    *relay.member.lock().unwrap() = false;
+    let revoke = [
+        "buzz",
+        "messages",
+        "delivery-revoke-scope",
+        "--channel",
+        &relay.channel,
+        "--journal-dir",
+        dir.path().to_str().unwrap(),
+    ];
+    runtime_dispatch(&client, &revoke).await.unwrap();
+    let read_records = || {
+        let journal: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.path().join("journal.json")).unwrap())
+                .unwrap();
+        keys.iter()
+            .map(|key| {
+                journal["entries"]
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .find(|r| r["key"] == *key)
+                    .unwrap()
+                    .clone()
+            })
+            .collect::<Vec<_>>()
+    };
+    let records = read_records();
+    for (index, record) in records.iter().enumerate() {
+        assert_eq!(
+            record["runtime"]["revoked"],
+            index == 0,
+            "conversation cancel crossed scope or namespace: {index}"
+        );
+        assert_eq!(record["attempts"], 1);
+    }
+    let mut thread_revoke = revoke.to_vec();
+    thread_revoke.extend(["--thread-root", &root]);
+    runtime_dispatch(&client, &thread_revoke).await.unwrap();
+    let records = read_records();
+    for (index, record) in records.iter().enumerate() {
+        assert_eq!(
+            record["runtime"]["revoked"],
+            index < 2,
+            "thread cancel crossed scope or namespace: {index}"
+        );
+        assert_eq!(record["attempts"], 1);
+    }
+    assert_eq!(
+        relay.bodies.lock().unwrap().len(),
+        before,
+        "revocation must never submit events"
+    );
+    *relay.member.lock().unwrap() = true;
+    assert!(runtime_dispatch(
+        &client,
+        &[
+            "buzz",
+            "messages",
+            "delivery-retry",
+            "--delivery-key",
+            &keys[1],
+            "--journal-dir",
+            dir.path().to_str().unwrap()
+        ]
+    )
+    .await
+    .is_err());
+    assert_eq!(relay.bodies.lock().unwrap().len(), before);
 }

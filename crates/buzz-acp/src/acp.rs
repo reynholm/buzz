@@ -191,6 +191,9 @@ mod kimi_diagnostics_tests;
 #[cfg(all(test, unix))]
 #[path = "acp/kimi_recovery_tests.rs"]
 mod kimi_recovery_tests;
+#[cfg(all(test, unix))]
+#[path = "acp/runtime_final_tests.rs"]
+mod runtime_final_tests;
 
 #[cfg(all(test, unix))]
 #[path = "acp/kimi_permission_tests.rs"]
@@ -220,6 +223,9 @@ fn build_initialize_params() -> serde_json::Value {
 /// One `AcpClient` per agent process. Multiple sessions can be created on the
 /// same client via repeated calls to [`session_new`](AcpClient::session_new).
 pub struct AcpClient {
+    runtime_final: Option<crate::final_reply::FinalReply>,
+    runtime_peer_verified: bool,
+    runtime_build_file: Option<std::path::PathBuf>,
     /// Configured or initialized adapter identity; never inferred from an error.
     kimi: bool,
     kimi_permissions: kimi_permission::PermissionState,
@@ -754,6 +760,9 @@ impl AcpClient {
             .ok_or_else(|| AcpError::Protocol("failed to open agent stdout".into()))?;
 
         Ok(Self {
+            runtime_final: None,
+            runtime_peer_verified: false,
+            runtime_build_file: None,
             kimi: crate::config::normalize_agent_command_identity(command) == "kimi",
             kimi_permissions: Default::default(),
             termination: terminate::TerminationState::default(),
@@ -996,6 +1005,25 @@ impl AcpClient {
     /// [`steering_supported`](Self::steering_supported) so the read loop's steer
     /// arm can choose [`ACP_STEER_METHOD`] for adapters that implement it.
     /// Parsed here rather than at each call site so no caller can forget it.
+    pub(crate) fn set_runtime_build_file(&mut self, path: Option<std::path::PathBuf>) {
+        self.runtime_build_file = path;
+    }
+
+    pub(crate) fn configure_runtime_final(&mut self, enabled: bool) -> Result<(), &'static str> {
+        if enabled && (!self.runtime_peer_verified || self.kimi) {
+            return Err("unverified_runtime_adapter");
+        }
+        self.runtime_final = enabled.then(crate::final_reply::FinalReply::default);
+        Ok(())
+    }
+
+    pub(crate) fn take_runtime_final(&mut self, success: bool) -> Result<String, &'static str> {
+        self.runtime_final
+            .as_mut()
+            .ok_or("runtime_capture_disabled")?
+            .take(success)
+    }
+
     pub async fn initialize(&mut self) -> Result<serde_json::Value, AcpError> {
         // Requesting version 2 is an intentional temporary pin — we are squatting
         // on ACP v2 ahead of the upstream ACP RFD. Revisit when that RFD merges.
@@ -1005,6 +1033,14 @@ impl AcpClient {
             .pointer("/agentInfo/name")
             .and_then(serde_json::Value::as_str)
             == Some("Kimi Code CLI");
+        self.runtime_peer_verified = result
+            .pointer("/agentInfo/name")
+            .and_then(serde_json::Value::as_str)
+            == Some("qwen-code")
+            && result
+                .pointer("/agentInfo/version")
+                .and_then(serde_json::Value::as_str)
+                == Some("0.26.7");
         self.steering_supported = result
             .pointer("/_meta/steering/supported")
             .and_then(|v| v.as_bool())
@@ -1329,6 +1365,26 @@ impl AcpClient {
         idle_timeout: std::time::Duration,
         max_duration: std::time::Duration,
     ) -> Result<StopReason, AcpError> {
+        if let Some(capture) = &mut self.runtime_final {
+            capture.begin(session_id);
+            let path = self.runtime_build_file.clone();
+            let verified = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                tokio::task::spawn_blocking(move || {
+                    crate::config::verify_build_file(path.as_deref())
+                }),
+            )
+            .await;
+            match verified {
+                Ok(Ok(Ok(()))) => {}
+                Ok(Ok(Err(reason))) => return Err(AcpError::Protocol(reason.into())),
+                _ => {
+                    return Err(AcpError::Protocol(
+                        "runtime_build_provenance_unavailable".into(),
+                    ))
+                }
+            }
+        }
         self.begin_claude_context_turn(session_id);
         self.capture_kimi_retirement_evidence().await;
         let params = build_prompt_params(session_id, prompt_blocks);
@@ -2444,6 +2500,9 @@ impl AcpClient {
     /// leave it `None` and are steered via `_session/steering` instead, which
     /// needs no run id.
     fn handle_session_update(&mut self, msg: &serde_json::Value) -> bool {
+        if let Some(capture) = &mut self.runtime_final {
+            capture.observe(msg);
+        }
         self.capture_status_update(msg);
         let update = &msg["params"]["update"];
         let update_type = update

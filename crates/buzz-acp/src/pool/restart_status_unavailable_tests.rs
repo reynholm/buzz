@@ -74,7 +74,7 @@ fn queue_human(
     (queue, event)
 }
 
-fn cancel_unconfirmed(
+async fn cancel_unconfirmed(
     ctx: &PromptContext,
     pool: &mut AgentPool,
     queue: &mut crate::EventQueue,
@@ -89,8 +89,10 @@ fn cancel_unconfirmed(
                 queue,
                 &ctx.session_controls,
                 scope,
-                Some(&observer)
-            ),
+                Some(&observer),
+                None
+            )
+            .await,
             crate::session_controls::status::StatusCancellation::Unconfirmed
         );
     } else {
@@ -169,7 +171,7 @@ async fn unavailable_pending_record_cancel_retires_local_fence_before_a_worker_i
                 crate::status_tasks::dispatch(&mut pool, &ctx, &tx, &mut HashMap::new());
                 assert!(pool.join_set.is_empty());
                 let unavailable = UnavailableRecord::hide(&fixture, &scope, fault);
-                cancel_unconfirmed(&ctx, &mut pool, &mut queue, &scope, source);
+                cancel_unconfirmed(&ctx, &mut pool, &mut queue, &scope, source).await;
                 assert!(!captured.current());
                 assert!(ctx.session_controls.pending_statuses().is_empty());
                 unavailable.restore();
@@ -228,7 +230,7 @@ async fn unavailable_cancel_during_retirement_cannot_recreate_the_followup_after
                 } else {
                     Some(UnavailableRecord::hide(&fixture, &scope, fault))
                 };
-                cancel_unconfirmed(&ctx, &mut pool, &mut queue, &scope, source);
+                cancel_unconfirmed(&ctx, &mut pool, &mut queue, &scope, source).await;
                 assert!(!captured.current());
                 if let Some(unavailable) = unavailable {
                     unavailable.restore();
@@ -297,7 +299,7 @@ async fn unavailable_record_cancel_fences_already_scheduled_workerless_expiry_fe
                 assert_eq!(pool.join_set.len(), 1);
                 let unavailable = UnavailableRecord::hide(&fixture, &scope, fault);
                 // No await since spawn: the feedback future is still held.
-                cancel_unconfirmed(&ctx, &mut pool, &mut queue, &scope, source);
+                cancel_unconfirmed(&ctx, &mut pool, &mut queue, &scope, source).await;
                 assert!(!captured.current());
                 unavailable.restore();
                 tokio::time::resume();

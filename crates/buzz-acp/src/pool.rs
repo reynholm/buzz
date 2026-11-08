@@ -135,6 +135,7 @@ pub struct ChannelDeliveryState {
 /// spawning a real agent subprocess.
 #[derive(Default)]
 pub struct SessionState {
+    reply_contracts: HashMap<SessionScope, Option<crate::config::ReplyContract>>,
     /// Task-captured restart generation and token; independent of live lease.
     pub(crate) control_dispatch: Option<crate::session_controls::ControlDispatch>,
     /// session scope → session_id
@@ -196,6 +197,7 @@ impl SessionState {
     /// Invalidate a single session scope's session and turn counter.
     /// Returns `true` if the scope had an active session.
     pub fn invalidate_scope(&mut self, scope: &SessionScope) -> bool {
+        self.reply_contracts.remove(scope);
         self.discard_durable(scope);
         self.background_rotation_pending.remove(scope);
         self.turn_counts.remove(scope);
@@ -219,6 +221,7 @@ impl SessionState {
             .chain(self.deliveries.keys())
             .chain(self.scope_owner_generations.keys())
             .chain(self.status.keys())
+            .chain(self.reply_contracts.keys())
             .filter(|s| s.channel_id() == *channel_id)
             .cloned()
             .collect::<HashSet<_>>()
@@ -241,6 +244,7 @@ impl SessionState {
     pub fn invalidate_all(&mut self) {
         self.depart_durable_all(crate::session_store::Departure::WorkerCrash);
         self.sessions.clear();
+        self.reply_contracts.clear();
         self.background_rotation_pending.clear();
         self.turn_counts.clear();
         self.heartbeat_session = None;
@@ -1006,7 +1010,10 @@ impl ChannelInfoResolver {
     }
 }
 
+#[derive(Clone)]
 pub struct PromptContext {
+    pub reply_contract: Option<crate::config::ReplyContract>,
+    pub reply_build_file: Option<std::path::PathBuf>,
     pub mcp_servers: Vec<McpServer>,
     pub initial_message: Option<String>,
     pub idle_timeout: Duration,
@@ -1798,6 +1805,11 @@ async fn create_or_resume_session_and_apply_model(
         channel.canvas,
     );
 
+    let combined_system_prompt = match (&ctx.reply_contract, combined_system_prompt) {
+        (Some(contract), Some(prompt)) => Some(format!("{prompt}\n\n{}", contract.instruction())),
+        (Some(contract), None) => Some(contract.instruction().into()),
+        (None, prompt) => prompt,
+    };
     let session_title = ctx.session_title.as_deref().map(|agent_name| {
         compose_scoped_session_title(
             agent_name,
@@ -2656,9 +2668,13 @@ pub async fn run_prompt_task(
     turn_id: String,
     prompt_routing: crate::queue::PromptRouting,
 ) {
-    agent
-        .acp
-        .configure_kimi_work(batch.as_ref().and_then(|batch| batch.work.as_ref()), None);
+    agent.acp.configure_kimi_work(
+        batch
+            .as_ref()
+            .and_then(|batch| batch.work.as_ref())
+            .filter(|work| !work.runtime_final),
+        None,
+    );
     let source = batch.as_ref().map_or(PromptSource::Heartbeat, |batch| {
         PromptSource::Channel(batch.scope.clone())
     });
@@ -2669,6 +2685,9 @@ pub async fn run_prompt_task(
             agent.index,
             agent.acp.process_instance,
         );
+        if work.runtime_final {
+            work.begin_runtime_execution();
+        }
         if !work.cancelled() {
             work.transition("running", "execution_started");
         }
@@ -2677,6 +2696,17 @@ pub async fn run_prompt_task(
         .as_ref()
         .and_then(|batch| batch.work.as_ref())
         .cloned();
+    // A route-less heartbeat has tool delivery authority only. Its session,
+    // standing instructions and capture must not inherit a channel's promise.
+    let ctx =
+        if ctx.reply_contract.is_some() && !work.as_ref().is_some_and(|work| work.runtime_final) {
+            let mut local = (*ctx).clone();
+            local.reply_contract = None;
+            local.reply_build_file = None;
+            Arc::new(local)
+        } else {
+            ctx
+        };
     // Borrow the worker into execution. Expiring startup or context fetches
     // must return the very same process for checked retirement, never drop its
     // ownership and admit another attempt while it might still be executing.
@@ -2684,12 +2714,17 @@ pub async fn run_prompt_task(
         &mut agent,
         batch,
         prompt_text,
-        ctx,
+        ctx.clone(),
         control_rx,
         turn_id.clone(),
         prompt_routing,
     );
-    let (returned, cancelled) = match work {
+    let (returned, cancelled) = match work.as_ref() {
+        Some(work) if work.runtime_final => tokio::select! {
+            biased;
+            _ = work.publication_revoked_signal() => (None, true),
+            returned = execution => (Some(returned), false),
+        },
         Some(work) => tokio::select! {
             biased;
             returned = tokio::time::timeout_at(work.deadline.into(), execution) => (returned.ok(), false),
@@ -2697,7 +2732,7 @@ pub async fn run_prompt_task(
         },
         None => (Some(execution.await), false),
     };
-    let (outcome, batch) = returned.unwrap_or_else(|| {
+    let (outcome, mut batch) = returned.unwrap_or_else(|| {
         let error = if cancelled {
             AcpError::WorkCancelledPoisoned
         } else {
@@ -2712,6 +2747,21 @@ pub async fn run_prompt_task(
             if cancelled { None } else { saved_batch },
         )
     });
+    if let Some(work) = work.as_ref().filter(|work| work.runtime_final) {
+        let final_text = agent
+            .acp
+            .take_runtime_final(matches!(outcome, PromptOutcome::Ok(StopReason::EndTurn)));
+        // Runtime publication finishes this turn's receipt, not execution or
+        // a separately owned existing background collection.
+        if work.runtime_control_continuation() && !work.publication_revoked() {
+            // This is an authorized execution continuation, not a terminal
+            // provider cancellation or a retry just to obtain a report.
+            work.transition("running", "control_continuation");
+        } else {
+            crate::runtime_delivery::complete(&ctx.rest_client, work, &outcome, final_text).await;
+            batch = None;
+        }
+    }
     send_prompt_result(&result_tx, &turn_id, agent, source, outcome, batch);
 }
 
@@ -2734,7 +2784,7 @@ async fn run_prompt_execution(
         if work.cancelled() {
             return (PromptOutcome::Cancelled, None);
         }
-        if work.remaining().is_zero() {
+        if !work.runtime_final && work.remaining().is_zero() {
             return (PromptOutcome::Error(AcpError::WorkDeadline), batch);
         }
     }
@@ -2841,7 +2891,9 @@ async fn run_prompt_execution(
                 );
                 agent.finish_background_collection();
                 work.finish();
-                work.transition("completed", "managed_report_confirmed");
+                if !work.runtime_final {
+                    work.transition("completed", "managed_report_confirmed");
+                }
                 return (PromptOutcome::Ok(StopReason::EndTurn), None);
             }
             Ok(None) => {}
@@ -2852,6 +2904,31 @@ async fn run_prompt_execution(
                 )
             }
         }
+    }
+
+    if ctx.reply_contract.is_some() {
+        agent
+            .acp
+            .set_runtime_build_file(ctx.reply_build_file.clone());
+        let path = ctx.reply_build_file.clone();
+        let provenance = tokio::time::timeout(
+            Duration::from_secs(2),
+            tokio::task::spawn_blocking(move || crate::config::verify_build_file(path.as_deref())),
+        )
+        .await;
+        let reason = match provenance {
+            Ok(Ok(Ok(()))) => agent.acp.configure_runtime_final(true).err(),
+            Ok(Ok(Err(reason))) => Some(reason),
+            _ => Some("runtime_build_provenance_unavailable"),
+        };
+        if let Some(reason) = reason {
+            return (
+                PromptOutcome::Error(AcpError::Protocol(reason.into())),
+                batch,
+            );
+        }
+    } else {
+        let _ = agent.acp.configure_runtime_final(false);
     }
 
     // Resolve project authority exactly once, before any ACP session creation or
@@ -2890,7 +2967,7 @@ async fn run_prompt_execution(
             let _ = work.is_dm.set(prompt_is_dm);
         }
         agent.acp.configure_kimi_work(
-            batch.work.as_ref(),
+            batch.work.as_ref().filter(|work| !work.runtime_final),
             Some(crate::acp::kimi_permission::PermissionNotice {
                 rest: ctx.rest_client.clone(),
                 channel: batch.channel_id,
@@ -2899,6 +2976,13 @@ async fn run_prompt_execution(
         );
     } else {
         agent.acp.configure_kimi_work(None, None);
+    }
+    if let Some(scope) = source.scope() {
+        if agent.state.sessions.contains_key(scope)
+            && agent.state.reply_contracts.get(scope).cloned().flatten() != ctx.reply_contract
+        {
+            agent.state.invalidate_scope(scope);
+        }
     }
     let initial_message_pending = ctx.initial_message.is_some()
         && matches!(&source, PromptSource::Channel(scope) if !agent.state.sessions.contains_key(scope));
@@ -3243,6 +3327,10 @@ async fn run_prompt_execution(
                 &standing,
                 initial_msg,
             );
+            let init_msg = match &ctx.reply_contract {
+                Some(contract) => format!("{init_msg}\n\n{}", contract.instruction()),
+                None => init_msg,
+            };
             let init_result = agent
                 .acp
                 .session_prompt_with_idle_timeout(
@@ -3386,7 +3474,7 @@ async fn run_prompt_execution(
     // failed or cancelled first turn must not make its retry assume that the
     // provider retained any of that thread's context.
     let mut pending_hydrated_thread_roots = HashSet::new();
-    let prompt_sections: Vec<String> = if let Some(text) = prompt_text {
+    let mut prompt_sections: Vec<String> = if let Some(text) = prompt_text {
         // Heartbeats create their session before this point, so a Goose method-not-found
         // probe has already selected the correct framing for this process.
         //
@@ -3627,6 +3715,12 @@ async fn run_prompt_execution(
         );
     };
 
+    if let Some(contract) = &ctx.reply_contract {
+        // Legacy sessions receive the current contract last, including an
+        // existing collection whose prompt has no incoming event sections.
+        prompt_sections.retain(|section| section != contract.instruction());
+        prompt_sections.push(contract.instruction().into());
+    }
     if agent
         .state
         .control_dispatch
@@ -3699,9 +3793,14 @@ async fn run_prompt_execution(
     let turn_budget = batch
         .as_ref()
         .and_then(|batch| batch.work.as_ref())
+        .filter(|work| !work.runtime_final)
         .map(|work| work.remaining().min(ctx.max_turn_duration))
         .unwrap_or(ctx.max_turn_duration);
-    if let Some(work) = batch.as_ref().and_then(|batch| batch.work.as_ref()) {
+    if let Some(work) = batch
+        .as_ref()
+        .and_then(|batch| batch.work.as_ref())
+        .filter(|work| !work.runtime_final)
+    {
         agent
             .acp
             .configure_kimi_progress(work.policy.approval_progress_timeout);
@@ -3892,6 +3991,13 @@ async fn run_prompt_execution(
     match prompt_result {
         Ok(stop_reason) => {
             log_stop_reason(&source, &stop_reason);
+            if stop_reason == StopReason::EndTurn {
+                if let Some(scope) = source.scope() {
+                    agent
+                        .state
+                        .acknowledge_reply_contract(scope, ctx.reply_contract.clone());
+                }
+            }
 
             if let PromptSource::Channel(scope) = &source {
                 let standing_sent = !agent.has_system_prompt_support();
@@ -5424,6 +5530,9 @@ fn requeue_cancelled_batch(
         ControlSignal::Cancel | ControlSignal::Rotate => return None,
     };
     requeue_batch_if_queue(ctx, batch).map(|mut b| {
+        if let Some(work) = b.work.as_ref().filter(|work| work.runtime_final) {
+            work.retain_control_continuation();
+        }
         b.cancel_reason = Some(reason);
         b
     })
@@ -10988,6 +11097,8 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
     ) -> PromptContext {
         use crate::relay::RestClient;
         PromptContext {
+            reply_contract: None,
+            reply_build_file: None,
             mcp_servers: vec![],
             initial_message: None,
             idle_timeout: Duration::from_secs(60),

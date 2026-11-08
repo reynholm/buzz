@@ -137,7 +137,7 @@ fn decode_receipt(
     }
     let journal: Journal =
         serde_json::from_slice(bytes).map_err(|_| "journal format is invalid")?;
-    if !matches!(journal.version, 1 | 2) || journal.entries.len() > 1024 {
+    if !matches!(journal.version, 1..=3) || journal.entries.len() > 1024 {
         return Err("journal version or entry bound is invalid");
     }
     let key = work.delivery_key.to_string();
@@ -197,7 +197,7 @@ fn decode_receipt(
 }
 
 /// Prefer the CLI shipped beside this harness, including candidate canaries.
-fn delivery_command() -> std::path::PathBuf {
+pub(crate) fn delivery_command() -> std::path::PathBuf {
     std::env::current_exe()
         .ok()
         .and_then(|path| {
@@ -224,6 +224,28 @@ pub(crate) async fn publish_terminal_using(
     work: &LogicalWork,
     content: &str,
 ) -> Result<String, &'static str> {
+    publish_using(program, rest, work, content, None)
+        .await
+        .map(|receipt| receipt.0)
+}
+
+pub(crate) async fn publish_runtime_using(
+    program: &Path,
+    rest: &RestClient,
+    work: &LogicalWork,
+    content: &str,
+    purpose: &str,
+) -> Result<(String, Option<String>), &'static str> {
+    publish_using(program, rest, work, content, Some(purpose)).await
+}
+
+async fn publish_using(
+    program: &Path,
+    rest: &RestClient,
+    work: &LogicalWork,
+    content: &str,
+    purpose: Option<&str>,
+) -> Result<(String, Option<String>), &'static str> {
     if work.publication_revoked() {
         return Err("work was cancelled");
     }
@@ -247,6 +269,20 @@ pub(crate) async fn publish_terminal_using(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
+    if let Some(purpose) = purpose {
+        command.args([
+            "--runtime-purpose",
+            purpose,
+            "--runtime-scope",
+            match work.scope {
+                crate::scope::SessionScope::Conversation { .. } => "conversation",
+                crate::scope::SessionScope::Thread { .. } => "thread",
+            },
+        ]);
+        for callback in &work.callback_pubkeys {
+            command.args(["--mention", callback]);
+        }
+    }
     if let Some(tag) = &rest.auth_tag_json {
         command.env("BUZZ_AUTH_TAG", tag);
     }
@@ -273,13 +309,13 @@ pub(crate) async fn publish_terminal_using(
         if output.len() > 65536 {
             return Err("managed CLI response exceeded its bound");
         }
-        if !child
-            .wait()
-            .await
-            .map_err(|_| "managed CLI wait failed")?
-            .success()
-        {
-            return Err("managed delivery remains unconfirmed");
+        let status = child.wait().await.map_err(|_| "managed CLI wait failed")?;
+        if !status.success() {
+            return Err(match status.code() {
+                Some(3) => "managed_delivery_access_denied",
+                Some(2) => "managed_delivery_pending",
+                _ => "managed_cli_unconfirmed",
+            });
         }
         let value: serde_json::Value =
             serde_json::from_slice(&output).map_err(|_| "managed CLI response is invalid")?;
@@ -290,6 +326,7 @@ pub(crate) async fn publish_terminal_using(
             .as_str()
             .filter(|id| id.len() == 64 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
             .map(str::to_owned)
+            .map(|event| (event, value["purpose"].as_str().map(str::to_owned)))
             .ok_or("managed CLI receipt is invalid")
     });
     let result = tokio::select! {
@@ -298,6 +335,17 @@ pub(crate) async fn publish_terminal_using(
     };
     if result.is_err() {
         let _ = tokio::time::timeout(Duration::from_secs(2), child.kill()).await;
+    }
+    if purpose.is_some() && work.publication_revoked() {
+        crate::runtime_delivery::journal_command(
+            program,
+            rest,
+            &work.journal_dir,
+            "delivery-revoke",
+            Some(work.delivery_key),
+        )
+        .await?;
+        return Err("publication was explicitly revoked");
     }
     result
 }

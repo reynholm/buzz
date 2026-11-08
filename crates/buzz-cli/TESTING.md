@@ -864,3 +864,43 @@ Use the complete `cargo test --locked -p buzz-cli` package to cover both route
 forms and the original pending/confirmed delivery regressions. The harness
 canary must use the candidate CLI beside the candidate harness so fallback
 notices and provider reports use the same delivery contract.
+
+### Runtime reply journal APIs
+
+`messages deliver --runtime-purpose answer|failure_notice` atomically records
+runtime purpose and the supported contract alongside the first signed event.
+Runtime preparation preserves literal content and uses only explicitly supplied
+callback recipients; it bypasses prose @Name and nostr URI extraction. The
+harness derives those callbacks from accepted request authors/original collection
+scope, within the existing 50-recipient and membership bounds. Ordinary tool
+message mention behavior remains unchanged.
+Runtime writes default to `.buzz-runtime-deliveries`; ordinary delivery keeps
+`.buzz-deliveries` and v2 records. The runtime pending/retry/revoke commands
+default to the runtime directory and share the existing lock, validator,
+namespace and publication code. Journal v3 preserves v1/v2 reads; old strict v2
+CLIs require a compatible CLI to inspect/recover v3 records; separate default
+directories preserve their existing v2 journal bytes. Explicit directory
+overrides must retain this separation during a mixed-version rollout. Do not downgrade or
+delete journals when rolling back runtime mode. See
+[the harness recovery procedure](../buzz-acp/RUNTIME_FINAL.md).
+
+```sh
+cargo test --locked -p buzz-cli --lib runtime_final -- --test-threads=1
+```
+
+These local signed-event tests cover lost/malformed ACK, exact saved bytes,
+confirmed suppression, original-route authorization, revocation, namespace and
+legacy filtering, unsupported metadata, and preservation of actual attempt
+counts. The harness testing guide additionally runs real CLI subprocesses and
+an actual harness startup with a failing fixture provider. They use mock relays
+and do not attest a deployed relay or native provider acceptance.
+
+The harness supplies `messages deliver --runtime-scope conversation|thread` with
+runtime purpose, persisting the original session policy separately from the
+signed reply route. `messages delivery-revoke-scope --channel <uuid>` revokes
+pending conversation records; adding `--thread-root <event-id>` selects that
+thread's records. Both use the original namespace, journal lock and atomic write,
+without membership or event submission. Existing v3 records without scope remain
+readable and use conservative channel/parent cancellation matching. The runtime
+CLI matrix covers matching reply parents across distinct scope policies, other
+threads/channels/signers/relays, lost membership and unchanged attempt counts.

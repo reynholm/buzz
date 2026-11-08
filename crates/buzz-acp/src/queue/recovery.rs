@@ -106,6 +106,8 @@ impl RecoveryPolicy {
 /// One logical request, including publication identity and explicit revocation.
 #[derive(Clone, Debug)]
 pub struct LogicalWork {
+    pub runtime_final: bool,
+    pub callback_pubkeys: Vec<String>,
     pub delivery_key: Uuid,
     pub scope: SessionScope,
     pub original_events: Arc<Vec<BatchEvent>>,
@@ -154,6 +156,9 @@ impl LogicalWork {
 
     /// The identical key, route and journal accompany every attempt.
     pub fn managed_instruction(&self) -> String {
+        if self.runtime_final {
+            return crate::config::ReplyContract::b24().instruction().into();
+        }
         let quote = |value: &str| format!("'{}'", value.replace('\'', "'\\''"));
         let tags = self.reply_tags();
         let parent = tags
@@ -172,6 +177,22 @@ impl LogicalWork {
         );
         format!("<managed-work>\nLogical work: {}. Attempt: {}. Final report command (pipe the final text through stdin):\n{}\nPreserve this exact key, route and journal on every retry and background collection. Use messages send only for separate progress, and messages edit for corrections. Publish the final report after all background work and result collection finish. If the report was already confirmed, the same command returns it; do not send a second completion or failure report. This protects report publication only. Before repeating any external action whose result is uncertain, verify its actual outcome. If it cannot be established safely, ask the human and stop; do not repeat the action or claim recovery succeeded.\n</managed-work>",self.delivery_key,self.attempt,command)
     }
+}
+
+/// Only accepted event authors confer automatic callback authority. Most recent
+/// authors win the existing SDK recipient cap; model prose grants no recipients.
+pub(crate) fn callback_pubkeys(events: &[BatchEvent]) -> Vec<String> {
+    let mut callbacks = Vec::new();
+    for event in events.iter().rev() {
+        let author = event.event.pubkey.to_hex();
+        if !callbacks.contains(&author) {
+            callbacks.push(author);
+        }
+        if callbacks.len() == buzz_sdk::mentions::MENTION_CAP {
+            break;
+        }
+    }
+    callbacks
 }
 
 /// A fresh OS-random UUID provides 48 unfixed random bits, independent of clocks
@@ -196,6 +217,7 @@ impl EventQueue {
                     .filter(|(scope, _)| !self.in_flight_scopes.contains(*scope))
                     .filter_map(|(_, continuation)| continuation.work.as_ref()),
             )
+            .filter(|work| !work.runtime_final)
             .map(|work| {
                 if work.retirement_unverified() {
                     Instant::now()
@@ -206,6 +228,20 @@ impl EventQueue {
             .min()
     }
 
+    /// Original runtime journal directory, also used by durable scope controls.
+    pub(crate) fn runtime_delivery_directory(&self) -> Option<PathBuf> {
+        self.runtime_delivery.as_ref().map(|(dir, _)| dir.clone())
+    }
+
+    /// Allocate publication identity independently of Kimi execution recovery.
+    pub fn with_runtime_delivery(mut self, cwd: &str, max_turn_secs: u64) -> Self {
+        self.runtime_delivery = Some((
+            PathBuf::from(cwd).join(".buzz-runtime-deliveries"),
+            Duration::from_secs(max_turn_secs),
+        ));
+        self
+    }
+
     /// Opt into stable Kimi work. Callers validate configured policy at startup.
     pub fn with_kimi_recovery(mut self, policy: RecoveryPolicy, cwd: &str) -> Self {
         self.recovery_policy = Some((policy, PathBuf::from(cwd).join(".buzz-deliveries")));
@@ -214,9 +250,33 @@ impl EventQueue {
 
     pub(super) fn attach_logical_work(&mut self, mut batch: FlushBatch) -> FlushBatch {
         if batch.work.is_none() {
-            if let Some((policy, journal_dir)) = &self.recovery_policy {
+            let runtime_policy = self.runtime_delivery.as_ref().map(|(dir, budget)| {
+                (
+                    RecoveryPolicy {
+                        max_retries: 0,
+                        total_budget: *budget,
+                        ..RecoveryPolicy::default()
+                    },
+                    dir.clone(),
+                )
+            });
+            let admission = runtime_policy
+                .as_ref()
+                .map(|(policy, dir)| (policy, dir))
+                .or_else(|| {
+                    self.recovery_policy
+                        .as_ref()
+                        .map(|(policy, dir)| (policy, dir))
+                });
+            if let Some((policy, journal_dir)) = admission {
                 let now = Instant::now();
                 let work = LogicalWork {
+                    runtime_final: self.runtime_delivery.is_some(),
+                    callback_pubkeys: batch
+                        .continuation
+                        .as_ref()
+                        .map(|c| c.callback_pubkeys.clone())
+                        .unwrap_or_else(|| callback_pubkeys(&batch.events)),
                     delivery_key: batch
                         .continuation
                         .as_ref()
@@ -271,7 +331,7 @@ impl EventQueue {
             .filter(|(scope, batch)| {
                 !self.in_flight_scopes.contains(*scope)
                     && batch.work.as_ref().is_some_and(|work| {
-                        work.remaining().is_zero()
+                        (!work.runtime_final && work.remaining().is_zero())
                             || work.retirement_unverified()
                             || (!work.awaiting_retirement()
                                 && work.next_attempt.is_none_or(|next| next <= now)
@@ -302,6 +362,9 @@ impl EventQueue {
         let work = batch.work.as_mut()?;
         if work.cancelled() {
             return None;
+        }
+        if work.runtime_final {
+            return Some(batch);
         }
         work.attempt = work.attempt.saturating_add(1);
         let now = Instant::now();

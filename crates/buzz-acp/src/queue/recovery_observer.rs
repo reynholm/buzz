@@ -62,7 +62,7 @@ impl LogicalWork {
                 "scope":self.scope.telemetry_label(),
                 "threadRootEventId":self.reply_tags().root_event_id,
                 "processGeneration":observer.process,
-                "remainingSecs":self.remaining().as_secs_f64(),
+                "remainingSecs":(!self.runtime_final).then(|| self.remaining().as_secs_f64()),
                 "nextAttemptInSecs":self.next_attempt.map(|next| next.saturating_duration_since(Instant::now()).as_secs_f64()),
             }));
     }

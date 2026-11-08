@@ -247,6 +247,7 @@ async fn compact_protects_background_collection_and_pending_blocks_idle() {
         .state
         .scope_owner_generations[&scope()];
     let continuation = crate::queue::RuntimeContinuation {
+        callback_pubkeys: Vec::new(),
         work: None,
         crash_recovery: false,
         background_ready: true,

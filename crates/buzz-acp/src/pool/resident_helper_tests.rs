@@ -220,6 +220,7 @@ async fn child_of_codex_host_queues_original_collection_before_releasing_slot() 
         blocking_pids: HashSet::new(),
         collection_pending: false,
         continuation: Some(crate::queue::RuntimeContinuation {
+            callback_pubkeys: Vec::new(),
             work: None,
             crash_recovery: false,
             background_ready: true,

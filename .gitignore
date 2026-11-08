@@ -81,3 +81,6 @@ deploy/charts/*/charts/*.tgz
 
 # Detached tag worktrees of the Linux release producer (scripts/fork/build-linux.sh)
 /.fork-linux-src/
+
+# Private runtime-final signed delivery cache (kept separate from legacy v2 journals).
+.buzz-runtime-deliveries/

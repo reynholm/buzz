@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 pub(super) struct WorkRuntime {
     pub(super) cancelled: tokio::sync::Notify,
     pub(super) finished: std::sync::atomic::AtomicBool,
+    control_continuation: std::sync::atomic::AtomicBool,
     pub(super) human_required: std::sync::Mutex<Option<&'static str>>,
     pub(super) observer: std::sync::Mutex<Option<super::recovery_observer::WorkObserver>>,
     pub(super) last_state: std::sync::Mutex<Option<(&'static str, &'static str, u32)>>,
@@ -22,6 +23,20 @@ struct Effects {
 }
 
 impl LogicalWork {
+    pub(crate) fn begin_runtime_execution(&self) {
+        self.runtime
+            .control_continuation
+            .store(false, Ordering::Release);
+    }
+    pub(crate) fn retain_control_continuation(&self) {
+        self.runtime
+            .control_continuation
+            .store(true, Ordering::Release);
+    }
+    pub(crate) fn runtime_control_continuation(&self) -> bool {
+        self.runtime_final && self.runtime.control_continuation.load(Ordering::Acquire)
+    }
+
     pub(crate) fn publication_revoked(&self) -> bool {
         self.revoked.load(Ordering::Acquire)
     }

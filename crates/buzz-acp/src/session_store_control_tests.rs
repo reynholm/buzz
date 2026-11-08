@@ -107,6 +107,7 @@ fn record(store: &SessionStore, scope: &SessionScope) -> SessionRecord {
 }
 fn live(store: &SessionStore) -> LiveSession {
     LiveSession {
+        reply_contract: None,
         lease: Uuid::nil(),
         adapter: "fake".into(),
         session_id: "existing".into(),

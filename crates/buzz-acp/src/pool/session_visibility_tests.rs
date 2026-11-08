@@ -220,6 +220,7 @@ impl Harness {
     /// A resumable record for `scope`, as left by a worker that went to sleep.
     fn departed_record(&self, scope: &SessionScope, ctx: &PromptContext) {
         let live = LiveSession {
+            reply_contract: None,
             lease: Uuid::nil(),
             adapter: "fake-acp".into(),
             session_id: "old-1".into(),

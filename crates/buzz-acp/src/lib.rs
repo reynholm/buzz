@@ -9,6 +9,7 @@ mod config;
 mod edit_routing;
 mod engram_fetch;
 mod filter;
+mod final_reply;
 mod isolated_execution;
 mod managed_work;
 #[cfg(unix)]
@@ -26,6 +27,7 @@ mod recovery_wake;
 mod relay;
 mod run_task;
 mod runtime;
+mod runtime_delivery;
 use runtime::{AgentRuntime, PoolStartup, SessionMode};
 mod control_tasks;
 mod scope;
@@ -3017,6 +3019,21 @@ async fn run_harness(
         );
     }
 
+    if config.reply_contract.is_some() {
+        let rest = relay::RestClient {
+            http: reqwest::Client::new(),
+            base_url: relay::relay_ws_to_http(&config.relay_url),
+            keys: config.keys.clone(),
+            auth_tag_json: std::env::var("BUZZ_AUTH_TAG")
+                .ok()
+                .filter(|v| !v.is_empty()),
+        };
+        let journal_dir =
+            std::path::PathBuf::from(current_working_directory()?).join(".buzz-runtime-deliveries");
+        if let Err(reason) = runtime_delivery::replay_pending(&rest, &journal_dir).await {
+            tracing::warn!(reason, "runtime delivery replay remains unconfirmed");
+        }
+    }
     let session_store = pool::open_session_store(
         config.session_store_dir.clone(),
         config.session_resume,
@@ -3200,6 +3217,11 @@ async fn run_harness(
     if config::normalize_agent_command_identity(&config.agent_command) == "kimi" {
         queue =
             queue.with_kimi_recovery(config.kimi_recovery.clone(), &current_working_directory()?);
+    }
+
+    if config.reply_contract.is_some() {
+        queue = queue
+            .with_runtime_delivery(&current_working_directory()?, config.max_turn_duration_secs);
     }
 
     // Online means the harness can receive work, not merely that its socket is
@@ -3902,8 +3924,7 @@ async fn run_harness(
                                         &buzz_event.event,
                                     );
                                     handle_owner_cancel_for_scope(
-                                        &mut pool, &mut queue, &ctx.session_controls, &scope, observer.as_ref(),
-                                    );
+                                        &mut pool, &mut queue, &ctx.session_controls, &scope, observer.as_ref(), Some(&ctx.rest_client)).await;
                                     continue; // consume event — do NOT push to queue
                                 }
                                 // Not from owner — fall through to normal prompt handling.
@@ -4897,14 +4918,15 @@ fn signal_in_flight_task(
 
 // An uncertain cancellation cannot establish durable publication ownership.
 // Keep its observer outcome and prior attempt record; this seam has no sender.
-fn handle_owner_cancel_for_scope(
+async fn handle_owner_cancel_for_scope(
     pool: &mut AgentPool,
     queue: &mut EventQueue,
     controls: &session_controls::SessionControlRuntime,
     scope: &scope::SessionScope,
     observer: Option<&observer::ObserverHandle>,
+    rest_client: Option<&relay::RestClient>,
 ) -> session_controls::status::StatusCancellation {
-    let cancellation = controls.cancel_status_outcome(scope);
+    let mut cancellation = controls.cancel_status_outcome(scope);
     let status_pending = cancellation != session_controls::status::StatusCancellation::None;
     if cancellation == session_controls::status::StatusCancellation::Unconfirmed {
         if let Some(observer) = observer {
@@ -4922,7 +4944,30 @@ fn handle_owner_cancel_for_scope(
     let logical_pending = queue.cancel_logical_work(scope);
     let background_pending = cancel_background_collection_for_scope(pool, queue, scope);
     let fired = signal_in_flight_task_for_scope(pool, scope, ControlSignal::Cancel);
-    if !fired && !background_pending && !status_pending && !logical_pending {
+    let mut publication_pending = false;
+    if let (Some(rest), Some(dir)) = (rest_client, queue.runtime_delivery_directory()) {
+        match runtime_delivery::revoke_scope(rest, &dir, scope).await {
+            Ok(revoked) => {
+                publication_pending = revoked;
+                if revoked && cancellation == session_controls::status::StatusCancellation::None {
+                    cancellation = session_controls::status::StatusCancellation::Cancelled;
+                }
+            }
+            Err(reason) => {
+                cancellation = session_controls::status::StatusCancellation::Unconfirmed;
+                publication_pending = true;
+                tracing::warn!(
+                    reason,
+                    "runtime pending publication cancellation remains unconfirmed"
+                );
+                if let Some(observer) = observer {
+                    observer.emit("control_result",None,&observer::context_for(Some(scope.channel_id()),None,None),serde_json::json!({"type":"cancel_turn","status":"unconfirmed","requestId":null}));
+                }
+            }
+        }
+    }
+    if !fired && !background_pending && !status_pending && !logical_pending && !publication_pending
+    {
         tracing::warn!(channel_id = %scope.channel_id(), scope = %scope.telemetry_label(),
             "!cancel received but no in-flight task — no-op");
     }
@@ -5479,7 +5524,7 @@ fn dispatch_pending(
                 queue.mark_complete(&scope);
                 continue;
             }
-            if work.remaining().is_zero() || work.retirement_unverified() {
+            if (!work.runtime_final && work.remaining().is_zero()) || work.retirement_unverified() {
                 let reason = if work.retirement_unverified() {
                     work.human_required("retirement_unverified");
                     "Kimi's old execution could not be confirmed stopped. Inspect the process and external action before continuing; replacement was blocked."
@@ -5809,6 +5854,16 @@ fn spawn_failure_notice(
         let work = work.clone();
         let rest = rest.clone();
         tokio::spawn(async move {
+            if work.runtime_final {
+                runtime_delivery::complete(
+                    &rest,
+                    &work,
+                    &PromptOutcome::Error(acp::AcpError::DeliveryJournalUnavailable),
+                    Err("execution_failed"),
+                )
+                .await;
+                return;
+            }
             if let Ok(Some(_)) = managed_work::confirmed_report(&rest, &work).await {
                 work.transition("completed", "managed_report_already_confirmed");
                 return;
@@ -6063,7 +6118,11 @@ fn handle_prompt_result(
             } else if matches!(
                 result.outcome,
                 PromptOutcome::Cancelled | PromptOutcome::CancelDrainTimeout(_)
-            ) {
+            ) || batch
+                .work
+                .as_ref()
+                .is_some_and(|work| work.runtime_control_continuation())
+            {
                 // Cancel re-prompt: store as cancelled events so flush_next()
                 // merges them into the next FlushBatch.cancelled_events,
                 // enabling the annotated merged-prompt format. The batch's
@@ -11046,6 +11105,8 @@ mod build_mcp_servers_tests {
 
     pub(super) fn test_config() -> Config {
         Config {
+            reply_contract: None,
+            reply_build_file: None,
             kimi_recovery: crate::queue::RecoveryPolicy::default(),
             keys: nostr::Keys::generate(),
             relay_url: "ws://localhost:3000".into(),
@@ -12189,6 +12250,8 @@ mod error_outcome_emission_tests {
 
     pub(super) fn test_config() -> Config {
         Config {
+            reply_contract: None,
+            reply_build_file: None,
             kimi_recovery: crate::queue::RecoveryPolicy::default(),
             keys: nostr::Keys::generate(),
             relay_url: "ws://localhost:3000".into(),

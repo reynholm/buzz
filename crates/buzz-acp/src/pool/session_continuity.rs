@@ -47,6 +47,7 @@ impl SessionStart {
 
 /// What the deciding worker knows about itself.
 pub(crate) struct ResumeContext {
+    pub reply_contract: Option<crate::config::ReplyContract>,
     pub adapter: String,
     pub cwd: String,
     pub model: Option<String>,
@@ -91,7 +92,11 @@ pub(crate) fn resume_decision(
     if live.session_id.is_empty() {
         return new(SessionReason::FirstInThread);
     }
-    if live.adapter != me.adapter || live.cwd != me.cwd || live.model != me.model {
+    if live.adapter != me.adapter
+        || live.cwd != me.cwd
+        || live.model != me.model
+        || live.reply_contract != me.reply_contract
+    {
         return new(SessionReason::ConfigChanged);
     }
     if !me.resume_supported {
@@ -238,6 +243,16 @@ impl SessionState {
         });
     }
 
+    /// Persist only after the prompt that carried the current contract succeeded.
+    pub(super) fn acknowledge_reply_contract(
+        &mut self,
+        scope: &SessionScope,
+        contract: Option<crate::config::ReplyContract>,
+    ) {
+        self.reply_contracts.insert(scope.clone(), contract.clone());
+        self.commit_owned(scope, |live| live.reply_contract = contract);
+    }
+
     /// Record the scope's turn counter after it was incremented.
     pub(crate) fn persist_turns(&mut self, scope: &SessionScope) {
         let turns = self.turn_counts.get(scope).copied().unwrap_or(0);
@@ -255,6 +270,8 @@ impl SessionState {
     }
 
     pub(super) fn restore_delivery(&mut self, scope: &SessionScope, live: LiveSession) {
+        self.reply_contracts
+            .insert(scope.clone(), live.reply_contract.clone());
         self.deliveries.insert(
             scope.clone(),
             ChannelDeliveryState {
@@ -344,6 +361,7 @@ pub(super) async fn acquire_session(
         ensure_dispatch_current(agent)?;
         let outcome = store.load(scope);
         let me = ResumeContext {
+            reply_contract: ctx.reply_contract.clone(),
             adapter: agent.agent_name.clone(),
             cwd: ctx.cwd.clone(),
             model: agent.desired_model.clone(),
@@ -387,6 +405,7 @@ pub(super) async fn acquire_session(
                 ..live.clone()
             },
             ResumeDecision::New { .. } => LiveSession {
+                reply_contract: None,
                 lease: Uuid::nil(),
                 adapter: me.adapter.clone(),
                 session_id: String::new(),

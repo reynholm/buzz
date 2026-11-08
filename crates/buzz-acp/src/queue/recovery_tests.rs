@@ -197,3 +197,55 @@ fn kimi_explicit_controls_revoke_publication_after_prompt_completion() {
         assert!(!fresh.publication_revoked());
     }
 }
+
+#[test]
+fn runtime_final_publication_identity_has_no_kimi_retry_policy() {
+    let scope = SessionScope::Conversation {
+        channel_id: Uuid::new_v4(),
+    };
+    let mut queue = EventQueue::new(DedupMode::Queue).with_runtime_delivery("/tmp/runtime", 60);
+    queue.push(event(&scope, &"a".repeat(64), "original"));
+    let batch = queue.flush_next().unwrap();
+    let work = batch.work.as_ref().unwrap();
+    assert!(work.runtime_final);
+    assert!(
+        queue.recovery_policy.is_none(),
+        "runtime publication must not enable Kimi policy"
+    );
+    assert!(!work.managed_instruction().contains("messages deliver"));
+    assert!(
+        queue.requeue(batch).is_some(),
+        "provider failures must be terminal, never task retries"
+    );
+    assert!(queue.recovery_batches.is_empty());
+}
+
+#[test]
+fn runtime_final_callback_selection_is_bounded_and_ignores_prose_and_p_tags() {
+    let scope = SessionScope::Conversation {
+        channel_id: Uuid::new_v4(),
+    };
+    let foreign = Keys::generate().public_key().to_hex();
+    let mut events: Vec<_> = (0..51)
+        .map(|_| {
+            let mut queued = event(&scope, &"a".repeat(64), "@Foreign is prose");
+            queued.event = EventBuilder::new(Kind::Custom(9), "@Foreign is prose")
+                .tag(Tag::parse(["p", foreign.as_str()]).unwrap())
+                .sign_with_keys(&Keys::generate())
+                .unwrap();
+            queued.into_batch_event()
+        })
+        .collect();
+    let latest = events.last().unwrap().event.pubkey.to_hex();
+    let oldest = events[0].event.pubkey.to_hex();
+    events.push(events.last().unwrap().clone());
+    let callbacks = callback_pubkeys(&events);
+    assert_eq!(callbacks.len(), buzz_sdk::mentions::MENTION_CAP);
+    assert_eq!(callbacks[0], latest);
+    assert!(!callbacks.contains(&oldest));
+    assert!(!callbacks.contains(&foreign));
+    assert_eq!(
+        callbacks.iter().collect::<HashSet<_>>().len(),
+        callbacks.len()
+    );
+}

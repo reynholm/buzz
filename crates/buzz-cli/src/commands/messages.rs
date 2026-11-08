@@ -583,7 +583,7 @@ pub struct SendMessageParams {
 }
 
 pub async fn cmd_send_message(client: &BuzzClient, p: SendMessageParams) -> Result<(), CliError> {
-    let event = prepare_message(client, p, None).await?;
+    let event = prepare_message(client, p, None, false).await?;
     let emitted_mentions = event_mention_pubkeys(&event);
     let resp = client.submit_event(event).await?;
     let mut output: serde_json::Value = serde_json::from_str(&normalize_write_response(&resp))
@@ -602,6 +602,7 @@ pub(super) async fn prepare_message(
     client: &BuzzClient,
     mut p: SendMessageParams,
     delivery_key: Option<&str>,
+    literal_recipients: bool,
 ) -> Result<nostr::Event, CliError> {
     // Allow '-' to read content from stdin. This keeps callers from having to
     // jam shell-metacharacter-heavy text (backticks, $vars, etc.) through argv
@@ -618,16 +619,39 @@ pub(super) async fn prepare_message(
     let channel_uuid = parse_uuid(&p.channel_id)?;
 
     let explicit_mentions = normalize_explicit_mentions(&p.mentions)?;
-    let stripped = strip_code_regions(&p.content);
-    let uri_pubkeys = extract_nostr_uris(&stripped);
-    // Supplying any identity explicitly authorizes unresolved or ambiguous @Name text
-    // as presentation-only, matching Desktop's separate visible-label and p-tag model.
-    // Uniquely resolvable member names still add their own p-tags; callers must supply
-    // every intended identity whose visible label cannot be resolved uniquely.
-    let has_explicit_mentions = !explicit_mentions.is_empty() || !uri_pubkeys.is_empty();
-    let (member_pubkeys, auto_resolved) =
-        resolve_content_mentions(client, &p.channel_id, &p.content, has_explicit_mentions).await?;
-    let mention_pubkeys = merge_message_mentions(&explicit_mentions, &uri_pubkeys, &auto_resolved)?;
+    let (member_pubkeys, mention_pubkeys) = if literal_recipients {
+        // Runtime prose is content, not authority to notify more people. Only
+        // structured callbacks supplied by the host enter recipient tags.
+        if explicit_mentions.len() > MENTION_CAP {
+            return Err(CliError::Usage(
+                "too many runtime callback recipients".into(),
+            ));
+        }
+        let members = if explicit_mentions.is_empty() {
+            Vec::new()
+        } else {
+            fetch_member_pubkeys(
+                client,
+                &serde_json::json!({"kinds":[39002],"#d":[p.channel_id],"limit":1}),
+            )
+            .await
+            .ok_or_else(|| {
+                CliError::Other("could not load channel membership for callback preflight".into())
+            })?
+        };
+        (members, explicit_mentions)
+    } else {
+        let stripped = strip_code_regions(&p.content);
+        let uri_pubkeys = extract_nostr_uris(&stripped);
+        // Explicit identities authorize unresolved labels as presentation-only;
+        // ordinary agent-tools delivery retains automatic member-name mentions.
+        let has_explicit_mentions = !explicit_mentions.is_empty() || !uri_pubkeys.is_empty();
+        let (members, auto_resolved) =
+            resolve_content_mentions(client, &p.channel_id, &p.content, has_explicit_mentions)
+                .await?;
+        let mentions = merge_message_mentions(&explicit_mentions, &uri_pubkeys, &auto_resolved)?;
+        (members, mentions)
+    };
 
     let missing = missing_members(&mention_pubkeys, &member_pubkeys);
     if !missing.is_empty() {
@@ -932,11 +956,59 @@ pub async fn dispatch(
 ) -> Result<(), CliError> {
     use crate::MessagesCmd;
     match cmd {
+        MessagesCmd::DeliveryRevokeScope {
+            channel,
+            thread_root,
+            journal_dir,
+        } => {
+            println!(
+                "{}",
+                super::delivery::runtime::revoke_scope(
+                    client,
+                    &channel,
+                    thread_root.as_deref(),
+                    journal_dir.as_deref()
+                )
+                .await?
+            );
+            Ok(())
+        }
+        MessagesCmd::DeliveryPending { journal_dir } => {
+            println!(
+                "{}",
+                super::delivery::runtime::pending(client, journal_dir.as_deref()).await?
+            );
+            Ok(())
+        }
+        MessagesCmd::DeliveryRetry {
+            delivery_key,
+            journal_dir,
+        } => {
+            println!(
+                "{}",
+                super::delivery::runtime::retry(client, &delivery_key, journal_dir.as_deref())
+                    .await?
+            );
+            Ok(())
+        }
+        MessagesCmd::DeliveryRevoke {
+            delivery_key,
+            journal_dir,
+        } => {
+            println!(
+                "{}",
+                super::delivery::runtime::revoke(client, &delivery_key, journal_dir.as_deref())
+                    .await?
+            );
+            Ok(())
+        }
         MessagesCmd::Deliver {
             channel,
             reply_to,
             content,
             delivery_key,
+            runtime_purpose,
+            runtime_scope,
             journal_dir,
             mentions,
         } => {
@@ -948,6 +1020,8 @@ pub async fn dispatch(
                 &delivery_key,
                 journal_dir.as_deref(),
                 mentions,
+                runtime_purpose.as_deref(),
+                runtime_scope.as_deref(),
             )
             .await?;
             println!("{output}");

@@ -459,8 +459,42 @@ buzz agents archived"
 
 #[derive(Subcommand)]
 pub enum MessagesCmd {
+    /// Durably revoke pending runtime publications in an original session scope.
+    DeliveryRevokeScope {
+        #[arg(long)]
+        channel: String,
+        #[arg(long)]
+        thread_root: Option<String>,
+        #[arg(long, env = "BUZZ_DELIVERY_JOURNAL_DIR")]
+        journal_dir: Option<std::path::PathBuf>,
+    },
+    /// List bounded pending runtime publications in this relay/signer namespace.
+    DeliveryPending {
+        #[arg(long, env = "BUZZ_DELIVERY_JOURNAL_DIR")]
+        journal_dir: Option<std::path::PathBuf>,
+    },
+    /// Retry a saved runtime publication; never takes replacement text or route.
+    DeliveryRetry {
+        #[arg(long)]
+        delivery_key: String,
+        #[arg(long, env = "BUZZ_DELIVERY_JOURNAL_DIR")]
+        journal_dir: Option<std::path::PathBuf>,
+    },
+    /// Durably revoke a runtime publication so restart recovery cannot send it.
+    DeliveryRevoke {
+        #[arg(long)]
+        delivery_key: String,
+        #[arg(long, env = "BUZZ_DELIVERY_JOURNAL_DIR")]
+        journal_dir: Option<std::path::PathBuf>,
+    },
     /// Durably publish one final report per delivery UUID; retries return the first report
     Deliver {
+        /// Runtime receipt purpose; selects the versioned runtime journal metadata.
+        #[arg(long, value_parser = ["answer", "failure_notice"])]
+        runtime_purpose: Option<String>,
+        /// Original session policy, supplied by runtime publication authority.
+        #[arg(long, value_parser = ["conversation", "thread"], requires = "runtime_purpose")]
+        runtime_scope: Option<String>,
         /// Stable background group UUID supplied by the harness
         #[arg(long)]
         delivery_key: String,
@@ -473,7 +507,7 @@ pub enum MessagesCmd {
         /// Final report text; '-' reads stdin on the first delivery
         #[arg(long)]
         content: String,
-        /// Persistent journal directory (default: .buzz-deliveries in the working directory)
+        /// Persistent journal directory (default: .buzz-deliveries; runtime purpose uses .buzz-runtime-deliveries)
         #[arg(long, env = "BUZZ_DELIVERY_JOURNAL_DIR")]
         journal_dir: Option<std::path::PathBuf>,
         /// Pubkey to notify (hex or npub; repeatable), with the same mention rules as send

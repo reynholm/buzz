@@ -27,7 +27,7 @@ use crate::scope::SessionScope;
 mod background;
 pub(crate) use background::RuntimeContinuation;
 mod recovery;
-pub(crate) use recovery::{LogicalWork, RecoveryPolicy};
+pub(crate) use recovery::{callback_pubkeys, LogicalWork, RecoveryPolicy};
 
 #[cfg(test)]
 #[path = "queue/recovery_tests.rs"]
@@ -340,6 +340,7 @@ pub struct FlushBatch {
 ///     else: push_front with original received_at, set exponential backoff retry_after with jitter
 /// ```
 pub struct EventQueue {
+    runtime_delivery: Option<(std::path::PathBuf, Duration)>,
     recovery_policy: Option<(RecoveryPolicy, std::path::PathBuf)>,
     recovery_batches: HashMap<SessionScope, FlushBatch>,
     in_flight_work: HashMap<SessionScope, LogicalWork>,
@@ -395,6 +396,7 @@ impl EventQueue {
     /// derive the deadline from the configured `max_turn_duration`.
     pub fn new(dedup_mode: DedupMode) -> Self {
         Self {
+            runtime_delivery: None,
             recovery_policy: None,
             recovery_batches: HashMap::new(),
             in_flight_work: HashMap::new(),
@@ -1062,7 +1064,7 @@ impl EventQueue {
         self.recovery_batches.iter().any(|(scope, batch)| {
             !self.in_flight_scopes.contains(scope)
                 && batch.work.as_ref().is_some_and(|work| {
-                    work.remaining().is_zero()
+                    (!work.runtime_final && work.remaining().is_zero())
                         || work.retirement_unverified()
                         || (!work.awaiting_retirement()
                             && work.next_attempt.is_none_or(|next| next <= now)

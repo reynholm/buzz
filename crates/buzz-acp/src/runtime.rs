@@ -100,6 +100,8 @@ fn make_prompt_context(
     let base_prompt_content = config.base_prompt_content.as_ref();
     let cwd = current_working_directory()?;
     Ok(PromptContext {
+        reply_contract: config.reply_contract.clone(),
+        reply_build_file: config.reply_build_file.clone(),
         mcp_servers: build_mcp_servers(config),
         initial_message: config.initial_message.clone(),
         idle_timeout: Duration::from_secs(config.idle_timeout_secs),
