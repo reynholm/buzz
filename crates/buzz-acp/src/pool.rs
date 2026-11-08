@@ -2748,6 +2748,17 @@ pub async fn run_prompt_task(
         },
         None => (Some(execution.await), false),
     };
+    // Runtime publication revocation can drop execution before its control
+    // branch runs. Persist provider cancellation while its lease is still ours.
+    if returned.is_none() && cancelled {
+        if let Err(error) = agent.acp.cancel_provider_background("user_cancel").await {
+            tracing::warn!(%error, "outer work cancellation remains unconfirmed at the provider");
+            if let Some(record) = agent.acp.provider_background_record() {
+                post_failure_notice(&ctx.rest_client, record.scope.channel_id(), &record.thread_tags,
+                    "Automatic continuation is cancelled. The provider has not confirmed durable cancellation; human attention is required.").await;
+            }
+        }
+    }
     let (mut outcome, mut batch) = returned.unwrap_or_else(|| {
         let error = if cancelled {
             AcpError::WorkCancelledPoisoned

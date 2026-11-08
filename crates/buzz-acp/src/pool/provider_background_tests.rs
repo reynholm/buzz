@@ -550,3 +550,39 @@ async fn provider_background_status_reads_state_without_cancelling_or_creating_a
         agent.acp.shutdown().await;
     }
 }
+
+#[tokio::test]
+async fn provider_background_runtime_cancel_persists_intent_when_outer_fence_drops_prompt() {
+    let (mut pool, queue, scope, dir, ctx) = setup().await;
+    let mut queue = queue.with_runtime_delivery(dir.path().to_str().unwrap(), 1800);
+    std::fs::write(dir.path().join("block-prompt"), "wait").unwrap();
+    assert_eq!(dispatch(&mut pool, &mut queue, &ctx), 1);
+    wait_marker(&dir, "prompt-started").await;
+    crate::handle_owner_cancel_for_scope(
+        &mut pool,
+        &mut queue,
+        &ctx.session_controls,
+        &scope,
+        None,
+        None,
+    )
+    .await;
+    let mut result = timeout(Duration::from_secs(5), pool.result_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let store = result.agent.state.store.as_ref().unwrap();
+    let crate::session_store::LoadOutcome::Found(saved) = store.load(&scope) else {
+        panic!("missing cancellation record");
+    };
+    std::fs::remove_file(dir.path().join("block-prompt")).unwrap();
+    result.agent.acp.shutdown().await;
+    let cancellation = saved.background_cancellation.expect(
+        "outer cancellation must persist the provider intent before invalidating its lease",
+    );
+    assert_eq!(cancellation.cause, "user_cancel");
+    assert!(
+        !cancellation.acknowledged,
+        "blocked provider cannot confirm cancellation"
+    );
+}
