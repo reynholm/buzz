@@ -161,6 +161,12 @@ fn states(observer: &crate::observer::ObserverHandle) -> Vec<String> {
 #[ignore = "requires rebuilt buzz CLI on PATH and BUZZ_TEST_BIN_DIR"]
 async fn provider_background_runtime_final_waits_for_all_acknowledged_results_before_delivery() {
     checked_cli();
+    for scenario in ["normal", "missing-ack", "crash-after-ack"] {
+        provider_background_delivery_scenario(scenario).await;
+    }
+}
+
+async fn provider_background_delivery_scenario(scenario: &str) {
     let relay = MockRelay::start().await;
     let dir = tempfile::tempdir().unwrap();
     let log = dir.path().join("requests");
@@ -227,6 +233,97 @@ async fn provider_background_runtime_final_waits_for_all_acknowledged_results_be
     })
     .await
     .unwrap();
+    if scenario == "missing-ack" {
+        std::fs::write(dir.path().join("omit-ack"), "").unwrap();
+        assert_eq!(
+            background_work_tests::dispatch(&mut pool, &mut queue, &ctx),
+            1
+        );
+        let result = timeout(Duration::from_secs(15), pool.result_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            result.outcome,
+            PromptOutcome::Error(AcpError::BackgroundCollectionPending)
+        ));
+        background_work_tests::apply_result(
+            &mut pool,
+            &mut queue,
+            result,
+            Some(&ctx.rest_client),
+            &HashSet::new(),
+        );
+        assert!(relay.readback().await.is_empty());
+        std::fs::remove_file(dir.path().join("omit-ack")).unwrap();
+        // Wait for the actual bounded collection retry, never run the original launch.
+        tokio::time::sleep(Duration::from_secs(7)).await;
+    }
+    if scenario == "crash-after-ack" {
+        std::fs::write(dir.path().join("block-final"), "").unwrap();
+        assert_eq!(
+            background_work_tests::dispatch(&mut pool, &mut queue, &ctx),
+            1
+        );
+        let store = pool.store.clone().unwrap();
+        timeout(Duration::from_secs(5), async {
+            loop {
+                if let crate::session_store::LoadOutcome::Found(saved) = store.load(&scope) {
+                    if saved
+                        .live
+                        .as_ref()
+                        .unwrap()
+                        .provider_background
+                        .as_ref()
+                        .unwrap()
+                        .tasks
+                        .values()
+                        .all(|task| task.state == crate::provider_background::State::Collected)
+                    {
+                        break;
+                    }
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(relay.readback().await.is_empty());
+        assert!(!dir
+            .path()
+            .join(".buzz-runtime-deliveries/journal.json")
+            .exists());
+        pool.join_set.abort_all();
+        while pool.join_set.join_next().await.is_some() {}
+        drop(pool);
+        drop(store);
+        drop(queue);
+        let store = Arc::new(
+            crate::session_store::SessionStore::open(
+                dir.path().join("sessions"),
+                &relay.url.replace("http://", "ws://"),
+                &relay.keys.public_key().to_hex(),
+            )
+            .unwrap(),
+        );
+        let records = store.pending_provider_work(&[scope.channel_id()]).unwrap();
+        assert_eq!(records.len(), 1);
+        assert!(records[0].parent_pending);
+        assert!(!records[0].outstanding());
+        queue = EventQueue::new(crate::config::DedupMode::Queue)
+            .with_runtime_delivery(dir.path().to_str().unwrap(), 60);
+        queue.restore_provider_background(records[0].clone(), dir.path().to_str().unwrap());
+        let agent = worker_with_peer(
+            "provider-background",
+            &log,
+            &observer,
+            crate::pool::background_work_tests::provider_background_fixture::ADAPTER,
+        )
+        .await;
+        pool = AgentPool::from_slots(vec![Some(agent)]);
+        pool.set_session_store(Some(store));
+        std::fs::remove_file(dir.path().join("block-final")).unwrap();
+    }
     assert_eq!(
         background_work_tests::dispatch(&mut pool, &mut queue, &ctx),
         1
@@ -259,7 +356,16 @@ async fn provider_background_runtime_final_waits_for_all_acknowledged_results_be
         tags.reply.as_deref(),
         Some(relay.parent.id.to_hex().as_str())
     );
-    assert!(!pool.has_runtime_hold());
+    assert!(
+        !pool.has_runtime_hold(),
+        "scenario {scenario}: holds={:?}, registry={:?}",
+        pool.runtime_holds,
+        pool.agents[0]
+            .as_ref()
+            .unwrap()
+            .acp
+            .provider_background_record()
+    );
     assert!(!queue.has_pending_scope(&scope));
     assert_eq!(
         std::fs::read_to_string(dir.path().join("launches"))

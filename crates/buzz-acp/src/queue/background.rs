@@ -25,6 +25,22 @@ pub(crate) struct RuntimeContinuation {
 }
 
 impl FlushBatch {
+    /// Collection setup and execution consume the original absolute budget.
+    pub(crate) fn execution_deadline(&self) -> Option<Instant> {
+        execution_deadline(
+            self.work.as_ref(),
+            self.continuation
+                .as_ref()
+                .and_then(|continuation| continuation.provider_recovery.as_ref()),
+        )
+    }
+    /// Only existing negotiated work may use collection retries and its budget.
+    pub(crate) fn provider_collection(&self) -> bool {
+        self.continuation
+            .as_ref()
+            .is_some_and(|continuation| continuation.provider_recovery.is_some())
+    }
+
     /// Reply destination, including batches containing only a continuation.
     pub(crate) fn reply_tags(&self) -> ThreadTags {
         if let Some(work) = &self.work {
@@ -45,6 +61,34 @@ impl FlushBatch {
     }
 }
 
+impl RuntimeContinuation {
+    pub(crate) fn execution_deadline(&self) -> Option<Instant> {
+        execution_deadline(self.work.as_ref(), self.provider_recovery.as_ref())
+    }
+}
+
+fn execution_deadline(
+    work: Option<&LogicalWork>,
+    provider: Option<&crate::provider_background::Record>,
+) -> Option<Instant> {
+    if let Some(provider) = provider {
+        let now = Instant::now();
+        let wall = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let target = std::time::Duration::from_secs(provider.deadline_unix);
+        let deadline = if target > wall {
+            now + (target - wall).min(Duration::from_secs(86400))
+        } else {
+            now - (wall - target).min(Duration::from_secs(86400))
+        };
+        Some(work.map_or(deadline, |work| deadline.min(work.deadline)))
+    } else {
+        work.filter(|work| !work.runtime_final)
+            .map(|work| work.deadline)
+    }
+}
+
 impl EventQueue {
     /// Keep one collection per scope independently of pending messages.
     pub(crate) fn enqueue_continuation(
@@ -59,6 +103,9 @@ impl EventQueue {
                 .filter(|pending| pending.delivery_key == continuation.delivery_key)
             {
                 pending.background_ready |= continuation.background_ready;
+                if continuation.provider_recovery.is_some() {
+                    pending.provider_recovery = continuation.provider_recovery;
+                }
                 return;
             }
         }
@@ -68,6 +115,9 @@ impl EventQueue {
             .filter(|pending| pending.delivery_key == continuation.delivery_key)
         {
             pending.background_ready |= continuation.background_ready;
+            if continuation.provider_recovery.is_some() {
+                pending.provider_recovery = continuation.provider_recovery;
+            }
             return;
         }
         self.continuations.entry(scope).or_insert(continuation);
@@ -89,22 +139,22 @@ impl EventQueue {
 
     pub(super) fn flush_continuation(&mut self) -> Option<FlushBatch> {
         let now = Instant::now();
-        let scope =
-            self.continuations
-                .iter()
-                .filter(|(scope, continuation)| {
-                    !self.in_flight_scopes.contains(*scope)
-                        && (continuation.background_ready
-                            || continuation.work.as_ref().is_some_and(|work| {
-                                !work.runtime_final && work.remaining().is_zero()
-                            }))
-                        && self
-                            .continuation_retry_after
-                            .get(*scope)
-                            .is_none_or(|deadline| *deadline <= now)
-                })
-                .min_by_key(|(_, continuation)| continuation.received_at)
-                .map(|(scope, _)| scope.clone())?;
+        let scope = self
+            .continuations
+            .iter()
+            .filter(|(scope, continuation)| {
+                !self.in_flight_scopes.contains(*scope)
+                    && (continuation.background_ready
+                        || continuation
+                            .execution_deadline()
+                            .is_some_and(|deadline| deadline <= now))
+                    && self
+                        .continuation_retry_after
+                        .get(*scope)
+                        .is_none_or(|deadline| *deadline <= now)
+            })
+            .min_by_key(|(_, continuation)| continuation.received_at)
+            .map(|(scope, _)| scope.clone())?;
         let continuation = self.continuations.remove(&scope)?;
         let mut events = Vec::new();
         if let Some(record) = &continuation.provider_recovery {
@@ -195,9 +245,8 @@ impl EventQueue {
             !self.in_flight_scopes.contains(scope)
                 && (continuation.background_ready
                     || continuation
-                        .work
-                        .as_ref()
-                        .is_some_and(|work| !work.runtime_final && work.remaining().is_zero()))
+                        .execution_deadline()
+                        .is_some_and(|deadline| deadline <= now))
                 && self
                     .continuation_retry_after
                     .get(scope)

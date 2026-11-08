@@ -2669,6 +2669,7 @@ pub async fn run_prompt_task(
     turn_id: String,
     prompt_routing: crate::queue::PromptRouting,
 ) {
+    let execution_deadline = batch.as_ref().and_then(FlushBatch::execution_deadline);
     if agent.background_context.is_none() {
         if let Some(batch) = batch.as_ref().filter(|batch| {
             batch
@@ -2735,18 +2736,26 @@ pub async fn run_prompt_task(
         turn_id.clone(),
         prompt_routing,
     );
+    let execution = async {
+        match execution_deadline {
+            Some(deadline) => tokio::time::timeout_at(deadline.into(), execution)
+                .await
+                .ok(),
+            None => Some(execution.await),
+        }
+    };
     let (returned, cancelled) = match work.as_ref() {
         Some(work) if work.runtime_final => tokio::select! {
             biased;
             _ = work.publication_revoked_signal() => (None, true),
-            returned = execution => (Some(returned), false),
+            returned = execution => (returned, false),
         },
         Some(work) => tokio::select! {
             biased;
-            returned = tokio::time::timeout_at(work.deadline.into(), execution) => (returned.ok(), false),
+            returned = execution => (returned, false),
             _ = work.cancelled_signal() => (None, true),
         },
-        None => (Some(execution.await), false),
+        None => (execution.await, false),
     };
     // Runtime publication revocation can drop execution before its control
     // branch runs. Persist provider cancellation while its lease is still ours.
@@ -2757,6 +2766,11 @@ pub async fn run_prompt_task(
                 post_failure_notice(&ctx.rest_client, record.scope.channel_id(), &record.thread_tags,
                     "Automatic continuation is cancelled. The provider has not confirmed durable cancellation; human attention is required.").await;
             }
+        }
+    }
+    if returned.is_none() && !cancelled {
+        if let Err(error) = agent.acp.suspend_provider_background("background_deadline") {
+            tracing::warn!(%error, "background deadline could not be persisted");
         }
     }
     let (mut outcome, mut batch) = returned.unwrap_or_else(|| {
@@ -2796,9 +2810,41 @@ pub async fn run_prompt_task(
             // provider cancellation or a retry just to obtain a report.
             work.transition("running", "control_continuation");
         } else {
-            crate::runtime_delivery::complete(&ctx.rest_client, work, &outcome, final_text).await;
+            let delivery =
+                crate::runtime_delivery::complete(&ctx.rest_client, work, &outcome, final_text)
+                    .await;
+            let reason = match delivery {
+                crate::runtime_delivery::DeliveryOutcome::DeliveryPending => {
+                    match crate::managed_work::has_durable_report(&ctx.rest_client, work).await {
+                        Ok(true) => "parent_handed_to_delivery_journal",
+                        _ => "final_handoff_needs_user",
+                    }
+                }
+                crate::runtime_delivery::DeliveryOutcome::MissingFinal => {
+                    "final_handoff_needs_user"
+                }
+                _ => "parent_completed",
+            };
+            if let Err(error) = agent.acp.finish_provider_parent(reason) {
+                tracing::warn!(%error, "parent completion could not be persisted");
+            }
             batch = None;
         }
+    }
+    if work.as_ref().is_none_or(|work| !work.runtime_final)
+        && matches!(outcome, PromptOutcome::Ok(StopReason::EndTurn))
+        && !agent.acp.provider_background_outstanding()
+    {
+        if let Err(error) = agent.acp.finish_provider_parent("parent_completed") {
+            tracing::warn!(%error, "parent completion could not be persisted");
+        }
+    }
+    if source
+        .scope()
+        .is_some_and(|scope| agent.state.background_rotation_pending.contains(scope))
+        && !agent.background_work_running(&source)
+    {
+        agent.state.invalidate(&source);
     }
     send_prompt_result(&result_tx, &turn_id, agent, source, outcome, batch);
 }
@@ -2822,7 +2868,11 @@ async fn run_prompt_execution(
         if work.cancelled() {
             return (PromptOutcome::Cancelled, None);
         }
-        if !work.runtime_final && work.remaining().is_zero() {
+        if batch
+            .as_ref()
+            .and_then(FlushBatch::execution_deadline)
+            .is_some_and(|deadline| deadline <= std::time::Instant::now())
+        {
             return (PromptOutcome::Error(AcpError::WorkDeadline), batch);
         }
     }
@@ -3852,9 +3902,12 @@ async fn run_prompt_execution(
     //
     let turn_budget = batch
         .as_ref()
-        .and_then(|batch| batch.work.as_ref())
-        .filter(|work| !work.runtime_final)
-        .map(|work| work.remaining().min(ctx.max_turn_duration))
+        .and_then(FlushBatch::execution_deadline)
+        .map(|deadline| {
+            deadline
+                .saturating_duration_since(std::time::Instant::now())
+                .min(ctx.max_turn_duration)
+        })
         .unwrap_or(ctx.max_turn_duration);
     if let Some(work) = batch
         .as_ref()

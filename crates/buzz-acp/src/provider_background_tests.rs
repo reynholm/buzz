@@ -4,6 +4,7 @@ use serde_json::json;
 fn record() -> Record {
     Record {
         terminal_reason: None,
+        parent_pending: false,
         cancellation: None,
         identity: Identity {
             session_id: "original".into(),

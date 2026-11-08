@@ -147,7 +147,7 @@ impl OwnedAgent {
             hold.continuation.is_some()
                 && (hold.collection_pending
                     || !hold.blocking_pids.is_empty()
-                    || self.acp.provider_background_outstanding())
+                    || self.acp.provider_background_active())
         })
     }
 
@@ -175,7 +175,7 @@ impl OwnedAgent {
             }
         }
         self.has_background_collection()
-            || self.acp.provider_background_outstanding()
+            || self.acp.provider_background_active()
             || children.is_none_or(|children| !children.is_empty())
     }
 }
@@ -431,7 +431,7 @@ impl AgentPool {
                 if children.is_empty()
                     && hold.blocking_pids.is_empty()
                     && !hold.collection_pending
-                    && !agent.acp.provider_background_outstanding() =>
+                    && !agent.acp.provider_background_active() =>
             {
                 agent.acp.observed_background_instances.clear();
                 return;
@@ -475,7 +475,7 @@ impl AgentPool {
     ) {
         if self.agents[index]
             .as_ref()
-            .is_some_and(|agent| agent.acp.provider_background_outstanding())
+            .is_some_and(|agent| agent.acp.provider_background_active())
         {
             return;
         }

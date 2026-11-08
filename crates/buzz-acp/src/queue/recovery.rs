@@ -276,21 +276,39 @@ impl EventQueue {
         self.recovery_batches
             .iter()
             .filter(|(scope, _)| !self.in_flight_scopes.contains(*scope))
-            .filter_map(|(_, batch)| batch.work.as_ref())
+            .filter_map(|(_, batch)| {
+                let deadline = batch.execution_deadline()?;
+                Some(
+                    if batch
+                        .work
+                        .as_ref()
+                        .is_some_and(|work| work.retirement_unverified())
+                    {
+                        Instant::now()
+                    } else {
+                        deadline
+                    },
+                )
+            })
             .chain(
                 self.continuations
                     .iter()
                     .filter(|(scope, _)| !self.in_flight_scopes.contains(*scope))
-                    .filter_map(|(_, continuation)| continuation.work.as_ref()),
+                    .filter_map(|(_, continuation)| {
+                        let deadline = continuation.execution_deadline()?;
+                        Some(
+                            if continuation
+                                .work
+                                .as_ref()
+                                .is_some_and(|work| work.retirement_unverified())
+                            {
+                                Instant::now()
+                            } else {
+                                deadline
+                            },
+                        )
+                    }),
             )
-            .filter(|work| !work.runtime_final)
-            .map(|work| {
-                if work.retirement_unverified() {
-                    Instant::now()
-                } else {
-                    work.deadline
-                }
-            })
             .min()
     }
 
@@ -397,7 +415,9 @@ impl EventQueue {
             .filter(|(scope, batch)| {
                 !self.in_flight_scopes.contains(*scope)
                     && batch.work.as_ref().is_some_and(|work| {
-                        (!work.runtime_final && work.remaining().is_zero())
+                        batch
+                            .execution_deadline()
+                            .is_some_and(|deadline| deadline <= now)
                             || work.retirement_unverified()
                             || (!work.awaiting_retirement()
                                 && work.next_attempt.is_none_or(|next| next <= now)
@@ -425,19 +445,29 @@ impl EventQueue {
     }
 
     pub(super) fn requeue_logical_work(&mut self, mut batch: FlushBatch) -> Option<FlushBatch> {
+        let provider_collection = batch.provider_collection();
+        let execution_deadline = batch.execution_deadline();
         let work = batch.work.as_mut()?;
         if work.cancelled() {
             return None;
         }
-        if work.runtime_final {
+        if work.runtime_final && !provider_collection {
             return Some(batch);
         }
         work.attempt = work.attempt.saturating_add(1);
         let now = Instant::now();
-        let Some(delay) = work.policy.delay(work.attempt, jitter_unit()) else {
+        // Runtime policy forbids replaying execution. Existing child results
+        // have a separate bounded collection policy under the original deadline.
+        let policy = if work.runtime_final {
+            RecoveryPolicy::default()
+        } else {
+            work.policy.clone()
+        };
+        let Some(delay) = policy.delay(work.attempt, jitter_unit()) else {
             return Some(batch);
         };
-        if now >= work.deadline || delay >= work.deadline.saturating_duration_since(now) {
+        let deadline = execution_deadline.unwrap_or(work.deadline);
+        if now >= deadline || delay >= deadline.saturating_duration_since(now) {
             return Some(batch);
         }
         work.next_attempt = Some(now + delay);
@@ -446,7 +476,7 @@ impl EventQueue {
             work.recovery_reason.unwrap_or("execution_failure"),
         );
         tracing::info!(work=%work.delivery_key,scope=%work.scope.telemetry_label(),
-            attempt=work.attempt,max_retries=work.policy.max_retries,delay_secs=delay.as_secs_f64(),
+            attempt=work.attempt,max_retries=policy.max_retries,delay_secs=delay.as_secs_f64(),
             remaining_secs=work.remaining().as_secs_f64(),reason=work.recovery_reason,
             "logical work retry scheduled");
         self.recovery_batches.insert(batch.scope.clone(), batch);

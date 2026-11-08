@@ -88,6 +88,9 @@ impl Cancellation {
 pub(crate) struct Record {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_reason: Option<String>,
+    /// Child receipts do not complete the parent or its final delivery.
+    #[serde(default)]
+    pub parent_pending: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cancellation: Option<Cancellation>,
     pub identity: Identity,
@@ -102,6 +105,11 @@ pub(crate) struct Record {
 }
 
 impl Record {
+    pub fn recoverable(&self) -> bool {
+        self.cancellation.is_none()
+            && self.terminal_reason.is_none()
+            && (self.parent_pending || self.outstanding())
+    }
     pub fn outstanding(&self) -> bool {
         self.cancellation.is_none()
             && self.terminal_reason.is_none()
@@ -133,7 +141,16 @@ impl Record {
         }
     }
     pub fn expired(&self) -> bool {
-        now_unix() >= self.deadline_unix
+        self.remaining().is_zero()
+    }
+    pub fn remaining(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.deadline_unix)
+            .saturating_sub(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default(),
+            )
+            .min(std::time::Duration::from_secs(86400))
     }
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.identity.session_id.is_empty()
@@ -169,7 +186,10 @@ impl Record {
         Ok(identity == self.identity)
     }
     pub fn apply(&mut self, value: &Value) -> Result<bool, &'static str> {
-        if self.cancellation.is_some() || !self.identity_matches(value)? {
+        if self.cancellation.is_some()
+            || self.terminal_reason.is_some()
+            || !self.identity_matches(value)?
+        {
             return Ok(false);
         }
         let task: Task =
@@ -216,11 +236,15 @@ impl Record {
                 return Err("background_unknown_acknowledgement");
             }
         }
+        self.parent_pending = true;
         self.tasks.insert(task.task_id.clone(), task);
         Ok(true)
     }
     /// Omitted entries never authorize forgetting an uncollected result.
     pub fn reconcile(&mut self, value: &Value) -> Result<(), &'static str> {
+        if self.cancellation.is_some() || self.terminal_reason.is_some() {
+            return Err("background_work_terminal");
+        }
         if !self.identity_matches(value)? {
             return Err("background_snapshot_identity_mismatch");
         }

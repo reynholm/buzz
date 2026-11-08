@@ -9,7 +9,22 @@ async fn setup() -> (
     tempfile::TempDir,
     Arc<PromptContext>,
 ) {
+    setup_with_native_steering(false).await
+}
+
+async fn setup_with_native_steering(
+    native: bool,
+) -> (
+    AgentPool,
+    EventQueue,
+    SessionScope,
+    tempfile::TempDir,
+    Arc<PromptContext>,
+) {
     let dir = tempfile::tempdir().unwrap();
+    if native {
+        std::fs::write(dir.path().join("native-steering"), "").unwrap();
+    }
     let mut acp = AcpClient::spawn(
         "python3",
         &[
@@ -586,3 +601,6 @@ async fn provider_background_runtime_cancel_persists_intent_when_outer_fence_dro
         "blocked provider cannot confirm cancellation"
     );
 }
+
+#[path = "provider_background_review_tests.rs"]
+mod review_tests;

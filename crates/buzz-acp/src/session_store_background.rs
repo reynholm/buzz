@@ -49,7 +49,7 @@ impl SessionStore {
                 let Some(background) = live.provider_background else {
                     continue;
                 };
-                if !background.outstanding()
+                if !background.recoverable()
                     || background.scope.channel_id() != *channel
                     || self.record_path(&background.scope) != path
                     || live.session_id != background.identity.session_id

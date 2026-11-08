@@ -101,6 +101,17 @@ impl AcpClient {
             .as_ref()
             .map(|binding| &binding.record)
     }
+    pub(crate) fn provider_background_active(&self) -> bool {
+        self.provider_background_record()
+            .is_some_and(Record::recoverable)
+    }
+    pub(crate) fn finish_provider_parent(&mut self, reason: &str) -> Result<(), AcpError> {
+        if let Some(binding) = &mut self.provider_background.binding {
+            binding.record.parent_pending = false;
+            binding.record.terminal_reason = Some(reason.into());
+        }
+        self.persist_provider_background()
+    }
     pub(crate) fn provider_background_outstanding(&self) -> bool {
         self.provider_background_record()
             .is_some_and(Record::outstanding)

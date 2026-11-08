@@ -915,7 +915,11 @@ impl QueuedNormalListenerEvent {
                 self.steer_event,
                 steer_ack_tx,
             );
-        if !native_attempted {
+        if !native_attempted
+            && !queue
+                .in_flight_prompt_routing(&self.scope)
+                .is_some_and(|routing| routing.provider_background())
+        {
             signal_in_flight_task_for_scope(pool, &self.scope, signal);
         }
     }
@@ -3235,7 +3239,20 @@ async fn run_harness(
         match store.pending_provider_work(&channel_ids) {
             Ok(records) => {
                 for record in records {
-                    queue.restore_provider_background(record, &current_working_directory()?);
+                    let cwd = current_working_directory()?;
+                    if record.runtime_final {
+                        let work = queue::LogicalWork::restore_provider(&record, &cwd);
+                        if managed_work::has_durable_report(&relay_rest_client, &work)
+                            .await
+                            .map_err(|reason| {
+                                anyhow::anyhow!("background final recovery unavailable: {reason}")
+                            })?
+                        {
+                            // Startup journal replay owns this exact signed delivery.
+                            continue;
+                        }
+                    }
+                    queue.restore_provider_background(record, &cwd);
                 }
             }
             Err(error) => {
@@ -5581,12 +5598,31 @@ fn dispatch_pending(
             held.push(batch);
             continue;
         }
+        if batch.work.as_ref().is_some_and(|work| work.cancelled()) {
+            queue.mark_complete(&scope);
+            continue;
+        }
+        if batch.provider_collection()
+            && batch
+                .execution_deadline()
+                .is_some_and(|deadline| deadline <= now.into())
+        {
+            pool.expire_provider_background(&scope);
+            spawn_failure_notice(Some(&ctx.rest_client), &batch,
+                "Background collection reached the original time budget. Verify the current result before starting another request.".into());
+            queue.mark_complete(&scope);
+            continue;
+        }
         if let Some(work) = &batch.work {
             if work.cancelled() {
                 queue.mark_complete(&scope);
                 continue;
             }
-            if (!work.runtime_final && work.remaining().is_zero()) || work.retirement_unverified() {
+            if batch
+                .execution_deadline()
+                .is_some_and(|deadline| deadline <= now.into())
+                || work.retirement_unverified()
+            {
                 let reason = if work.retirement_unverified() {
                     work.human_required("retirement_unverified");
                     "Kimi's old execution could not be confirmed stopped. Inspect the process and external action before continuing; replacement was blocked."

@@ -52,6 +52,14 @@ pub(crate) async fn confirmed_report(
         .and_then(|receipt| receipt.event))
 }
 
+/// A signed prepared record transfers recovery to the CLI journal, even offline.
+pub(crate) async fn has_durable_report(
+    rest: &RestClient,
+    work: &LogicalWork,
+) -> Result<bool, &'static str> {
+    Ok(inspect_receipt(rest, work).await?.is_some())
+}
+
 pub(crate) async fn terminal_content_matches(
     rest: &RestClient,
     work: &LogicalWork,

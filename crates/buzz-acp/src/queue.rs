@@ -839,7 +839,7 @@ impl EventQueue {
     ///
     /// Note: does NOT remove from `in_flight_channels` — caller must call
     /// `mark_complete` separately.
-    pub fn requeue(&mut self, batch: FlushBatch) -> Option<FlushBatch> {
+    pub fn requeue(&mut self, mut batch: FlushBatch) -> Option<FlushBatch> {
         if batch.work.is_some() {
             return self.requeue_logical_work(batch);
         }
@@ -899,8 +899,9 @@ impl EventQueue {
             "requeueing failed batch with backoff"
         );
 
-        if let Some(continuation) = batch.continuation {
+        if let Some(continuation) = batch.continuation.take() {
             self.enqueue_continuation(scope.clone(), continuation);
+            self.requeue_preserve_timestamps(batch);
             self.continuation_retry_after
                 .insert(scope, Instant::now() + delay);
             return None;
@@ -962,8 +963,7 @@ impl EventQueue {
         let channel_id = batch.channel_id;
         let scope = batch.scope.clone();
         if let Some(continuation) = batch.continuation {
-            self.enqueue_continuation(scope, continuation);
-            return;
+            self.enqueue_continuation(scope.clone(), continuation);
         }
 
         // Restore cancelled carryover FIRST so it precedes any carryover a

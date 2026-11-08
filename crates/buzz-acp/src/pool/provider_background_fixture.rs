@@ -29,9 +29,14 @@ for line in sys.stdin:
     with open(os.path.join(root,'requests'),'a') as log: log.write(line)
     m=r.get('method'); result={}
     if m=='initialize':
-        result={'protocolVersion':2,'agentInfo':{'name':'qwen-code','version':'0.26.7'},'agentCapabilities':{'sessionCapabilities':{'resume':{}}},'_meta':{'buzz':{'backgroundTasks':{'version':1}}}}
+        result={'protocolVersion':2,'agentInfo':{'name':'qwen-code','version':'0.26.7'},'agentCapabilities':{'sessionCapabilities':{'resume':{}}},'_meta':{'buzz':{'backgroundTasks':{'version':1}},'steering':{'supported':os.path.exists(os.path.join(root,'native-steering'))}}}
     elif m in ('session/new','session/resume'): result={'sessionId':'original-session'}
     elif m=='_buzz/background_tasks/snapshot':
+        open(os.path.join(root,'snapshot-started'),'w').close()
+        while os.path.exists(os.path.join(root,'block-snapshot')): time.sleep(.01)
+        if os.path.exists(os.path.join(root,'fail-snapshot')):
+            send({'jsonrpc':'2.0','id':r['id'],'error':{'code':-32000,'message':'temporary snapshot failure'}})
+            continue
         refresh()
         result=dict(r['params'],tasks=list(tasks.values()))
     elif m=='_buzz/background_tasks/cancel':
@@ -51,12 +56,17 @@ for line in sys.stdin:
             open(os.path.join(root,'prompt-started'),'w').close()
             while os.path.exists(os.path.join(root,'block-prompt')): time.sleep(.01)
         elif meta.get('collect'):
+            open(os.path.join(root,'collection-started'),'w').close()
+            while os.path.exists(os.path.join(root,'block-collection')): time.sleep(.01)
             with open(os.path.join(root,'collections'),'a') as log: log.write(json.dumps(meta['collect'])+'\n')
             if not os.path.exists(os.path.join(root,'omit-ack')):
                 for t in meta['collect']:
                     t=dict(t,state='collected',completion_sequence=t['sequence'],sequence=t['sequence']+1)
                     tasks[t['task_id']]=t; emit(t)
-        if meta.get('collect') and not os.path.exists(os.path.join(root,'omit-ack')):
+        if tasks and all(t['state']=='collected' for t in tasks.values()):
+            open(os.path.join(root,'results-acked'),'w').close()
+            if not meta.get('collect'): open(os.path.join(root,'parent-resumed'),'w').close()
+            while os.path.exists(os.path.join(root,'block-final')): time.sleep(.01)
             send({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'original-session','update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':'All three existing results were collected.'}}}})
         result={'stopReason':'end_turn'}
     if 'id' in r: send({'jsonrpc':'2.0','id':r['id'],'result':result})

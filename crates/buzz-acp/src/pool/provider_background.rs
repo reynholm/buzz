@@ -33,19 +33,32 @@ impl OwnedAgent {
             *self.state.leases.get(scope).ok_or_else(|| {
                 AcpError::Protocol("background_tasks_require_session_lease".into())
             })?;
-        let saved = batch
+        let requested = batch
             .continuation
             .as_ref()
-            .and_then(|continuation| continuation.provider_recovery.clone())
-            .or_else(|| match store.load(scope) {
-                LoadOutcome::Found(record) => record
-                    .live
-                    .and_then(|live| live.provider_background)
-                    .map(|record| *record),
-                _ => None,
-            });
-        let restoring = saved.as_ref().is_some_and(Record::outstanding);
-        let record = if let Some(saved) = saved.filter(|record| record.outstanding()) {
+            .and_then(|continuation| continuation.provider_recovery.clone());
+        // The leased registry may contain receipts and inputs newer than a queued retry.
+        let durable = match store.load(scope) {
+            LoadOutcome::Found(record) => record
+                .live
+                .and_then(|live| live.provider_background)
+                .map(|record| *record),
+            _ => None,
+        };
+        if let (Some(requested), Some(durable)) = (&requested, &durable) {
+            if requested.identity != durable.identity {
+                return Err(AcpError::Protocol(
+                    "background_recovery_identity_mismatch".into(),
+                ));
+            }
+        }
+        let recovery_requested = requested.is_some();
+        let saved = durable.or(requested);
+        if recovery_requested && saved.as_ref().is_some_and(|record| !record.recoverable()) {
+            return Err(AcpError::Protocol("background_work_terminal".into()));
+        }
+        let restoring = saved.as_ref().is_some_and(Record::recoverable);
+        let record = if let Some(saved) = saved.filter(Record::recoverable) {
             if saved.identity.session_id != session {
                 return Err(AcpError::Protocol(
                     "background_original_session_unavailable".into(),
@@ -60,6 +73,7 @@ impl OwnedAgent {
                 .ok_or_else(|| AcpError::Protocol("background_origin_unavailable".into()))?;
             Record {
                 terminal_reason: None,
+                parent_pending: false,
                 cancellation: None,
                 identity: Identity {
                     session_id: session.into(),
@@ -86,10 +100,11 @@ impl OwnedAgent {
             }
         };
         self.acp.bind_provider_background(record, store, lease)?;
+        // Accepted clarification must survive an early provider RPC failure.
+        self.acp.append_provider_inputs(&batch.events)?;
         if restoring {
             self.acp.reconcile_provider_background().await?;
         }
-        self.acp.append_provider_inputs(&batch.events)?;
         if let Some(continuation) = self
             .background_context
             .as_mut()
@@ -122,7 +137,7 @@ impl AgentPool {
     ) -> Option<String> {
         self.agents.iter().flatten().find_map(|agent| {
             let record = agent.acp.provider_background_record()
-                .filter(|record| record.scope == *scope && record.outstanding())?;
+                .filter(|record| record.scope == *scope && record.recoverable())?;
             let original = record.thread_tags.root_event_id.as_deref()
                 .or(record.thread_tags.parent_event_id.as_deref());
             let same = if dm && original.is_none() {
@@ -143,8 +158,29 @@ impl AgentPool {
             agent
                 .acp
                 .provider_background_record()
-                .is_some_and(|record| record.scope == *scope && record.outstanding())
+                .is_some_and(|record| record.scope == *scope && record.recoverable())
         })
+    }
+    pub(crate) fn expire_provider_background(&mut self, scope: &SessionScope) {
+        for agent in self.agents.iter_mut().flatten() {
+            if agent
+                .acp
+                .provider_background_record()
+                .is_some_and(|record| record.scope == *scope)
+            {
+                if let Err(error) = agent.acp.suspend_provider_background("background_deadline") {
+                    tracing::warn!(%error, "idle background deadline could not be persisted");
+                }
+            }
+        }
+        self.runtime_holds.retain(|_, hold| {
+            if hold.scope == *scope {
+                hold.continuation = None;
+                hold.collection_pending = false;
+                return !hold.blocking_pids.is_empty();
+            }
+            true
+        });
     }
     pub(crate) fn poll_provider_background(&mut self, queue: &mut EventQueue) {
         let indexes: Vec<_> = self.runtime_holds.keys().copied().collect();
@@ -182,8 +218,10 @@ impl AgentPool {
             let Some(record) = agent.acp.provider_background_record() else {
                 continue;
             };
-            if record.outstanding() || agent.acp.provider_background_pending() {
-                let ready = agent.acp.provider_background_pending() || record.expired();
+            if record.recoverable() || agent.acp.provider_background_pending() {
+                let ready = agent.acp.provider_background_pending()
+                    || record.expired()
+                    || (record.parent_pending && !record.outstanding());
                 if let Some(hold) = self.runtime_holds.get_mut(&index) {
                     hold.collection_pending = ready;
                     if let Some(continuation) = &mut hold.continuation {

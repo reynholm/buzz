@@ -105,12 +105,20 @@ receipts before advertising it. `provider_background` tests use actual
 ACP subprocess pipes and the production queue/session store. They cover three
 tasks in one process, pending versus acknowledged results, repeat/stale events,
 same-route clarification, status, explicit cancellation and original-session
-restart without relaunching tools. Run the full package suite for acceptance.
+restart without relaunching tools. Collection has its own bounded retry policy
+even when runtime-final execution retries are disabled. Accepted clarification
+survives snapshot failure and capacity deferral; native steering refusal leaves
+ordinary input queued. The original absolute deadline covers setup, snapshot and
+prompt, including expired idle collections without logical work. Durable child
+receipts keep the parent recoverable until final journal handoff or a terminal
+state. Run the full package suite for acceptance.
 
 The ignored `provider_background_runtime_final` journey additionally uses the
 rebuilt CLI and a signature-checking local mock relay. It asserts that the first
 `end_turn` publishes no `missing_final`, then collection acknowledgements permit
-one final report in the original thread:
+one final report in the original thread. It repeats this with a missing receipt
+and with a host crash after the last durable child receipt but before final
+preparation; both reuse existing tasks and the original delivery identity:
 
 ```sh
 cargo build -p buzz-cli
