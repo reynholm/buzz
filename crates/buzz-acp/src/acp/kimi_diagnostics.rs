@@ -108,6 +108,51 @@ fn metadata(msg: &Value) -> Value {
 }
 
 impl AcpClient {
+    pub(crate) fn kimi_prompt_stop(&mut self, result: Result<&StopReason, &AcpError>) {
+        if !self.kimi {
+            return;
+        }
+        let (initiator, reason) = match result {
+            Ok(StopReason::Cancelled) => ("adapter", "cancelled"),
+            Ok(_) => return,
+            Err(AcpError::PermissionProgressTimeout) => ("watchdog", "observable_tool_timeout"),
+            Err(AcpError::PermissionTelemetryTimeout) => ("watchdog", "telemetry_unavailable"),
+            Err(AcpError::IdleTimeout(_)) => ("deadline", "idle_timeout"),
+            Err(AcpError::HardTimeout { .. }) => ("deadline", "hard_timeout"),
+            Err(AcpError::WorkDeadline | AcpError::WorkDeadlinePoisoned) => {
+                ("deadline", "work_deadline")
+            }
+            Err(AcpError::WorkCancelledPoisoned) => ("user", "explicit_cancel"),
+            Err(AcpError::KimiFailure(_) | AcpError::AgentError { .. }) => {
+                ("provider", "provider_failure")
+            }
+            Err(
+                AcpError::PermissionRequired
+                | AcpError::PermissionDecisionTimeout
+                | AcpError::PermissionViewUnavailable,
+            ) => ("approval", "decision_unavailable"),
+            Err(_) => ("transport", "transport_failure"),
+        };
+        self.kimi_stop_event(initiator, reason);
+    }
+
+    pub(super) fn kimi_stop_event(&mut self, initiator: &str, reason: &str) {
+        // Timeout cleanup also sends session/cancel. Preserve its original
+        // initiator rather than reporting that cleanup as a second user stop.
+        if self.kimi_permissions.stop_recorded {
+            return;
+        }
+        self.kimi_permissions.stop_recorded = true;
+        tracing::info!(target: "acp::stop", process_generation=%self.process_instance,
+            initiator, reason, "Kimi prompt stopped");
+        self.observe(
+            "prompt_stop",
+            serde_json::json!({
+                "processGeneration": self.process_instance, "initiator":initiator, "reason":reason,
+            }),
+        );
+    }
+
     pub(super) fn trace_kimi_wire(&self, direction: &str, msg: &Value) {
         let metadata = metadata(msg);
         tracing::debug!(target:"acp::wire", process_generation=%self.process_instance,

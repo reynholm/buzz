@@ -3,8 +3,26 @@ use super::ConfigError;
 use crate::queue::RecoveryPolicy;
 use std::time::Duration;
 
+/// Visibility policy for permission lifecycle telemetry. Compatibility is only
+/// selected automatically for an exact, verified adapter identity and version.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum KimiPermissionVisibility {
+    #[default]
+    Auto,
+    Observable,
+    Unknown,
+}
+
 #[derive(Debug, Clone, clap::Args)]
 pub struct KimiRecoveryArgs {
+    /// Permission telemetry policy: exact verified compatibility, strict, or unknown.
+    #[arg(
+        long = "kimi-permission-visibility",
+        env = "BUZZ_ACP_KIMI_PERMISSION_VISIBILITY",
+        value_enum,
+        default_value = "auto"
+    )]
+    pub permission_visibility: KimiPermissionVisibility,
     /// Deadline for a human Kimi permission decision, capped by the turn budget.
     #[arg(
         long = "kimi-approval-decision-timeout",
@@ -48,6 +66,7 @@ impl KimiRecoveryArgs {
     pub fn policy(&self) -> Result<RecoveryPolicy, ConfigError> {
         let policy = RecoveryPolicy {
             max_retries: self.retries,
+            permission_visibility: self.permission_visibility,
             delays: self
                 .delays
                 .iter()

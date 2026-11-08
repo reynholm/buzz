@@ -6460,6 +6460,7 @@ fn handle_prompt_result(
                     | acp::AcpError::WorkDeadlinePoisoned
                     | acp::AcpError::WorkCancelledPoisoned
                     | acp::AcpError::PermissionProgressTimeout
+                    | acp::AcpError::PermissionTelemetryTimeout
                     | acp::AcpError::PermissionConflict
                     | acp::AcpError::PermissionRequired
                     | acp::AcpError::PermissionViewUnavailable

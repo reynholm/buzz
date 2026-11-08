@@ -156,6 +156,9 @@ pub enum AcpError {
     #[error("Kimi made no tool progress after its permission response")]
     PermissionProgressTimeout,
 
+    #[error("Kimi permission lifecycle telemetry is unavailable; the tool result is unknown")]
+    PermissionTelemetryTimeout,
+
     #[error("A human permission decision is required")]
     PermissionRequired,
 
@@ -192,6 +195,10 @@ mod kimi_recovery_tests;
 #[cfg(all(test, unix))]
 #[path = "acp/kimi_permission_tests.rs"]
 mod kimi_permission_tests;
+
+#[cfg(all(test, unix))]
+#[path = "acp/kimi_visibility_tests.rs"]
+mod kimi_visibility_tests;
 
 #[cfg(all(test, unix))]
 #[path = "acp/kimi_manual_permission_tests.rs"]
@@ -1008,6 +1015,7 @@ impl AcpClient {
         self.capture_startup_children();
         self.capture_kimi_retirement_evidence().await;
         if self.kimi {
+            self.select_kimi_visibility(&result);
             tracing::debug!(target: "acp::init", resume_supported=self.resume_supported, "Kimi initialized");
         } else {
             tracing::debug!(target: "acp::init", "initialize response: {result}");
@@ -1338,7 +1346,8 @@ impl AcpClient {
         self.next_id += 1;
 
         if self.kimi {
-            self.kimi_permissions.begin(session_id, id, idle_timeout);
+            self.kimi_permissions
+                .begin(session_id, id, idle_timeout, self.process_instance);
         }
 
         let msg = serde_json::json!({
@@ -1353,6 +1362,7 @@ impl AcpClient {
             self.last_prompt_id = None;
             self.current_hard_deadline = None;
             if self.kimi {
+                self.kimi_stop_event("transport", "prompt_write_failed");
                 self.finish_kimi_permissions("prompt_write_failed");
             }
             return Err(e);
@@ -1390,6 +1400,7 @@ impl AcpClient {
         }
         let parsed = result.and_then(|result| self.parse_prompt_response(session_id, &result));
         if self.kimi {
+            self.kimi_prompt_stop(parsed.as_ref());
             self.finish_kimi_permissions(if parsed.is_ok() {
                 "prompt_completed"
             } else {
@@ -1689,6 +1700,7 @@ impl AcpClient {
 
         // Step 2: send session/cancel notification (no id)
         if self.kimi {
+            self.kimi_stop_event("user", "explicit_cancel");
             self.finish_kimi_permissions("cancelled");
         }
         self.session_cancel(session_id).await?;
@@ -2034,7 +2046,7 @@ impl AcpClient {
                     let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
                 }
                 if permission_fires_first {
-                    return Err(AcpError::PermissionProgressTimeout);
+                    return Err(self.kimi_permission_timeout());
                 } else if idle_fires_first {
                     tracing::warn!("idle timeout ({idle_timeout:?}) — no agent activity");
                     return Err(AcpError::IdleTimeout(idle_timeout));
@@ -2153,7 +2165,7 @@ impl AcpClient {
                         let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
                     }
                     if permission_fires_first {
-                        return Err(AcpError::PermissionProgressTimeout);
+                        return Err(self.kimi_permission_timeout());
                     } else if idle_fires_first {
                         tracing::warn!("idle timeout ({idle_timeout:?}) — no agent activity");
                         return Err(AcpError::IdleTimeout(idle_timeout));

@@ -2762,7 +2762,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/acp.rs`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Route standard usage_update occupancy to the status binding of its own session ID; the harness owns BUZZ_SESSION_STATUS_DIR in adapter spawns. Negotiate structured terminal provider failures and propagate them through the existing queue retry and authentication paths. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Route standard usage_update occupancy to the status binding of its own session ID; the harness owns BUZZ_SESSION_STATUS_DIR in adapter spawns. Negotiate structured terminal provider failures and propagate them through the existing queue retry and authentication paths. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Select exact verified Kimi lifecycle visibility, preserve matching tool watchdogs and unknown effects, and explain bounded telemetry stops.
 
 New module: `false`.
 
@@ -2789,8 +2789,14 @@ New module: `false`.
 - Invocation: `crates/buzz-acp/src/acp.rs` → `handle_kimi_permission_request`; exact call `return self.handle_kimi_permission_request(msg).await;`; behavior test `kimi_permission_from_another_session_is_never_approved`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `trace_outgoing`; exact call `self.trace_outgoing(&msg, false);
                             match self.write_ndjson(&msg).await {`; behavior test `kimi_native_steer_keeps_safe_logs_and_ack_variants`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `select_kimi_visibility`; exact call `self.select_kimi_visibility(&result);`; behavior test `kimi_visibility_permission_only_foreground_and_background_survive_individual_deadline`; verify `env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp --lib kimi_visibility_permission_only_foreground_and_background_survive_individual_deadline -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `observe_kimi_permission_progress`; exact call `self.observe_kimi_permission_progress(msg);`; behavior test `kimi_visibility_permission_before_create_acknowledges_observable_lifecycle`; verify `env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp --lib kimi_visibility_permission_before_create_acknowledges_observable_lifecycle -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `kimi_permission_timeout`; exact call `return Err(self.kimi_permission_timeout());`; behavior test `kimi_visibility_unknown_versions_bound_telemetry_without_claiming_tool_stall`; verify `env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp --lib kimi_visibility_unknown_versions_bound_telemetry_without_claiming_tool_stall -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `kimi_prompt_stop`; exact call `self.kimi_prompt_stop(parsed.as_ref());`; behavior test `kimi_visibility_global_idle_and_hard_bounds_remain_active`; verify `env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp --lib kimi_visibility_global_idle_and_hard_bounds_remain_active -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp.rs` → `kimi_stop_event`; exact call `self.kimi_stop_event("user", "explicit_cancel");`; behavior test `kimi_visibility_explicit_cancel_drains_without_automatic_continuation`; verify `env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp --lib kimi_visibility_explicit_cancel_drains_without_automatic_continuation -- --test-threads=1`
 - Verify: `just ci`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+- Verify: `env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp --lib kimi_visibility -- --test-threads=1`
 
 ## `crates/buzz-acp/src/acp/launch.rs`
 
@@ -2948,6 +2954,7 @@ New module: `false`.
 - Invocation: `crates/buzz-acp/src/pool.rs` → `prepare_background_return`; exact call `agent.prepare_background_return();`; behavior test `completed_empty_turn_prepares_observation_before_listener_return`; verify `cargo test --locked -p buzz-acp --lib completed_empty_turn_prepares_observation_before_listener_return -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `confirmed_report`; exact call `crate::managed_work::confirmed_report(&ctx.rest_client, work).await`; behavior test `kimi_confirmed_report_prevents_any_new_provider_rpc`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 - Invocation: `crates/buzz-acp/src/pool.rs` → `collection_prompt_batch`; exact call `.and_then(background_work::collection_prompt_batch);`; behavior test `kimi_collection_dm_listener_interrupt_delivers_correction`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/pool.rs` → `kimi_prompt_stop`; exact call `agent.acp.kimi_prompt_stop(Err(&error));`; behavior test `kimi_outer_work_stop_records_deadline_and_cancel_when_prompt_future_is_dropped`; verify `env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp --lib kimi_outer_work_stop_records_deadline_and_cancel_when_prompt_future_is_dropped -- --test-threads=1`
 - Verify: `just ci`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
@@ -5502,7 +5509,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/TESTING.md`
 
-Document original-session collection, bounded ordinary preemption and bundled agent/MCP/CLI delivery runtime fixtures. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
+Document original-session collection, bounded ordinary preemption and bundled agent/MCP/CLI delivery runtime fixtures. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Select exact verified Kimi lifecycle visibility, preserve matching tool watchdogs and unknown effects, and explain bounded telemetry stops.
 
 New module: `false`.
 
@@ -9371,7 +9378,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/KIMI_RECOVERY.md`
 
-Document bounded logical-work recovery, permission decisions, uncertain effects, managed delivery and provider acceptance boundaries
+Document bounded logical-work recovery, permission decisions, uncertain effects, managed delivery and provider acceptance boundaries Select exact verified Kimi lifecycle visibility, preserve matching tool watchdogs and unknown effects, and explain bounded telemetry stops.
 
 New module: `true`.
 
@@ -9379,7 +9386,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/acp/kimi_diagnostics.rs`
 
-Project Kimi plaintext wire diagnostics to bounded structural fields while preserving the owner-encrypted concrete request view
+Project Kimi plaintext wire diagnostics to bounded structural fields while preserving the owner-encrypted concrete request view Select exact verified Kimi lifecycle visibility, preserve matching tool watchdogs and unknown effects, and explain bounded telemetry stops.
 
 New module: `true`.
 
@@ -9403,21 +9410,23 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/acp/kimi_permission.rs`
 
-Bind actual Kimi permission requests to active prompt, generation and offered options; bound decision, pipe write and post-response progress
+Bind actual Kimi permission requests to active prompt, generation and offered options; bound decision, pipe write and post-response progress Select exact verified Kimi lifecycle visibility, preserve matching tool watchdogs and unknown effects, and explain bounded telemetry stops. Match verified title-only progress and bound missing acknowledgement without imposing a periodic-heartbeat contract.
 
 New module: `true`.
 
+- Invocation: `crates/buzz-acp/src/acp/kimi_permission.rs` → `effect_started`; exact call `work.effect_started(&self.permission_effect_key(&record.tool));`; behavior test `kimi_visibility_same_tool_in_new_process_cannot_settle_old_unknown_effect`; verify `env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp --lib kimi_visibility_same_tool_in_new_process_cannot_settle_old_unknown_effect -- --test-threads=1`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/acp/kimi_permission/controls.rs`
 
-Validate owner-signed, command-first permission decisions against the current route and random request token
+Validate owner-signed, command-first permission decisions against the current route and random request token Select exact verified Kimi lifecycle visibility, preserve matching tool watchdogs and unknown effects, and explain bounded telemetry stops.
 
 New module: `true`.
 
 - Required symbol: `return Err(AcpError::PermissionViewUnavailable);`
 - Required symbol: `exited = self.child.wait() => {`
 - Invocation: `crates/buzz-acp/src/acp/kimi_permission/controls.rs` → `can_publish_intact`; exact call `!observer.can_publish_intact(`; behavior test `kimi_manual_permission_requires_unabridged_published_owner_view`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1`
+- Invocation: `crates/buzz-acp/src/acp/kimi_permission/controls.rs` → `configure_kimi_visibility`; exact call `self.configure_kimi_visibility(work.policy.permission_visibility);`; behavior test `kimi_visibility_operator_profile_flows_from_cli_to_runtime_watchdog`; verify `env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp --lib kimi_visibility_operator_profile_flows_from_cli_to_runtime_watchdog -- --test-threads=1`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
 ## `crates/buzz-acp/src/acp/kimi_permission_tests.rs`
@@ -9454,7 +9463,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/config/kimi_recovery.rs`
 
-Parse and bound configurable Kimi retry counts, delays, work budget and permission deadlines
+Parse and bound configurable Kimi retry counts, delays, work budget and permission deadlines Select exact verified Kimi lifecycle visibility, preserve matching tool watchdogs and unknown effects, and explain bounded telemetry stops.
 
 New module: `true`.
 
@@ -9502,15 +9511,16 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/pool/kimi_runtime_tests.rs`
 
-Cover Kimi logical-work, permission, retirement or managed-delivery invariants through production seams and deterministic peers
+Cover Kimi logical-work, permission, retirement or managed-delivery invariants through production seams and deterministic peers Verify original stop provenance when outer logical-work bounds drop an in-flight ACP prompt.
 
 New module: `true`.
 
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+- Verify: `env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp --lib kimi_outer_work_stop_records_deadline_and_cancel_when_prompt_future_is_dropped -- --test-threads=1`
 
 ## `crates/buzz-acp/src/queue/recovery.rs`
 
-Retain original logical work, delivery identity, bounded independent jitter and revocation across retry and collection
+Retain original logical work, delivery identity, bounded independent jitter and revocation across retry and collection Select exact verified Kimi lifecycle visibility, preserve matching tool watchdogs and unknown effects, and explain bounded telemetry stops.
 
 New module: `true`.
 
@@ -9836,3 +9846,11 @@ New module: `true`.
 - Required symbol: `linux_inhibitor_sleep_is_only_resident_under_the_matching_parent`
 - Required symbol: `native_caffeinate_is_resident_while_ordinary_sleep_blocks`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `crates/buzz-acp/src/acp/kimi_visibility_tests.rs`
+
+Exercise exact Kimi permission lifecycle profiles, main-tool watchdogs, telemetry uncertainty, scope/generation correlation, cancellation and CLI override through real ACP subprocess pipes. Verify quiet acknowledged main tools and exact-version title-only progress without settling effects.
+
+New module: `true`.
+
+- Verify: `env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp --lib kimi_visibility -- --test-threads=1`

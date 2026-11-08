@@ -39,6 +39,7 @@ impl WorkRevocation {
 /// Bounded Kimi retry profile. Existing adapters do not opt into this profile.
 #[derive(Clone, Debug)]
 pub struct RecoveryPolicy {
+    pub permission_visibility: crate::config::KimiPermissionVisibility,
     pub max_retries: u32,
     pub delays: Vec<Duration>,
     pub total_budget: Duration,
@@ -50,6 +51,7 @@ impl Default for RecoveryPolicy {
     fn default() -> Self {
         Self {
             max_retries: 4,
+            permission_visibility: Default::default(),
             delays: [5, 15, 45, 120].map(Duration::from_secs).to_vec(),
             total_budget: Duration::from_secs(1800),
             approval_progress_timeout: Duration::from_secs(120),

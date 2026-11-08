@@ -803,6 +803,7 @@ impl PromptOutcome {
                         | AcpError::WorkDeadlinePoisoned
                         | AcpError::WorkCancelledPoisoned
                         | AcpError::PermissionProgressTimeout
+                        | AcpError::PermissionTelemetryTimeout
                         | AcpError::PermissionConflict
                         | AcpError::PermissionRequired
                         | AcpError::PermissionViewUnavailable
@@ -828,6 +829,7 @@ impl PromptOutcome {
                 | AcpError::WorkDeadlinePoisoned
                 | AcpError::WorkCancelledPoisoned
                 | AcpError::PermissionProgressTimeout
+                | AcpError::PermissionTelemetryTimeout
                 | AcpError::PermissionConflict
                 | AcpError::PermissionRequired
                 | AcpError::PermissionViewUnavailable
@@ -2701,6 +2703,9 @@ pub async fn run_prompt_task(
         } else {
             AcpError::WorkDeadlinePoisoned
         };
+        // The outer bound dropped the ACP future; its completion hook cannot
+        // diagnose this stop. Record the owning boundary's original reason.
+        agent.acp.kimi_prompt_stop(Err(&error));
         agent.state.invalidate_after_error(&source, &error);
         (
             PromptOutcome::Error(error),

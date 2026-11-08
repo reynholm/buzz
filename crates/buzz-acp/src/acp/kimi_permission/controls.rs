@@ -78,9 +78,21 @@ impl AcpClient {
         work: Option<&LogicalWork>,
         notice: Option<PermissionNotice>,
     ) {
+        // New logical work may stop during startup, before prompt begin resets
+        // its diagnostics. Do not let the preceding work suppress that stop.
+        if self
+            .kimi_permissions
+            .work
+            .as_ref()
+            .map(|work| work.delivery_key)
+            != work.map(|work| work.delivery_key)
+        {
+            self.kimi_permissions.stop_recorded = false;
+        }
         self.kimi_permissions.work = work.cloned();
         self.kimi_permissions.notice = notice;
         if let Some(work) = work {
+            self.configure_kimi_visibility(work.policy.permission_visibility);
             self.kimi_permissions.progress_timeout = work.policy.approval_progress_timeout;
             self.kimi_permissions.decision_timeout = work.policy.approval_decision_timeout;
         }

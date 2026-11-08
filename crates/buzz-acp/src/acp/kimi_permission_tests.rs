@@ -83,7 +83,7 @@ async fn permission(mode: &str) -> (Result<StopReason, AcpError>, Vec<ObserverEv
 async fn kimi_written_permission_without_tool_progress_has_a_separate_deadline() {
     let (result, events) = permission("no_progress").await;
     assert!(
-        matches!(result, Err(AcpError::PermissionProgressTimeout)),
+        matches!(result, Err(AcpError::PermissionTelemetryTimeout)),
         "{result:?}"
     );
     let states: Vec<_> = events

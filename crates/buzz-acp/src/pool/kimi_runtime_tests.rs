@@ -650,3 +650,111 @@ async fn exercise_initial_background_error(terminal: bool) {
     result.agent.acp.shutdown().await;
     server.abort();
 }
+
+#[tokio::test]
+async fn kimi_outer_work_stop_records_deadline_and_cancel_when_prompt_future_is_dropped() {
+    use crate::{
+        config::DedupMode,
+        observer::ObserverHandle,
+        queue::{EventQueue, QueuedEvent, RecoveryPolicy},
+    };
+    let mut missing = Vec::new();
+    for cancelled in [false, true] {
+        let fixture = Fixture::new();
+        let scope = scope();
+        let (mut ctx, server) = relay_context(scope.channel_id(), vec![]).await;
+        // The initial setup prompt has its ordinary turn budget; the outer
+        // logical-work deadline is what must bound this in-flight prompt.
+        ctx.initial_message = Some("safe initial context".into());
+        ctx.idle_timeout = Duration::from_secs(10);
+        ctx.max_turn_duration = Duration::from_secs(10);
+        let mut agent = fixture
+            .agent(&[("KIMI_IDENTITY", "1"), ("HANG_PROMPT", "1")])
+            .await;
+        let process = agent.acp.process_instance;
+        let observer = ObserverHandle::in_process();
+        agent.acp.set_observer(Some(observer.clone()), 0);
+        let mut queue = EventQueue::new(DedupMode::Queue)
+            .with_kimi_recovery(RecoveryPolicy::default(), "/tmp/work");
+        queue.push(QueuedEvent {
+            channel_id: scope.channel_id(),
+            scope: scope.clone(),
+            event: EventBuilder::new(Kind::Custom(9), "outer stop")
+                .sign_with_keys(&Keys::generate())
+                .unwrap(),
+            prompt_tag: "mention".into(),
+            received_at: std::time::Instant::now(),
+            edit: None,
+        });
+        let mut batch = queue.flush_next().unwrap();
+        batch.work.as_mut().unwrap().deadline =
+            std::time::Instant::now() + Duration::from_secs(if cancelled { 5 } else { 1 });
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(run_prompt_task(
+            agent,
+            Some(batch),
+            None,
+            Arc::new(ctx),
+            tx,
+            None,
+            "outer-stop".into(),
+            Default::default(),
+        ));
+        tokio::time::timeout(Duration::from_millis(800), async {
+            while !fixture.methods().iter().any(|m| m == "session/prompt") {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("outer stop must exercise an in-flight prompt");
+        if cancelled {
+            assert!(queue.cancel_logical_work(&scope));
+        }
+        let mut result = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.agent.acp.process_instance, process);
+        assert!(
+            result.agent.acp.has_in_flight_prompt(),
+            "ACP future was dropped while executing"
+        );
+        if cancelled {
+            assert!(matches!(
+                result.outcome,
+                PromptOutcome::Error(AcpError::WorkCancelledPoisoned)
+            ));
+            assert!(result.batch.is_none());
+        } else {
+            assert!(matches!(
+                result.outcome,
+                PromptOutcome::Error(AcpError::WorkDeadlinePoisoned)
+            ));
+            assert!(result.batch.is_some());
+        }
+        assert!(result.outcome.requires_retirement());
+        let events = observer.snapshot();
+        let stops: Vec<_> = events.iter().filter(|e| e.kind == "prompt_stop").collect();
+        let (initiator, reason) = if cancelled {
+            ("user", "explicit_cancel")
+        } else {
+            ("deadline", "work_deadline")
+        };
+        if stops.len() != 1
+            || stops[0].payload["initiator"] != initiator
+            || stops[0].payload["reason"] != reason
+        {
+            missing.push(format!(
+                "cancelled={cancelled}: {:?}",
+                stops.iter().map(|e| &e.payload).collect::<Vec<_>>()
+            ));
+        }
+        result.agent.acp.shutdown().await;
+        task.await.unwrap();
+        server.abort();
+    }
+    assert!(
+        missing.is_empty(),
+        "outer stop provenance missing: {missing:?}"
+    );
+}

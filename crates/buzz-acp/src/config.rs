@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use crate::filter::SubscriptionRule;
 mod kimi_recovery;
+pub use kimi_recovery::KimiPermissionVisibility;
 
 /// Default idle timeout (seconds) when neither `--idle-timeout` nor the
 /// deprecated `--turn-timeout` is set.

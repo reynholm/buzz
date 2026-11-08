@@ -1,13 +1,35 @@
 //! Request-bound Kimi permission diagnostics and post-response progress bounds.
 use super::*;
-use crate::config::PermissionMode;
+use crate::config::{KimiPermissionVisibility, PermissionMode};
+use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tokio::time::Instant;
 mod controls;
 pub(crate) use controls::{owner_decision, PermissionDecision, PermissionNotice};
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Visibility {
+    Observable,
+    CompatibilityUnobservable,
+    Unknown,
+}
+
+impl Visibility {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Observable => "observable",
+            Self::CompatibilityUnobservable => "compatibility_unobservable",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct PermissionRecord {
+    generation: uuid::Uuid,
+    visibility: Visibility,
+    last_match: Option<Instant>,
+    wait_started: Instant,
     pub decision_token: uuid::Uuid,
     pub id: serde_json::Value,
     pub session: String,
@@ -18,8 +40,18 @@ pub(super) struct PermissionRecord {
     pub deadline: Instant,
 }
 
+struct ObservedTool {
+    last_match: Instant,
+    acknowledged: bool,
+}
+
 pub(super) struct PermissionState {
     policy: PermissionMode,
+    visibility_policy: KimiPermissionVisibility,
+    verified_main_only: bool,
+    generation: Option<uuid::Uuid>,
+    pub(super) stop_recorded: bool,
+    observed_tools: HashMap<String, ObservedTool>,
     decision_timeout: Duration,
     idle_timeout: Duration,
     decisions: Option<tokio::sync::mpsc::Receiver<PermissionDecision>>,
@@ -38,6 +70,11 @@ impl Default for PermissionState {
     fn default() -> Self {
         Self {
             policy: PermissionMode::BypassPermissions,
+            visibility_policy: Default::default(),
+            verified_main_only: false,
+            generation: None,
+            stop_recorded: false,
+            observed_tools: HashMap::new(),
             decision_timeout: Duration::from_secs(120),
             idle_timeout: Duration::from_secs(1500),
             decisions: None,
@@ -76,7 +113,16 @@ fn safe_title(title: Option<&str>) -> &'static str {
 }
 
 impl PermissionState {
-    pub fn begin(&mut self, session: &str, prompt: u64, idle_timeout: Duration) {
+    pub fn begin(
+        &mut self,
+        session: &str,
+        prompt: u64,
+        idle_timeout: Duration,
+        generation: uuid::Uuid,
+    ) {
+        self.generation = Some(generation);
+        self.stop_recorded = false;
+        self.observed_tools.clear();
         self.idle_timeout = idle_timeout;
         self.session = Some(session.into());
         self.prompt = Some(prompt);
@@ -87,11 +133,88 @@ impl PermissionState {
     }
 
     pub fn progress_deadline(&self) -> Option<Instant> {
-        self.progress.values().map(|record| record.deadline).min()
+        self.progress
+            .values()
+            .filter(|record| record.visibility != Visibility::CompatibilityUnobservable)
+            .map(|record| record.deadline)
+            .min()
     }
 }
 
 impl AcpClient {
+    pub(super) fn select_kimi_visibility(&mut self, result: &serde_json::Value) {
+        self.kimi_permissions.verified_main_only = result
+            .pointer("/agentInfo/name")
+            .and_then(serde_json::Value::as_str)
+            == Some("Kimi Code CLI")
+            && result
+                .pointer("/agentInfo/version")
+                .and_then(serde_json::Value::as_str)
+                == Some("2.5.2");
+        self.log_kimi_visibility();
+    }
+
+    fn configure_kimi_visibility(&mut self, policy: KimiPermissionVisibility) {
+        if self.kimi_permissions.visibility_policy != policy {
+            self.kimi_permissions.visibility_policy = policy;
+            self.log_kimi_visibility();
+        }
+    }
+
+    fn log_kimi_visibility(&self) {
+        let profile = match self.kimi_permissions.visibility_policy {
+            KimiPermissionVisibility::Auto if self.kimi_permissions.verified_main_only => {
+                "kimi_2_5_2_main_only"
+            }
+            KimiPermissionVisibility::Observable => "observable_override",
+            _ => "unknown",
+        };
+        tracing::info!(target: "acp::permission", process_generation=%self.process_instance,
+            profile, policy=?self.kimi_permissions.visibility_policy, "Kimi permission visibility selected");
+        self.observe("permission_visibility_profile", serde_json::json!({
+            "profile":profile, "selection":format!("{:?}", self.kimi_permissions.visibility_policy),
+            "processGeneration":self.process_instance,
+        }));
+    }
+
+    fn permission_effect_key(&self, tool: &str) -> String {
+        // Work outlives prompts and processes, whereas ACP tool IDs may be reused.
+        // Hash a framed tuple to retain bounded identity without retaining payloads.
+        hex::encode(Sha256::digest(
+            serde_json::to_vec(&(
+                self.process_instance,
+                &self.kimi_permissions.session,
+                self.kimi_permissions.prompt,
+                tool,
+            ))
+            .unwrap_or_default(),
+        ))
+    }
+
+    pub(super) fn kimi_permission_timeout(&self) -> AcpError {
+        let Some(record) = self
+            .kimi_permissions
+            .progress
+            .values()
+            .filter(|record| record.visibility != Visibility::CompatibilityUnobservable)
+            .min_by_key(|record| record.deadline)
+        else {
+            return AcpError::PermissionTelemetryTimeout;
+        };
+        tracing::warn!(target: "acp::permission", process_generation=%record.generation,
+            initiator="watchdog", visibility=record.visibility.label(),
+            wait_ms=record.wait_started.elapsed().as_millis() as u64,
+            last_matching_event_age_ms=?record.last_match.map(|last| last.elapsed().as_millis() as u64),
+            reason=if record.visibility == Visibility::Observable { "observable_tool_timeout" } else { "telemetry_unavailable" },
+            "Kimi permission watchdog expired");
+        self.permission_event(record, "watchdog_expired");
+        if record.visibility == Visibility::Observable {
+            AcpError::PermissionProgressTimeout
+        } else {
+            AcpError::PermissionTelemetryTimeout
+        }
+    }
+
     async fn write_kimi_permission(
         &mut self,
         record: &PermissionRecord,
@@ -135,10 +258,29 @@ impl AcpClient {
                 _ => {}
             }
         }
+        let reason = if state == "watchdog_expired" {
+            match record.visibility {
+                Visibility::Observable => Some("observable_tool_timeout"),
+                _ => Some("telemetry_unavailable"),
+            }
+        } else {
+            None
+        };
+        let last_match_age = record
+            .last_match
+            .map(|last| last.elapsed().as_millis().min(u64::MAX as u128) as u64);
+        tracing::debug!(target: "acp::permission", state, visibility=record.visibility.label(),
+            process_generation=%record.generation, prompt=record.prompt,
+            wait_ms=record.wait_started.elapsed().as_millis() as u64,
+            last_matching_event_age_ms=?last_match_age, reason, "Kimi permission lifecycle");
         self.observe("permission_lifecycle",serde_json::json!({
             "state":state,"requestId":record.id,"sessionId":record.session,"promptId":record.prompt,
             "requestToken":record.decision_token,"policy":self.kimi_permissions.policy.as_wire_str(),
-            "processGeneration":self.process_instance,"toolCallId":record.tool,"description":record.description,
+            "processGeneration":record.generation,"toolCallId":record.tool,
+            "visibility":record.visibility.label(), "waitElapsedMs":record.wait_started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+            "lastMatchingEventAgeMs":last_match_age,
+            "initiator":if state == "watchdog_expired" { Some("watchdog") } else if state == "cancelled" { Some("user") } else { None },
+            "reason":reason,"description":record.description,
             "elapsedMs":record.received.elapsed().as_millis().min(u64::MAX as u128) as u64,
         }));
     }
@@ -149,17 +291,20 @@ impl AcpClient {
         }
         let records = std::mem::take(&mut self.kimi_permissions.progress);
         for record in records.values() {
-            if state == "prompt_completed" {
-                self.permission_event(record, "progress_observed");
-            }
             self.permission_event(record, state);
         }
+        self.kimi_permissions.observed_tools.clear();
+        self.kimi_permissions.read_only_tools.clear();
+        self.kimi_permissions.generation = None;
         self.kimi_permissions.session = None;
         self.kimi_permissions.prompt = None;
     }
 
     pub(super) fn observe_kimi_permission_progress(&mut self, msg: &serde_json::Value) {
         if !self.kimi
+            || self.kimi_permissions.generation != Some(self.process_instance)
+            || self.last_prompt_id != self.kimi_permissions.prompt
+            || self.last_prompt_id.is_none()
             || msg.get("method").and_then(serde_json::Value::as_str) != Some("session/update")
             || msg
                 .pointer("/params/sessionId")
@@ -175,7 +320,10 @@ impl AcpClient {
         ) {
             return;
         }
-        let Some(tool) = update["toolCallId"].as_str() else {
+        let Some(tool) = update["toolCallId"]
+            .as_str()
+            .filter(|tool| !tool.is_empty() && tool.len() <= 256)
+        else {
             return;
         };
         if matches!(update["kind"].as_str(), Some("read" | "search"))
@@ -184,19 +332,51 @@ impl AcpClient {
         {
             self.kimi_permissions.read_only_tools.insert(tool.into());
         }
+        // The verified adapter maps tool.progress to a non-empty title update
+        // without status. A create alone proves visibility, not execution.
+        let verified_progress = self.kimi_permissions.verified_main_only
+            && update["sessionUpdate"] == "tool_call_update"
+            && update["status"].is_null()
+            && update["title"]
+                .as_str()
+                .is_some_and(|title| !title.is_empty());
         if !matches!(
             update["status"].as_str(),
-            Some("in_progress" | "completed" | "failed")
-        ) {
+            Some("pending" | "in_progress" | "completed" | "failed")
+        ) && !(update["sessionUpdate"] == "tool_call" && update["status"].is_null())
+            && !verified_progress
+        {
             return;
         }
+        let acknowledged = verified_progress
+            || matches!(
+                update["status"].as_str(),
+                Some("in_progress" | "completed" | "failed")
+            );
+        let now = Instant::now();
+        if self.kimi_permissions.observed_tools.len() < 256
+            || self.kimi_permissions.observed_tools.contains_key(tool)
+        {
+            self.kimi_permissions
+                .observed_tools
+                .entry(tool.into())
+                .and_modify(|observed| {
+                    observed.last_match = now;
+                    observed.acknowledged |= acknowledged;
+                })
+                .or_insert(ObservedTool {
+                    last_match: now,
+                    acknowledged,
+                });
+        }
         if let Some(work) = &self.kimi_permissions.work {
+            let effect_key = self.permission_effect_key(tool);
             match update["status"].as_str() {
                 Some("in_progress") if !self.kimi_permissions.read_only_tools.contains(tool) => {
-                    work.effect_started(tool)
+                    work.effect_started(&effect_key)
                 }
                 // A failed tool may already have produced a partial external effect.
-                Some("completed") => work.effect_settled(tool),
+                Some("completed") => work.effect_settled(&effect_key),
                 _ => {}
             }
         }
@@ -204,12 +384,25 @@ impl AcpClient {
             .kimi_permissions
             .progress
             .iter()
-            .filter(|(_, record)| record.tool == tool)
+            .filter(|(_, record)| {
+                record.tool == tool
+                    && record.generation == self.process_instance
+                    && Some(record.prompt) == self.last_prompt_id
+            })
             .map(|(key, _)| key.clone())
             .collect();
         for key in progressed {
-            if let Some(record) = self.kimi_permissions.progress.remove(&key) {
+            if let Some(mut record) = self.kimi_permissions.progress.remove(&key) {
+                record.visibility = Visibility::Observable;
+                record.last_match = Some(now);
+                record.deadline = now + self.kimi_permissions.progress_timeout;
                 self.permission_event(&record, "progress_observed");
+                // Lifecycle visibility does not promise periodic heartbeats.
+                // After execution acknowledgement, ordinary turn/work bounds own
+                // liveness. Only a successful terminal status settles the effect.
+                if !acknowledged {
+                    self.kimi_permissions.progress.insert(key, record);
+                }
             }
         }
     }
@@ -227,6 +420,7 @@ impl AcpClient {
             .pointer("/params/sessionId")
             .and_then(serde_json::Value::as_str);
         if session != self.kimi_permissions.session.as_deref()
+            || self.kimi_permissions.generation != Some(self.process_instance)
             || self.last_prompt_id != self.kimi_permissions.prompt
             || self.last_prompt_id.is_none()
         {
@@ -251,7 +445,25 @@ impl AcpClient {
                 AcpError::Protocol("permission request missing bounded tool call id".into())
             })?;
         let now = Instant::now();
+        let observed = self.kimi_permissions.observed_tools.get(tool);
+        let last_match = observed.map(|observed| observed.last_match);
+        let acknowledged = observed.is_some_and(|observed| observed.acknowledged);
+        let visibility = if last_match.is_some()
+            || self.kimi_permissions.visibility_policy == KimiPermissionVisibility::Observable
+        {
+            Visibility::Observable
+        } else if self.kimi_permissions.visibility_policy == KimiPermissionVisibility::Auto
+            && self.kimi_permissions.verified_main_only
+        {
+            Visibility::CompatibilityUnobservable
+        } else {
+            Visibility::Unknown
+        };
         let record = PermissionRecord {
+            generation: self.process_instance,
+            visibility,
+            last_match,
+            wait_started: now,
             decision_token: uuid::Uuid::new_v4(),
             id: id.clone(),
             session: session.unwrap_or_default().into(),
@@ -333,7 +545,7 @@ impl AcpClient {
                     .read_only_tools
                     .insert(record.tool.clone());
             } else if let Some(work) = &self.kimi_permissions.work {
-                work.effect_started(&record.tool);
+                work.effect_started(&self.permission_effect_key(&record.tool));
             }
         }
         self.write_kimi_permission(&record, &response).await?;
@@ -341,8 +553,11 @@ impl AcpClient {
         self.pending_permission_id = None;
         self.kimi_permissions.pending = None;
         let mut record = record;
-        record.deadline = Instant::now() + self.kimi_permissions.progress_timeout;
-        self.kimi_permissions.progress.insert(key, record);
+        record.wait_started = Instant::now();
+        record.deadline = record.wait_started + self.kimi_permissions.progress_timeout;
+        if selected.is_some_and(|option| option["kind"] == "allow_once") && !acknowledged {
+            self.kimi_permissions.progress.insert(key, record);
+        }
         Ok(())
     }
 }

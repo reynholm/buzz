@@ -63,6 +63,39 @@ BUZZ_TEST_PI_ACP=/absolute/buzz-pi-acp/dist/index.js \
   cargo test -p buzz-acp real_pi_preserves -- --ignored
 ```
 
+## Kimi permission visibility
+
+```sh
+env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL \
+  -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY \
+  cargo test --locked -p buzz-acp --lib kimi_ -- --test-threads=1
+```
+
+The `kimi_visibility` cases use actual local ACP subprocess pipes with a synthetic
+peer advertising exact `Kimi Code CLI` `2.5.2`. They run permission-only foreground
+and background subagent shapes for several shortened tool-watchdog intervals;
+observable pending tools without acknowledgement, quiet long main tools after
+acknowledgement, verified title-only progress, permission-before-create (including
+absent initial status), unrelated session/tool traffic, reused IDs in another
+process, prompt reset, exact-version boundaries and CLI policy overrides have
+separate assertions.
+Idle/hard bounds and user cancellation run through the production read/cancel loop.
+Unobserved completion and execution acknowledgement retain external-effect
+uncertainty. The pool `kimi_outer_work_stop` regression drives a real initial
+prompt through the outer logical-work deadline and cancellation boundary, where
+the dropped ACP future cannot emit its own stop diagnosis. The strict profile and
+unknown telemetry outcomes both require worker retirement rather than pipe reuse.
+See [KIMI_RECOVERY.md](KIMI_RECOVERY.md) for selection, diagnostics and rollback.
+
+These checks do not run the installed provider, prove a real 180-second subagent
+execution, publish an answer or attest native/human acceptance. In a disposable
+profile, record the exact harness and unmodified Kimi `2.5.2`, start harmless
+foreground and background subagent work lasting over 180 seconds, and verify that
+no 120-second permission watchdog cancels it. Observe the main-tool watchdog with
+a controlled stall, then check ordinary idle/hard deadlines and explicit cancel.
+Inspect the original thread and redacted stop diagnostics separately. Keep unknown
+external effects unreplayed and do not change working agents for this check.
+
 ## Background process lifecycle
 
 On Unix, the `background` and `process_` test filters exercise real local ACP

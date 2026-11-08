@@ -27,6 +27,7 @@ blocks that slot; other available slots/scopes continue independently.
 | `--kimi-recovery-budget` | `KIMI_RECOVERY_BUDGET` | 1800 seconds |
 | `--kimi-approval-decision-timeout` | `KIMI_APPROVAL_DECISION_TIMEOUT` | 120 seconds |
 | `--kimi-approval-progress-timeout` | `KIMI_APPROVAL_PROGRESS_TIMEOUT` | 120 seconds |
+| `--kimi-permission-visibility` | `KIMI_PERMISSION_VISIBILITY` | `auto` |
 
 Each retry independently multiplies its base delay by a uniform draw in the
 inclusive range 0.8–1.2. The default maximum delay is 144 seconds and the sum of
@@ -129,12 +130,49 @@ configured behavior.
 
 Decision waiting is bounded by the configured timeout and remaining turn/work
 limits. Permission writes have at most 30 seconds and are also capped by those
-limits. After a written reply, a separate progress watchdog requires correlated
-tool progress or a prompt outcome, not unrelated service chatter. The initial
-120-second progress bound is conservative relative to one observed successful
-4.169-second reply-to-end-turn exchange; it is not an incident-derived timeout.
-Idle-pool sleep remains blocked by an active turn, background hold or pending
-continuation/retry. This does not disable the turn/work watchdogs.
+limits. A written allow reply is tracked with one of three lifecycle visibility
+states:
+
+- `observable`: a matching create or lifecycle update was seen in this prompt,
+  or the operator explicitly selected `observable`. Its separate 120-second
+  watchdog bounds missing execution acknowledgement after pending/create, rather
+  than the tool's total runtime. Matching `in_progress`, terminal status, or the
+  exact verified adapter's title-only progress update clears this wait. An already
+  observed acknowledgement also avoids starting another short wait at permission.
+  Text, another tool and another session never acknowledge it. A create without
+  an initial status proves visibility but does not prove execution or completion.
+  No verified profile here promises periodic execution heartbeats: an acknowledged
+  quiet long tool remains bounded by the ordinary idle/hard/work deadlines.
+- `compatibility_unobservable`: with `auto`, the exact initialize identity
+  `Kimi Code CLI` and version `2.5.2` select `kimi_2_5_2_main_only`. This verified
+  adapter forwards session-wide subagent permissions but only main-agent tool
+  lifecycle. A permission without matching lifecycle has no individual tool
+  deadline. A later matching lifecycle promotes it to `observable`; execution
+  acknowledgement clears the individual wait without settling external effects.
+- `unknown`: all other versions, including `2.5.1`, future patches and custom
+  version suffixes, retain bounded telemetry waiting. Expiry reports unavailable
+  telemetry and an unknown tool result; it does not diagnose a proven tool stall.
+
+Every profile preserves idle timeout, hard turn deadline, logical-work budget
+and explicit user cancellation. The selected profile/policy and process generation
+are logged; watchdog diagnostics include visibility, elapsed wait, last matching
+event age (null when none), initiator and reason. Prompt stop diagnostics distinguish
+user cancellation, deadlines, watchdog, transport and provider failures without
+logging commands, environment or payloads.
+
+`--kimi-permission-visibility observable` (or
+`BUZZ_ACP_KIMI_PERMISSION_VISIBILITY=observable`) restores strict per-permission
+acknowledgement waiting for managed Kimi work. `unknown` forces conservative
+bounded telemetry waiting; `auto` restores exact-version selection. The override does not authorize
+compatibility for an unverified version. Configuration takes effect on new work;
+restart only the explicitly selected harness after its current work is reconciled.
+Do not replay an action merely to test rollback.
+
+Prompt completion without lifecycle is not progress or external-effect settlement.
+Effect identities include session, prompt and process generation, so a reused tool
+ID cannot settle an older unknown action. Per-prompt visibility is cleared at
+begin/finish. Idle-pool sleep remains blocked by an active turn, background hold
+or pending continuation/retry. These changes do not disable turn/work watchdogs.
 
 The decision wait observes child exit directly and retires its vote mailbox.
 Death before a vote propagates the execution failure to checked retirement and

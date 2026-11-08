@@ -160,6 +160,7 @@ impl SessionState {
                 | AcpError::WorkDeadlinePoisoned
                 | AcpError::WorkCancelledPoisoned
                 | AcpError::PermissionProgressTimeout
+                | AcpError::PermissionTelemetryTimeout
                 | AcpError::PermissionConflict
                 | AcpError::PermissionRequired
                 | AcpError::PermissionViewUnavailable
