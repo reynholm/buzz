@@ -250,85 +250,175 @@ async fn provider_background_end_turn_without_ack_preserves_results_and_retry_id
 
 #[tokio::test]
 async fn provider_background_restart_reconciles_the_original_session_without_relaunch() {
-    let (mut pool, mut queue, scope, dir, ctx) = setup().await;
-    assert_eq!(dispatch(&mut pool, &mut queue, &ctx), 1);
-    return_success(&mut pool, &mut queue).await;
-    for mut agent in pool.agents.iter_mut().filter_map(Option::take) {
-        agent.acp.shutdown().await;
-    }
-    drop(pool);
-    drop(queue);
-    let store = Arc::new(
-        crate::session_store::SessionStore::open(
-            dir.path().join("sessions"),
-            "wss://relay.example",
-            &ctx.agent_keys.public_key().to_hex(),
+    for scenario in ["collect", "expire", "expire_stale_local"] {
+        let (mut pool, queue, scope, dir, ctx) = setup().await;
+        let mut queue = if scenario == "collect" {
+            queue
+        } else {
+            queue.with_runtime_delivery(dir.path().to_str().unwrap(), 20)
+        };
+        // A prior owner advances local ownership before the original launch.
+        pool.record_scope_owner(scope.clone(), 0);
+        assert_eq!(dispatch(&mut pool, &mut queue, &ctx), 1);
+        return_success(&mut pool, &mut queue).await;
+        for mut agent in pool.agents.iter_mut().filter_map(Option::take) {
+            agent.acp.shutdown().await;
+        }
+        drop(pool);
+        drop(queue);
+        let store = Arc::new(
+            crate::session_store::SessionStore::open(
+                dir.path().join("sessions"),
+                "wss://relay.example",
+                &ctx.agent_keys.public_key().to_hex(),
+            )
+            .unwrap(),
+        );
+        assert!(store.pending_provider_work(&[]).unwrap().is_empty());
+        let records = store.pending_provider_work(&[scope.channel_id()]).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].identity.generation, 2);
+        let mut queue = EventQueue::new(DedupMode::Queue);
+        queue.restore_provider_background(records[0].clone(), dir.path().to_str().unwrap());
+        let mut acp = AcpClient::spawn(
+            "python3",
+            &[
+                "-u".into(),
+                "-c".into(),
+                ADAPTER.into(),
+                dir.path().to_string_lossy().into(),
+            ],
+            &[],
+            false,
         )
-        .unwrap(),
-    );
-    assert!(store.pending_provider_work(&[]).unwrap().is_empty());
-    let records = store.pending_provider_work(&[scope.channel_id()]).unwrap();
-    assert_eq!(records.len(), 1);
-    let mut queue = EventQueue::new(DedupMode::Queue);
-    queue.restore_provider_background(records[0].clone(), dir.path().to_str().unwrap());
-    let mut acp = AcpClient::spawn(
-        "python3",
-        &[
-            "-u".into(),
-            "-c".into(),
-            ADAPTER.into(),
-            dir.path().to_string_lossy().into(),
-        ],
-        &[],
-        false,
-    )
-    .await
-    .unwrap();
-    acp.initialize().await.unwrap();
-    let mut pool = AgentPool::from_slots(vec![Some(owned_worker(0, acp))]);
-    pool.set_session_store(Some(store));
-    assert_eq!(dispatch(&mut pool, &mut queue, &ctx), 1);
-    return_success(&mut pool, &mut queue).await;
-    assert!(pool.has_runtime_hold());
-    assert_eq!(
-        std::fs::read_to_string(dir.path().join("launches"))
+        .await
+        .unwrap();
+        acp.initialize().await.unwrap();
+        let mut pool = AgentPool::from_slots(vec![Some(owned_worker(0, acp))]);
+        pool.set_session_store(Some(store));
+        assert_eq!(dispatch(&mut pool, &mut queue, &ctx), 1);
+        return_success(&mut pool, &mut queue).await;
+        assert!(pool.has_runtime_hold());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("launches"))
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
+        let continuation = pool.runtime_holds[&0].continuation.as_ref().unwrap();
+        assert_eq!(continuation.generation, 1);
+        assert_eq!(
+            continuation
+                .provider_recovery
+                .as_ref()
+                .unwrap()
+                .identity
+                .generation,
+            2
+        );
+        complete_tasks(&mut pool, &mut queue, &dir).await;
+        assert!(pool.runtime_holds[&0].collection_pending);
+        if scenario == "collect" {
+            assert_eq!(dispatch(&mut pool, &mut queue, &ctx), 1);
+            return_success(&mut pool, &mut queue).await;
+            assert!(!pool.has_runtime_hold());
+        } else {
+            let remaining = pool.agents[0]
+                .as_ref()
+                .unwrap()
+                .acp
+                .provider_background_record()
+                .unwrap()
+                .remaining();
+            tokio::time::sleep(remaining + Duration::from_millis(20)).await;
+            if scenario == "expire_stale_local" {
+                let generation = pool.record_scope_owner(scope.clone(), 0);
+                pool.agents[0]
+                    .as_mut()
+                    .unwrap()
+                    .state
+                    .set_scope_owner_generation(scope.clone(), generation);
+            }
+            assert_eq!(dispatch(&mut pool, &mut queue, &ctx), 0);
+            let agent = pool.agents[0].as_ref().unwrap();
+            assert_eq!(
+                agent
+                    .acp
+                    .provider_background_record()
+                    .unwrap()
+                    .terminal_reason
+                    .as_deref(),
+                Some("background_deadline")
+            );
+            if scenario == "expire_stale_local" {
+                assert!(
+                    pool.has_runtime_hold(),
+                    "expiry must preserve a hold whose local owner changed"
+                );
+                pool.queue_finished_background_work(&mut queue);
+            }
+            assert!(
+                !pool.has_runtime_hold(),
+                "terminal expiry must release gen2 work restored under local gen1"
+            );
+            pool.queue_finished_background_work(&mut queue);
+            assert!(!queue.has_pending_continuation(&scope));
+            let other = SessionScope::Thread {
+                channel_id: scope.channel_id(),
+                root_event_id: "b".repeat(64),
+            };
+            let event = EventBuilder::new(
+                Kind::Custom(9),
+                "Start independent work in the other thread",
+            )
+            .tag(nostr::Tag::parse(["e", &"b".repeat(64), "", "reply"]).unwrap())
+            .sign_with_keys(&Keys::generate())
+            .unwrap();
+            queue.push(QueuedEvent {
+                channel_id: other.channel_id(),
+                scope: other,
+                event,
+                received_at: std::time::Instant::now(),
+                prompt_tag: "mention".into(),
+                edit: None,
+            });
+            assert_eq!(
+                dispatch(&mut pool, &mut queue, &ctx),
+                1,
+                "the only worker must admit another scope after expiry"
+            );
+            return_success(&mut pool, &mut queue).await;
+        }
+        let requests: Vec<serde_json::Value> = std::fs::read_to_string(dir.path().join("requests"))
             .unwrap()
             .lines()
-            .count(),
-        1
-    );
-    complete_tasks(&mut pool, &mut queue, &dir).await;
-    assert_eq!(dispatch(&mut pool, &mut queue, &ctx), 1);
-    return_success(&mut pool, &mut queue).await;
-    assert!(!pool.has_runtime_hold());
-    let requests: Vec<serde_json::Value> = std::fs::read_to_string(dir.path().join("requests"))
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    assert_eq!(
-        requests
-            .iter()
-            .filter(|request| request["method"] == "session/new")
-            .count(),
-        1
-    );
-    assert_eq!(
-        requests
-            .iter()
-            .filter(|request| request["method"] == "session/resume")
-            .count(),
-        1
-    );
-    assert_eq!(
-        requests
-            .iter()
-            .filter(|request| request["method"] == "session/prompt")
-            .count(),
-        2
-    );
-    for mut agent in pool.agents.into_iter().flatten() {
-        agent.acp.shutdown().await;
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request["method"] == "session/new")
+                .count(),
+            if scenario == "collect" { 1 } else { 2 }
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request["method"] == "session/resume")
+                .count(),
+            1
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request["method"] == "session/prompt")
+                .count(),
+            2
+        );
+        for mut agent in pool.agents.into_iter().flatten() {
+            agent.acp.shutdown().await;
+        }
     }
 }
 

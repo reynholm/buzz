@@ -162,6 +162,24 @@ impl AgentPool {
         })
     }
     pub(crate) fn expire_provider_background(&mut self, record: &Record) -> Result<(), AcpError> {
+        // Provider identity survives restart; local ownership is assigned anew.
+        // Validate both independently before changing an idle worker's hold.
+        let releasable: Vec<_> = self
+            .runtime_holds
+            .iter()
+            .filter_map(|(index, hold)| {
+                let continuation = hold.continuation.as_ref()?;
+                let provider = continuation.provider_recovery.as_ref()?;
+                let agent = self.agents.get(*index)?.as_ref()?;
+                (hold.scope == record.scope
+                    && provider.scope == record.scope
+                    && provider.identity == record.identity
+                    && continuation.delivery_key == record.identity.work_id
+                    && continuation.session_id == record.identity.session_id
+                    && self.continuation_matches(agent, &hold.scope, continuation))
+                .then_some(*index)
+            })
+            .collect();
         let result = if let Some(agent) = self.agents.iter_mut().flatten().find(|agent| {
             agent.acp.provider_background_record().is_some_and(|bound| {
                 bound.identity == record.identity && bound.scope == record.scope
@@ -182,20 +200,16 @@ impl AgentPool {
         };
         // Persistence failure needs human attention, not another automatic wake.
         // A stale expiry must leave any replacement collection and OS work alone.
-        self.runtime_holds.retain(|_, hold| {
-            if hold.scope == record.scope
-                && hold.continuation.as_ref().is_some_and(|continuation| {
-                    continuation.delivery_key == record.identity.work_id
-                        && continuation.session_id == record.identity.session_id
-                        && continuation.generation == record.identity.generation
-                })
-            {
-                hold.continuation = None;
-                hold.collection_pending = false;
-                return !hold.blocking_pids.is_empty();
+        for index in releasable {
+            let Some(hold) = self.runtime_holds.get_mut(&index) else {
+                continue;
+            };
+            hold.continuation = None;
+            hold.collection_pending = false;
+            if hold.blocking_pids.is_empty() {
+                self.runtime_holds.remove(&index);
             }
-            true
-        });
+        }
         result
     }
     pub(crate) fn poll_provider_background(&mut self, queue: &mut EventQueue) {

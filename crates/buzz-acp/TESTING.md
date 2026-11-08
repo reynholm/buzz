@@ -115,6 +115,9 @@ state. Startup journal handoff and recovered expiry terminalize the matching
 dead-owner registry before a new request resumes that session. A live or replaced
 owner cannot be terminalized by stale recovery. Expiry bypasses retry backoff;
 collection retries must fit within the original budget even without logical work.
+After restart, durable provider generation can differ from local worker ownership.
+The restart journey covers running-only recovery, pending expiry and another
+thread claiming the only worker; a separate row retains the local-owner fence.
 Run the full package suite for acceptance.
 
 The ignored `provider_background_runtime_final` journey additionally uses the
