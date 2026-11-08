@@ -111,14 +111,20 @@ survives snapshot failure and capacity deferral; native steering refusal leaves
 ordinary input queued. The original absolute deadline covers setup, snapshot and
 prompt, including expired idle collections without logical work. Durable child
 receipts keep the parent recoverable until final journal handoff or a terminal
-state. Run the full package suite for acceptance.
+state. Startup journal handoff and recovered expiry terminalize the matching
+dead-owner registry before a new request resumes that session. A live or replaced
+owner cannot be terminalized by stale recovery. Expiry bypasses retry backoff;
+collection retries must fit within the original budget even without logical work.
+Run the full package suite for acceptance.
 
 The ignored `provider_background_runtime_final` journey additionally uses the
 rebuilt CLI and a signature-checking local mock relay. It asserts that the first
 `end_turn` publishes no `missing_final`, then collection acknowledgements permit
 one final report in the original thread. It repeats this with a missing receipt
 and with a host crash after the last durable child receipt but before final
-preparation; both reuse existing tasks and the original delivery identity:
+preparation; both reuse existing tasks and the original delivery identity. A
+journal-handoff restart additionally admits a new request with its own lifecycle
+identity and budget after the old deadline:
 
 ```sh
 cargo build -p buzz-cli

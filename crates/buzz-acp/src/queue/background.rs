@@ -144,14 +144,14 @@ impl EventQueue {
             .iter()
             .filter(|(scope, continuation)| {
                 !self.in_flight_scopes.contains(*scope)
-                    && (continuation.background_ready
-                        || continuation
-                            .execution_deadline()
-                            .is_some_and(|deadline| deadline <= now))
-                    && self
-                        .continuation_retry_after
-                        .get(*scope)
-                        .is_none_or(|deadline| *deadline <= now)
+                    && (continuation
+                        .execution_deadline()
+                        .is_some_and(|deadline| deadline <= now)
+                        || (continuation.background_ready
+                            && self
+                                .continuation_retry_after
+                                .get(*scope)
+                                .is_none_or(|deadline| *deadline <= now)))
             })
             .min_by_key(|(_, continuation)| continuation.received_at)
             .map(|(scope, _)| scope.clone())?;
@@ -243,14 +243,14 @@ impl EventQueue {
         let now = Instant::now();
         self.continuations.iter().any(|(scope, continuation)| {
             !self.in_flight_scopes.contains(scope)
-                && (continuation.background_ready
-                    || continuation
-                        .execution_deadline()
-                        .is_some_and(|deadline| deadline <= now))
-                && self
-                    .continuation_retry_after
-                    .get(scope)
-                    .is_none_or(|deadline| *deadline <= now)
+                && (continuation
+                    .execution_deadline()
+                    .is_some_and(|deadline| deadline <= now)
+                    || (continuation.background_ready
+                        && self
+                            .continuation_retry_after
+                            .get(scope)
+                            .is_none_or(|deadline| *deadline <= now)))
         })
     }
 }
@@ -290,6 +290,64 @@ mod tests {
             prompt_tag: String::new(),
             received_at: Instant::now(),
             edit: None,
+        }
+    }
+
+    #[test]
+    fn provider_collection_deadline_overrides_backoff_and_bounds_retry_without_work() {
+        for expired in [true, false] {
+            let scope = SessionScope::Conversation {
+                channel_id: Uuid::new_v4(),
+            };
+            let mut continuation = continuation();
+            continuation.provider_recovery = Some(crate::provider_background::Record {
+                terminal_reason: None,
+                parent_pending: true,
+                cancellation: None,
+                identity: crate::provider_background::Identity {
+                    session_id: continuation.session_id.clone(),
+                    work_id: continuation.delivery_key,
+                    generation: continuation.generation,
+                },
+                scope: scope.clone(),
+                thread_tags: continuation.thread_tags.clone(),
+                events: vec![],
+                runtime_final: false,
+                deadline_unix: if expired {
+                    1
+                } else {
+                    crate::provider_background::now_unix() + 1
+                },
+                tasks: Default::default(),
+                started: Default::default(),
+            });
+            let mut queue = EventQueue::new(DedupMode::Queue);
+            queue.enqueue_continuation(scope.clone(), continuation);
+            if expired {
+                queue
+                    .continuation_retry_after
+                    .insert(scope.clone(), Instant::now() + Duration::from_secs(60));
+                assert!(queue.next_work_terminal_deadline().unwrap() <= Instant::now());
+                assert!(
+                    queue.has_ready_continuation(),
+                    "expiry must bypass retry throttle"
+                );
+                assert!(
+                    queue.flush_next().is_some(),
+                    "terminal dispatch must receive the expired batch"
+                );
+                assert!(
+                    queue.next_work_terminal_deadline().is_none(),
+                    "in-flight expiry must not spin"
+                );
+            } else {
+                let batch = queue.flush_next().unwrap();
+                assert!(batch.work.is_none());
+                assert!(
+                    queue.requeue(batch).is_some(),
+                    "a retry that cannot fit must terminalize instead of waiting beyond the budget"
+                );
+            }
         }
     }
 

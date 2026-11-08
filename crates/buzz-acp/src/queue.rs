@@ -889,6 +889,13 @@ impl EventQueue {
             0.8 + (nanos as f64 / u32::MAX as f64) * 0.4
         };
         let delay = Duration::from_secs_f64(capped_secs as f64 * jitter);
+        if collecting
+            && batch
+                .execution_deadline()
+                .is_some_and(|deadline| delay >= deadline.saturating_duration_since(Instant::now()))
+        {
+            return Some(batch);
+        }
 
         tracing::warn!(
             channel_id = %channel_id,

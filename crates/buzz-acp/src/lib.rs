@@ -3001,6 +3001,32 @@ async fn tokio_main() -> Result<()> {
     result
 }
 
+async fn recover_provider_background(
+    store: &session_store::SessionStore,
+    record: provider_background::Record,
+    cwd: &str,
+    rest: &relay::RestClient,
+    queue: &mut EventQueue,
+) -> anyhow::Result<()> {
+    if record.runtime_final {
+        let work = queue::LogicalWork::restore_provider(&record, cwd);
+        if managed_work::has_durable_report(rest, &work)
+            .await
+            .map_err(|reason| anyhow::anyhow!("background final recovery unavailable: {reason}"))?
+        {
+            // Startup journal replay owns this exact signed delivery.
+            store
+                .finish_dead_provider_background(&record, "parent_handed_to_delivery_journal")
+                .map_err(|error| {
+                    anyhow::anyhow!("background terminal recovery unavailable: {error}")
+                })?;
+            return Ok(());
+        }
+    }
+    queue.restore_provider_background(record, cwd);
+    Ok(())
+}
+
 async fn run_harness(
     config: Config,
     shutdown_tx: watch::Sender<()>,
@@ -3240,19 +3266,14 @@ async fn run_harness(
             Ok(records) => {
                 for record in records {
                     let cwd = current_working_directory()?;
-                    if record.runtime_final {
-                        let work = queue::LogicalWork::restore_provider(&record, &cwd);
-                        if managed_work::has_durable_report(&relay_rest_client, &work)
-                            .await
-                            .map_err(|reason| {
-                                anyhow::anyhow!("background final recovery unavailable: {reason}")
-                            })?
-                        {
-                            // Startup journal replay owns this exact signed delivery.
-                            continue;
-                        }
-                    }
-                    queue.restore_provider_background(record, &cwd);
+                    recover_provider_background(
+                        store,
+                        record,
+                        &cwd,
+                        &relay_rest_client,
+                        &mut queue,
+                    )
+                    .await?;
                 }
             }
             Err(error) => {
@@ -5607,9 +5628,19 @@ fn dispatch_pending(
                 .execution_deadline()
                 .is_some_and(|deadline| deadline <= now.into())
         {
-            pool.expire_provider_background(&scope);
-            spawn_failure_notice(Some(&ctx.rest_client), &batch,
-                "Background collection reached the original time budget. Verify the current result before starting another request.".into());
+            let record = batch
+                .continuation
+                .as_ref()
+                .and_then(|continuation| continuation.provider_recovery.as_ref())
+                .expect("provider collection identity");
+            let content = match pool.expire_provider_background(record) {
+                Ok(()) => "Background collection reached the original time budget. Verify the current result before starting another request.",
+                Err(error) => {
+                    tracing::warn!(%error, "background terminal state could not be persisted");
+                    "Background collection stopped, but its terminal state could not be saved. Human attention is required before continuing this work."
+                }
+            };
+            spawn_failure_notice(Some(&ctx.rest_client), &batch, content.into());
             queue.mark_complete(&scope);
             continue;
         }

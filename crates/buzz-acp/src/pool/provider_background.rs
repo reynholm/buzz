@@ -161,26 +161,42 @@ impl AgentPool {
                 .is_some_and(|record| record.scope == *scope && record.recoverable())
         })
     }
-    pub(crate) fn expire_provider_background(&mut self, scope: &SessionScope) {
-        for agent in self.agents.iter_mut().flatten() {
-            if agent
-                .acp
-                .provider_background_record()
-                .is_some_and(|record| record.scope == *scope)
-            {
-                if let Err(error) = agent.acp.suspend_provider_background("background_deadline") {
-                    tracing::warn!(%error, "idle background deadline could not be persisted");
-                }
-            }
-        }
+    pub(crate) fn expire_provider_background(&mut self, record: &Record) -> Result<(), AcpError> {
+        let result = if let Some(agent) = self.agents.iter_mut().flatten().find(|agent| {
+            agent.acp.provider_background_record().is_some_and(|bound| {
+                bound.identity == record.identity && bound.scope == record.scope
+            })
+        }) {
+            agent.acp.finish_provider_parent("background_deadline")
+        } else {
+            self.store
+                .as_ref()
+                .ok_or_else(|| AcpError::Protocol("background_tasks_require_session_store".into()))
+                .and_then(|store| {
+                    store
+                        .finish_dead_provider_background(record, "background_deadline")
+                        .map_err(|_| {
+                            AcpError::Protocol("background_terminal_state_not_persisted".into())
+                        })
+                })
+        };
+        // Persistence failure needs human attention, not another automatic wake.
+        // A stale expiry must leave any replacement collection and OS work alone.
         self.runtime_holds.retain(|_, hold| {
-            if hold.scope == *scope {
+            if hold.scope == record.scope
+                && hold.continuation.as_ref().is_some_and(|continuation| {
+                    continuation.delivery_key == record.identity.work_id
+                        && continuation.session_id == record.identity.session_id
+                        && continuation.generation == record.identity.generation
+                })
+            {
                 hold.continuation = None;
                 hold.collection_pending = false;
                 return !hold.blocking_pids.is_empty();
             }
             true
         });
+        result
     }
     pub(crate) fn poll_provider_background(&mut self, queue: &mut EventQueue) {
         let indexes: Vec<_> = self.runtime_holds.keys().copied().collect();

@@ -374,6 +374,106 @@ async fn provider_background_delivery_scenario(scenario: &str) {
             .count(),
         1
     );
+    if scenario == "normal" {
+        // Recreate the crash window: the signed final is durable, but the host
+        // has not saved parent completion. The old deadline is now in the past.
+        let agent = pool.agents[0].as_ref().unwrap();
+        let store = agent.state.store.clone().unwrap();
+        let mut record = agent.acp.provider_background_record().unwrap().clone();
+        record.parent_pending = true;
+        record.terminal_reason = None;
+        record.deadline_unix = 1;
+        store
+            .commit_background(&scope, agent.state.leases[&scope], record.clone())
+            .unwrap();
+        for agent in pool.agents.iter_mut().flatten() {
+            agent.acp.shutdown().await;
+        }
+        drop(pool);
+        drop(queue);
+        drop(store);
+        let store = Arc::new(
+            crate::session_store::SessionStore::open(
+                dir.path().join("sessions"),
+                &relay.url.replace("http://", "ws://"),
+                &relay.keys.public_key().to_hex(),
+            )
+            .unwrap(),
+        );
+        let pending = store.pending_provider_work(&[scope.channel_id()]).unwrap();
+        assert_eq!(pending.len(), 1);
+        queue = EventQueue::new(crate::config::DedupMode::Queue)
+            .with_runtime_delivery(dir.path().to_str().unwrap(), 60);
+        crate::recover_provider_background(
+            &store,
+            pending[0].clone(),
+            dir.path().to_str().unwrap(),
+            &ctx.rest_client,
+            &mut queue,
+        )
+        .await
+        .unwrap();
+        assert!(!queue.has_pending_scope(&scope));
+        let crate::session_store::LoadOutcome::Found(saved) = store.load(&scope) else {
+            panic!("missing handoff registry");
+        };
+        assert!(
+            !saved
+                .live
+                .unwrap()
+                .provider_background
+                .unwrap()
+                .recoverable(),
+            "journal handoff must terminalize the durable registry before a new request"
+        );
+        let agent = worker_with_peer(
+            "provider-background",
+            &log,
+            &observer,
+            crate::pool::background_work_tests::provider_background_fixture::ADAPTER,
+        )
+        .await;
+        pool = AgentPool::from_slots(vec![Some(agent)]);
+        pool.set_session_store(Some(store));
+        let request = EventBuilder::new(
+            Kind::Custom(9),
+            "Start a new independent background request",
+        )
+        .tag(nostr::Tag::parse(["e", &relay.parent.id.to_hex(), "", "reply"]).unwrap())
+        .sign_with_keys(&relay.keys)
+        .unwrap();
+        queue.push(QueuedEvent {
+            channel_id: scope.channel_id(),
+            scope: scope.clone(),
+            event: request,
+            received_at: std::time::Instant::now(),
+            prompt_tag: "mention".into(),
+            edit: None,
+        });
+        assert_eq!(
+            background_work_tests::dispatch(&mut pool, &mut queue, &ctx),
+            1
+        );
+        let result = timeout(Duration::from_secs(15), pool.result_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(result.outcome, PromptOutcome::Ok(StopReason::EndTurn)),
+            "new request must reach its own prompt after the old deadline"
+        );
+        let next = result.agent.acp.provider_background_record().unwrap();
+        assert_ne!(next.identity, record.identity);
+        assert!(next.deadline_unix > crate::provider_background::now_unix());
+        background_work_tests::apply_result(
+            &mut pool,
+            &mut queue,
+            result,
+            Some(&ctx.rest_client),
+            &HashSet::new(),
+        );
+        assert_eq!(relay.readback().await.len(), 1, "no duplicate old final");
+    }
     for mut agent in pool.agents.into_iter().flatten() {
         agent.acp.shutdown().await;
     }

@@ -379,7 +379,7 @@ async fn provider_background_restart_after_last_receipt_resumes_unfinished_paren
 
 #[tokio::test]
 async fn provider_background_expired_idle_collection_never_reenters_provider() {
-    for runtime in [false, true] {
+    for (runtime, restart) in [(false, false), (true, false), (false, true), (true, true)] {
         let (mut pool, queue, scope, dir, ctx) = setup().await;
         let mut queue = if runtime {
             queue.with_runtime_delivery(dir.path().to_str().unwrap(), 1800)
@@ -390,16 +390,71 @@ async fn provider_background_expired_idle_collection_never_reenters_provider() {
         return_success(&mut pool, &mut queue).await;
         complete_tasks(&mut pool, &mut queue, &dir).await;
         let mut batch = queue.flush_next().unwrap();
-        batch
+        let saved = batch
             .continuation
             .as_mut()
             .unwrap()
             .provider_recovery
             .as_mut()
-            .unwrap()
-            .deadline_unix = 1;
-        queue.requeue_preserve_timestamps(batch);
-        queue.mark_complete(&scope);
+            .unwrap();
+        saved.deadline_unix = 1;
+        let original = saved.clone();
+        let agent = pool.agents[0].as_ref().unwrap();
+        let store = agent.state.store.clone().unwrap();
+        store
+            .commit_background(&scope, agent.state.leases[&scope], original.clone())
+            .unwrap();
+        if restart {
+            for agent in pool.agents.iter_mut().flatten() {
+                agent.acp.shutdown().await;
+            }
+            drop(pool);
+            drop(queue);
+            drop(store);
+            let store = Arc::new(
+                crate::session_store::SessionStore::open(
+                    dir.path().join("sessions"),
+                    "wss://relay.example",
+                    &ctx.agent_keys.public_key().to_hex(),
+                )
+                .unwrap(),
+            );
+            let records = store.pending_provider_work(&[scope.channel_id()]).unwrap();
+            assert_eq!(records.len(), 1);
+            queue = EventQueue::new(DedupMode::Queue);
+            if runtime {
+                queue = queue.with_runtime_delivery(dir.path().to_str().unwrap(), 1800);
+            }
+            queue.restore_provider_background(records[0].clone(), dir.path().to_str().unwrap());
+            let mut acp = AcpClient::spawn(
+                "python3",
+                &[
+                    "-u".into(),
+                    "-c".into(),
+                    ADAPTER.into(),
+                    dir.path().to_string_lossy().into(),
+                ],
+                &[],
+                false,
+            )
+            .await
+            .unwrap();
+            acp.initialize().await.unwrap();
+            pool = AgentPool::from_slots(vec![Some(owned_worker(0, acp))]);
+            pool.set_session_store(Some(store));
+        } else {
+            queue.requeue_preserve_timestamps(batch);
+            queue.mark_complete(&scope);
+        }
+        if !restart {
+            let mut stale = original.clone();
+            stale.identity.work_id = uuid::Uuid::new_v4();
+            assert!(pool.expire_provider_background(&stale).is_err());
+            assert!(
+                pool.has_runtime_hold(),
+                "stale expiry must leave the current collection alone"
+            );
+        }
         let before = std::fs::read_to_string(dir.path().join("requests")).unwrap();
         assert_eq!(dispatch(&mut pool, &mut queue, &ctx), 0);
         assert!(!pool.has_runtime_hold());
@@ -409,15 +464,31 @@ async fn provider_background_expired_idle_collection_never_reenters_provider() {
             before
         );
         let agent = pool.agents[0].as_ref().unwrap();
+        let crate::session_store::LoadOutcome::Found(saved) =
+            agent.state.store.as_ref().unwrap().load(&scope)
+        else {
+            panic!("missing durable terminal state");
+        };
+        let saved = saved.live.unwrap().provider_background.unwrap();
+        assert!(
+            !saved.recoverable(),
+            "expiry must persist without an ACP binding, restart={restart}, runtime={runtime}"
+        );
         assert_eq!(
-            agent
-                .acp
-                .provider_background_record()
-                .unwrap()
-                .terminal_reason
-                .as_deref(),
+            saved.terminal_reason.as_deref(),
             Some("background_deadline")
         );
+        let root = original.thread_tags.root_event_id.as_deref().unwrap();
+        clarification(&mut queue, &scope, root);
+        assert_eq!(dispatch(&mut pool, &mut queue, &ctx), 1);
+        return_success(&mut pool, &mut queue).await;
+        let prompt = last_prompt(&dir);
+        let meta = &prompt["params"]["_meta"]["buzz"]["backgroundTasks"];
+        assert_ne!(
+            meta["identity"],
+            serde_json::to_value(original.identity).unwrap()
+        );
+        assert!(meta["deadline_unix"].as_u64().unwrap() > crate::provider_background::now_unix());
         for mut agent in pool.agents.into_iter().flatten() {
             agent.acp.shutdown().await;
         }

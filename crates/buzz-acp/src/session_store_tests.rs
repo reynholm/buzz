@@ -508,3 +508,106 @@ fn invalid_identity_disables_store_instead_of_sharing_a_namespace() {
     }
     assert!(SessionStore::open(root.path().into(), "wss://relay.example", "invalid-key").is_err());
 }
+
+#[test]
+fn provider_background_terminalization_fences_live_and_replaced_owners_and_write_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = open_store(dir.path().to_path_buf()).unwrap();
+    let scope = thread("a");
+    let lease = owner
+        .claim(&scope, &Expect::Missing, live(&owner, "original"))
+        .unwrap();
+    let original = crate::provider_background::Record {
+        terminal_reason: None,
+        parent_pending: true,
+        cancellation: None,
+        identity: crate::provider_background::Identity {
+            session_id: "original".into(),
+            work_id: Uuid::new_v4(),
+            generation: 1,
+        },
+        scope: scope.clone(),
+        thread_tags: Default::default(),
+        events: vec![],
+        runtime_final: true,
+        deadline_unix: crate::provider_background::now_unix() + 1800,
+        tasks: Default::default(),
+        started: Default::default(),
+    };
+    owner
+        .commit_background(&scope, lease, original.clone())
+        .unwrap();
+    let recovery = open_store(dir.path().to_path_buf()).unwrap();
+    let before = found(recovery.load(&scope));
+    assert!(
+        matches!(
+            recovery.finish_dead_provider_background(&original, "background_deadline"),
+            Err(StoreError::Conflict)
+        ),
+        "a live owner must retain its work"
+    );
+    assert_eq!(found(recovery.load(&scope)), before);
+    drop(owner);
+    let mut wrong = original.clone();
+    wrong.identity.work_id = Uuid::new_v4();
+    assert!(matches!(
+        recovery.finish_dead_provider_background(&wrong, "background_deadline"),
+        Err(StoreError::Conflict)
+    ));
+    assert_eq!(found(recovery.load(&scope)), before);
+    recovery
+        .finish_dead_provider_background(&original, "parent_handed_to_delivery_journal")
+        .unwrap();
+    let terminal = found(recovery.load(&scope));
+    assert_eq!(terminal.live.as_ref().unwrap().lease, lease);
+    assert!(!terminal
+        .live
+        .as_ref()
+        .unwrap()
+        .provider_background
+        .as_ref()
+        .unwrap()
+        .recoverable());
+    recovery
+        .finish_dead_provider_background(&original, "background_deadline")
+        .unwrap();
+    assert_eq!(
+        found(recovery.load(&scope)),
+        terminal,
+        "terminalization replay must preserve the recorded outcome"
+    );
+    let replacement = open_store(dir.path().to_path_buf()).unwrap();
+    let mut next = original.clone();
+    next.identity.work_id = Uuid::new_v4();
+    next.identity.generation += 1;
+    let mut next_live = live(&replacement, "original");
+    next_live.provider_background = Some(Box::new(next.clone()));
+    replacement
+        .claim(
+            &scope,
+            &Expect::from_outcome(&replacement.load(&scope)),
+            next_live,
+        )
+        .unwrap();
+    drop(replacement);
+    let replaced = found(recovery.load(&scope));
+    assert!(matches!(
+        recovery.finish_dead_provider_background(&original, "background_deadline"),
+        Err(StoreError::Conflict)
+    ));
+    assert_eq!(
+        found(recovery.load(&scope)),
+        replaced,
+        "a stale generation must not finish replacement work"
+    );
+    recovery
+        .fail_writes
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(recovery
+        .finish_dead_provider_background(&next, "background_deadline")
+        .is_err());
+    assert!(
+        !matches!(recovery.load(&scope), LoadOutcome::Found(record) if record.live.as_ref().and_then(|live| live.provider_background.as_ref()).is_some_and(|background| background.recoverable())),
+        "failed terminal writes must not leave resumable stale work"
+    );
+}

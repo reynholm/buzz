@@ -21,6 +21,44 @@ impl SessionStore {
         })
     }
 
+    /// Finish an unbound recovery only while the exact provider owner is dead.
+    /// The record lock serializes this identity/liveness check with new claims.
+    pub(crate) fn finish_dead_provider_background(
+        &self,
+        expected: &Record,
+        reason: &str,
+    ) -> Result<(), StoreError> {
+        expected.validate().map_err(|_| StoreError::Unreadable)?;
+        let result = self.update(&self.record_path(&expected.scope), |current| {
+            let mut record = current.ok_or(StoreError::Conflict)?.clone();
+            let live = record.live.as_mut().ok_or(StoreError::Conflict)?;
+            let background = live
+                .provider_background
+                .as_mut()
+                .ok_or(StoreError::Conflict)?;
+            if live.session_id != expected.identity.session_id
+                || background.identity != expected.identity
+                || background.scope != expected.scope
+            {
+                return Err(StoreError::Conflict);
+            }
+            if !background.recoverable() {
+                return Err(StoreError::AlreadyRecorded);
+            }
+            if self.instance_liveness(live.instance) != InstanceLiveness::Dead {
+                return Err(StoreError::Conflict);
+            }
+            background.parent_pending = false;
+            background.terminal_reason = Some(reason.into());
+            background.validate().map_err(|_| StoreError::Unreadable)?;
+            Ok(record)
+        });
+        match result {
+            Err(StoreError::AlreadyRecorded) => Ok(()),
+            result => result,
+        }
+    }
+
     pub(crate) fn pending_provider_work(
         &self,
         channels: &[Uuid],
