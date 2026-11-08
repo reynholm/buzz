@@ -10,6 +10,9 @@ mod claude_context;
 mod kimi_diagnostics;
 pub(crate) mod kimi_permission;
 pub(crate) mod launch;
+mod provider_background;
+#[cfg(all(test, unix))]
+mod provider_background_tests;
 mod provider_failure;
 mod restart_status;
 
@@ -150,6 +153,9 @@ pub enum AcpError {
     #[error("Managed report journal cannot be verified; inspect delivery before continuation")]
     DeliveryJournalUnavailable,
 
+    #[error("Provider background results are not durably acknowledged")]
+    BackgroundCollectionPending,
+
     #[error("Kimi permission request identity was reused; a human must check the action")]
     PermissionConflict,
 
@@ -223,6 +229,7 @@ fn build_initialize_params() -> serde_json::Value {
 /// One `AcpClient` per agent process. Multiple sessions can be created on the
 /// same client via repeated calls to [`session_new`](AcpClient::session_new).
 pub struct AcpClient {
+    provider_background: provider_background::ProviderBackground,
     runtime_final: Option<crate::final_reply::FinalReply>,
     runtime_peer_verified: bool,
     runtime_build_file: Option<std::path::PathBuf>,
@@ -262,6 +269,8 @@ pub struct AcpClient {
     /// Used by [`cancel_with_cleanup`] to drain the correct response.
     /// Set in [`session_prompt_with_idle_timeout`]; consumed in [`cancel_with_cleanup`].
     last_prompt_id: Option<u64>,
+    /// One prompt response can race a cancellation RPC on the same ACP stream.
+    deferred_prompt_response: Option<serde_json::Value>,
     /// Hard deadline for the current turn, set by `session_prompt_with_idle_timeout`.
     /// Inherited by `cancel_with_cleanup` so the drain loop shares the same budget
     /// rather than starting a fresh timer (prevents double-jeopardy).
@@ -533,6 +542,7 @@ fn build_client_capabilities() -> serde_json::Value {
             // exact terminal login argv for subscription auth. Unknown `_meta`
             // keys are ignored by other adapters.
             "terminal-auth": true,
+            "buzz": {"backgroundTasks": {"version": crate::provider_background::VERSION}},
             // Request structured terminal failures rather than ordinary text
             // followed by end_turn, which would suppress queue retries.
             "jetbrains": {
@@ -760,6 +770,7 @@ impl AcpClient {
             .ok_or_else(|| AcpError::Protocol("failed to open agent stdout".into()))?;
 
         Ok(Self {
+            provider_background: Default::default(),
             runtime_final: None,
             runtime_peer_verified: false,
             runtime_build_file: None,
@@ -777,6 +788,7 @@ impl AcpClient {
             pending_permission_id: None,
             permission_responded: false,
             last_prompt_id: None,
+            deferred_prompt_response: None,
             current_hard_deadline: None,
             observer: None,
             observer_agent_index: None,
@@ -1029,6 +1041,10 @@ impl AcpClient {
         // on ACP v2 ahead of the upstream ACP RFD. Revisit when that RFD merges.
         let params = build_initialize_params();
         let result = self.send_request("initialize", params).await?;
+        self.provider_background.enabled = result
+            .pointer("/_meta/buzz/backgroundTasks/version")
+            .and_then(serde_json::Value::as_u64)
+            == Some(crate::provider_background::VERSION);
         self.kimi |= result
             .pointer("/agentInfo/name")
             .and_then(serde_json::Value::as_str)
@@ -1078,6 +1094,7 @@ impl AcpClient {
     }
 
     fn observe_incoming(&mut self, msg: &serde_json::Value, wire: &str) {
+        self.consume_provider_background(msg);
         self.observe_kimi_permission_progress(msg);
         // The initialize reply can identify Kimi before initialize() returns.
         let kimi_frame = self.kimi
@@ -1387,7 +1404,11 @@ impl AcpClient {
         }
         self.begin_claude_context_turn(session_id);
         self.capture_kimi_retirement_evidence().await;
-        let params = build_prompt_params(session_id, prompt_blocks);
+        self.check_provider_background()?;
+        let mut params = build_prompt_params(session_id, prompt_blocks);
+        if let Some(metadata) = self.provider_prompt_metadata(session_id) {
+            params["_meta"]["buzz"]["backgroundTasks"] = metadata;
+        }
         let hard_deadline = tokio::time::Instant::now() + max_duration;
         self.current_hard_deadline = Some(hard_deadline);
 
@@ -1953,6 +1974,7 @@ impl AcpClient {
                 continue;
             }
             self.observe_incoming(&msg, trimmed);
+            self.check_provider_background()?;
 
             // Check if this is a response to our expected request (has matching id
             // AND no `method` field — a `method` field means it's an agent-initiated
@@ -1964,6 +1986,19 @@ impl AcpClient {
                     }
                     return Ok(msg["result"].clone());
                 }
+            }
+
+            if msg.get("method").is_none()
+                && self
+                    .last_prompt_id
+                    .is_some_and(|id| msg["id"] == serde_json::json!(id))
+            {
+                if self.deferred_prompt_response.replace(msg).is_some() {
+                    return Err(AcpError::Protocol(
+                        "duplicate_deferred_prompt_response".into(),
+                    ));
+                }
+                continue;
             }
 
             // Dispatch by method name (notifications and agent-initiated requests).
@@ -2043,6 +2078,18 @@ impl AcpClient {
         max_duration: std::time::Duration,
     ) -> Result<serde_json::Value, AcpError> {
         use tokio::time::Instant;
+
+        if let Some(msg) = self.deferred_prompt_response.take() {
+            if msg["id"] != serde_json::json!(expected_id) {
+                return Err(AcpError::Protocol(
+                    "deferred_prompt_identity_mismatch".into(),
+                ));
+            }
+            if let Some(error) = msg.get("error") {
+                return Err(self.decode_agent_error(error));
+            }
+            return Ok(msg["result"].clone());
+        }
 
         // Take the per-turn steer receiver into a local so it can be
         // borrowed independently of `self.reader` inside `select!`.
@@ -2289,6 +2336,7 @@ impl AcpClient {
                         continue;
                     }
                     self.observe_incoming(&msg, trimmed);
+                    self.check_provider_background()?;
 
                     let activity_now = Instant::now();
                     idle_deadline = activity_now + idle_timeout;
@@ -2736,6 +2784,15 @@ impl AcpClient {
     /// The request `id` is stored as `serde_json::Value` to support both numeric
     /// and string IDs per JSON-RPC 2.0.
     async fn handle_permission_request(&mut self, msg: &serde_json::Value) -> Result<(), AcpError> {
+        if self
+            .provider_background_record()
+            .is_some_and(|record| record.cancellation.is_some())
+        {
+            let id = msg
+                .get("id")
+                .ok_or_else(|| AcpError::Protocol("permission request missing id".into()))?;
+            return self.write_ndjson(&permission_response_cancelled(id)).await;
+        }
         if self.kimi && self.status_capture.is_none() {
             return self.handle_kimi_permission_request(msg).await;
         }

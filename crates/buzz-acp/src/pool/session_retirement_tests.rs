@@ -120,6 +120,7 @@ async fn retirement_background_release_avoids_unclaimable_collection() {
             scope: a.clone(),
             blocking_pids: HashSet::from([123]),
             continuation: Some(crate::queue::RuntimeContinuation {
+                provider_recovery: None,
                 callback_pubkeys: Vec::new(),
                 work: None,
                 crash_recovery: false,

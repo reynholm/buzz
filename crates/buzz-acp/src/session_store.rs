@@ -31,6 +31,8 @@ use uuid::Uuid;
 use crate::scope::SessionScope;
 use buzz_core::session_control::RestartDepth;
 
+#[path = "session_store_background.rs"]
+mod background;
 #[path = "session_store_controls.rs"]
 #[allow(dead_code)]
 // Control controller consumes these durable APIs independently of provider resume.
@@ -149,6 +151,8 @@ impl From<String> for SessionReason {
 /// A provider session that a later turn may resume.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LiveSession {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) provider_background: Option<Box<crate::provider_background::Record>>,
     /// Acknowledged final-reply instruction contract; absent on legacy records.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_contract: Option<crate::config::ReplyContract>,
@@ -190,6 +194,9 @@ pub struct SessionRecord {
     /// Optional on legacy records; independent from the terminal reset result.
     #[serde(default)]
     pub(crate) restart_status: Option<RestartStatus>,
+    /// Latest cancellation survives session tombstones; absence of acknowledgement is explicit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) background_cancellation: Option<crate::provider_background::Cancellation>,
 }
 
 /// Result of reading a scope's record.
@@ -462,6 +469,7 @@ impl SessionStore {
                 revision: Some(Uuid::new_v4()),
                 pending_restart: current.and_then(|r| r.pending_restart.clone()),
                 restart_status: current.and_then(|r| r.restart_status.clone()),
+                background_cancellation: current.and_then(|r| r.background_cancellation.clone()),
                 control_receipts: current
                     .map(|r| r.control_receipts.clone())
                     .unwrap_or_default(),
@@ -627,6 +635,7 @@ impl SessionStore {
             reason: Some(SessionReason::Discarded),
             revision: Some(Uuid::new_v4()),
             pending_restart: None,
+            background_cancellation: current.and_then(|r| r.background_cancellation.clone()),
             restart_status: current
                 .and_then(|r| r.restart_status.clone())
                 .map(|mut status| {
@@ -796,7 +805,11 @@ fn read_record(path: &Path, namespace: &str) -> Result<Option<SessionRecord>, ()
     // A failed provider write quarantines stale provider state. Its accepted
     // restart policy and receipts must survive that quarantine as a tombstone.
     Ok(read_record_file(&with_suffix(path, "stale"), namespace)?
-        .filter(|r| !r.control_receipts.is_empty() || r.pending_restart.is_some())
+        .filter(|r| {
+            !r.control_receipts.is_empty()
+                || r.pending_restart.is_some()
+                || r.background_cancellation.is_some()
+        })
         .map(|mut record| {
             record.live = None;
             record.reason = Some(SessionReason::ResumeFailed("not_persisted".into()));
@@ -822,6 +835,15 @@ fn read_record_file(path: &Path, namespace: &str) -> Result<Option<SessionRecord
         Ok(record)
             if record.version == RECORD_VERSION
                 && record.namespace == namespace
+                && record
+                    .background_cancellation
+                    .as_ref()
+                    .is_none_or(|cancel| cancel.valid())
+                && record
+                    .live
+                    .as_ref()
+                    .and_then(|live| live.provider_background.as_ref())
+                    .is_none_or(|background| background.validate().is_ok())
                 && controls::valid_controls(&record) =>
         {
             Ok(Some(record))

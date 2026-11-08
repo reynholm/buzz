@@ -207,6 +207,7 @@ fn ctx() -> PromptContext {
 
 fn live_session(store: &SessionStore, ctx: &PromptContext, sid: &str) -> LiveSession {
     LiveSession {
+        provider_background: None,
         reply_contract: None,
         lease: Uuid::nil(),
         adapter: "fake-acp".into(),
@@ -250,6 +251,7 @@ fn me(store_instance: Uuid) -> ResumeContext {
 
 fn stored(live: impl FnOnce(&mut LiveSession)) -> LoadOutcome {
     let mut session = LiveSession {
+        provider_background: None,
         reply_contract: None,
         lease: Uuid::new_v4(),
         adapter: "fake-acp".into(),
@@ -272,6 +274,7 @@ fn stored(live: impl FnOnce(&mut LiveSession)) -> LoadOutcome {
         pending_restart: None,
         control_receipts: Vec::new(),
         restart_status: None,
+        background_cancellation: None,
         live: Some(session),
         reason: None,
     }))
@@ -332,6 +335,7 @@ fn decision_tombstone_is_discarded() {
         pending_restart: None,
         control_receipts: Vec::new(),
         restart_status: None,
+        background_cancellation: None,
         live: None,
         reason: Some(SessionReason::Discarded),
     }));

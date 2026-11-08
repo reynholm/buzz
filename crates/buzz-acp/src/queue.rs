@@ -186,9 +186,9 @@ impl BatchEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplyRoute {
     /// Routed thread root, lowercase; `None` for a top-level message.
-    root_event_id: Option<String>,
+    pub(crate) root_event_id: Option<String>,
     /// See [`reply_thread`].
-    thread: String,
+    pub(crate) thread: String,
 }
 
 impl ReplyRoute {
@@ -220,11 +220,23 @@ impl ReplyRoute {
 /// `<context>` the agent actually received.
 #[derive(Debug, Clone, Default)]
 pub struct PromptRouting {
+    provider_background: Arc<OnceLock<bool>>,
+    native_steering: Arc<OnceLock<bool>>,
     is_dm: Arc<OnceLock<bool>>,
     trigger_anchor: Arc<OnceLock<bool>>,
 }
 
 impl PromptRouting {
+    pub(crate) fn record_provider_controls(&self, background: bool, steering: bool) {
+        let _ = self.provider_background.set(background);
+        let _ = self.native_steering.set(steering);
+    }
+    pub(crate) fn queues_unsupported_steering(&self) -> bool {
+        self.provider_background.get() == Some(&true) && self.native_steering.get() != Some(&true)
+    }
+    pub(crate) fn provider_background(&self) -> bool {
+        self.provider_background.get() == Some(&true)
+    }
     /// Record whether the prompt rendered the channel as a DM
     /// (`format_prompt`'s `is_dm`). Later calls are ignored: a turn has one
     /// `<context>`.
@@ -1546,7 +1558,7 @@ impl Default for EventQueue {
 }
 
 /// Parsed thread relationship from NIP-10 `e` tags.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ThreadTags {
     /// Root event ID (hex). Present for all thread replies.
     pub root_event_id: Option<String>,
@@ -1557,7 +1569,7 @@ pub struct ThreadTags {
 }
 
 /// Original-message routing recovered for a kind:40003 edit event.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ResolvedEdit {
     /// Id of the edited original message, taken from the edit's `e` tag and
     /// verified against the fetched original's id and signature.

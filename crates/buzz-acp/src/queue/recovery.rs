@@ -126,6 +126,48 @@ pub struct LogicalWork {
 }
 
 impl LogicalWork {
+    pub(crate) fn restore_provider(record: &crate::provider_background::Record, cwd: &str) -> Self {
+        let now = Instant::now();
+        let remaining = Duration::from_secs(
+            record
+                .deadline_unix
+                .saturating_sub(crate::provider_background::now_unix())
+                .min(86400),
+        );
+        let events = record
+            .events
+            .iter()
+            .map(|saved| BatchEvent {
+                event: saved.event.clone(),
+                edit: saved.edit.clone(),
+                received_at: now,
+                prompt_tag: "background-recovery".into(),
+            })
+            .collect::<Vec<_>>();
+        Self {
+            runtime_final: record.runtime_final,
+            callback_pubkeys: callback_pubkeys(&events),
+            delivery_key: record.identity.work_id,
+            scope: record.scope.clone(),
+            original_events: Arc::new(events),
+            thread_tags: record.thread_tags.clone(),
+            journal_dir: PathBuf::from(cwd).join(if record.runtime_final {
+                ".buzz-runtime-deliveries"
+            } else {
+                ".buzz-deliveries"
+            }),
+            started_at: now,
+            deadline: now + remaining,
+            attempt: 0,
+            next_attempt: None,
+            recovery_reason: Some("provider_background_restore"),
+            policy: RecoveryPolicy::default(),
+            is_dm: Arc::new(OnceLock::new()),
+            ordinary_preempted: false,
+            revoked: Arc::new(AtomicBool::new(false)),
+            runtime: Arc::new(WorkRuntime::default()),
+        }
+    }
     /// Explicit scope controls share this token with all late batch clones.
     pub fn cancelled(&self) -> bool {
         self.revoked.load(Ordering::Acquire) || self.runtime.finished.load(Ordering::Acquire)
@@ -205,6 +247,30 @@ fn jitter_unit() -> f64 {
 }
 
 impl EventQueue {
+    pub(crate) fn restore_provider_background(
+        &mut self,
+        record: crate::provider_background::Record,
+        cwd: &str,
+    ) {
+        let work = LogicalWork::restore_provider(&record, cwd);
+        self.enqueue_continuation(
+            record.scope.clone(),
+            RuntimeContinuation {
+                provider_recovery: Some(record.clone()),
+                callback_pubkeys: work.callback_pubkeys.clone(),
+                work: Some(work),
+                crash_recovery: true,
+                background_ready: true,
+                delivery_key: record.identity.work_id,
+                ordinary_preempted: false,
+                worker_index: usize::MAX,
+                session_id: record.identity.session_id.clone(),
+                generation: record.identity.generation,
+                thread_tags: record.thread_tags,
+                received_at: Instant::now(),
+            },
+        );
+    }
     /// Terminal work can be reported without a free provider process.
     pub(crate) fn next_work_terminal_deadline(&self) -> Option<Instant> {
         self.recovery_batches

@@ -22,6 +22,8 @@ mod pool_lifecycle;
 mod process_tree;
 mod prompt_framing;
 mod prompt_project;
+mod provider_background;
+mod provider_status;
 mod queue;
 mod recovery_wake;
 mod relay;
@@ -884,6 +886,12 @@ impl QueuedNormalListenerEvent {
         let Some(signal) = mode_gate_signal(handling, &self.effective_author, owner) else {
             return;
         };
+        if queue
+            .in_flight_prompt_routing(&self.scope)
+            .is_some_and(|routing| routing.queues_unsupported_steering())
+        {
+            return;
+        }
         // A native steer keeps the running turn's `<context>`, so it may only
         // carry a message that replies in the same place. A channel-policy or
         // DM session spans several destinations; a message for another one
@@ -3223,6 +3231,20 @@ async fn run_harness(
         queue = queue
             .with_runtime_delivery(&current_working_directory()?, config.max_turn_duration_secs);
     }
+    if let Some(store) = &session_store {
+        match store.pending_provider_work(&channel_ids) {
+            Ok(records) => {
+                for record in records {
+                    queue.restore_provider_background(record, &current_working_directory()?);
+                }
+            }
+            Err(error) => {
+                return Err(anyhow::anyhow!(
+                    "background work recovery unavailable: {error}"
+                ))
+            }
+        }
+    }
 
     // Online means the harness can receive work, not merely that its socket is
     // connected. Publishing after channel subscriptions gives desktop callers
@@ -3440,6 +3462,7 @@ async fn run_harness(
 
     let (status_tx, mut status_rx) = mpsc::unbounded_channel();
     loop {
+        pool.poll_provider_background(&mut queue);
         status_tasks::dispatch(&mut pool, &ctx, &status_tx, &mut typing_channels);
         control_tasks::dispatch(&mut pool, &ctx, &control_tx);
         while let Some(Some(result)) = result_publications.join_next().now_or_never() {
@@ -4033,6 +4056,16 @@ async fn run_harness(
                                 policy = %config.session_policy,
                                 "admitted event — resolved session scope"
                             );
+                            if let Some((content, tags)) = ingress.runtime_status(&pool, &queue, &session_scope, channel_is_dm) {
+                                if result_publications.len() < 128 {
+                                    let rest = ctx.rest_client.clone();
+                                    let channel = session_scope.channel_id();
+                                    result_publications.spawn(async move {
+                                        pool::post_failure_notice(&rest, channel, &tags, &content).await;
+                                    });
+                                    continue;
+                                }
+                            }
                             let queued = ingress.push(&mut queue, session_scope, channel_is_dm);
                             // 👀 — immediate "seen" reaction, only if the event
                             // was actually queued (not dropped by DedupMode::Drop).
@@ -4574,7 +4607,11 @@ async fn run_harness(
                 if release_withheld {
                     queue.release_native_steer(&scope, &event_id);
                 }
-                if signal_fallback {
+                if signal_fallback
+                    && !queue
+                        .in_flight_prompt_routing(&scope)
+                        .is_some_and(|routing| routing.provider_background())
+                {
                     // Universal cancel+merge fallback. Note: the
                     // queued event has already been released to the
                     // front of `queues[scope]`, so the cancel will pick
@@ -4942,6 +4979,27 @@ async fn handle_owner_cancel_for_scope(
         }
     }
     let logical_pending = queue.cancel_logical_work(scope);
+    for agent in pool.agents_mut().iter_mut().flatten() {
+        if agent
+            .acp
+            .provider_background_record()
+            .is_some_and(|record| record.scope == *scope)
+        {
+            if let Err(error) = agent.acp.cancel_provider_background("user_cancel").await {
+                cancellation = session_controls::status::StatusCancellation::Unconfirmed;
+                tracing::warn!(%error,"provider cancellation remains unconfirmed; scope remains revoked");
+                if let (Some(rest), Some(record)) =
+                    (rest_client, agent.acp.provider_background_record())
+                {
+                    pool::post_failure_notice(rest, scope.channel_id(), &record.thread_tags,
+                        "Automatic continuation is cancelled. The provider has not confirmed durable cancellation; human attention is required.").await;
+                }
+                if let Some(observer) = observer {
+                    observer.emit("control_result", None, &observer::context_for(Some(scope.channel_id()),None,None), serde_json::json!({"type":"cancel_turn","status":"unconfirmed","requestId":null}));
+                }
+            }
+        }
+    }
     let background_pending = cancel_background_collection_for_scope(pool, queue, scope);
     let fired = signal_in_flight_task_for_scope(pool, scope, ControlSignal::Cancel);
     let mut publication_pending = false;
@@ -5519,6 +5577,10 @@ fn dispatch_pending(
         };
         let channel_id = batch.channel_id;
         let scope = batch.scope.clone();
+        if batch.continuation.is_none() && pool.provider_background_blocks_input(&scope) {
+            held.push(batch);
+            continue;
+        }
         if let Some(work) = &batch.work {
             if work.cancelled() {
                 queue.mark_complete(&scope);
@@ -5713,6 +5775,10 @@ fn dispatch_pending(
         // The prompt task records how it routed replies, for the
         // native-steer guard (`EventQueue::in_flight_accepts_steer`).
         let prompt_routing = queue.in_flight_prompt_routing(&scope).unwrap_or_default();
+        prompt_routing.record_provider_controls(
+            agent.acp.provider_background_supported(),
+            agent.acp.steering_supported(),
+        );
         let abort_handle = pool.join_set.spawn(async move {
             pool::run_prompt_task(
                 agent,
@@ -6285,6 +6351,13 @@ fn handle_prompt_result(
     if collecting && !matches!(result.outcome, PromptOutcome::Ok(_)) {
         if let PromptSource::Channel(scope) = &result.source {
             if !queue.has_pending_continuation(scope) {
+                if let Err(error) = result
+                    .agent
+                    .acp
+                    .suspend_provider_background("collection_needs_user")
+                {
+                    tracing::warn!(%error,"terminal background state could not be persisted");
+                }
                 result.agent.finish_background_collection();
             }
         }

@@ -593,6 +593,8 @@ pub(crate) fn apply_result(
 
 #[path = "kimi_background_tests.rs"]
 mod kimi_background_tests;
+#[path = "provider_background_tests.rs"]
+mod provider_background_tests;
 
 fn last_prompt(dir: &tempfile::TempDir) -> serde_json::Value {
     std::fs::read_to_string(dir.path().join("requests"))
@@ -1181,3 +1183,6 @@ async fn background_observer_cancel_after_ordinary_control_never_resumes_collect
 
 #[path = "background_uncertainty_tests.rs"]
 mod uncertainty_tests;
+
+#[path = "provider_background_fixture.rs"]
+pub(super) mod provider_background_fixture;

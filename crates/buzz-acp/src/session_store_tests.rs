@@ -17,6 +17,7 @@ fn thread(root: &str) -> SessionScope {
 
 fn live(store: &SessionStore, session_id: &str) -> LiveSession {
     LiveSession {
+        provider_background: None,
         reply_contract: None,
         lease: Uuid::nil(),
         adapter: "claude-agent-acp".into(),

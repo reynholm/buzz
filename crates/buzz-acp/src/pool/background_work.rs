@@ -4,6 +4,7 @@ use super::*;
 use crate::queue::{EventQueue, RuntimeContinuation};
 
 pub(super) const FOLLOWUP_PROMPT: &str = "The background child process you left running has exited. Collect its result and continue the work in the same Buzz thread. Post the update there. Do not start a second copy of the task.";
+pub(super) const PROVIDER_FOLLOWUP_PROMPT: &str = "Provider background results are ready. Collect the existing results identified in the structured ACP metadata and continue in the original Buzz thread. Preserve the existing task and its tools; do not start a second copy. A result remains pending until the provider durably acknowledges its exact completion sequence.";
 
 /// Shell arguments stay literal even when workspace names contain apostrophes.
 fn shell_argument(value: &str) -> String {
@@ -15,8 +16,13 @@ pub(super) fn followup_prompt(
     continuation: &RuntimeContinuation,
     cwd: &str,
 ) -> String {
+    let instruction = if continuation.provider_recovery.is_some() {
+        PROVIDER_FOLLOWUP_PROMPT
+    } else {
+        FOLLOWUP_PROMPT
+    };
     if let Some(work) = &continuation.work {
-        return format!("{FOLLOWUP_PROMPT}\n{}", work.managed_instruction());
+        return format!("{instruction}\n{}", work.managed_instruction());
     }
     let journal = std::path::Path::new(cwd).join(".buzz-deliveries");
     let parent = continuation
@@ -31,7 +37,7 @@ pub(super) fn followup_prompt(
         shell_argument(parent),
         shell_argument(&journal.to_string_lossy()),
     )).unwrap_or_else(|| "Original reply event is unavailable; do not invent a destination or publish a report elsewhere.".into());
-    format!("{FOLLOWUP_PROMPT}\nChannel: {channel}\nReply thread: {}\nPublish the final report using this managed command (replace <FINAL_REPORT> with properly quoted text or use --content - and stdin):\n{command}\nKeep this delivery key, original route and journal directory for every retry, including after an application error. An unconfirmed managed delivery can be safely retried with the SAME key; never replace it with a fresh key or bare messages send. Replays return the first report even if the summary changes. Preserve callback notifications with --mention or ordinary @mentions. Use messages send for separate progress and messages edit for an explicit correction. Managed delivery does not cover other publishing tools.", continuation.thread_tags.root_event_id.as_deref().unwrap_or("none"))
+    format!("{instruction}\nChannel: {channel}\nReply thread: {}\nPublish the final report using this managed command (replace <FINAL_REPORT> with properly quoted text or use --content - and stdin):\n{command}\nKeep this delivery key, original route and journal directory for every retry, including after an application error. An unconfirmed managed delivery can be safely retried with the SAME key; never replace it with a fresh key or bare messages send. Replays return the first report even if the summary changes. Preserve callback notifications with --mention or ordinary @mentions. Use messages send for separate progress and messages edit for an explicit correction. Managed delivery does not cover other publishing tools.", continuation.thread_tags.root_event_id.as_deref().unwrap_or("none"))
 }
 
 /// Render retained assignments and new input without changing queue ownership.
@@ -81,6 +87,7 @@ pub(crate) enum ContinuationState {
 
 impl OwnedAgent {
     pub(crate) fn prepare_background_return(&mut self) {
+        self.acp.poll_provider_background();
         if self.background_context.is_some() {
             self.acp.return_children = Some(self.acp.background_child_pids());
         }
@@ -99,6 +106,7 @@ impl OwnedAgent {
             blocking_pids: HashSet::new(),
             collection_pending: false,
             continuation: Some(RuntimeContinuation {
+                provider_recovery: None,
                 callback_pubkeys: batch
                     .map(|batch| {
                         batch
@@ -112,12 +120,12 @@ impl OwnedAgent {
                 // background ownership keeps its existing independent key.
                 work: batch
                     .and_then(|batch| batch.work.clone())
-                    .filter(|work| !work.runtime_final),
+                    .filter(|work| !work.runtime_final || self.acp.provider_background_supported()),
                 crash_recovery: false,
                 background_ready: true,
                 delivery_key: batch
                     .and_then(|batch| batch.work.as_ref())
-                    .filter(|work| !work.runtime_final)
+                    .filter(|work| !work.runtime_final || self.acp.provider_background_supported())
                     .map_or_else(Uuid::new_v4, |work| work.delivery_key),
                 ordinary_preempted: false,
                 worker_index: self.index,
@@ -137,7 +145,9 @@ impl OwnedAgent {
     pub(crate) fn has_background_collection(&self) -> bool {
         self.background_context.as_ref().is_some_and(|hold| {
             hold.continuation.is_some()
-                && (hold.collection_pending || !hold.blocking_pids.is_empty())
+                && (hold.collection_pending
+                    || !hold.blocking_pids.is_empty()
+                    || self.acp.provider_background_outstanding())
         })
     }
 
@@ -164,7 +174,9 @@ impl OwnedAgent {
                 hold.blocking_pids = children.clone();
             }
         }
-        self.has_background_collection() || children.is_none_or(|children| !children.is_empty())
+        self.has_background_collection()
+            || self.acp.provider_background_outstanding()
+            || children.is_none_or(|children| !children.is_empty())
     }
 }
 
@@ -333,7 +345,7 @@ impl AgentPool {
                 .is_none_or(|hold| scope == Some(&hold.scope))
     }
 
-    fn continuation_matches(
+    pub(super) fn continuation_matches(
         &self,
         agent: &OwnedAgent,
         scope: &SessionScope,
@@ -350,6 +362,22 @@ impl AgentPool {
         scope: &SessionScope,
         continuation: &RuntimeContinuation,
     ) -> ContinuationState {
+        if let Some(record) = continuation
+            .provider_recovery
+            .as_ref()
+            .filter(|_| continuation.crash_recovery)
+        {
+            return if record.scope == *scope
+                && continuation
+                    .work
+                    .as_ref()
+                    .is_some_and(|work| !work.cancelled())
+            {
+                ContinuationState::Ready
+            } else {
+                ContinuationState::Stale
+            };
+        }
         if continuation.crash_recovery {
             return match &continuation.work {
                 Some(work)
@@ -393,13 +421,17 @@ impl AgentPool {
             agent.acp.observed_background_instances.clear();
             return;
         };
+        if agent.acp.provider_background_record().is_some() {
+            hold.collection_pending = agent.acp.provider_background_pending();
+        }
         match agent.acp.return_children.take().flatten() {
             // Work seen at prompt completion may exit while publishing metrics.
             // Keep that completion pending so the poll still queues collection.
             Some(children)
                 if children.is_empty()
                     && hold.blocking_pids.is_empty()
-                    && !hold.collection_pending =>
+                    && !hold.collection_pending
+                    && !agent.acp.provider_background_outstanding() =>
             {
                 agent.acp.observed_background_instances.clear();
                 return;
@@ -423,6 +455,7 @@ impl AgentPool {
     /// Synchronous fixture entry; production uses the asynchronous shared poll.
     #[cfg(all(test, unix))]
     pub fn queue_finished_background_work(&mut self, queue: &mut EventQueue) {
+        self.poll_provider_background(queue);
         let indexes: Vec<_> = self.runtime_holds.keys().copied().collect();
         for index in indexes {
             let Some(Some(agent)) = self.agents.get_mut(index) else {
@@ -440,6 +473,12 @@ impl AgentPool {
         children: HashSet<u32>,
         queue: &mut EventQueue,
     ) {
+        if self.agents[index]
+            .as_ref()
+            .is_some_and(|agent| agent.acp.provider_background_outstanding())
+        {
+            return;
+        }
         if !children.is_empty() {
             if let Some(hold) = self.runtime_holds.get_mut(&index) {
                 hold.blocking_pids = children;

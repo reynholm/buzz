@@ -5,6 +5,8 @@ use super::*;
 /// Authority and reply destination of a background task's original session.
 #[derive(Clone, Debug)]
 pub(crate) struct RuntimeContinuation {
+    /// Durable provider recovery must resume this exact session before collection.
+    pub provider_recovery: Option<crate::provider_background::Record>,
     /// Bounded authors from the original accepted request, independent of prose.
     pub callback_pubkeys: Vec<String>,
     pub work: Option<LogicalWork>,
@@ -104,6 +106,37 @@ impl EventQueue {
                 .min_by_key(|(_, continuation)| continuation.received_at)
                 .map(|(scope, _)| scope.clone())?;
         let continuation = self.continuations.remove(&scope)?;
+        let mut events = Vec::new();
+        if let Some(record) = &continuation.provider_recovery {
+            if let Some(pending) = self.queues.get_mut(&scope) {
+                let original = record
+                    .thread_tags
+                    .root_event_id
+                    .as_deref()
+                    .or(record.thread_tags.parent_event_id.as_deref());
+                let dm = continuation
+                    .work
+                    .as_ref()
+                    .is_some_and(|work| work.is_dm.get() == Some(&true));
+                let mut retained = VecDeque::new();
+                while let Some(event) = pending.pop_front() {
+                    let tags = routing_thread_tags(&event.event, event.edit.as_ref());
+                    let same = if dm && original.is_none() {
+                        tags.root_event_id.is_none()
+                    } else {
+                        original.is_some_and(|original| {
+                            reply_thread(&event.event, event.edit.as_ref()) == original
+                        })
+                    };
+                    if same && events.len() < MAX_BATCH_EVENTS {
+                        events.push(event.into_batch_event());
+                    } else {
+                        retained.push_back(event);
+                    }
+                }
+                *pending = retained;
+            }
+        }
         self.in_flight_continuations.insert(scope.clone());
         self.in_flight_scopes.insert(scope.clone());
         self.in_flight_deadlines
@@ -115,7 +148,7 @@ impl EventQueue {
             work,
             channel_id: scope.channel_id(),
             scope,
-            events: Vec::new(),
+            events,
             cancelled_events: Vec::new(),
             cancel_reason: None,
             continuation: Some(continuation),
@@ -180,6 +213,7 @@ mod tests {
 
     fn continuation() -> RuntimeContinuation {
         RuntimeContinuation {
+            provider_recovery: None,
             callback_pubkeys: Vec::new(),
             work: None,
             crash_recovery: false,

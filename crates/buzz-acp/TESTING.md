@@ -98,6 +98,29 @@ external effects unreplayed and do not change working agents for this check.
 
 ## Background process lifecycle
 
+The opt-in provider-internal task extension negotiates
+`_meta.buzz.backgroundTasks.version: 1`. Participating adapters must implement
+host-owned continuation, durable per-completion acknowledgement and cancel
+receipts before advertising it. `provider_background` tests use actual
+ACP subprocess pipes and the production queue/session store. They cover three
+tasks in one process, pending versus acknowledged results, repeat/stale events,
+same-route clarification, status, explicit cancellation and original-session
+restart without relaunching tools. Run the full package suite for acceptance.
+
+The ignored `provider_background_runtime_final` journey additionally uses the
+rebuilt CLI and a signature-checking local mock relay. It asserts that the first
+`end_turn` publishes no `missing_final`, then collection acknowledgements permit
+one final report in the original thread:
+
+```sh
+cargo build -p buzz-cli
+BUZZ_TEST_BIN_DIR="$PWD/target/debug" PATH="$PWD/target/debug:$PATH" \
+  cargo test -p buzz-acp provider_background_runtime_final -- --ignored --test-threads=1
+```
+
+This proves the host path only. Real adapter capability support, durable result
+storage, continuation deduplication and human acceptance remain separate checks.
+
 On Unix, the `background` and `process_` test filters exercise real local ACP
 adapters and child processes. They cover provider residency, direct and nested
 work, bounded process enumeration, queue serialization, retry exhaustion,

@@ -159,6 +159,122 @@ fn states(observer: &crate::observer::ObserverHandle) -> Vec<String> {
 
 #[tokio::test]
 #[ignore = "requires rebuilt buzz CLI on PATH and BUZZ_TEST_BIN_DIR"]
+async fn provider_background_runtime_final_waits_for_all_acknowledged_results_before_delivery() {
+    checked_cli();
+    let relay = MockRelay::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("requests");
+    let observer = crate::observer::ObserverHandle::in_process();
+    let agent = worker_with_peer(
+        "provider-background",
+        &log,
+        &observer,
+        crate::pool::background_work_tests::provider_background_fixture::ADAPTER,
+    )
+    .await;
+    let ctx = Arc::new(context(&relay, dir.path()));
+    let (mut queue, scope) = queue(&relay, dir.path());
+    let mut pool = AgentPool::from_slots(vec![Some(agent)]);
+    pool.set_session_store(Some(Arc::new(
+        crate::session_store::SessionStore::open(
+            dir.path().join("sessions"),
+            &relay.url.replace("http://", "ws://"),
+            &relay.keys.public_key().to_hex(),
+        )
+        .unwrap(),
+    )));
+    assert_eq!(
+        background_work_tests::dispatch(&mut pool, &mut queue, &ctx),
+        1
+    );
+    let result = timeout(Duration::from_secs(15), pool.result_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        result.outcome,
+        PromptOutcome::Ok(StopReason::EndTurn)
+    ));
+    background_work_tests::apply_result(
+        &mut pool,
+        &mut queue,
+        result,
+        Some(&ctx.rest_client),
+        &HashSet::new(),
+    );
+    assert!(pool.has_runtime_hold());
+    assert!(
+        relay.readback().await.is_empty(),
+        "end_turn with live tasks must not publish missing_final"
+    );
+    for index in 0..3 {
+        std::fs::write(dir.path().join(format!("child-{index}")), "done").unwrap();
+    }
+    timeout(Duration::from_secs(5), async {
+        loop {
+            pool.queue_finished_background_work(&mut queue);
+            if pool.agents[0]
+                .as_ref()
+                .unwrap()
+                .acp
+                .provider_background_record()
+                .is_some_and(|record| record.pending().len() == 3)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        background_work_tests::dispatch(&mut pool, &mut queue, &ctx),
+        1
+    );
+    let result = timeout(Duration::from_secs(15), pool.result_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        result.outcome,
+        PromptOutcome::Ok(StopReason::EndTurn)
+    ));
+    background_work_tests::apply_result(
+        &mut pool,
+        &mut queue,
+        result,
+        Some(&ctx.rest_client),
+        &HashSet::new(),
+    );
+    let reports = relay.readback().await;
+    assert_eq!(reports.len(), 1);
+    assert_eq!(
+        reports[0].content,
+        "All three existing results were collected."
+    );
+    let tags = buzz_core::nip10::parse_thread_markers_from_parts(
+        reports[0].tags.iter().map(|tag| tag.as_slice()),
+    );
+    assert_eq!(
+        tags.reply.as_deref(),
+        Some(relay.parent.id.to_hex().as_str())
+    );
+    assert!(!pool.has_runtime_hold());
+    assert!(!queue.has_pending_scope(&scope));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("launches"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+    for mut agent in pool.agents.into_iter().flatten() {
+        agent.acp.shutdown().await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires rebuilt buzz CLI on PATH and BUZZ_TEST_BIN_DIR"]
 async fn runtime_final_pool_delivers_only_final_question_with_typed_receipt() {
     checked_cli();
     for case in ["plain", "segmented", "missing", "error", "cancel"] {
@@ -409,6 +525,7 @@ async fn runtime_final_legacy_cached_and_durable_sessions_receive_fresh_contract
             .unwrap(),
         );
         let legacy = crate::session_store::LiveSession {
+            provider_background: None,
             reply_contract: None,
             lease: Uuid::nil(),
             adapter: "qwen-code".into(),

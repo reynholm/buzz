@@ -347,6 +347,7 @@ pub struct OwnedAgent {
 mod background_work;
 mod dispatch_diagnostics;
 mod kimi_controls;
+mod provider_background;
 pub(crate) use background_work::{BackgroundPollRequest, ContinuationState, RuntimeHold};
 pub(crate) mod compaction;
 mod first_mention;
@@ -2668,6 +2669,21 @@ pub async fn run_prompt_task(
     turn_id: String,
     prompt_routing: crate::queue::PromptRouting,
 ) {
+    if agent.background_context.is_none() {
+        if let Some(batch) = batch.as_ref().filter(|batch| {
+            batch
+                .continuation
+                .as_ref()
+                .is_some_and(|continuation| continuation.provider_recovery.is_some())
+        }) {
+            agent.background_context = Some(RuntimeHold {
+                scope: batch.scope.clone(),
+                blocking_pids: HashSet::new(),
+                continuation: batch.continuation.clone(),
+                collection_pending: true,
+            });
+        }
+    }
     agent.acp.configure_kimi_work(
         batch
             .as_ref()
@@ -2732,7 +2748,7 @@ pub async fn run_prompt_task(
         },
         None => (Some(execution.await), false),
     };
-    let (outcome, mut batch) = returned.unwrap_or_else(|| {
+    let (mut outcome, mut batch) = returned.unwrap_or_else(|| {
         let error = if cancelled {
             AcpError::WorkCancelledPoisoned
         } else {
@@ -2744,16 +2760,27 @@ pub async fn run_prompt_task(
         agent.state.invalidate_after_error(&source, &error);
         (
             PromptOutcome::Error(error),
-            if cancelled { None } else { saved_batch },
+            if cancelled { None } else { saved_batch.clone() },
         )
     });
+    if matches!(outcome, PromptOutcome::Ok(StopReason::EndTurn))
+        && agent
+            .acp
+            .provider_background_record()
+            .is_some_and(|record| record.unacknowledged())
+    {
+        outcome = PromptOutcome::Error(AcpError::BackgroundCollectionPending);
+        batch = saved_batch;
+    }
     if let Some(work) = work.as_ref().filter(|work| work.runtime_final) {
         let final_text = agent
             .acp
             .take_runtime_final(matches!(outcome, PromptOutcome::Ok(StopReason::EndTurn)));
         // Runtime publication finishes this turn's receipt, not execution or
         // a separately owned existing background collection.
-        if work.runtime_control_continuation() && !work.publication_revoked() {
+        if agent.acp.provider_background_outstanding() && !work.publication_revoked() {
+            work.transition("waiting_background", "provider_tasks_outstanding");
+        } else if work.runtime_control_continuation() && !work.publication_revoked() {
             // This is an authorized execution continuation, not a terminal
             // provider cancellation or a retry just to obtain a report.
             work.transition("running", "control_continuation");
@@ -2795,7 +2822,7 @@ async fn run_prompt_execution(
     }
     let prompt_text = batch
         .as_ref()
-        .filter(|batch| batch.work.is_none())
+        .filter(|batch| batch.work.is_none() && batch.events.is_empty())
         .and_then(|batch| {
             batch.continuation.as_ref().map(|continuation| {
                 background_work::followup_prompt(batch.channel_id, continuation, &ctx.cwd)
@@ -3265,6 +3292,24 @@ async fn run_prompt_execution(
         }
     };
     agent.remember_background_context(&source, batch.as_ref(), &session_id);
+    if let (Some(scope), Some(batch)) = (source.scope(), batch.as_ref()) {
+        if let Err(error) = agent
+            .configure_provider_background(scope, batch, &session_id)
+            .await
+        {
+            return (PromptOutcome::Error(error), Some(batch.clone()));
+        }
+        if batch
+            .continuation
+            .as_ref()
+            .is_some_and(|continuation| continuation.provider_recovery.is_some())
+            && agent.acp.provider_background_outstanding()
+            && !agent.acp.provider_background_pending()
+        {
+            // Restore and snapshot are host operations, not a replay of the launch.
+            return (PromptOutcome::Ok(StopReason::EndTurn), None);
+        }
+    }
     agent.acp.set_observer_context(observer::context_for_turn(
         observer_channel_id,
         Some(session_id.clone()),
@@ -3701,8 +3746,12 @@ async fn run_prompt_execution(
                 session_continuity::format_session_marker(start, first_mention.as_ref()),
             );
         }
-        if b.continuation.is_some() {
-            sections.push(background_work::FOLLOWUP_PROMPT.to_owned());
+        if let Some(continuation) = &b.continuation {
+            sections.push(background_work::followup_prompt(
+                b.channel_id,
+                continuation,
+                &ctx.cwd,
+            ));
         }
         sections
     } else {
@@ -3849,6 +3898,20 @@ async fn run_prompt_execution(
                     // Control signal received. Guard against Race 1: the turn may
                     // have completed naturally just as cancel fired.
                     if agent.acp.has_in_flight_prompt() {
+                        if !matches!(control_signal, ControlSignal::Steer | ControlSignal::Interrupt) {
+                            let cause = if matches!(control_signal, ControlSignal::Cancel) {
+                                "user_cancel"
+                            } else {
+                                "steering_replacement"
+                            };
+                            if let Err(error) = agent.acp.cancel_provider_background(cause).await {
+                                tracing::warn!(%error,"provider background cancellation failed; scope remains revoked");
+                                if let Some(record) = agent.acp.provider_background_record() {
+                                    post_failure_notice(&ctx.rest_client, record.scope.channel_id(), &record.thread_tags,
+                                        "Automatic continuation is cancelled. The provider has not confirmed durable cancellation; human attention is required.").await;
+                                }
+                            }
+                        }
                         // Prompt is genuinely in-flight — cancel it.
                         match agent
                             .acp
@@ -4023,6 +4086,7 @@ async fn run_prompt_execution(
             if batch
                 .as_ref()
                 .is_some_and(|batch| batch.continuation.is_some())
+                && !agent.acp.provider_background_outstanding()
             {
                 // The original collection succeeded. Newly launched children,
                 // if any, form a fresh observed group in this same destination.

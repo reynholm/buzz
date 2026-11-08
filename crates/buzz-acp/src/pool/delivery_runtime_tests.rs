@@ -552,6 +552,7 @@ async fn managed_runtime_bundled_agent_publication_then_application_error_retrie
         .state
         .set_scope_owner_generation(scope.clone(), generation);
     let continuation = RuntimeContinuation {
+        provider_recovery: None,
         callback_pubkeys: Vec::new(),
         work: None,
         crash_recovery: false,

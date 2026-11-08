@@ -60,7 +60,7 @@ pub(crate) struct ResumeContext {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ResumeDecision {
     Resume {
-        live: LiveSession,
+        live: Box<LiveSession>,
         reason: SessionReason,
     },
     New {
@@ -103,7 +103,7 @@ pub(crate) fn resume_decision(
         return new(SessionReason::ResumeUnsupported);
     }
     let resume = |reason| ResumeDecision::Resume {
-        live: live.clone(),
+        live: Box::new(live.clone()),
         reason,
     };
     if live.instance != me.instance {
@@ -333,7 +333,18 @@ pub(super) async fn acquire_session(
     scope: &SessionScope,
 ) -> Result<(String, SessionStart), AcpError> {
     ensure_dispatch_current(agent)?;
+    let required_session = agent
+        .background_context
+        .as_ref()
+        .and_then(|hold| hold.continuation.as_ref())
+        .and_then(|continuation| continuation.provider_recovery.as_ref())
+        .map(|record| record.identity.session_id.clone());
     let Some(store) = agent.state.store.clone() else {
+        if required_session.is_some() {
+            return Err(AcpError::Protocol(
+                "background_original_session_unavailable".into(),
+            ));
+        }
         let sid =
             create_or_resume_session_and_apply_model(agent, ctx, agent_core, channel, None).await?;
         return Ok((
@@ -372,6 +383,14 @@ pub(super) async fn acquire_session(
         };
         let mut decision =
             resume_decision(&outcome, &me, |instance| store.instance_alive(instance));
+        if let Some(required) = &required_session {
+            if !matches!(&decision,ResumeDecision::Resume { live,.. } if &live.session_id == required)
+            {
+                return Err(AcpError::Protocol(
+                    "background_original_session_unavailable".into(),
+                ));
+            }
+        }
         if let Some(intent) = agent
             .state
             .control_dispatch
@@ -402,9 +421,10 @@ pub(super) async fn acquire_session(
                 instance: me.instance,
                 worker_index: me.worker_index,
                 departed: None,
-                ..live.clone()
+                ..*live.clone()
             },
             ResumeDecision::New { .. } => LiveSession {
+                provider_background: None,
                 reply_contract: None,
                 lease: Uuid::nil(),
                 adapter: me.adapter.clone(),
@@ -454,6 +474,9 @@ pub(super) async fn acquire_session(
                     Ok(sid) => (sid, SessionStart::Resumed { reason }, Some(live)),
                     Err(AcpError::AgentExited) => return Err(AcpError::AgentExited),
                     Err(err) => {
+                        if required_session.is_some() {
+                            return Err(err);
+                        }
                         // A restart during resume also forbids the fallback RPC.
                         if ensure_dispatch_current(agent).is_err() {
                             // Preserve the original error's health classification;
@@ -509,7 +532,7 @@ pub(super) async fn acquire_session(
                 | StoreError::AlreadyRecorded,
             ) => {
                 if let Some(live) = restored {
-                    agent.state.restore_delivery(scope, live);
+                    agent.state.restore_delivery(scope, *live);
                 }
                 return Ok((sid, start));
             }
