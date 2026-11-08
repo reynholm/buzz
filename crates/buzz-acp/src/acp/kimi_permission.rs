@@ -340,11 +340,11 @@ impl AcpClient {
             && update["title"]
                 .as_str()
                 .is_some_and(|title| !title.is_empty());
-        if !matches!(
+        if !(matches!(
             update["status"].as_str(),
             Some("pending" | "in_progress" | "completed" | "failed")
-        ) && !(update["sessionUpdate"] == "tool_call" && update["status"].is_null())
-            && !verified_progress
+        ) || (update["sessionUpdate"] == "tool_call" && update["status"].is_null())
+            || verified_progress)
         {
             return;
         }
