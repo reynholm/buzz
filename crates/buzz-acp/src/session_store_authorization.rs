@@ -94,9 +94,8 @@ impl SessionStore {
                     cause: "host_shutdown".into(),
                     source_id: None,
                 });
-            background
-                .terminal_reason
-                .get_or_insert("host_shutdown".into());
+            // Shutdown revokes this connection's authority, not durable child
+            // results or the pending parent. A new host must reconcile them.
             background
                 .refresh_authorization()
                 .map_err(|_| StoreError::Unreadable)?;

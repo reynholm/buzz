@@ -21,23 +21,45 @@ async fn setup_with_native_steering(
     tempfile::TempDir,
     Arc<PromptContext>,
 ) {
+    setup_with_options(native, false).await
+}
+
+async fn setup_with_options(
+    native: bool,
+    authorization: bool,
+) -> (
+    AgentPool,
+    EventQueue,
+    SessionScope,
+    tempfile::TempDir,
+    Arc<PromptContext>,
+) {
     let dir = tempfile::tempdir().unwrap();
+    if authorization {
+        std::fs::write(dir.path().join("authorization-fixture"), "").unwrap();
+    }
     if native {
         std::fs::write(dir.path().join("native-steering"), "").unwrap();
     }
-    let mut acp = AcpClient::spawn(
-        "python3",
-        &[
+    let command;
+    let args;
+    if authorization {
+        use std::os::unix::fs::PermissionsExt;
+        let wrapper = dir.path().join("b24-cowork-code-cli");
+        std::fs::write(&wrapper, format!("#!/usr/bin/env python3\n{ADAPTER}")).unwrap();
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+        command = wrapper.to_string_lossy().into_owned();
+        args = vec![dir.path().to_string_lossy().into_owned()];
+    } else {
+        command = "python3".into();
+        args = vec![
             "-u".into(),
             "-c".into(),
             ADAPTER.into(),
             dir.path().to_string_lossy().into(),
-        ],
-        &[],
-        false,
-    )
-    .await
-    .unwrap();
+        ];
+    }
+    let mut acp = AcpClient::spawn(&command, &args, &[], false).await.unwrap();
     acp.initialize().await.unwrap();
     let scope = scope();
     let mut ctx = tests::make_prompt_context_no_owner();

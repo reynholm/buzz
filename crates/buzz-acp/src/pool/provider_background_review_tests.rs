@@ -494,3 +494,110 @@ async fn provider_background_expired_idle_collection_never_reenters_provider() {
         }
     }
 }
+
+#[tokio::test]
+async fn provider_background_stale_authorization_result_retries_in_the_original_session() {
+    for initial in [true, false] {
+        let (mut pool, mut queue, scope, dir, ctx) = setup_with_options(false, true).await;
+        if initial {
+            queue = queue.with_runtime_delivery(dir.path().to_str().unwrap(), 1800);
+            std::fs::write(dir.path().join("block-prompt"), "").unwrap();
+        }
+        assert_eq!(dispatch(&mut pool, &mut queue, &ctx), 1);
+        let before = if initial {
+            wait_marker(&dir, "prompt-started").await;
+            let crate::session_store::LoadOutcome::Found(saved) =
+                pool.store.as_ref().unwrap().load(&scope)
+            else {
+                panic!("missing active original prompt");
+            };
+            *saved.live.unwrap().provider_background.unwrap()
+        } else {
+            return_success(&mut pool, &mut queue).await;
+            complete_tasks(&mut pool, &mut queue, &dir).await;
+            let before = pool.agents[0]
+                .as_ref()
+                .unwrap()
+                .acp
+                .provider_background_record()
+                .unwrap()
+                .clone();
+            std::fs::write(dir.path().join("block-collection"), "").unwrap();
+            assert_eq!(dispatch(&mut pool, &mut queue, &ctx), 1);
+            timeout(Duration::from_secs(5), async {
+                while !dir.path().join("collection-started").exists() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+            before
+        };
+        let root = before
+            .thread_tags
+            .root_event_id
+            .as_ref()
+            .or(before.thread_tags.parent_event_id.as_ref())
+            .unwrap();
+        let event = clarification(&mut queue, &scope, root);
+        pool.accept_authorization_input(
+            &scope,
+            crate::provider_background::SavedEvent { event, edit: None },
+        )
+        .unwrap();
+        std::fs::remove_file(dir.path().join(if initial {
+            "block-prompt"
+        } else {
+            "block-collection"
+        }))
+        .unwrap();
+        let result = timeout(Duration::from_secs(10), pool.result_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            result.outcome,
+            PromptOutcome::Error(AcpError::BackgroundCollectionPending)
+        ));
+        assert_eq!(
+            result.agent.state.sessions.get(&scope),
+            Some(&before.identity.session_id),
+            "stale parent result removed its original session"
+        );
+        let crate::session_store::LoadOutcome::Found(saved) =
+            result.agent.state.store.as_ref().unwrap().load(&scope)
+        else {
+            panic!("missing original work")
+        };
+        let live = saved
+            .live
+            .expect("stale result tombstoned recoverable work");
+        assert_eq!(live.provider_background.unwrap().identity, before.identity);
+        if initial {
+            assert!(
+                result.batch.as_ref().unwrap().provider_collection(),
+                "first stale runtime prompt lost its collection continuation"
+            );
+        }
+        apply_result(&mut pool, &mut queue, result, None, &HashSet::new());
+        assert!(queue.has_pending_continuation(&scope));
+        timeout(Duration::from_secs(10), async {
+            while dispatch(&mut pool, &mut queue, &ctx) == 0 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        return_success(&mut pool, &mut queue).await;
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("launches"))
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
+        for mut agent in pool.agents.into_iter().flatten() {
+            agent.acp.shutdown().await;
+        }
+    }
+}

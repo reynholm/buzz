@@ -41,7 +41,10 @@ pub(crate) async fn complete_using(
 ) -> DeliveryOutcome {
     let needs_user = matches!(
         outcome,
-        PromptOutcome::Error(crate::acp::AcpError::HumanApprovalRequired)
+        PromptOutcome::Error(
+            crate::acp::AcpError::HumanApprovalRequired
+                | crate::acp::AcpError::HumanApprovalWorkerFailure(_)
+        )
     );
     let cancelled = work.publication_revoked()
         || matches!(
@@ -115,6 +118,11 @@ pub(crate) async fn complete_using(
         return outcome;
     }
     let (content, purpose, reason) = match final_text {
+        _ if matches!(outcome, PromptOutcome::Error(crate::acp::AcpError::HumanApprovalWorkerFailure(_))) => (
+            "A human decision is required before the blocked action can start. The worker also failed; inspect its diagnostics before continuing. No action was approved and no automatic retry was scheduled.".into(),
+            "failure_notice",
+            "human_approval_worker_failure",
+        ),
         _ if needs_user => (
             "A human decision is required before the blocked action can start. No action was approved and no automatic retry was scheduled.".into(),
             "failure_notice",

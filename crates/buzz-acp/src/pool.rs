@@ -812,6 +812,7 @@ impl PromptOutcome {
                         | AcpError::PermissionConflict
                         | AcpError::PermissionRequired
                         | AcpError::HumanApprovalRequired
+                        | AcpError::HumanApprovalWorkerFailure(_)
                         | AcpError::PermissionViewUnavailable
                         | AcpError::PermissionDecisionTimeout
                 )
@@ -839,6 +840,7 @@ impl PromptOutcome {
                 | AcpError::PermissionConflict
                 | AcpError::PermissionRequired
                 | AcpError::HumanApprovalRequired
+                | AcpError::HumanApprovalWorkerFailure(_)
                 | AcpError::PermissionViewUnavailable
                 | AcpError::PermissionDecisionTimeout
                 | AcpError::WriteTimeout(_)
@@ -2802,6 +2804,23 @@ pub async fn run_prompt_task(
         outcome = PromptOutcome::Error(AcpError::BackgroundCollectionPending);
         batch = saved_batch;
     }
+    if matches!(
+        outcome,
+        PromptOutcome::Error(AcpError::BackgroundCollectionPending)
+    ) {
+        if let (Some(batch), Some(mut continuation)) = (
+            &mut batch,
+            agent
+                .background_context
+                .as_ref()
+                .and_then(|hold| hold.continuation.clone()),
+        ) {
+            // A first prompt can become stale before any collection batch
+            // exists. Retry only the existing parent/results in its session.
+            continuation.provider_recovery = agent.acp.provider_background_record().cloned();
+            batch.continuation = Some(continuation);
+        }
+    }
     if let Some(work) = work.as_ref().filter(|work| work.runtime_final) {
         let final_text = agent
             .acp
@@ -2827,7 +2846,9 @@ pub async fn run_prompt_task(
             let reason = match delivery {
                 _ if matches!(
                     outcome,
-                    PromptOutcome::Error(AcpError::HumanApprovalRequired)
+                    PromptOutcome::Error(
+                        AcpError::HumanApprovalRequired | AcpError::HumanApprovalWorkerFailure(_)
+                    )
                 ) =>
                 {
                     "needs_user"
@@ -4359,6 +4380,15 @@ async fn run_prompt_execution(
         }
         Err(e) => {
             tracing::error!(target: "pool::prompt", "session_prompt error: {e}");
+            if matches!(e, AcpError::BackgroundCollectionPending) {
+                // The ACP end_turn received the contract, even though its
+                // answer predates accepted input. Keep it for this continuation.
+                if let Some(scope) = source.scope() {
+                    agent
+                        .state
+                        .acknowledge_reply_contract(scope, ctx.reply_contract.clone());
+                }
+            }
             // AgentError means the agent caught a problem before mutating
             // session state (e.g. bad LLM response). The session is healthy —
             // don't invalidate it. Other errors may have corrupted state.

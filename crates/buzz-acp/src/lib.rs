@@ -6376,13 +6376,24 @@ fn handle_prompt_result(
                 spawn_failure_notice(rest_client,&batch,"Kimi recovery reached its time budget. Check the work's current result before retrying explicitly.".into());
             } else if matches!(
                 &result.outcome,
-                PromptOutcome::Error(acp::AcpError::HumanApprovalRequired)
+                PromptOutcome::Error(
+                    acp::AcpError::HumanApprovalRequired
+                        | acp::AcpError::HumanApprovalWorkerFailure(_)
+                )
             ) {
                 if let Some(work) = &batch.work {
                     work.human_required("human_approval_required");
                     work.transition("waiting_human", "human_approval_required");
                 }
-                spawn_failure_notice(rest_client, &batch, "A human decision is required before the blocked action can start. No action was approved and no automatic retry was scheduled.".into());
+                let notice = if matches!(
+                    &result.outcome,
+                    PromptOutcome::Error(acp::AcpError::HumanApprovalWorkerFailure(_))
+                ) {
+                    "A human decision is required before the blocked action can start. The worker also failed; inspect its diagnostics before continuing. No action was approved and no automatic retry was scheduled."
+                } else {
+                    "A human decision is required before the blocked action can start. No action was approved and no automatic retry was scheduled."
+                };
+                spawn_failure_notice(rest_client, &batch, notice.into());
             } else if matches!(
                 &result.outcome,
                 PromptOutcome::Error(acp::AcpError::PermissionConflict)
@@ -6725,6 +6736,8 @@ fn handle_prompt_result(
                     | acp::AcpError::PermissionTelemetryTimeout
                     | acp::AcpError::PermissionConflict
                     | acp::AcpError::PermissionRequired
+                    | acp::AcpError::HumanApprovalRequired
+                    | acp::AcpError::HumanApprovalWorkerFailure(_)
                     | acp::AcpError::PermissionViewUnavailable
                     | acp::AcpError::PermissionDecisionTimeout
                     | acp::AcpError::WriteTimeout(_)

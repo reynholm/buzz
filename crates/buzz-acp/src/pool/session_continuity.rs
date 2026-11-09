@@ -159,6 +159,11 @@ impl SessionState {
         source: &super::PromptSource,
         error: &AcpError,
     ) {
+        // Pending collection is control flow on a healthy original session.
+        // A stale parent answer must not discard the session needed to collect it.
+        if matches!(error, AcpError::BackgroundCollectionPending) {
+            return;
+        }
         if matches!(
             error,
             AcpError::Io(_)
@@ -168,6 +173,8 @@ impl SessionState {
                 | AcpError::PermissionTelemetryTimeout
                 | AcpError::PermissionConflict
                 | AcpError::PermissionRequired
+                | AcpError::HumanApprovalRequired
+                | AcpError::HumanApprovalWorkerFailure(_)
                 | AcpError::PermissionViewUnavailable
                 | AcpError::PermissionDecisionTimeout
                 | AcpError::WriteTimeout(_)

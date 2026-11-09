@@ -18,11 +18,13 @@ for line in sys.stdin:
  elif m=='session/prompt':
   prompt_count+=1
   case=os.environ.get('CASE','plain')
-  if case=='human':
+  if case.startswith('human'):
    p={'sessionId':r['params']['sessionId'],'toolCall':{'toolCallId':'tool-1'},'approvalRequired':True,'options':[{'kind':'allow_once','optionId':'allow'}]}
    print(json.dumps({'jsonrpc':'2.0','id':'approval-1','method':'session/request_permission','params':p}),flush=True)
    ack=json.loads(sys.stdin.readline())
    assert ack['result']['outcome']['outcome']=='cancelled'
+   if case=='human-eof':sys.exit(0)
+   if case=='human-idle':time.sleep(30)
   if case=='background' and prompt_count==1:
    child="import pathlib,sys,time\nwhile not pathlib.Path(sys.argv[1]).exists():time.sleep(.02)"
    subprocess.Popen([sys.executable,'-c',child,os.environ['LOG']+'.finish'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -36,7 +38,7 @@ for line in sys.stdin:
   if case!='missing':updates.append(text(os.environ.get('ANSWER','Which option?')))
   updates.extend([text('child',{'parentToolCallId':'child','agent':{'agentName':'/root/child','depth':1,'kind':'subagent'}}), {'sessionUpdate':'tool_call','toolCallId':'child','_meta':{'parentToolCallId':'child'}}, text('',{'executionLifecycle':{'v':1,'kind':'request','phase':'ended','outcome':'success'}}), text('',{'usage':{}})])
   for u in updates:print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':r['params']['sessionId'],'update':u}}),flush=True)
-  if case=='error':
+  if case in ('error','human-error'):
    print(json.dumps({'jsonrpc':'2.0','id':r['id'],'error':{'code':-32603,'message':'synthetic provider failure'}}),flush=True);continue
   v={'stopReason':'cancelled' if case=='cancel' else 'end_turn'}
  print(json.dumps({'jsonrpc':'2.0','id':r['id'],'result':v}),flush=True)
@@ -71,9 +73,23 @@ async fn worker_with_peer(
     observer: &crate::observer::ObserverHandle,
     peer: &str,
 ) -> OwnedAgent {
+    let private = case == "authorized-provider-background";
+    let (command, args) = if private {
+        use std::os::unix::fs::PermissionsExt;
+        let wrapper = log.parent().unwrap().join("b24-cowork-code-cli");
+        std::fs::write(&wrapper, format!("#!/usr/bin/env python3\n{peer}")).unwrap();
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(log.parent().unwrap().join("authorization-fixture"), "").unwrap();
+        (wrapper.to_string_lossy().into_owned(), vec![])
+    } else {
+        (
+            "python3".into(),
+            vec!["-u".into(), "-c".into(), peer.into()],
+        )
+    };
     let mut acp = AcpClient::spawn(
-        "python3",
-        &["-u".into(), "-c".into(), peer.into()],
+        &command,
+        &args,
         &[
             ("CASE".into(), case.into()),
             ("LOG".into(), log.to_string_lossy().into_owned()),
@@ -166,7 +182,13 @@ fn states(observer: &crate::observer::ObserverHandle) -> Vec<String> {
 #[ignore = "requires rebuilt buzz CLI on PATH and BUZZ_TEST_BIN_DIR"]
 async fn provider_background_runtime_final_waits_for_all_acknowledged_results_before_delivery() {
     checked_cli();
-    for scenario in ["normal", "missing-ack", "crash-after-ack"] {
+    for scenario in [
+        "normal",
+        "missing-ack",
+        "crash-after-ack",
+        "stale-first",
+        "shutdown",
+    ] {
         provider_background_delivery_scenario(scenario).await;
     }
 }
@@ -176,8 +198,14 @@ async fn provider_background_delivery_scenario(scenario: &str) {
     let dir = tempfile::tempdir().unwrap();
     let log = dir.path().join("requests");
     let observer = crate::observer::ObserverHandle::in_process();
+    let private = ["stale-first", "shutdown"].contains(&scenario);
+    let peer_case = if private {
+        "authorized-provider-background"
+    } else {
+        "provider-background"
+    };
     let agent = worker_with_peer(
-        "provider-background",
+        peer_case,
         &log,
         &observer,
         crate::pool::background_work_tests::provider_background_fixture::ADAPTER,
@@ -194,18 +222,55 @@ async fn provider_background_delivery_scenario(scenario: &str) {
         )
         .unwrap(),
     )));
+    if scenario == "stale-first" {
+        std::fs::write(dir.path().join("block-prompt"), "").unwrap();
+    }
     assert_eq!(
         background_work_tests::dispatch(&mut pool, &mut queue, &ctx),
         1
     );
+    if scenario == "stale-first" {
+        timeout(Duration::from_secs(5), async {
+            while !dir.path().join("prompt-started").exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let input = EventBuilder::new(
+            Kind::Custom(9),
+            "Use the revised scope for existing results",
+        )
+        .tag(nostr::Tag::parse(["e", &relay.parent.id.to_hex(), "", "reply"]).unwrap())
+        .sign_with_keys(&relay.keys)
+        .unwrap();
+        pool.accept_authorization_input(
+            &scope,
+            crate::provider_background::SavedEvent {
+                event: input,
+                edit: None,
+            },
+        )
+        .unwrap();
+        std::fs::remove_file(dir.path().join("block-prompt")).unwrap();
+    }
     let result = timeout(Duration::from_secs(15), pool.result_rx.recv())
         .await
         .unwrap()
         .unwrap();
-    assert!(matches!(
-        result.outcome,
-        PromptOutcome::Ok(StopReason::EndTurn)
-    ));
+    if scenario == "stale-first" {
+        assert!(matches!(
+            result.outcome,
+            PromptOutcome::Error(AcpError::BackgroundCollectionPending)
+        ));
+        assert!(result.batch.as_ref().unwrap().provider_collection());
+        assert_eq!(result.agent.state.sessions[&scope], "original-session");
+    } else {
+        assert!(matches!(
+            result.outcome,
+            PromptOutcome::Ok(StopReason::EndTurn)
+        ));
+    }
     background_work_tests::apply_result(
         &mut pool,
         &mut queue,
@@ -218,6 +283,79 @@ async fn provider_background_delivery_scenario(scenario: &str) {
         relay.readback().await.is_empty(),
         "end_turn with live tasks must not publish missing_final"
     );
+    if scenario == "shutdown" {
+        let original = pool.agents[0]
+            .as_ref()
+            .unwrap()
+            .acp
+            .provider_background_record()
+            .unwrap()
+            .clone();
+        pool.revoke_authorization_for_shutdown();
+        pool.agents[0].as_mut().unwrap().acp.shutdown().await;
+        drop(pool);
+        drop(queue);
+        let store = Arc::new(
+            crate::session_store::SessionStore::open(
+                dir.path().join("sessions"),
+                &relay.url.replace("http://", "ws://"),
+                &relay.keys.public_key().to_hex(),
+            )
+            .unwrap(),
+        );
+        let pending = store.pending_provider_work(&[scope.channel_id()]).unwrap();
+        assert_eq!(pending.len(), 1, "shutdown lost running work");
+        assert_eq!(pending[0].identity, original.identity);
+        assert_eq!(pending[0].deadline_unix, original.deadline_unix);
+        assert_eq!(
+            pending[0]
+                .authorization
+                .as_ref()
+                .unwrap()
+                .snapshot(&pending[0])["state"],
+            "revoked"
+        );
+        queue = EventQueue::new(crate::config::DedupMode::Queue)
+            .with_runtime_delivery(dir.path().to_str().unwrap(), 60);
+        queue.restore_provider_background(pending[0].clone(), dir.path().to_str().unwrap());
+        let agent = worker_with_peer(
+            peer_case,
+            &log,
+            &observer,
+            crate::pool::background_work_tests::provider_background_fixture::ADAPTER,
+        )
+        .await;
+        pool = AgentPool::from_slots(vec![Some(agent)]);
+        pool.set_session_store(Some(store));
+        assert_eq!(
+            background_work_tests::dispatch(&mut pool, &mut queue, &ctx),
+            1
+        );
+        let result = timeout(Duration::from_secs(15), pool.result_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            result.outcome,
+            PromptOutcome::Ok(StopReason::EndTurn)
+        ));
+        background_work_tests::apply_result(
+            &mut pool,
+            &mut queue,
+            result,
+            Some(&ctx.rest_client),
+            &HashSet::new(),
+        );
+        assert_eq!(
+            std::fs::read_to_string(&log)
+                .unwrap()
+                .lines()
+                .filter(|line| line.contains("session/prompt"))
+                .count(),
+            1,
+            "running-only restore issued a model prompt"
+        );
+    }
     for index in 0..3 {
         std::fs::write(dir.path().join(format!("child-{index}")), "done").unwrap();
     }
@@ -329,18 +467,27 @@ async fn provider_background_delivery_scenario(scenario: &str) {
         pool.set_session_store(Some(store));
         std::fs::remove_file(dir.path().join("block-final")).unwrap();
     }
-    assert_eq!(
-        background_work_tests::dispatch(&mut pool, &mut queue, &ctx),
-        1
-    );
+    timeout(Duration::from_secs(10), async {
+        while background_work_tests::dispatch(&mut pool, &mut queue, &ctx) == 0 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
     let result = timeout(Duration::from_secs(15), pool.result_rx.recv())
         .await
         .unwrap()
         .unwrap();
-    assert!(matches!(
-        result.outcome,
-        PromptOutcome::Ok(StopReason::EndTurn)
-    ));
+    assert!(
+        matches!(result.outcome, PromptOutcome::Ok(StopReason::EndTurn)),
+        "scenario {scenario}: outcome={:?}, registry={:?}",
+        match &result.outcome {
+            PromptOutcome::Error(error) => error.to_string(),
+            PromptOutcome::Ok(stop) => format!("{stop:?}"),
+            _ => "other outcome".into(),
+        },
+        result.agent.acp.provider_background_record()
+    );
     background_work_tests::apply_result(
         &mut pool,
         &mut queue,
@@ -379,6 +526,31 @@ async fn provider_background_delivery_scenario(scenario: &str) {
             .count(),
         1
     );
+    if private {
+        let requests: Vec<serde_json::Value> = std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let prompts: Vec<_> = requests
+            .iter()
+            .filter(|request| request["method"] == "session/prompt")
+            .collect();
+        assert_eq!(prompts.len(), 2);
+        assert_eq!(
+            prompts[0]["params"]["_meta"]["buzz"]["backgroundTasks"]["identity"],
+            prompts[1]["params"]["_meta"]["buzz"]["backgroundTasks"]["identity"]
+        );
+        if scenario == "stale-first" {
+            assert!(prompts[1].to_string().contains("Use the revised scope"));
+        }
+        if scenario == "shutdown" {
+            assert_eq!(
+                prompts[1]["params"]["_meta"]["buzz"]["authorizationContext"]["state"],
+                "revoked"
+            );
+        }
+    }
     if scenario == "normal" {
         // Recreate the crash window: the signed final is durable, but the host
         // has not saved parent completion. The old deadline is now in the past.
@@ -488,13 +660,27 @@ async fn provider_background_delivery_scenario(scenario: &str) {
 #[ignore = "requires rebuilt buzz CLI on PATH and BUZZ_TEST_BIN_DIR"]
 async fn runtime_final_pool_delivers_only_final_question_with_typed_receipt() {
     checked_cli();
-    for case in ["plain", "segmented", "missing", "error", "cancel", "human"] {
+    for case in [
+        "plain",
+        "segmented",
+        "missing",
+        "error",
+        "cancel",
+        "human",
+        "human-error",
+        "human-eof",
+        "human-idle",
+    ] {
         let relay = MockRelay::start().await;
         let dir = tempfile::tempdir().unwrap();
         let log = dir.path().join("provider.jsonl");
         let observer = crate::observer::ObserverHandle::in_process();
         let agent = worker(case, &log, &observer).await;
-        let ctx = Arc::new(context(&relay, dir.path()));
+        let mut context = context(&relay, dir.path());
+        if case == "human-idle" {
+            context.idle_timeout = Duration::from_millis(300);
+        }
+        let ctx = Arc::new(context);
         let (mut queue, scope) = queue(&relay, dir.path());
         let mut pool = AgentPool::from_slots(vec![Some(agent)]);
         assert_eq!(
@@ -509,13 +695,80 @@ async fn runtime_final_pool_delivers_only_final_question_with_typed_receipt() {
             result.batch.is_none(),
             "runtime final must consume failed work, without task replay"
         );
-        background_work_tests::apply_result(
-            &mut pool,
-            &mut queue,
-            result,
-            Some(&ctx.rest_client),
-            &HashSet::new(),
-        );
+        if case.starts_with("human") {
+            let old_pid = result.agent.acp.process_id();
+            let mut config = crate::build_mcp_servers_tests::test_config();
+            config.agent_command = "python3".into();
+            config.agent_args = vec!["-u".into(), "-c".into(), PEER.into()];
+            config.persona_env_vars = vec![
+                ("CASE".into(), "plain".into()),
+                (
+                    "LOG".into(),
+                    dir.path()
+                        .join("replacement.jsonl")
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
+            ];
+            let mut history = vec![crate::SlotCircuit {
+                crash_times: vec![],
+                open_until: None,
+                respawn_in_flight: false,
+            }];
+            let (tx, mut rx) = mpsc::channel(8);
+            let mut respawns = tokio::task::JoinSet::new();
+            crate::handle_prompt_result(
+                &mut pool,
+                &mut queue,
+                &config,
+                result,
+                &mut false,
+                &HashSet::new(),
+                &mut history,
+                &tx,
+                &mut respawns,
+                None,
+                Some(&ctx.rest_client),
+                &mut tokio::time::Instant::now(),
+            );
+            assert!(
+                pool.agents[0].is_none(),
+                "{case}: blocked/failed worker returned to the available pool"
+            );
+            assert_eq!(respawns.len(), 1, "{case}: worker was not retired");
+            timeout(Duration::from_secs(10), respawns.join_next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            let (mut replacement, _, _) = rx.recv().await.unwrap().result.unwrap();
+            assert_ne!(replacement.process_id(), old_pid);
+            // The replacement must accept unrelated work without the old prompt.
+            replacement
+                .session_new(dir.path().to_str().unwrap(), vec![], None, None)
+                .await
+                .unwrap();
+            assert!(matches!(
+                replacement
+                    .session_prompt_with_idle_timeout(
+                        "new-session",
+                        "Independent next request",
+                        Duration::from_secs(2),
+                        Duration::from_secs(5)
+                    )
+                    .await,
+                Ok(StopReason::EndTurn)
+            ));
+            replacement.shutdown().await;
+        } else {
+            background_work_tests::apply_result(
+                &mut pool,
+                &mut queue,
+                result,
+                Some(&ctx.rest_client),
+                &HashSet::new(),
+            );
+        }
         assert_eq!(queue.queued_event_count(&scope), 0);
         assert_eq!(
             std::fs::read_to_string(&log)
@@ -551,7 +804,7 @@ async fn runtime_final_pool_delivers_only_final_question_with_typed_receipt() {
                 assert!(states(&observer)
                     .iter()
                     .any(|state| state == "answer_confirmed"));
-            } else if case == "human" {
+            } else if case.starts_with("human") {
                 assert!(reports[0].content.contains("A human decision is required"));
                 assert!(!reports[0].content.contains("Which option?"));
                 assert!(states(&observer)
@@ -563,6 +816,9 @@ async fn runtime_final_pool_delivers_only_final_question_with_typed_receipt() {
                 assert!(!states(&observer)
                     .iter()
                     .any(|state| state == "answer_confirmed"));
+                if case != "human" {
+                    assert!(reports[0].content.contains("worker also failed"));
+                }
             } else {
                 assert!(reports[0]
                     .content

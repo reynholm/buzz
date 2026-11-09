@@ -129,6 +129,9 @@ impl AcpClient {
             return Ok(());
         };
         let snapshot = journal.snapshot(record);
+        let acknowledged_identity = record.identity.clone();
+        let acknowledged_revision = journal.revision;
+        let acknowledged_update = journal.update_id;
         let budget = record.remaining().min(std::time::Duration::from_secs(2));
         let result = tokio::time::timeout(
             budget,
@@ -150,7 +153,14 @@ impl AcpClient {
         }
         if let Some(binding) = &mut self.provider_background.binding {
             if let Some(journal) = &mut binding.record.authorization {
-                journal.receipt_revision = journal.revision;
+                // Incoming checks can reload a newer revision while this RPC
+                // awaits. Its receipt only acknowledges the snapshot we sent.
+                if binding.record.identity == acknowledged_identity
+                    && journal.revision == acknowledged_revision
+                    && journal.update_id == acknowledged_update
+                {
+                    journal.receipt_revision = acknowledged_revision;
+                }
             }
         }
         self.persist_provider_background()

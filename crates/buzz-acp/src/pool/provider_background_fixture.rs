@@ -2,6 +2,7 @@
 pub(in crate::pool) const ADAPTER: &str = r#"
 import json,os,sys,threading,time
 root=sys.argv[1] if len(sys.argv)>1 else os.path.dirname(os.environ['LOG'])
+private_capability=os.environ.pop('QWEN_CODE_PRIVATE_ACP_CAPABILITY','')
 lock=threading.RLock()
 saved=os.path.join(root,'provider-state')
 stored=json.load(open(saved)) if os.path.exists(saved) else {}
@@ -27,10 +28,17 @@ def finish():
 threading.Thread(target=finish,daemon=True).start()
 for line in sys.stdin:
     r=json.loads(line)
-    with open(os.path.join(root,'requests'),'a') as log: log.write(line)
+    safe=json.loads(line)
+    if safe.get('method')=='initialize' and '_meta' in safe.get('params',{}):
+        safe['params']['_meta']['qwen-code/private-parent-capability']='[redacted]'
+    with open(os.path.join(root,'requests'),'a') as log: log.write(json.dumps(safe)+'\n')
     m=r.get('method'); result={}
     if m=='initialize':
         result={'protocolVersion':2,'agentInfo':{'name':'qwen-code','version':'0.26.7'},'agentCapabilities':{'sessionCapabilities':{'resume':{}}},'_meta':{'buzz':{'backgroundTasks':{'version':1}},'steering':{'supported':os.path.exists(os.path.join(root,'native-steering'))}}}
+        if os.path.exists(os.path.join(root,'authorization-fixture')):
+            assert private_capability and r['params']['_meta']['qwen-code/private-parent-capability']==private_capability
+            result['_meta']['buzz']['authorizationContext']={'version':1}
+    elif m=='_buzz/authorization/update': result=dict(r['params'],durable=True)
     elif m in ('session/new','session/resume'): result={'sessionId':'original-session'}
     elif m=='_buzz/background_tasks/snapshot':
         open(os.path.join(root,'snapshot-started'),'w').close()

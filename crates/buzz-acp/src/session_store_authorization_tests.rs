@@ -186,6 +186,10 @@ fn authorization_admission_reconciles_sources_replay_expiry_and_reset() {
         Err(StoreError::Conflict)
     ));
     store.revoke_authorization_for_shutdown(&scope).unwrap();
+    assert!(
+        load().recoverable(),
+        "shutdown discarded pending parent recovery instead of fencing only authorization"
+    );
     assert_eq!(
         load().authorization.as_ref().unwrap().snapshot(&load())["state"],
         "revoked"
@@ -193,6 +197,53 @@ fn authorization_admission_reconciles_sources_replay_expiry_and_reset() {
     let LoadOutcome::Found(before_discard) = store.load(&scope) else {
         panic!("missing work")
     };
+    let shutdown_dir = dir.path().join("shutdown-recovery");
+    {
+        let process = SessionStore::open(
+            shutdown_dir.clone(),
+            "wss://relay.example",
+            &owner.public_key().to_hex(),
+        )
+        .unwrap();
+        let mut shutdown_live = before_discard.live.clone().unwrap();
+        shutdown_live.instance = process.instance();
+        process
+            .claim(&scope, &Expect::Missing, shutdown_live)
+            .unwrap();
+        process.revoke_authorization_for_shutdown(&scope).unwrap();
+    }
+    let recovered = SessionStore::open(
+        shutdown_dir,
+        "wss://relay.example",
+        &owner.public_key().to_hex(),
+    )
+    .unwrap();
+    let pending = recovered
+        .pending_provider_work(&[scope.channel_id()])
+        .unwrap();
+    assert_eq!(
+        pending.len(),
+        1,
+        "shutdown registry was omitted from startup recovery"
+    );
+    assert_eq!(pending[0].identity, current.identity);
+    let previous = before_discard
+        .live
+        .as_ref()
+        .unwrap()
+        .provider_background
+        .as_ref()
+        .unwrap();
+    assert_eq!(pending[0].deadline_unix, previous.deadline_unix);
+    assert_eq!(pending[0].tasks, previous.tasks);
+    assert_eq!(
+        pending[0]
+            .authorization
+            .as_ref()
+            .unwrap()
+            .snapshot(&pending[0])["state"],
+        "revoked"
+    );
     let mut reusable = before_discard.live.clone().unwrap();
     reusable.provider_background = None;
     store.discard(&scope, lease).unwrap();

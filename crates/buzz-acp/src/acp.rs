@@ -172,6 +172,10 @@ pub enum AcpError {
     #[error("The action requires human approval; no action was approved")]
     HumanApprovalRequired,
 
+    /// Keep worker-health evidence without retrying an action blocked for approval.
+    #[error("The action requires human approval; the worker also failed: {0}")]
+    HumanApprovalWorkerFailure(#[source] Box<AcpError>),
+
     #[error("The human permission decision deadline expired")]
     PermissionDecisionTimeout,
 
@@ -1528,11 +1532,13 @@ impl AcpClient {
                 }
             }
         }
-        let mut parsed = if self.needs_user.is_some() {
-            Err(AcpError::HumanApprovalRequired)
-        } else {
-            result.and_then(|result| self.parse_prompt_response(session_id, &result))
-        };
+        let mut parsed = result.and_then(|result| self.parse_prompt_response(session_id, &result));
+        if self.needs_user.is_some() {
+            parsed = Err(match parsed {
+                Ok(_) => AcpError::HumanApprovalRequired,
+                Err(error) => AcpError::HumanApprovalWorkerFailure(Box::new(error)),
+            });
+        }
         if matches!(parsed, Ok(StopReason::EndTurn)) {
             match self.fence_stale_parent(session_id, authorization_revision) {
                 Ok(true) => parsed = Err(AcpError::BackgroundCollectionPending),

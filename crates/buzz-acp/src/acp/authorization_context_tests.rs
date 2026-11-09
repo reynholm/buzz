@@ -84,7 +84,7 @@ for line in sys.stdin:
  elif m=='session/prompt':
   prompt=r['id']
   p={'sessionId':'approval-session','toolCall':{'toolCallId':'tool-1'},'options':[{'kind':'allow_once','optionId':'allow'}]}
-  if mode=='human':p['_meta']={'buzz':{'authorization':{'requiresHuman':True,'fingerprint':'action-1','reason':'policy_denied'}}}
+  if mode.startswith('human'):p['_meta']={'buzz':{'authorization':{'requiresHuman':True,'fingerprint':'action-1','reason':'policy_denied'}}}
   if mode=='headless':p['approvalRequired']=True
   if mode=='malformed':p['_meta']={'buzz':{'authorization':{'requiresHuman':'true'}}}
   print(json.dumps({'jsonrpc':'2.0','id':'permission-1','method':'session/request_permission','params':p}),flush=True)
@@ -96,6 +96,10 @@ for line in sys.stdin:
   if mode!='ordinary' and r['id']=='permission-1':
    print(json.dumps({'jsonrpc':'2.0','id':'permission-2','method':'session/request_permission','params':{'sessionId':'approval-session','toolCall':{'toolCallId':'tool-2'},'options':[{'kind':'allow_once','optionId':'allow'}]}}),flush=True)
    continue
+  if mode=='human-error':
+   print(json.dumps({'jsonrpc':'2.0','id':prompt,'error':{'code':-32603,'message':'fixture worker failure'}}),flush=True)
+   continue
+  if mode=='human-eof':sys.exit(0)
   print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'approval-session','update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':json.dumps(outcome)}}}}),flush=True)
   print(json.dumps({'jsonrpc':'2.0','id':prompt,'result':{'stopReason':'end_turn'}}),flush=True)
   continue
@@ -105,7 +109,14 @@ for line in sys.stdin:
 
 #[tokio::test]
 async fn human_required_permission_cannot_become_automatic_success() {
-    for mode in ["human", "headless", "malformed", "ordinary"] {
+    for mode in [
+        "human",
+        "headless",
+        "malformed",
+        "ordinary",
+        "human-error",
+        "human-eof",
+    ] {
         let dir = tempfile::tempdir().unwrap();
         let trace = dir.path().join("permission.json");
         let store = std::sync::Arc::new(
@@ -181,10 +192,26 @@ async fn human_required_permission_cannot_become_automatic_success() {
             assert!(matches!(result, Ok(StopReason::EndTurn)));
             assert!(trace.with_extension("effect").exists());
         } else {
-            assert!(
-                matches!(result, Err(AcpError::HumanApprovalRequired)),
-                "{mode}: end_turn hid required human approval"
-            );
+            if mode == "human-error" || mode == "human-eof" {
+                let error = result.unwrap_err();
+                let detail = error.to_string();
+                let cause = if mode == "human-error" {
+                    "fixture worker failure"
+                } else {
+                    "Agent process exited unexpectedly"
+                };
+                assert!(
+                    detail.contains(cause),
+                    "{mode}: needs_user hid worker failure: {detail}"
+                );
+                assert!(detail.contains("human approval"));
+                assert!(crate::pool::PromptOutcome::Error(error).requires_retirement());
+            } else {
+                assert!(
+                    matches!(result, Err(AcpError::HumanApprovalRequired)),
+                    "{mode}: end_turn hid required human approval"
+                );
+            }
             assert!(!trace.with_extension("effect").exists());
             let outcome: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(&trace).unwrap()).unwrap();
@@ -281,6 +308,8 @@ prompt_id=None
 prompt_count=0
 first_revision=None
 mode=sys.argv[2] if len(sys.argv)>2 else 'normal'
+update_number=0
+held_update=None
 for line in sys.stdin:
  r=json.loads(line); m=r.get('method'); p=r.get('params',{}); v={}
  if m=='initialize':
@@ -288,6 +317,15 @@ for line in sys.stdin:
   v={'protocolVersion':2,'_meta':{'buzz':{'backgroundTasks':{'version':1},'authorizationContext':{'version':1}}}}
  elif m=='session/new':v={'sessionId':'source-session'}
  elif m=='_buzz/authorization/update':
+  update_number+=1
+  if mode=='receipt-race' and update_number==1:
+   held_update=r
+   pathlib.Path(sys.argv[1]).with_suffix('.ack-ready').touch()
+   until=time.monotonic()+5
+   while not pathlib.Path(sys.argv[1]).with_suffix('.ack-release').exists() and time.monotonic()<until:time.sleep(.005)
+   c={'identity':p['identity'],'revision':p['revision'],'check_id':str(uuid.uuid4()),'call_id':'during-update','fingerprint':'old-update'}
+   print(json.dumps({'jsonrpc':'2.0','id':'during-update','method':'_buzz/authorization/check','params':c}),flush=True)
+   continue
   v={**p,'durable':True}
   if mode=='unmatched-receipt':v['update_id']=str(uuid.uuid4())
  elif m=='session/prompt':
@@ -307,6 +345,10 @@ for line in sys.stdin:
   if first_revision is None:first_revision=a['revision']
   check={'identity':a['identity'],'revision':first_revision,'check_id':str(uuid.uuid4()),'call_id':'call-1','fingerprint':'fingerprint-1'}
   print(json.dumps({'jsonrpc':'2.0','id':'check-1','method':'_buzz/authorization/check','params':check}),flush=True)
+  continue
+ elif r.get('id')=='during-update':
+  assert r['result']['status']=='stale'
+  print(json.dumps({'jsonrpc':'2.0','id':held_update['id'],'result':{**held_update['params'],'durable':True}}),flush=True)
   continue
  elif r.get('id')=='check-1':
   assert r['result']['status']==('current' if prompt_count==1 else 'stale')
@@ -607,7 +649,12 @@ for line in sys.stdin:
     assert!(reopened
         .check_authorization_admission(&scope, lease, &check)
         .is_err());
-    for mode in ["unmatched-receipt", "needs-user", "foreign-needs-user"] {
+    for mode in [
+        "unmatched-receipt",
+        "needs-user",
+        "foreign-needs-user",
+        "receipt-race",
+    ] {
         let mut live = live.clone();
         live.provider_background = None;
         let expected = crate::session_store::Expect::from_outcome(&store.load(&scope));
@@ -635,6 +682,65 @@ for line in sys.stdin:
         peer.configure_authorization_policy(Some(owner.public_key().to_hex()), true, false);
         peer.bind_provider_background(fresh, store.clone(), lease)
             .unwrap();
+        if mode == "receipt-race" {
+            let newer = owner_event(
+                &owner,
+                channel,
+                "Restrict the action while its old update is awaiting a receipt.",
+            );
+            let arrival = async {
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    while !trace.with_extension("ack-ready").exists() {
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                })
+                .await
+                .unwrap();
+                let ingress = accepted_ingress(newer.clone(), channel, &owner, &agent).await;
+                ingress
+                    .persist_authorization(&scope, &empty_pool, &early_queue, true)
+                    .unwrap();
+                std::fs::write(trace.with_extension("ack-release"), "").unwrap();
+            };
+            let (result, ()) = tokio::join!(peer.reconcile_authorization(), arrival);
+            result.unwrap();
+            let crate::session_store::LoadOutcome::Found(saved) = store.load(&scope) else {
+                panic!("missing receipt race state")
+            };
+            let bg = saved.live.unwrap().provider_background.unwrap();
+            let journal = bg.authorization.as_ref().unwrap();
+            assert!(
+                journal.receipt_revision < journal.revision,
+                "an old receipt acknowledged a newer raw input"
+            );
+            assert!(bg.events.iter().any(|source| source.event.id == newer.id));
+            let admission = crate::authorization_context::Admission {
+                identity: bg.identity.clone(),
+                revision: journal.revision,
+                check_id: uuid::Uuid::new_v4(),
+                call_id: "after-delayed-receipt".into(),
+                fingerprint: "same-action-at-new-revision".into(),
+            };
+            assert_eq!(
+                store
+                    .check_authorization_admission(&scope, lease, &admission)
+                    .unwrap()["status"],
+                "stale"
+            );
+            peer.reconcile_authorization().await.unwrap();
+            let record = peer.provider_background_record().unwrap();
+            let journal = record.authorization.as_ref().unwrap();
+            assert_eq!(journal.receipt_revision, journal.revision);
+            assert_eq!(
+                store
+                    .check_authorization_admission(&scope, lease, &admission)
+                    .unwrap()["status"],
+                "current"
+            );
+            peer.shutdown().await;
+            store.discard(&scope, lease).unwrap();
+            continue;
+        }
         let result = peer
             .session_prompt_with_idle_timeout(
                 "source-session",
