@@ -811,6 +811,7 @@ impl PromptOutcome {
                         | AcpError::PermissionTelemetryTimeout
                         | AcpError::PermissionConflict
                         | AcpError::PermissionRequired
+                        | AcpError::HumanApprovalRequired
                         | AcpError::PermissionViewUnavailable
                         | AcpError::PermissionDecisionTimeout
                 )
@@ -837,6 +838,7 @@ impl PromptOutcome {
                 | AcpError::PermissionTelemetryTimeout
                 | AcpError::PermissionConflict
                 | AcpError::PermissionRequired
+                | AcpError::HumanApprovalRequired
                 | AcpError::PermissionViewUnavailable
                 | AcpError::PermissionDecisionTimeout
                 | AcpError::WriteTimeout(_)
@@ -2670,6 +2672,9 @@ pub async fn run_prompt_task(
     prompt_routing: crate::queue::PromptRouting,
 ) {
     let execution_deadline = batch.as_ref().and_then(FlushBatch::execution_deadline);
+    agent
+        .acp
+        .install_authorization_wake(prompt_routing.authorization_wake());
     if agent.background_context.is_none() {
         if let Some(batch) = batch.as_ref().filter(|batch| {
             batch
@@ -2803,7 +2808,13 @@ pub async fn run_prompt_task(
             .take_runtime_final(matches!(outcome, PromptOutcome::Ok(StopReason::EndTurn)));
         // Runtime publication finishes this turn's receipt, not execution or
         // a separately owned existing background collection.
-        if agent.acp.provider_background_outstanding() && !work.publication_revoked() {
+        if (agent.acp.provider_background_outstanding()
+            || matches!(
+                outcome,
+                PromptOutcome::Error(AcpError::BackgroundCollectionPending)
+            ))
+            && !work.publication_revoked()
+        {
             work.transition("waiting_background", "provider_tasks_outstanding");
         } else if work.runtime_control_continuation() && !work.publication_revoked() {
             // This is an authorized execution continuation, not a terminal
@@ -2814,6 +2825,13 @@ pub async fn run_prompt_task(
                 crate::runtime_delivery::complete(&ctx.rest_client, work, &outcome, final_text)
                     .await;
             let reason = match delivery {
+                _ if matches!(
+                    outcome,
+                    PromptOutcome::Error(AcpError::HumanApprovalRequired)
+                ) =>
+                {
+                    "needs_user"
+                }
                 crate::runtime_delivery::DeliveryOutcome::DeliveryPending => {
                     match crate::managed_work::has_durable_report(&ctx.rest_client, work).await {
                         Ok(true) => "parent_handed_to_delivery_journal",
@@ -3355,7 +3373,12 @@ async fn run_prompt_execution(
     agent.remember_background_context(&source, batch.as_ref(), &session_id);
     if let (Some(scope), Some(batch)) = (source.scope(), batch.as_ref()) {
         if let Err(error) = agent
-            .configure_provider_background(scope, batch, &session_id)
+            .configure_provider_background(
+                scope,
+                batch,
+                &session_id,
+                ctx.agent_owner_pubkey.as_ref(),
+            )
             .await
         {
             return (PromptOutcome::Error(error), Some(batch.clone()));

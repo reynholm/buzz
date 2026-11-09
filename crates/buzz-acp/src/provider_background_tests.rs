@@ -3,6 +3,8 @@ use serde_json::json;
 
 fn record() -> Record {
     Record {
+        authorization: None,
+        needs_user: None,
         terminal_reason: None,
         parent_pending: false,
         cancellation: None,

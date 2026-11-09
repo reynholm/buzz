@@ -301,6 +301,8 @@ mod tests {
             };
             let mut continuation = continuation();
             continuation.provider_recovery = Some(crate::provider_background::Record {
+                authorization: None,
+                needs_user: None,
                 terminal_reason: None,
                 parent_pending: true,
                 cancellation: None,

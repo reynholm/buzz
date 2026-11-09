@@ -220,6 +220,8 @@ impl ReplyRoute {
 /// `<context>` the agent actually received.
 #[derive(Debug, Clone, Default)]
 pub struct PromptRouting {
+    authorization_enabled: Arc<OnceLock<bool>>,
+    authorization_wake: Arc<tokio::sync::Notify>,
     provider_background: Arc<OnceLock<bool>>,
     native_steering: Arc<OnceLock<bool>>,
     is_dm: Arc<OnceLock<bool>>,
@@ -227,6 +229,18 @@ pub struct PromptRouting {
 }
 
 impl PromptRouting {
+    pub(crate) fn record_authorization(&self, enabled: bool) {
+        let _ = self.authorization_enabled.set(enabled);
+    }
+    pub(crate) fn authorization_enabled(&self) -> bool {
+        self.authorization_enabled.get() == Some(&true)
+    }
+    pub(crate) fn authorization_wake(&self) -> Arc<tokio::sync::Notify> {
+        self.authorization_wake.clone()
+    }
+    pub(crate) fn wake_authorization(&self) {
+        self.authorization_wake.notify_one();
+    }
     pub(crate) fn record_provider_controls(&self, background: bool, steering: bool) {
         let _ = self.provider_background.set(background);
         let _ = self.native_steering.set(steering);

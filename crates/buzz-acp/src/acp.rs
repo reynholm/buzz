@@ -10,6 +10,7 @@ mod claude_context;
 mod kimi_diagnostics;
 pub(crate) mod kimi_permission;
 pub(crate) mod launch;
+mod private_parent;
 mod provider_background;
 #[cfg(all(test, unix))]
 mod provider_background_tests;
@@ -168,6 +169,9 @@ pub enum AcpError {
     #[error("A human permission decision is required")]
     PermissionRequired,
 
+    #[error("The action requires human approval; no action was approved")]
+    HumanApprovalRequired,
+
     #[error("The human permission decision deadline expired")]
     PermissionDecisionTimeout,
 
@@ -176,6 +180,10 @@ pub enum AcpError {
 }
 
 pub(crate) mod kimi_recovery;
+
+#[cfg(all(test, unix))]
+#[path = "acp/authorization_context_tests.rs"]
+mod authorization_context_tests;
 
 /// Build an [`AcpError::AgentError`] from a JSON-RPC error object,
 /// preserving the numeric code. When the `message` field is missing or
@@ -229,6 +237,10 @@ fn build_initialize_params() -> serde_json::Value {
 /// One `AcpClient` per agent process. Multiple sessions can be created on the
 /// same client via repeated calls to [`session_new`](AcpClient::session_new).
 pub struct AcpClient {
+    authorization_wake: Option<std::sync::Arc<tokio::sync::Notify>>,
+    private_parent_capability: Option<String>,
+    private_parent_bootstrapped: bool,
+    needs_user: Option<crate::authorization_context::NeedsUser>,
     provider_background: provider_background::ProviderBackground,
     runtime_final: Option<crate::final_reply::FinalReply>,
     runtime_peer_verified: bool,
@@ -542,7 +554,10 @@ fn build_client_capabilities() -> serde_json::Value {
             // exact terminal login argv for subscription auth. Unknown `_meta`
             // keys are ignored by other adapters.
             "terminal-auth": true,
-            "buzz": {"backgroundTasks": {"version": crate::provider_background::VERSION}},
+            "buzz": {
+                "backgroundTasks": {"version": crate::provider_background::VERSION},
+                "authorizationContext": {"version": 1, "interactiveApproval": false}
+            },
             // Request structured terminal failures rather than ordinary text
             // followed by end_turn, which would suppress queue retries.
             "jetbrains": {
@@ -698,6 +713,11 @@ impl AcpClient {
         // over the harness-owned agent identity in native shells.
         cmd.env_remove("GIT_CONFIG_PARAMETERS");
         cmd.env_remove("NOSTR_PRIVATE_KEY");
+        // Never inherit or take this secret from persona/repository settings.
+        // Only the explicitly selected local launcher receives a new bootstrap.
+        let private_parent_capability = (!launch_prefixed
+            && crate::config::normalize_agent_command_identity(command) == "b24-cowork-code-cli")
+            .then(private_parent::fresh);
         crate::session_status::apply_status_dir_env(&mut cmd, extra_env);
         if extra_env.iter().any(|(name, _)| name == "GIT_CONFIG_COUNT") {
             // Native shells inherit these overrides, while buzz-agent clears
@@ -728,6 +748,10 @@ impl AcpClient {
                 _ => None,
             };
         cmd.envs(launch_env.iter().cloned());
+        cmd.env_remove(private_parent::ENV);
+        if let Some(secret) = &private_parent_capability {
+            cmd.env(private_parent::ENV, secret);
+        }
         cmd.env_remove(launch::PREFIX_ENV);
         #[cfg(unix)]
         let service_registry = if standard_adapter == Some(StandardAdapterKind::Codex) {
@@ -770,7 +794,11 @@ impl AcpClient {
             .ok_or_else(|| AcpError::Protocol("failed to open agent stdout".into()))?;
 
         Ok(Self {
+            authorization_wake: None,
+            private_parent_capability,
+            private_parent_bootstrapped: false,
             provider_background: Default::default(),
+            needs_user: None,
             runtime_final: None,
             runtime_peer_verified: false,
             runtime_build_file: None,
@@ -1039,12 +1067,22 @@ impl AcpClient {
     pub async fn initialize(&mut self) -> Result<serde_json::Value, AcpError> {
         // Requesting version 2 is an intentional temporary pin — we are squatting
         // on ACP v2 ahead of the upstream ACP RFD. Revisit when that RFD merges.
-        let params = build_initialize_params();
+        let mut params = build_initialize_params();
+        if let Some(secret) = self.private_parent_capability.take() {
+            params["_meta"][private_parent::KEY] = serde_json::json!(secret);
+            self.private_parent_bootstrapped = true;
+        }
         let result = self.send_request("initialize", params).await?;
         self.provider_background.enabled = result
             .pointer("/_meta/buzz/backgroundTasks/version")
             .and_then(serde_json::Value::as_u64)
             == Some(crate::provider_background::VERSION);
+        self.provider_background.authorization_enabled = self.private_parent_bootstrapped
+            && self.provider_background.enabled
+            && result
+                .pointer("/_meta/buzz/authorizationContext/version")
+                .and_then(serde_json::Value::as_u64)
+                == Some(crate::authorization_context::VERSION);
         self.kimi |= result
             .pointer("/agentInfo/name")
             .and_then(serde_json::Value::as_str)
@@ -1094,6 +1132,7 @@ impl AcpClient {
     }
 
     fn observe_incoming(&mut self, msg: &serde_json::Value, wire: &str) {
+        self.consume_authorization_needs_user(msg);
         self.consume_provider_background(msg);
         self.observe_kimi_permission_progress(msg);
         // The initialize reply can identify Kimi before initialize() returns.
@@ -1382,6 +1421,13 @@ impl AcpClient {
         idle_timeout: std::time::Duration,
         max_duration: std::time::Duration,
     ) -> Result<StopReason, AcpError> {
+        self.needs_user = self
+            .provider_background_record()
+            .filter(|record| record.identity.session_id == session_id)
+            .and_then(|record| record.needs_user.clone());
+        if self.needs_user.is_some() {
+            return Err(AcpError::HumanApprovalRequired);
+        }
         if let Some(capture) = &mut self.runtime_final {
             capture.begin(session_id);
             let path = self.runtime_build_file.clone();
@@ -1405,10 +1451,17 @@ impl AcpClient {
         self.begin_claude_context_turn(session_id);
         self.capture_kimi_retirement_evidence().await;
         self.check_provider_background()?;
+        self.reconcile_authorization().await?;
         let mut params = build_prompt_params(session_id, prompt_blocks);
         if let Some(metadata) = self.provider_prompt_metadata(session_id) {
             params["_meta"]["buzz"]["backgroundTasks"] = metadata;
         }
+        if let Some(metadata) = self.authorization_prompt_metadata(session_id) {
+            params["_meta"]["buzz"]["authorizationContext"] = metadata;
+            params["_meta"]["buzz"]["authorizationCarrier"] =
+                serde_json::json!({"synthetic":self.authorization_synthetic()});
+        }
+        let authorization_revision = self.authorization_revision(session_id);
         let hard_deadline = tokio::time::Instant::now() + max_duration;
         self.current_hard_deadline = Some(hard_deadline);
 
@@ -1475,7 +1528,18 @@ impl AcpClient {
                 }
             }
         }
-        let parsed = result.and_then(|result| self.parse_prompt_response(session_id, &result));
+        let mut parsed = if self.needs_user.is_some() {
+            Err(AcpError::HumanApprovalRequired)
+        } else {
+            result.and_then(|result| self.parse_prompt_response(session_id, &result))
+        };
+        if matches!(parsed, Ok(StopReason::EndTurn)) {
+            match self.fence_stale_parent(session_id, authorization_revision) {
+                Ok(true) => parsed = Err(AcpError::BackgroundCollectionPending),
+                Err(error) => parsed = Err(error),
+                Ok(false) => {}
+            }
+        }
         if self.kimi {
             self.kimi_prompt_stop(parsed.as_ref());
             self.finish_kimi_permissions(if parsed.is_ok() {
@@ -1816,7 +1880,7 @@ impl AcpClient {
         .await
         .map_err(|_| AcpError::WriteTimeout(WRITE_TIMEOUT))?
         .map_err(AcpError::Io)?;
-        self.observe("acp_write", value.clone());
+        self.observe("acp_write", private_parent::redacted(value));
         Ok(())
     }
 
@@ -2013,6 +2077,9 @@ impl AcpClient {
                     "session/request_permission" => {
                         self.handle_permission_request(&msg).await?;
                     }
+                    "_buzz/authorization/check" => {
+                        self.handle_authorization_check(&msg).await?;
+                    }
                     other => {
                         // If the unknown message has an id, it's a request expecting a reply.
                         // Silence would cause the agent to hang waiting for a response.
@@ -2096,6 +2163,7 @@ impl AcpClient {
         // Dropped at scope exit (return paths drain `pending_steer` first
         // so the ack_tx oneshot is never leaked silently).
         let mut steer_rx = self.steer_rx.take();
+        let authorization_wake = self.authorization_wake.clone();
 
         // Tracks the in-flight steer write: `(request_id, transport, ack_tx)`.
         // While `Some`, the steer arm is gated off so we don't stack writes,
@@ -2164,6 +2232,21 @@ impl AcpClient {
             // read level — the buffer never grows beyond the limit.
             let read_result = tokio::select! {
                 biased;
+                _ = async {
+                    match &authorization_wake {
+                        Some(wake) => wake.notified().await,
+                        None => std::future::pending::<()>().await,
+                    }
+                }, if self.authorization_supported() && pending_steer.is_none() => {
+                    tokio::time::timeout_at(hard_deadline, self.reconcile_authorization())
+                        .await.map_err(|_| AcpError::HardTimeout {silence: Instant::now().saturating_duration_since(last_activity_at)})??;
+                    if let Some(msg) = self.deferred_prompt_response.take() {
+                        if msg["id"]!=serde_json::json!(expected_id) { return Err(AcpError::Protocol("deferred_prompt_identity_mismatch".into())) }
+                        if let Some(error) = msg.get("error") { return Err(self.decode_agent_error(error)) }
+                        return Ok(msg["result"].clone());
+                    }
+                    continue;
+                }
                 read_result = self.reader.next() => Some(read_result),
                 // Steer arm: gated off whenever a steer write is already in
                 // flight so we don't stack two writes against the same
@@ -2506,6 +2589,9 @@ impl AcpClient {
                             "session/request_permission" => {
                                 self.handle_permission_request(&msg).await?;
                             }
+                            "_buzz/authorization/check" => {
+                                self.handle_authorization_check(&msg).await?;
+                            }
                             other => {
                                 // If the unknown message has an id, it's a request expecting a reply.
                                 // Silence would cause the agent to hang waiting for a response.
@@ -2821,6 +2907,31 @@ impl AcpClient {
         self.pending_permission_id = Some(id.clone());
         // Mark as not yet responded — guards against double-response race.
         self.permission_responded = false;
+
+        if let Some(required) = crate::authorization_context::NeedsUser::from_permission(msg)
+            .or_else(|| self.needs_user.clone())
+        {
+            self.needs_user = Some(required.clone());
+            // Persist the fence before acknowledging the blocked request.
+            self.record_provider_needs_user(
+                msg["params"]["sessionId"].as_str().unwrap_or_default(),
+                required.clone(),
+            )?;
+            self.write_ndjson(&permission_response_cancelled(&id))
+                .await?;
+            self.permission_responded = true;
+            self.pending_permission_id = None;
+            self.observe(
+                "authorization_needs_user",
+                serde_json::json!({
+                    "sessionId": msg["params"]["sessionId"],
+                    "state": "needs_user", "interactiveApproval": false,
+                "approved": false
+                ,"request": required
+                }),
+            );
+            return Ok(());
+        }
 
         let options = msg["params"]["options"]
             .as_array()

@@ -18,6 +18,11 @@ for line in sys.stdin:
  elif m=='session/prompt':
   prompt_count+=1
   case=os.environ.get('CASE','plain')
+  if case=='human':
+   p={'sessionId':r['params']['sessionId'],'toolCall':{'toolCallId':'tool-1'},'approvalRequired':True,'options':[{'kind':'allow_once','optionId':'allow'}]}
+   print(json.dumps({'jsonrpc':'2.0','id':'approval-1','method':'session/request_permission','params':p}),flush=True)
+   ack=json.loads(sys.stdin.readline())
+   assert ack['result']['outcome']['outcome']=='cancelled'
   if case=='background' and prompt_count==1:
    child="import pathlib,sys,time\nwhile not pathlib.Path(sys.argv[1]).exists():time.sleep(.02)"
    subprocess.Popen([sys.executable,'-c',child,os.environ['LOG']+'.finish'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -483,7 +488,7 @@ async fn provider_background_delivery_scenario(scenario: &str) {
 #[ignore = "requires rebuilt buzz CLI on PATH and BUZZ_TEST_BIN_DIR"]
 async fn runtime_final_pool_delivers_only_final_question_with_typed_receipt() {
     checked_cli();
-    for case in ["plain", "segmented", "missing", "error", "cancel"] {
+    for case in ["plain", "segmented", "missing", "error", "cancel", "human"] {
         let relay = MockRelay::start().await;
         let dir = tempfile::tempdir().unwrap();
         let log = dir.path().join("provider.jsonl");
@@ -544,6 +549,18 @@ async fn runtime_final_pool_delivers_only_final_question_with_typed_receipt() {
             if ["plain", "segmented"].contains(&case) {
                 assert_eq!(reports[0].content, "Which option?");
                 assert!(states(&observer)
+                    .iter()
+                    .any(|state| state == "answer_confirmed"));
+            } else if case == "human" {
+                assert!(reports[0].content.contains("A human decision is required"));
+                assert!(!reports[0].content.contains("Which option?"));
+                assert!(states(&observer)
+                    .iter()
+                    .any(|state| state == "waiting_human"));
+                assert!(!states(&observer)
+                    .iter()
+                    .any(|state| state == "missing_final"));
+                assert!(!states(&observer)
                     .iter()
                     .any(|state| state == "answer_confirmed"));
             } else {

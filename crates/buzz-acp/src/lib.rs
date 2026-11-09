@@ -5,6 +5,7 @@ mod git;
 mod git_runtime_tests;
 
 mod acp;
+mod authorization_context;
 mod config;
 mod edit_routing;
 mod engram_fetch;
@@ -926,6 +927,34 @@ impl QueuedNormalListenerEvent {
 }
 
 impl NormalListenerIngress {
+    fn persist_authorization(
+        &self,
+        scope: &scope::SessionScope,
+        pool: &AgentPool,
+        queue: &EventQueue,
+        selected_managed_parent: bool,
+    ) -> Result<(), session_store::StoreError> {
+        let routing = queue.in_flight_prompt_routing(scope);
+        let enabled = selected_managed_parent
+            || pool.authorization_supported()
+            || routing
+                .as_ref()
+                .is_some_and(|routing| routing.authorization_enabled());
+        if enabled
+            && pool.accept_authorization_input(
+                scope,
+                provider_background::SavedEvent {
+                    event: self.buzz_event.event.clone(),
+                    edit: self.edit.clone(),
+                },
+            )?
+        {
+            if let Some(routing) = routing {
+                routing.wake_authorization();
+            }
+        }
+        Ok(())
+    }
     /// Resolve an admitted edit's original message once, before its session
     /// scope is derived, so scope, reactions, prompt, typing, steering, and
     /// failure notices all share one routing authority. The lookup is bounded
@@ -3924,6 +3953,12 @@ async fn run_harness(
                                 let owner = owner_cache.get();
                                 if let Some(owner) = owner {
                                     if buzz_event.event.pubkey.to_hex() == *owner {
+                                        let scope = scope::SessionScope::derive(config.session_policy, buzz_event.channel_id,
+                                            is_dm_channel(buzz_event.channel_id, &ctx.channel_info).await, &buzz_event.event);
+                                        if let Err(error) = pool.revoke_authorization_input(&scope,
+                                            provider_background::SavedEvent {event:buzz_event.event.clone(),edit:None},"host_shutdown") {
+                                            tracing::error!(%error,"shutdown source could not be persisted");
+                                        }
                                         tracing::info!(
                                             channel_id = %buzz_event.channel_id,
                                             sender = %buzz_event.event.pubkey.to_hex(),
@@ -3984,6 +4019,13 @@ async fn run_harness(
                                             .await,
                                         &buzz_event.event,
                                     );
+                                    if let Err(error) = pool.revoke_authorization_input(
+                                        &scope,
+                                        provider_background::SavedEvent { event: buzz_event.event.clone(), edit: None },
+                                        "user_cancel",
+                                    ) {
+                                        tracing::error!(%error, "owner cancellation authorization fence could not be persisted");
+                                    }
                                     handle_owner_cancel_for_scope(
                                         &mut pool, &mut queue, &ctx.session_controls, &scope, observer.as_ref(), Some(&ctx.rest_client)).await;
                                     continue; // consume event — do NOT push to queue
@@ -4104,13 +4146,23 @@ async fn run_harness(
                                     continue;
                                 }
                             }
+                            let authorization_durable = match ingress.persist_authorization(&session_scope, &pool, &queue,
+                                config::normalize_agent_command_identity(&config.agent_command)=="b24-cowork-code-cli") {
+                                Ok(()) => true,
+                                Err(error) => {
+                                    queue.cancel_logical_work(&session_scope);
+                                    signal_in_flight_task_for_scope(&mut pool, &session_scope, ControlSignal::Cancel);
+                                    tracing::warn!(%error,"raw authorization input could not be persisted; old execution is fenced");
+                                    false
+                                }
+                            };
                             let queued = ingress.push(&mut queue, session_scope, channel_is_dm);
                             // 👀 — immediate "seen" reaction, only if the event
                             // was actually queued (not dropped by DedupMode::Drop).
                             // Fire-and-forget: on rare fast-failure paths the
                             // guard's cleanup may race with this add, leaving a
                             // cosmetic stale 👀. Acceptable — see ReactionGuard docs.
-                            queued.mark_seen(&ctx.rest_client);
+                            if authorization_durable { queued.mark_seen(&ctx.rest_client); }
                             // Event is already queued. The authorized ingress
                             // retains its verified author, resolved scope, and
                             // event data through the optional steer/interrupt
@@ -4741,6 +4793,7 @@ async fn run_harness(
         }
     }
 
+    pool.revoke_authorization_for_shutdown();
     let status_scopes = ctx.session_controls.shutdown_statuses();
     let compact_workers = ctx.session_controls.shutdown_compactions();
     for meta in pool.task_map_mut().values_mut() {
@@ -5846,6 +5899,7 @@ fn dispatch_pending(
             agent.acp.provider_background_supported(),
             agent.acp.steering_supported(),
         );
+        prompt_routing.record_authorization(agent.acp.authorization_supported());
         let abort_handle = pool.join_set.spawn(async move {
             pool::run_prompt_task(
                 agent,
@@ -6320,6 +6374,15 @@ fn handle_prompt_result(
                 )
             ) {
                 spawn_failure_notice(rest_client,&batch,"Kimi recovery reached its time budget. Check the work's current result before retrying explicitly.".into());
+            } else if matches!(
+                &result.outcome,
+                PromptOutcome::Error(acp::AcpError::HumanApprovalRequired)
+            ) {
+                if let Some(work) = &batch.work {
+                    work.human_required("human_approval_required");
+                    work.transition("waiting_human", "human_approval_required");
+                }
+                spawn_failure_notice(rest_client, &batch, "A human decision is required before the blocked action can start. No action was approved and no automatic retry was scheduled.".into());
             } else if matches!(
                 &result.outcome,
                 PromptOutcome::Error(acp::AcpError::PermissionConflict)

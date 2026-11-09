@@ -518,6 +518,8 @@ fn provider_background_terminalization_fences_live_and_replaced_owners_and_write
         .claim(&scope, &Expect::Missing, live(&owner, "original"))
         .unwrap();
     let original = crate::provider_background::Record {
+        authorization: None,
+        needs_user: None,
         terminal_reason: None,
         parent_pending: true,
         cancellation: None,

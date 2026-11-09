@@ -39,6 +39,10 @@ pub(crate) async fn complete_using(
     outcome: &PromptOutcome,
     final_text: Result<String, &'static str>,
 ) -> DeliveryOutcome {
+    let needs_user = matches!(
+        outcome,
+        PromptOutcome::Error(crate::acp::AcpError::HumanApprovalRequired)
+    );
     let cancelled = work.publication_revoked()
         || matches!(
             outcome,
@@ -102,10 +106,20 @@ pub(crate) async fn complete_using(
             ),
         };
         emit(work, outcome, reason);
-        work.finish();
+        if needs_user {
+            work.human_required("human_approval_required");
+            work.transition("waiting_human", "human_approval_required");
+        } else {
+            work.finish();
+        }
         return outcome;
     }
     let (content, purpose, reason) = match final_text {
+        _ if needs_user => (
+            "A human decision is required before the blocked action can start. No action was approved and no automatic retry was scheduled.".into(),
+            "failure_notice",
+            "human_approval_required",
+        ),
         Ok(text) if matches!(outcome, PromptOutcome::Ok(crate::acp::StopReason::EndTurn)) => {
             (text, "answer", "normal_end_turn")
         }
@@ -132,7 +146,12 @@ pub(crate) async fn complete_using(
             ),
         };
     emit(work, result, delivery_reason);
-    work.finish();
+    if needs_user {
+        work.human_required("human_approval_required");
+        work.transition("waiting_human", "human_approval_required");
+    } else {
+        work.finish();
+    }
     result
 }
 

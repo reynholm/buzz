@@ -31,6 +31,8 @@ use uuid::Uuid;
 use crate::scope::SessionScope;
 use buzz_core::session_control::RestartDepth;
 
+#[path = "session_store_authorization.rs"]
+mod authorization;
 #[path = "session_store_background.rs"]
 mod background;
 #[path = "session_store_controls.rs"]
@@ -177,6 +179,13 @@ pub struct LiveSession {
 /// discarded on purpose and must not be resumed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) authorization_revocation: Option<crate::authorization_context::Revocation>,
+    #[serde(default)]
+    pub(crate) authorization_ingress: crate::authorization_context::Ingress,
+    /// Latest blocked action survives retirement of the provider session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) needs_user: Option<crate::authorization_context::NeedsUserReceipt>,
     pub version: u32,
     /// Hash of the canonical relay identity and agent public key.
     pub namespace: String,
@@ -462,6 +471,11 @@ impl SessionStore {
                 return Err(StoreError::Conflict);
             }
             Ok(SessionRecord {
+                authorization_revocation: current.and_then(|r| r.authorization_revocation.clone()),
+                authorization_ingress: current
+                    .map(|r| r.authorization_ingress.clone())
+                    .unwrap_or_default(),
+                needs_user: current.and_then(|r| r.needs_user.clone()),
                 version: RECORD_VERSION,
                 namespace: self.namespace.clone(),
                 live: Some(live),
@@ -629,6 +643,11 @@ impl SessionStore {
 
     fn tombstone(&self, current: Option<&SessionRecord>) -> SessionRecord {
         SessionRecord {
+            authorization_revocation: current.and_then(|r| r.authorization_revocation.clone()),
+            authorization_ingress: current
+                .map(|r| r.authorization_ingress.clone())
+                .unwrap_or_default(),
+            needs_user: current.and_then(|r| r.needs_user.clone()),
             version: RECORD_VERSION,
             namespace: self.namespace.clone(),
             live: None,
@@ -717,6 +736,7 @@ impl SessionStore {
         let lock = self.lock_record(path)?;
         let current = read_record(path, &self.namespace).map_err(|()| StoreError::Unreadable)?;
         let mut next = decide(current.as_ref())?;
+        next.preserve_authorization_revocation(current.as_ref())?;
         next.revision = Some(Uuid::new_v4());
         if let Err(err) = self.write_record(path, &next) {
             // Still inside the critical section, on a record `decide`
@@ -809,6 +829,13 @@ fn read_record(path: &Path, namespace: &str) -> Result<Option<SessionRecord>, ()
             !r.control_receipts.is_empty()
                 || r.pending_restart.is_some()
                 || r.background_cancellation.is_some()
+                || r.needs_user.is_some()
+                || r.authorization_revocation.is_some()
+                || r.live
+                    .as_ref()
+                    .and_then(|live| live.provider_background.as_ref())
+                    .is_some_and(|background| background.authorization.is_some())
+                || r.authorization_ingress.sequence > 0
         })
         .map(|mut record| {
             record.live = None;
@@ -843,7 +870,13 @@ fn read_record_file(path: &Path, namespace: &str) -> Result<Option<SessionRecord
                     .live
                     .as_ref()
                     .and_then(|live| live.provider_background.as_ref())
-                    .is_none_or(|background| background.validate().is_ok())
+                    .is_none_or(|background| {
+                        background.validate().is_ok()
+                            && background
+                                .authorization
+                                .as_ref()
+                                .is_none_or(|journal| journal.matches_payload(background))
+                    })
                 && controls::valid_controls(&record) =>
         {
             Ok(Some(record))
@@ -869,3 +902,7 @@ mod control_tests;
 
 #[path = "session_store_orphans.rs"]
 mod orphan_controls;
+
+#[cfg(test)]
+#[path = "session_store_authorization_tests.rs"]
+mod authorization_tests;

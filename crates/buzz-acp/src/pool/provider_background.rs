@@ -5,11 +5,45 @@ use crate::queue::EventQueue;
 use crate::session_store::LoadOutcome;
 
 impl OwnedAgent {
+    fn configure_permission_context(
+        &mut self,
+        scope: &SessionScope,
+        batch: &FlushBatch,
+        session: &str,
+    ) {
+        let (Some(store), Some(lease), Some(continuation)) = (
+            self.state.store.clone(),
+            self.state.leases.get(scope),
+            self.background_context
+                .as_ref()
+                .and_then(|hold| hold.continuation.as_ref()),
+        ) else {
+            return;
+        };
+        let identity = self
+            .acp
+            .provider_background_record()
+            .filter(|record| record.scope == *scope && record.identity.session_id == session)
+            .map(|record| record.identity.clone())
+            .unwrap_or_else(|| Identity {
+                session_id: session.into(),
+                work_id: continuation.delivery_key,
+                generation: continuation.generation,
+            });
+        self.acp.bind_permission_context(
+            identity,
+            scope.clone(),
+            batch.reply_tags(),
+            store,
+            *lease,
+        );
+    }
     pub(super) async fn configure_provider_background(
         &mut self,
         scope: &SessionScope,
         batch: &FlushBatch,
         session: &str,
+        owner: Option<&nostr::PublicKey>,
     ) -> Result<(), AcpError> {
         if let Some(record) = batch
             .continuation
@@ -23,6 +57,7 @@ impl OwnedAgent {
             }
         }
         if !self.acp.provider_background_supported() {
+            self.configure_permission_context(scope, batch, session);
             return Ok(());
         }
         let store =
@@ -72,6 +107,8 @@ impl OwnedAgent {
                 .and_then(|hold| hold.continuation.as_ref())
                 .ok_or_else(|| AcpError::Protocol("background_origin_unavailable".into()))?;
             Record {
+                authorization: None,
+                needs_user: None,
                 terminal_reason: None,
                 parent_pending: false,
                 cancellation: None,
@@ -99,7 +136,16 @@ impl OwnedAgent {
                 started: Default::default(),
             }
         };
+        self.acp.configure_authorization_policy(
+            owner.map(nostr::PublicKey::to_hex),
+            !restoring
+                && batch.continuation.is_none()
+                && batch.cancelled_events.is_empty()
+                && batch.work.as_ref().is_none_or(|work| work.attempt == 0),
+            batch.continuation.is_some(),
+        );
         self.acp.bind_provider_background(record, store, lease)?;
+        self.configure_permission_context(scope, batch, session);
         // Accepted clarification must survive an early provider RPC failure.
         self.acp.append_provider_inputs(&batch.events)?;
         if restoring {
@@ -129,6 +175,56 @@ impl OwnedAgent {
 }
 
 impl AgentPool {
+    pub(crate) fn revoke_authorization_for_shutdown(&self) {
+        let Some(store) = &self.store else {
+            return;
+        };
+        let scopes: std::collections::HashSet<_> = self
+            .agents
+            .iter()
+            .flatten()
+            .filter_map(|agent| {
+                agent
+                    .acp
+                    .provider_background_record()
+                    .map(|record| record.scope.clone())
+            })
+            .chain(self.task_map.values().filter_map(|task| task.scope.clone()))
+            .chain(self.runtime_holds.values().map(|hold| hold.scope.clone()))
+            .collect();
+        for scope in scopes {
+            if let Err(error) = store.revoke_authorization_for_shutdown(&scope) {
+                tracing::error!(%error,"shutdown authorization fence could not be persisted");
+            }
+        }
+    }
+    pub(crate) fn authorization_supported(&self) -> bool {
+        self.agents
+            .iter()
+            .flatten()
+            .any(|agent| agent.acp.authorization_supported())
+    }
+    pub(crate) fn accept_authorization_input(
+        &self,
+        scope: &SessionScope,
+        source: SavedEvent,
+    ) -> Result<bool, crate::session_store::StoreError> {
+        self.store
+            .as_ref()
+            .ok_or(crate::session_store::StoreError::Unreadable)?
+            .accept_authorization_input(scope, source, None)
+    }
+    pub(crate) fn revoke_authorization_input(
+        &self,
+        scope: &SessionScope,
+        source: SavedEvent,
+        reason: &str,
+    ) -> Result<bool, crate::session_store::StoreError> {
+        self.store
+            .as_ref()
+            .ok_or(crate::session_store::StoreError::Unreadable)?
+            .accept_authorization_input(scope, source, Some(reason))
+    }
     pub(crate) fn provider_background_status(
         &self,
         scope: &SessionScope,

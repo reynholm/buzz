@@ -87,6 +87,10 @@ impl Cancellation {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Record {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorization: Option<crate::authorization_context::Journal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub needs_user: Option<crate::authorization_context::NeedsUser>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_reason: Option<String>,
     /// Child receipts do not complete the parent or its final delivery.
     #[serde(default)]
@@ -105,13 +109,87 @@ pub(crate) struct Record {
 }
 
 impl Record {
+    pub fn accept_authorization_source(&mut self, input: SavedEvent) -> Result<(), &'static str> {
+        let Some(journal) = &mut self.authorization else {
+            return Ok(());
+        };
+        if input.event.verify().is_err() {
+            journal.fenced_reason = Some("source_signature_invalid".into());
+        } else if let Some(saved) = self
+            .events
+            .iter()
+            .find(|saved| saved.event.id == input.event.id)
+        {
+            if saved != &input {
+                journal.fenced_reason = Some("source_id_conflict".into());
+            }
+        } else if self.events.len() >= 50 {
+            journal.fenced_reason = Some("source_coverage_incomplete".into());
+        } else {
+            let mut next = self.clone();
+            next.events.push(input);
+            if next.validate().is_ok() {
+                self.events = next.events;
+            } else if let Some(journal) = &mut self.authorization {
+                journal.fenced_reason = Some("source_coverage_oversized".into());
+            }
+        }
+        self.refresh_authorization()
+    }
+
+    /// Preserve inputs admitted by the main loop while an ACP RPC was awaiting.
+    pub fn merge_authorization(&mut self, durable: &Self) -> Result<(), &'static str> {
+        let (Some(local), Some(saved)) = (&self.authorization, &durable.authorization) else {
+            return Ok(());
+        };
+        if self.identity != durable.identity || self.scope != durable.scope {
+            return Err("authorization_identity_changed");
+        }
+        let mut journal = saved.clone();
+        journal.control = journal.control.or_else(|| local.control.clone());
+        journal.initial_coverage &= local.initial_coverage;
+        journal.owner_pubkey = local.owner_pubkey.clone();
+        if local.fenced_reason.is_some() {
+            journal.fenced_reason = local.fenced_reason.clone();
+        }
+        if local.revision == saved.revision && local.update_id == saved.update_id {
+            journal.receipt_revision = journal.receipt_revision.max(local.receipt_revision);
+        }
+        let mut events = durable.events.clone();
+        for source in &self.events {
+            if let Some(previous) = events
+                .iter()
+                .find(|previous| previous.event.id == source.event.id)
+            {
+                if previous != source {
+                    journal.fenced_reason = Some("source_id_conflict".into());
+                }
+            } else {
+                events.push(source.clone());
+            }
+        }
+        self.events = events;
+        self.authorization = Some(journal);
+        self.refresh_authorization()
+    }
+
+    pub fn refresh_authorization(&mut self) -> Result<(), &'static str> {
+        if let Some(mut journal) = self.authorization.take() {
+            let result = journal.refresh(self);
+            self.authorization = Some(journal);
+            result?;
+        }
+        Ok(())
+    }
     pub fn recoverable(&self) -> bool {
-        self.cancellation.is_none()
+        self.needs_user.is_none()
+            && self.cancellation.is_none()
             && self.terminal_reason.is_none()
             && (self.parent_pending || self.outstanding())
     }
     pub fn outstanding(&self) -> bool {
-        self.cancellation.is_none()
+        self.needs_user.is_none()
+            && self.cancellation.is_none()
             && self.terminal_reason.is_none()
             && self.tasks.values().any(|task| !task.state.terminal())
     }
@@ -154,6 +232,10 @@ impl Record {
     }
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.identity.session_id.is_empty()
+            || self
+                .authorization
+                .as_ref()
+                .is_some_and(|journal| !journal.valid(self))
             || self.identity.session_id.len() > 512
             || self.identity.work_id.is_nil()
             || self

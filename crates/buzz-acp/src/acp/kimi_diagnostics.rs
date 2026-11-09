@@ -160,6 +160,8 @@ impl AcpClient {
     }
 
     pub(super) fn trace_outgoing(&self, msg: &Value, notification: bool) {
+        let safe = super::private_parent::redacted(msg);
+        let msg = &safe;
         if self.kimi {
             self.trace_kimi_wire("→", msg);
         } else if notification {

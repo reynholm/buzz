@@ -268,6 +268,9 @@ fn stored(live: impl FnOnce(&mut LiveSession)) -> LoadOutcome {
     };
     live(&mut session);
     LoadOutcome::Found(Box::new(SessionRecord {
+        authorization_revocation: None,
+        authorization_ingress: Default::default(),
+        needs_user: None,
         version: 2,
         namespace: String::new(),
         revision: None,
@@ -329,6 +332,9 @@ fn decision_unreadable_is_resume_failed() {
 #[test]
 fn decision_tombstone_is_discarded() {
     let tombstone = LoadOutcome::Found(Box::new(SessionRecord {
+        authorization_revocation: None,
+        authorization_ingress: Default::default(),
+        needs_user: None,
         version: 2,
         namespace: String::new(),
         revision: None,
