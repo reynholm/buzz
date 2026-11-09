@@ -3581,9 +3581,16 @@ async fn run_prompt_execution(
                     );
                 }
                 Err(e) => {
+                    if matches!(e, AcpError::BackgroundCollectionPending) {
+                        // Setup also carried the contract received by this
+                        // stale end_turn; its continuation must keep it.
+                        agent
+                            .state
+                            .acknowledge_reply_contract(scope, ctx.reply_contract.clone());
+                    }
                     tracing::error!(
                         target: "pool::session",
-                        "initial_message failed for channel {cid}: {e} — invalidating session"
+                        "initial_message did not produce a current result for channel {cid}: {e}"
                     );
                     agent.state.invalidate_after_error(&source, &e);
                     return (PromptOutcome::Error(e), requeue_batch_if_queue(&ctx, batch));

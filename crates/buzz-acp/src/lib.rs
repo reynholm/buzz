@@ -6762,13 +6762,14 @@ fn handle_prompt_result(
 
                 let index = result.agent.index;
                 let slot_history = &mut crash_history[index];
-                if !spawn_respawn_task(
+                if !spawn_respawn_with_policy(
                     result.agent,
                     config,
                     slot_history,
                     respawn_tx,
                     respawn_tasks,
                     observer,
+                    !matches!(e, acp::AcpError::HumanApprovalRequired),
                 ) && pool.live_count() == 0
                     && !any_respawn_in_flight(crash_history)
                 {
@@ -7157,13 +7158,37 @@ fn spawn_respawn_task(
     respawn_tasks: &mut tokio::task::JoinSet<()>,
     observer: Option<observer::ObserverHandle>,
 ) -> bool {
+    spawn_respawn_with_policy(
+        old_agent,
+        config,
+        slot,
+        respawn_tx,
+        respawn_tasks,
+        observer,
+        true,
+    )
+}
+
+fn spawn_respawn_with_policy(
+    old_agent: OwnedAgent,
+    config: &Config,
+    slot: &mut SlotCircuit,
+    respawn_tx: &mpsc::Sender<RespawnResult>,
+    respawn_tasks: &mut tokio::task::JoinSet<()>,
+    observer: Option<observer::ObserverHandle>,
+    count_as_crash: bool,
+) -> bool {
     let index = old_agent.index;
 
     if old_agent.acp.is_kimi() {
-        let delay = match slot.record_crash() {
-            CrashVerdict::CircuitOpen => None,
-            CrashVerdict::HalfOpenProbe => Some(Duration::ZERO),
-            CrashVerdict::Respawn(delay) => Some(delay),
+        let delay = if count_as_crash {
+            match slot.record_crash() {
+                CrashVerdict::CircuitOpen => None,
+                CrashVerdict::HalfOpenProbe => Some(Duration::ZERO),
+                CrashVerdict::Respawn(delay) => Some(delay),
+            }
+        } else {
+            Some(Duration::ZERO)
         };
         slot.respawn_in_flight = true;
         worker_retirement::recover_kimi(
@@ -7178,19 +7203,25 @@ fn spawn_respawn_task(
     }
 
     // Circuit breaker: record crash, decide whether to respawn.
-    let delay = match slot.record_crash() {
-        CrashVerdict::CircuitOpen => {
-            tracing::error!(agent = index, "circuit open — not respawning");
-            return false;
+    let delay = if count_as_crash {
+        match slot.record_crash() {
+            CrashVerdict::CircuitOpen => {
+                tracing::error!(agent = index, "circuit open — not respawning");
+                return false;
+            }
+            CrashVerdict::HalfOpenProbe => {
+                tracing::info!(agent = index, "circuit half-open — probe respawn");
+                Duration::ZERO
+            }
+            CrashVerdict::Respawn(d) => {
+                tracing::info!(agent = index, delay_ms = d.as_millis(), "respawn backoff");
+                d
+            }
         }
-        CrashVerdict::HalfOpenProbe => {
-            tracing::info!(agent = index, "circuit half-open — probe respawn");
-            Duration::ZERO
-        }
-        CrashVerdict::Respawn(d) => {
-            tracing::info!(agent = index, delay_ms = d.as_millis(), "respawn backoff");
-            d
-        }
+    } else {
+        // A completed prompt waiting for approval still gets a fresh worker,
+        // without consuming the slot's crash budget or replaying its action.
+        Duration::ZERO
     };
 
     slot.respawn_in_flight = true;

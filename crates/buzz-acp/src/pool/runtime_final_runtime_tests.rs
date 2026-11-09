@@ -187,6 +187,7 @@ async fn provider_background_runtime_final_waits_for_all_acknowledged_results_be
         "missing-ack",
         "crash-after-ack",
         "stale-first",
+        "stale-initial",
         "shutdown",
     ] {
         provider_background_delivery_scenario(scenario).await;
@@ -198,7 +199,7 @@ async fn provider_background_delivery_scenario(scenario: &str) {
     let dir = tempfile::tempdir().unwrap();
     let log = dir.path().join("requests");
     let observer = crate::observer::ObserverHandle::in_process();
-    let private = ["stale-first", "shutdown"].contains(&scenario);
+    let private = scenario.starts_with("stale-") || scenario == "shutdown";
     let peer_case = if private {
         "authorized-provider-background"
     } else {
@@ -211,7 +212,11 @@ async fn provider_background_delivery_scenario(scenario: &str) {
         crate::pool::background_work_tests::provider_background_fixture::ADAPTER,
     )
     .await;
-    let ctx = Arc::new(context(&relay, dir.path()));
+    let mut context = context(&relay, dir.path());
+    if scenario == "stale-initial" {
+        context.initial_message = Some("Initialize the existing work scope.".into());
+    }
+    let ctx = Arc::new(context);
     let (mut queue, scope) = queue(&relay, dir.path());
     let mut pool = AgentPool::from_slots(vec![Some(agent)]);
     pool.set_session_store(Some(Arc::new(
@@ -222,14 +227,14 @@ async fn provider_background_delivery_scenario(scenario: &str) {
         )
         .unwrap(),
     )));
-    if scenario == "stale-first" {
+    if scenario.starts_with("stale-") {
         std::fs::write(dir.path().join("block-prompt"), "").unwrap();
     }
     assert_eq!(
         background_work_tests::dispatch(&mut pool, &mut queue, &ctx),
         1
     );
-    if scenario == "stale-first" {
+    if scenario.starts_with("stale-") {
         timeout(Duration::from_secs(5), async {
             while !dir.path().join("prompt-started").exists() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -258,7 +263,7 @@ async fn provider_background_delivery_scenario(scenario: &str) {
         .await
         .unwrap()
         .unwrap();
-    if scenario == "stale-first" {
+    if scenario.starts_with("stale-") {
         assert!(matches!(
             result.outcome,
             PromptOutcome::Error(AcpError::BackgroundCollectionPending)
@@ -541,7 +546,7 @@ async fn provider_background_delivery_scenario(scenario: &str) {
             prompts[0]["params"]["_meta"]["buzz"]["backgroundTasks"]["identity"],
             prompts[1]["params"]["_meta"]["buzz"]["backgroundTasks"]["identity"]
         );
-        if scenario == "stale-first" {
+        if scenario.starts_with("stale-") {
             assert!(prompts[1].to_string().contains("Use the revised scope"));
         }
         if scenario == "shutdown" {
@@ -660,12 +665,19 @@ async fn provider_background_delivery_scenario(scenario: &str) {
 #[ignore = "requires rebuilt buzz CLI on PATH and BUZZ_TEST_BIN_DIR"]
 async fn runtime_final_pool_delivers_only_final_question_with_typed_receipt() {
     checked_cli();
+    let mut human_history = vec![crate::SlotCircuit {
+        crash_times: vec![],
+        open_until: None,
+        respawn_in_flight: false,
+    }];
     for case in [
         "plain",
         "segmented",
         "missing",
         "error",
         "cancel",
+        "human",
+        "human",
         "human",
         "human-error",
         "human-eof",
@@ -710,27 +722,40 @@ async fn runtime_final_pool_delivers_only_final_question_with_typed_receipt() {
                         .into_owned(),
                 ),
             ];
-            let mut history = vec![crate::SlotCircuit {
+            let mut failure_history = vec![crate::SlotCircuit {
                 crash_times: vec![],
                 open_until: None,
                 respawn_in_flight: false,
             }];
+            let history = if case == "human" {
+                &mut human_history
+            } else {
+                &mut failure_history
+            };
             let (tx, mut rx) = mpsc::channel(8);
             let mut respawns = tokio::task::JoinSet::new();
-            crate::handle_prompt_result(
+            let action = crate::handle_prompt_result(
                 &mut pool,
                 &mut queue,
                 &config,
                 result,
                 &mut false,
                 &HashSet::new(),
-                &mut history,
+                history,
                 &tx,
                 &mut respawns,
                 None,
                 Some(&ctx.rest_client),
                 &mut tokio::time::Instant::now(),
             );
+            if case == "human" {
+                assert!(
+                    matches!(action, crate::LoopAction::Continue),
+                    "healthy needs_user opened the crash circuit"
+                );
+                assert!(history[0].crash_times.is_empty());
+                assert!(history[0].open_until.is_none());
+            }
             assert!(
                 pool.agents[0].is_none(),
                 "{case}: blocked/failed worker returned to the available pool"
@@ -742,6 +767,8 @@ async fn runtime_final_pool_delivers_only_final_question_with_typed_receipt() {
                 .unwrap()
                 .unwrap();
             let (mut replacement, _, _) = rx.recv().await.unwrap().result.unwrap();
+            // The receive loop acknowledges the replacement on this same slot.
+            history[0].respawn_in_flight = false;
             assert_ne!(replacement.process_id(), old_pid);
             // The replacement must accept unrelated work without the old prompt.
             replacement
