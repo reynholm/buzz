@@ -247,8 +247,8 @@ pub struct AcpClient {
     needs_user: Option<crate::authorization_context::NeedsUser>,
     provider_background: provider_background::ProviderBackground,
     runtime_final: Option<crate::final_reply::FinalReply>,
-    runtime_peer_verified: bool,
-    runtime_build_file: Option<std::path::PathBuf>,
+    runtime_final_requested: bool,
+    runtime_final_supported: bool,
     /// Configured or initialized adapter identity; never inferred from an error.
     kimi: bool,
     kimi_permissions: kimi_permission::PermissionState,
@@ -804,8 +804,8 @@ impl AcpClient {
             provider_background: Default::default(),
             needs_user: None,
             runtime_final: None,
-            runtime_peer_verified: false,
-            runtime_build_file: None,
+            runtime_final_requested: false,
+            runtime_final_supported: false,
             kimi: crate::config::normalize_agent_command_identity(command) == "kimi",
             kimi_permissions: Default::default(),
             termination: terminate::TerminationState::default(),
@@ -1040,22 +1040,14 @@ impl AcpClient {
         }
     }
 
-    /// Send the `initialize` request and return the agent's response result value.
-    ///
-    /// Must be called exactly once, before any other ACP method.
-    /// The caller may inspect `agentCapabilities` in the returned value.
-    ///
-    /// Records `_meta.steering.supported` into
-    /// [`steering_supported`](Self::steering_supported) so the read loop's steer
-    /// arm can choose [`ACP_STEER_METHOD`] for adapters that implement it.
-    /// Parsed here rather than at each call site so no caller can forget it.
-    pub(crate) fn set_runtime_build_file(&mut self, path: Option<std::path::PathBuf>) {
-        self.runtime_build_file = path;
+    /// Select delivery negotiation before initialize, without enabling capture.
+    pub(crate) fn request_runtime_final(&mut self, enabled: bool) {
+        self.runtime_final_requested = enabled;
     }
 
     pub(crate) fn configure_runtime_final(&mut self, enabled: bool) -> Result<(), &'static str> {
-        if enabled && (!self.runtime_peer_verified || self.kimi) {
-            return Err("unverified_runtime_adapter");
+        if enabled && !self.runtime_final_supported {
+            return Err("unsupported_runtime_delivery_contract");
         }
         self.runtime_final = enabled.then(crate::final_reply::FinalReply::default);
         Ok(())
@@ -1068,10 +1060,15 @@ impl AcpClient {
             .take(success)
     }
 
+    /// Initialize this process once and record its negotiated capabilities.
     pub async fn initialize(&mut self) -> Result<serde_json::Value, AcpError> {
         // Requesting version 2 is an intentional temporary pin — we are squatting
         // on ACP v2 ahead of the upstream ACP RFD. Revisit when that RFD merges.
         let mut params = build_initialize_params();
+        if self.runtime_final_requested {
+            params["clientCapabilities"]["_meta"]["buzz"]["replyDelivery"] =
+                serde_json::json!({"version":1,"mode":"runtime_final"});
+        }
         if let Some(secret) = self.private_parent_capability.take() {
             params["_meta"][private_parent::KEY] = serde_json::json!(secret);
             self.private_parent_bootstrapped = true;
@@ -1091,14 +1088,15 @@ impl AcpClient {
             .pointer("/agentInfo/name")
             .and_then(serde_json::Value::as_str)
             == Some("Kimi Code CLI");
-        self.runtime_peer_verified = result
-            .pointer("/agentInfo/name")
-            .and_then(serde_json::Value::as_str)
-            == Some("qwen-code")
+        self.runtime_final_supported = self.runtime_final_requested
             && result
-                .pointer("/agentInfo/version")
+                .pointer("/_meta/buzz/replyDelivery/version")
+                .and_then(serde_json::Value::as_u64)
+                == Some(1)
+            && result
+                .pointer("/_meta/buzz/replyDelivery/mode")
                 .and_then(serde_json::Value::as_str)
-                == Some("0.26.7");
+                == Some("runtime_final");
         self.steering_supported = result
             .pointer("/_meta/steering/supported")
             .and_then(|v| v.as_bool())
@@ -1434,29 +1432,16 @@ impl AcpClient {
         }
         if let Some(capture) = &mut self.runtime_final {
             capture.begin(session_id);
-            let path = self.runtime_build_file.clone();
-            let verified = tokio::time::timeout(
-                std::time::Duration::from_secs(2),
-                tokio::task::spawn_blocking(move || {
-                    crate::config::verify_build_file(path.as_deref())
-                }),
-            )
-            .await;
-            match verified {
-                Ok(Ok(Ok(()))) => {}
-                Ok(Ok(Err(reason))) => return Err(AcpError::Protocol(reason.into())),
-                _ => {
-                    return Err(AcpError::Protocol(
-                        "runtime_build_provenance_unavailable".into(),
-                    ))
-                }
-            }
         }
         self.begin_claude_context_turn(session_id);
         self.capture_kimi_retirement_evidence().await;
         self.check_provider_background()?;
         self.reconcile_authorization().await?;
         let mut params = build_prompt_params(session_id, prompt_blocks);
+        if self.runtime_final.is_some() {
+            params["_meta"]["buzz"]["replyDelivery"] =
+                serde_json::json!({"version":1,"mode":"runtime_final"});
+        }
         if let Some(metadata) = self.provider_prompt_metadata(session_id) {
             params["_meta"]["buzz"]["backgroundTasks"] = metadata;
         }

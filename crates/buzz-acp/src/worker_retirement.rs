@@ -82,6 +82,7 @@ pub(crate) fn recover_kimi(
     let args = config.agent_args.clone();
     let env = config.persona_env_vars.clone();
     let has_codex = config.has_generated_codex_config;
+    let runtime_final = config.reply_contract.is_some();
     tasks.spawn(async move {
         let report = match guard.agent.as_mut() {
             Some(agent) => agent.acp.terminate().await,
@@ -103,7 +104,16 @@ pub(crate) fn recover_kimi(
             return;
         };
         tokio::time::sleep(delay).await;
-        let result = spawn_and_init(&command, &args, &env, has_codex, index, observer).await;
+        let result = spawn_and_init(
+            &command,
+            &args,
+            &env,
+            has_codex,
+            runtime_final,
+            index,
+            observer,
+        )
+        .await;
         guard.send(result, report);
     });
 }
@@ -181,6 +191,7 @@ pub(crate) fn drive(
         let args = config.agent_args.clone();
         let env = config.persona_env_vars.clone();
         let has_codex = config.has_generated_codex_config;
+        let runtime_final = config.reply_contract.is_some();
         let observer = observer.clone();
         let controls = controls.clone();
         tasks.spawn(async move {
@@ -207,7 +218,16 @@ pub(crate) fn drive(
                 }
             }
             guard.agent.take();
-            let result = spawn_and_init(&command, &args, &env, has_codex, index, observer).await;
+            let result = spawn_and_init(
+                &command,
+                &args,
+                &env,
+                has_codex,
+                runtime_final,
+                index,
+                observer,
+            )
+            .await;
             guard.send(result, report);
         });
     }

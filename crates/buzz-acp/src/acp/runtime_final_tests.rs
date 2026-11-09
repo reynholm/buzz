@@ -6,10 +6,15 @@ import json,sys
 for line in sys.stdin:
  r=json.loads(line); m=r.get('method'); v={}
  if 'id' not in r: continue
- if m=='initialize': v={'protocolVersion':1,'agentInfo':{'name':'qwen-code','version':'0.26.7'}}
+ if m=='initialize':
+  assert r['params']['clientCapabilities']['_meta']['buzz']['replyDelivery']['version']==1
+  assert r['params']['clientCapabilities']['_meta']['buzz']['replyDelivery']['mode']=='runtime_final'
+  v={'protocolVersion':1,'agentInfo':{'name':'qwen-code','version':'0.26.7'},'_meta':{'buzz':{'replyDelivery':{'version':1,'mode':'runtime_final'}}}}
  elif m=='session/new': v={'sessionId':'s'}
  elif m=='session/prompt':
   text=r['params']['prompt'][0]['text']
+  delivery=r['params'].get('_meta',{}).get('buzz',{}).get('replyDelivery')
+  assert (delivery is None) if text=='tools' else delivery==dict(version=1,mode='runtime_final')
   updates=[{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':'Final question?'}}]
   if text=='thought': updates.append({'sessionUpdate':'agent_thought_chunk','content':{'type':'text','text':'private'}})
   updates.insert(0,{'sessionUpdate':'available_commands_update','availableCommands':[{'name':'synthetic','description':'x'*662000}]})
@@ -31,10 +36,8 @@ async fn runtime_final_production_prompt_capture_excludes_failed_and_cancelled_p
     )
     .await
     .unwrap();
+    client.request_runtime_final(true);
     client.initialize().await.unwrap();
-    let version = tempfile::NamedTempFile::new().unwrap();
-    std::fs::write(version.path(), "0.26.7-b24.8").unwrap();
-    client.set_runtime_build_file(Some(version.path().to_owned()));
     client.configure_runtime_final(true).unwrap();
     client
         .session_new("/tmp", vec![], None, None)
@@ -63,28 +66,26 @@ async fn runtime_final_production_prompt_capture_excludes_failed_and_cancelled_p
             "{text}"
         );
     }
-    std::fs::write(version.path(), "0.26.7-b24.9").unwrap();
-    let upgraded = client
+    client.configure_runtime_final(false).unwrap();
+    client
         .session_prompt_with_idle_timeout(
             "s",
-            "normal",
+            "tools",
             Duration::from_secs(2),
             Duration::from_secs(5),
         )
-        .await;
-    assert!(
-        upgraded.is_err(),
-        "an unverified in-process upgrade must block the next provider prompt"
-    );
+        .await
+        .unwrap();
+    assert!(client.take_runtime_final(true).is_err());
     client.shutdown().await;
 }
 
 #[tokio::test]
-async fn runtime_final_initialize_gate_rejects_kimi_and_unverified_adapter_versions() {
+async fn runtime_final_initialize_capability_is_independent_of_product_identity() {
     for (name, version) in [
         ("Kimi Code CLI", "2.5.2"),
-        ("qwen-code", "0.26.8"),
-        ("other", "0.26.7"),
+        ("qwen-code", "99.0.0-b24.99"),
+        ("other", "development"),
     ] {
         let peer = PEER.replace(
             "'name':'qwen-code','version':'0.26.7'",
@@ -93,11 +94,51 @@ async fn runtime_final_initialize_gate_rejects_kimi_and_unverified_adapter_versi
         let mut client = AcpClient::spawn("python3", &["-u".into(), "-c".into(), peer], &[], false)
             .await
             .unwrap();
+        client.request_runtime_final(true);
         client.initialize().await.unwrap();
         assert!(
-            client.configure_runtime_final(true).is_err(),
-            "unsupported runtime profile: {name} {version}"
+            client.configure_runtime_final(true).is_ok(),
+            "negotiated delivery must not depend on product identity: {name} {version}"
         );
         client.shutdown().await;
     }
+}
+
+#[tokio::test]
+async fn runtime_final_product_identity_cannot_substitute_for_capability() {
+    for capability in [
+        "None",
+        "{}",
+        "{'version':2,'mode':'runtime_final'}",
+        "{'version':1,'mode':'agent_tools'}",
+        "{'version':'1','mode':'runtime_final'}",
+        "{'version':True,'mode':'runtime_final'}",
+        "{'version':1.0,'mode':'runtime_final'}",
+        "{'version':1}",
+    ] {
+        let peer = PEER.replace("{'version':1,'mode':'runtime_final'}", capability);
+        let mut client = AcpClient::spawn("python3", &["-u".into(), "-c".into(), peer], &[], false)
+            .await
+            .unwrap();
+        client.request_runtime_final(true);
+        client.initialize().await.unwrap();
+        assert!(
+            client.configure_runtime_final(true).is_err(),
+            "invalid capability admitted: {capability}"
+        );
+        client.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn runtime_final_unsolicited_capability_cannot_enable_default_tool_delivery() {
+    let peer = PEER
+        .replace("assert r['params']['clientCapabilities']['_meta']['buzz']['replyDelivery']['version']==1", "assert 'replyDelivery' not in r['params']['clientCapabilities']['_meta']['buzz']")
+        .replace("assert r['params']['clientCapabilities']['_meta']['buzz']['replyDelivery']['mode']=='runtime_final'", "pass");
+    let mut client = AcpClient::spawn("python3", &["-u".into(), "-c".into(), peer], &[], false)
+        .await
+        .unwrap();
+    client.initialize().await.unwrap();
+    assert!(client.configure_runtime_final(true).is_err());
+    client.shutdown().await;
 }

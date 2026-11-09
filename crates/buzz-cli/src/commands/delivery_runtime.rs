@@ -19,7 +19,7 @@ impl RuntimeDelivery {
     pub(super) fn new(purpose: &str, scope: Option<&str>) -> Result<Self, CliError> {
         let value = Self {
             purpose: purpose.into(),
-            profile: "b24_0_26_7_8".into(),
+            profile: "runtime_final_v1".into(),
             contract_revision: 1,
             revoked: false,
             scope: scope.map(str::to_owned),
@@ -29,7 +29,7 @@ impl RuntimeDelivery {
     }
     pub(super) fn validate(&self) -> Result<(), CliError> {
         if !matches!(self.purpose.as_str(), "answer" | "failure_notice")
-            || self.profile != "b24_0_26_7_8"
+            || !matches!(self.profile.as_str(), "runtime_final_v1" | "b24_0_26_7_8")
             || self.contract_revision != 1
             || self
                 .scope
@@ -209,6 +209,20 @@ mod tests {
         assert_eq!(listed["pending"].as_array().unwrap().len(), 1);
         assert_eq!(listed["pending"][0]["delivery_key"], runtime_key);
         assert!(listed["pending"][0].get("content").is_none());
+        let journal_path = dir.path().join("journal.json");
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&journal_path).unwrap()).unwrap();
+        for record in saved["entries"].as_object_mut().unwrap().values_mut() {
+            if record["runtime"].is_object() {
+                assert_eq!(record["runtime"]["profile"], "runtime_final_v1");
+                record["runtime"]["profile"] = serde_json::json!("b24_0_26_7_8");
+            }
+        }
+        std::fs::write(&journal_path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        assert_eq!(
+            pending(&client, Some(dir.path())).await.unwrap()["pending"][0]["delivery_key"],
+            runtime_key
+        );
         let other = BuzzClient::new(url, nostr::Keys::generate(), None, None).unwrap();
         assert!(pending(&other, Some(dir.path())).await.unwrap()["pending"]
             .as_array()

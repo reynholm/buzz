@@ -352,6 +352,7 @@ async fn provider_background_restart_after_last_receipt_resumes_unfinished_paren
     )
     .await
     .unwrap();
+    acp.request_runtime_final(true);
     acp.initialize().await.unwrap();
     let mut pool = AgentPool::from_slots(vec![Some(owned_worker(0, acp))]);
     pool.set_session_store(Some(store));
@@ -439,6 +440,7 @@ async fn provider_background_expired_idle_collection_never_reenters_provider() {
             )
             .await
             .unwrap();
+            acp.request_runtime_final(true);
             acp.initialize().await.unwrap();
             pool = AgentPool::from_slots(vec![Some(owned_worker(0, acp))]);
             pool.set_session_store(Some(store));

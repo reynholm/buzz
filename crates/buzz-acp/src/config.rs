@@ -21,7 +21,7 @@ use crate::filter::SubscriptionRule;
 mod kimi_recovery;
 mod reply_delivery;
 pub use kimi_recovery::KimiPermissionVisibility;
-pub(crate) use reply_delivery::verify_build_file;
+pub(crate) use reply_delivery::ReplyDelivery;
 pub use reply_delivery::{ReplyContract, ReplyDeliveryArgs};
 
 /// Default idle timeout (seconds) when neither `--idle-timeout` nor the
@@ -1211,7 +1211,7 @@ impl Config {
         validate_multiple_event_handling(args.multiple_event_handling, args.dedup)?;
 
         let config = Config {
-            reply_contract: args.reply_delivery.contract(&agent_command)?,
+            reply_contract: args.reply_delivery.contract()?,
             reply_build_file: args.reply_delivery.reply_build_file.clone(),
             kimi_recovery: args.kimi_recovery.policy()?,
             keys,
@@ -3371,7 +3371,7 @@ fn kimi_recovery_cli_profile_is_configurable_and_rejects_unbounded_values() {
 }
 
 #[test]
-fn runtime_final_cli_admits_only_explicit_verified_b24_launch() {
+fn runtime_final_cli_legacy_profile_is_not_product_authority() {
     let provenance = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(provenance.path(), "0.26.7-b24.8\n").unwrap();
     let parse = |command: &str| {
@@ -3397,14 +3397,14 @@ fn runtime_final_cli_admits_only_explicit_verified_b24_launch() {
     assert!(Config::from_args(args.unwrap()).is_ok());
     for command in ["kimi", "/tmp/kimi", "qwen-code", "node", "goose"] {
         assert!(
-            Config::from_args(parse(command).unwrap()).is_err(),
-            "unverified launch admitted: {command}"
+            Config::from_args(parse(command).unwrap()).is_ok(),
+            "capability negotiation, not command identity, must decide support: {command}"
         );
     }
 }
 
 #[test]
-fn runtime_final_build_provenance_rejects_unverified_upgrade() {
+fn runtime_final_legacy_version_file_cannot_grant_or_revoke_support() {
     let provenance = tempfile::NamedTempFile::new().unwrap();
     for version in ["0.26.7-b24.9", "0.26.7", "", "0.26.7-b24.8"] {
         std::fs::write(provenance.path(), version).unwrap();
@@ -3426,10 +3426,26 @@ fn runtime_final_build_provenance_rejects_unverified_upgrade() {
             Config::from_args(args).is_ok(),
             "delivery-only startup must remain available after upgrades"
         );
+    }
+}
+
+#[test]
+fn runtime_final_requires_protocol_opt_in_without_product_version_provenance() {
+    for command in ["b24-cowork-code-cli", "another-capable-adapter"] {
+        let args = CliArgs::try_parse_from([
+            "buzz-acp",
+            "--private-key",
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            "--agent-command",
+            command,
+            "--reply-delivery",
+            "runtime_final",
+        ])
+        .unwrap();
+        let config = Config::from_args(args).unwrap();
         assert_eq!(
-            verify_build_file(Some(provenance.path())).is_ok(),
-            version == "0.26.7-b24.8",
-            "{version}"
+            serde_json::to_value(config.reply_contract.unwrap()).unwrap()["profile"],
+            "runtime_final_v1"
         );
     }
 }

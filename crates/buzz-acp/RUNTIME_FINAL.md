@@ -5,39 +5,55 @@ through the existing `buzz messages deliver` journal. The default remains
 `agent_tools`. A delivered answer, including a clarification question, confirms
 publication only; it does not certify completion of the user's task.
 
-Only the verified B24 `0.26.7-b24.8` integration is supported. Select the exact
-wrapper and identify its active installation's VERSION file:
+Runtime delivery is enabled by an explicit operator opt-in and a negotiated ACP
+contract, independently of the adapter's product name or version:
 
 ```sh
-buzz-acp --agent-command b24-cowork-code-cli \
-  --reply-delivery runtime_final --reply-profile b24_0_26_7_8 \
-  --reply-build-file "$HOME/.b24-cowork-code/app/VERSION" \
+buzz-acp --agent-command <adapter> --reply-delivery runtime_final \
   <existing relay, identity and agent settings>
 ```
 
-Equivalent environment settings are `BUZZ_ACP_REPLY_DELIVERY`,
-`BUZZ_ACP_REPLY_PROFILE` and `BUZZ_ACP_REPLY_BUILD_FILE`. The build file must be
-absolute and a regular file of at most 64 bytes, containing `0.26.7-b24.8`.
-The operator must identify the VERSION file belonging to the selected active
-wrapper; this is configured installation provenance, not a cryptographic
-attestation of arbitrary wrappers. The harness also requires ACP initialize
-`qwen-code` version `0.26.7`. That initialize identity alone cannot distinguish
-B24 from other Qwen adapters or a newer fork. The VERSION file is rechecked
-before each provider prompt, including setup prompts. An unsupported upgrade
-blocks new execution. It does not block recovery of already saved reports.
+`BUZZ_ACP_REPLY_DELIVERY=runtime_final` selects the same mode. The optional
+`--reply-profile runtime_final_v1` names the protocol, not a product release.
+The old `b24_0_26_7_8` profile spelling and `--reply-build-file` option remain
+accepted for configuration compatibility. They confer no support or trust:
+VERSION files are not read, and an old profile cannot bypass negotiation.
 
-| Launch | Final publication | Runtime enablement |
-| --- | --- | --- |
-| Kimi Code CLI 2.5.2, native provider | Existing agent tools | Rejected |
-| Kimi Code CLI 2.5.2, B24 endpoint | Existing agent tools | Rejected |
-| B24 wrapper, verified .8 install and initialize pair | Agent tools by default; runtime final by explicit opt-in | Supported |
-| Generic Qwen, Node or another wrapper/build | Existing behavior | Rejected |
+Only opted-in connections send
+`initialize.params.clientCapabilities._meta.buzz.replyDelivery` equal to
+`{"version":1,"mode":"runtime_final"}`. The adapter must acknowledge the same
+values in `initialize.result._meta.buzz.replyDelivery`. Missing fields, other
+versions or modes, and mistyped values fail closed before new session/model/tool
+execution; there is no silent fallback. Every replacement process negotiates
+again. `agentInfo` is diagnostic and never selects delivery support.
 
-Current Kimi can expose some internal failures as ordinary `end_turn` without
-observable failure metadata. Changing its endpoint does not fix that ACP
-limitation. It is excluded from runtime delivery. The supported B24 build maps
-provider errors to JSON-RPC errors; observable errors, cancellation and non-normal
-stops suppress partial final text.
+Negotiation declares support without activating every prompt. Each actual
+runtime-final `session/prompt` carries the same object under
+`_meta.buzz.replyDelivery`, alongside the mode instruction. Setup, resume and
+collection use this explicit mode; ordinary tool-delivery and heartbeat prompts
+do not carry it. A capability response on a default tool-delivery connection
+cannot enable runtime capture. This metadata is not an authorization grant.
+
+Protocol v1 requires terminal provider failures to be observable as JSON-RPC
+errors or the supported Air `sessionFailure` extension. Partial text followed by
+an error, cancellation or a non-normal stop is never a successful final answer.
+The adapter must honor the main-session/turn final contract and mode instruction,
+including suppression of duplicate manual final publication. An adapter must not
+advertise this contract until it implements those behaviors. Native providers
+without the capability keep their existing tool-delivery behavior by default.
+Choosing an adapter binary remains an operator trust decision; a self-declared
+capability is a compatibility contract, not binary attestation or authorization.
+
+Local `buzz-acp run` tasks have no conversation publication route and do not
+support `runtime_final`. Selecting it by flag or environment returns the terminal
+error `runtime_final_requires_conversation` with exit code 2 before configuration
+file reads or adapter launch. Default local tasks keep their existing terminal
+record and tool-delivery instructions.
+
+Saved journal replay is independent of adapter availability and negotiation.
+New journals use the stable `runtime_final_v1` profile. Existing runtime records
+with the old profile remain readable and retain their signed bytes, route,
+signer, delivery key, receipts and revocation fences.
 
 The capture is bounded to the kind-9 limit of 64 KiB and the current prompt/session. Main tools and
 thoughts clear earlier commentary. Child-agent text and tool events, synthetic
@@ -61,7 +77,7 @@ Steer, interrupt and a busy model switch retain the accepted batch and its
 publication identity for the existing authorized continuation. Explicit cancel,
 rotate and provider cancellation terminate that turn without publishing partial
 text. Heartbeats have no accepted publication route: they retain tool delivery
-instructions and disable runtime capture and its build gate for that turn.
+instructions and disable runtime capture and runtime delivery metadata for that turn.
 This does not enable Kimi permission watchdogs, total-work deadlines or
 provider/task retries for B24. An ended turn can deliver a clarification while
 an existing background child is pending. Finishing that receipt does not revoke

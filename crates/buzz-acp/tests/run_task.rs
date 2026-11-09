@@ -219,6 +219,7 @@ fn file_and_stdin_run_one_fresh_equipped_session_without_service() {
                     && standing.contains("## Task Session"),
                 "{standing}"
             );
+            assert!(!standing.contains("Buzz publishes your final user-facing prose"));
             assert!(prompt["params"].to_string().contains("prepared task"));
             assert!(!prompt["params"].to_string().contains("MUST_NOT_RUN"));
         }
@@ -232,6 +233,35 @@ fn file_and_stdin_run_one_fresh_equipped_session_without_service() {
                 "missing {expected}: {wire:?}"
             );
         }
+    }
+}
+
+#[test]
+fn runtime_final_local_task_is_rejected_before_adapter_spawn() {
+    for via_env in [false, true] {
+        let f = Fixture::new();
+        let output = if via_env {
+            let task_file = f.dir.join("task.json");
+            fs::write(&task_file, f.task().to_string()).unwrap();
+            let mut command = f.command();
+            command
+                .env("BUZZ_ACP_REPLY_DELIVERY", "runtime_final")
+                .args(["--no-memory", "--task"])
+                .arg(task_file);
+            wait(command.spawn().unwrap())
+        } else {
+            f.run(
+                &f.task(),
+                &["--no-memory", "--reply-delivery", "runtime_final"],
+                false,
+            )
+        };
+        let record = terminal(&output, 2, "invalid");
+        assert_eq!(record["error"], "runtime_final_requires_conversation");
+        assert!(
+            f.wire().is_empty(),
+            "unsupported local mode must not even launch the adapter"
+        );
     }
 }
 

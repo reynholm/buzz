@@ -1431,7 +1431,7 @@ mod restart_status_tests;
 #[test]
 fn runtime_final_contract_revision_fences_legacy_resume_and_mode_rollback() {
     let mut current = me(Uuid::from_u128(1));
-    current.reply_contract = Some(crate::config::ReplyContract::b24());
+    current.reply_contract = Some(crate::config::ReplyContract::runtime_final());
     assert!(matches!(
         resume_decision(&stored(|_| {}), &current, |_| false),
         ResumeDecision::New {

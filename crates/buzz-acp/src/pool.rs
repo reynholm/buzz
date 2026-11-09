@@ -3034,21 +3034,7 @@ async fn run_prompt_execution(
     }
 
     if ctx.reply_contract.is_some() {
-        agent
-            .acp
-            .set_runtime_build_file(ctx.reply_build_file.clone());
-        let path = ctx.reply_build_file.clone();
-        let provenance = tokio::time::timeout(
-            Duration::from_secs(2),
-            tokio::task::spawn_blocking(move || crate::config::verify_build_file(path.as_deref())),
-        )
-        .await;
-        let reason = match provenance {
-            Ok(Ok(Ok(()))) => agent.acp.configure_runtime_final(true).err(),
-            Ok(Ok(Err(reason))) => Some(reason),
-            _ => Some("runtime_build_provenance_unavailable"),
-        };
-        if let Some(reason) = reason {
+        if let Err(reason) = agent.acp.configure_runtime_final(true) {
             return (
                 PromptOutcome::Error(AcpError::Protocol(reason.into())),
                 batch,

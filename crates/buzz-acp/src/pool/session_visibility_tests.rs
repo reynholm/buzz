@@ -1243,6 +1243,7 @@ async fn every_spawn_path_and_managed_mcp_get_the_current_status_dir() {
         &config.agent_args,
         &config.persona_env_vars,
         config.has_generated_codex_config,
+        config.reply_contract.is_some(),
         1,
         None,
     )

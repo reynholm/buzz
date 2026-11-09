@@ -199,7 +199,9 @@ impl LogicalWork {
     /// The identical key, route and journal accompany every attempt.
     pub fn managed_instruction(&self) -> String {
         if self.runtime_final {
-            return crate::config::ReplyContract::b24().instruction().into();
+            return crate::config::ReplyContract::runtime_final()
+                .instruction()
+                .into();
         }
         let quote = |value: &str| format!("'{}'", value.replace('\'', "'\\''"));
         let tags = self.reply_tags();

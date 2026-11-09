@@ -60,6 +60,7 @@ async fn setup_with_options(
         ];
     }
     let mut acp = AcpClient::spawn(&command, &args, &[], false).await.unwrap();
+    acp.request_runtime_final(true);
     acp.initialize().await.unwrap();
     let scope = scope();
     let mut ctx = tests::make_prompt_context_no_owner();
@@ -315,6 +316,7 @@ async fn provider_background_restart_reconciles_the_original_session_without_rel
         )
         .await
         .unwrap();
+        acp.request_runtime_final(true);
         acp.initialize().await.unwrap();
         let mut pool = AgentPool::from_slots(vec![Some(owned_worker(0, acp))]);
         pool.set_session_store(Some(store));

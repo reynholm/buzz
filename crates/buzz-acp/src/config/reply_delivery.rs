@@ -22,11 +22,11 @@ pub enum ReplyDelivery {
     RuntimeFinal,
 }
 
-/// Verified installation profile; persisted independently of provider model names.
+/// Delivery protocol profile, independent of provider names and product versions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ReplyProfile {
-    #[serde(rename = "b24_0_26_7_8")]
-    VerifiedB24,
+    #[serde(rename = "runtime_final_v1", alias = "b24_0_26_7_8")]
+    RuntimeFinalV1,
 }
 
 /// Persisted instruction identity, separate from session-store ownership CAS.
@@ -38,12 +38,11 @@ pub struct ReplyContract {
 }
 
 impl ReplyContract {
-    /// The only currently verified runtime profile. Selecting it attests the
-    /// operator checked the installed wrapper's fork build, absent from ACP init.
-    pub fn b24() -> Self {
+    /// Select the protocol; each new worker must negotiate its support over ACP.
+    pub fn runtime_final() -> Self {
         Self {
             mode: ReplyDelivery::RuntimeFinal,
-            profile: ReplyProfile::VerifiedB24,
+            profile: ReplyProfile::RuntimeFinalV1,
             revision: 1,
         }
     }
@@ -64,42 +63,22 @@ pub struct ReplyDeliveryArgs {
         default_value = "agent_tools"
     )]
     pub reply_delivery: ReplyDelivery,
-    /// Verified installed integration profile, required for runtime_final.
+    /// Optional protocol profile; the legacy B24 spelling remains an alias.
     #[arg(long, env = "BUZZ_ACP_REPLY_PROFILE")]
     pub reply_profile: Option<String>,
-    /// Active installation VERSION file, checked before new provider execution.
+    /// Legacy option accepted for compatibility; VERSION files do not select support.
     #[arg(long, env = "BUZZ_ACP_REPLY_BUILD_FILE")]
     pub reply_build_file: Option<std::path::PathBuf>,
 }
 
 impl ReplyDeliveryArgs {
-    pub fn contract(&self, command: &str) -> Result<Option<ReplyContract>, ConfigError> {
+    pub fn contract(&self) -> Result<Option<ReplyContract>, ConfigError> {
         match (self.reply_delivery, self.reply_profile.as_deref()) {
             (ReplyDelivery::AgentTools, None) => Ok(None),
-            (ReplyDelivery::RuntimeFinal, Some("b24_0_26_7_8"))
-                if self.reply_build_file.as_ref().is_some_and(|p| p.is_absolute()) && std::path::Path::new(command).file_name().and_then(|v| v.to_str()) == Some("b24-cowork-code-cli") => Ok(Some(ReplyContract::b24())),
-            _ => Err(ConfigError::ConfigFile("runtime_final requires --reply-profile b24_0_26_7_8, an absolute --reply-build-file for the active VERSION file, and the verified b24-cowork-code-cli wrapper; Kimi and unverified launches must use agent_tools".into())),
+            (ReplyDelivery::RuntimeFinal, None | Some("runtime_final_v1" | "b24_0_26_7_8")) => {
+                Ok(Some(ReplyContract::runtime_final()))
+            }
+            _ => Err(ConfigError::ConfigFile("runtime_final accepts only the runtime_final_v1 protocol profile; adapter support must be negotiated over ACP".into())),
         }
     }
-}
-
-/// Read a small regular VERSION file from the configured active installation.
-/// New execution fails closed on upgrades; journal-only replay does not call it.
-pub(crate) fn verify_build_file(path: Option<&std::path::Path>) -> Result<(), &'static str> {
-    use std::io::Read;
-    let path = path.ok_or("runtime_build_provenance_missing")?;
-    let metadata = std::fs::metadata(path).map_err(|_| "runtime_build_provenance_unavailable")?;
-    if !metadata.is_file() || metadata.len() > 64 {
-        return Err("runtime_build_provenance_invalid");
-    }
-    let mut version = String::new();
-    std::fs::File::open(path)
-        .map_err(|_| "runtime_build_provenance_unavailable")?
-        .take(65)
-        .read_to_string(&mut version)
-        .map_err(|_| "runtime_build_provenance_invalid")?;
-    if version.len() > 64 || version.trim() != "0.26.7-b24.8" {
-        return Err("runtime_build_not_verified");
-    }
-    Ok(())
 }

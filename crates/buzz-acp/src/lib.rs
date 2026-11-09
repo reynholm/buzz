@@ -3624,10 +3624,13 @@ async fn run_harness(
                 let args = config.agent_args.clone();
                 let env = config.persona_env_vars.clone();
                 let has_codex = config.has_generated_codex_config;
+                let runtime_final = config.reply_contract.is_some();
                 let observer = observer.clone();
                 let guard = RespawnGuard::new(idx, respawn_tx.clone());
                 respawn_tasks.spawn(async move {
-                    let result = spawn_and_init(&cmd, &args, &env, has_codex, idx, observer).await;
+                    let result =
+                        spawn_and_init(&cmd, &args, &env, has_codex, runtime_final, idx, observer)
+                            .await;
                     guard.send(result);
                 });
             }
@@ -6934,12 +6937,13 @@ fn recover_panicked_agent(
     let args = config.agent_args.clone();
     let env = config.persona_env_vars.clone();
     let has_codex = config.has_generated_codex_config;
+    let runtime_final = config.reply_contract.is_some();
     let guard = RespawnGuard::new(i, respawn_tx.clone());
     respawn_tasks.spawn(async move {
         if !delay.is_zero() {
             tokio::time::sleep(delay).await;
         }
-        let result = spawn_and_init(&cmd, &args, &env, has_codex, i, observer).await;
+        let result = spawn_and_init(&cmd, &args, &env, has_codex, runtime_final, i, observer).await;
         guard.send(result);
     });
 }
@@ -7231,6 +7235,7 @@ fn spawn_respawn_with_policy(
     let args = config.agent_args.clone();
     let env = config.persona_env_vars.clone();
     let has_codex = config.has_generated_codex_config;
+    let runtime_final = config.reply_contract.is_some();
     let guard = RespawnGuard::new(index, respawn_tx.clone());
     respawn_tasks.spawn(async move {
         // Shutdown old agent (reap child, prevent zombie).
@@ -7242,7 +7247,8 @@ fn spawn_respawn_with_policy(
             tokio::time::sleep(delay).await;
         }
 
-        let result = spawn_and_init(&cmd, &args, &env, has_codex, index, observer).await;
+        let result =
+            spawn_and_init(&cmd, &args, &env, has_codex, runtime_final, index, observer).await;
         guard.send(result);
     });
 
@@ -7297,6 +7303,7 @@ async fn initialize_agent_pool(
         .await;
         match spawn_result {
             Ok(mut acp) => {
+                acp.request_runtime_final(startup.runtime_final);
                 acp.set_observer(startup.observer.clone(), i);
                 let initialize = tokio::time::timeout(Duration::from_secs(60), acp.initialize());
                 let initialize_result = match shutdown.as_mut() {
@@ -7397,6 +7404,7 @@ async fn spawn_and_init(
     args: &[String],
     extra_env: &[(String, String)],
     has_generated_codex_config: bool,
+    runtime_final: bool,
     agent_index: usize,
     observer: Option<observer::ObserverHandle>,
 ) -> Result<(AcpClient, u32, String)> {
@@ -7404,6 +7412,7 @@ async fn spawn_and_init(
         .await
         .map_err(|e| anyhow::anyhow!("failed to spawn agent: {e}"))?;
     acp.set_observer(observer, agent_index);
+    acp.request_runtime_final(runtime_final);
 
     match acp.initialize().await {
         Ok(init_result) => {

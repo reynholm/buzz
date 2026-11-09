@@ -12,7 +12,7 @@ for line in sys.stdin:
    print(json.dumps({'jsonrpc':'2.0','id':pending,'result':{'stopReason':'cancelled'}}),flush=True);pending=None
   continue
  if 'id' not in r:continue
- if m=='initialize':v={'protocolVersion':1,'agentInfo':{'name':'qwen-code','version':'0.26.7'}}
+ if m=='initialize':v={'protocolVersion':1,'agentInfo':{'name':'qwen-code','version':'99.0.0-b24.99'},'_meta':{'buzz':{'replyDelivery':{'version':1,'mode':'runtime_final'}}}}
  elif m=='session/new':v={'sessionId':'control-session','models':{'currentModelId':'old','availableModels':[{'modelId':'old'},{'modelId':'new'}]}}
  elif m=='session/prompt':
   count+=1

@@ -137,6 +137,14 @@ pub(crate) async fn run() -> i32 {
         }
         Err(_) => return emit(Terminal::new("invalid", Some("invalid_arguments")), 2),
     };
+    // Local tasks have a terminal record, not a conversation route or publisher.
+    // Reject the incompatible mode before configuration reads or adapter launch.
+    if args.launch.reply_delivery.reply_delivery == crate::config::ReplyDelivery::RuntimeFinal {
+        return emit(
+            Terminal::new("invalid", Some("runtime_final_requires_conversation")),
+            2,
+        );
+    }
     // These settings belong only to conversation admission and repeated work.
     args.launch.heartbeat_interval = 0;
     args.launch.heartbeat_prompt = None;

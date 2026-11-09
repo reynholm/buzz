@@ -34,7 +34,7 @@ for line in sys.stdin:
     with open(os.path.join(root,'requests'),'a') as log: log.write(json.dumps(safe)+'\n')
     m=r.get('method'); result={}
     if m=='initialize':
-        result={'protocolVersion':2,'agentInfo':{'name':'qwen-code','version':'0.26.7'},'agentCapabilities':{'sessionCapabilities':{'resume':{}}},'_meta':{'buzz':{'backgroundTasks':{'version':1}},'steering':{'supported':os.path.exists(os.path.join(root,'native-steering'))}}}
+        result={'protocolVersion':2,'agentInfo':{'name':'qwen-code','version':'0.26.7'},'agentCapabilities':{'sessionCapabilities':{'resume':{}}},'_meta':{'buzz':{'backgroundTasks':{'version':1},'replyDelivery':{'version':1,'mode':'runtime_final'}},'steering':{'supported':os.path.exists(os.path.join(root,'native-steering'))}}}
         if os.path.exists(os.path.join(root,'authorization-fixture')):
             assert private_capability and r['params']['_meta']['qwen-code/private-parent-capability']==private_capability
             result['_meta']['buzz']['authorizationContext']={'version':1}

@@ -10,7 +10,7 @@ for line in sys.stdin:
  if 'id' not in r: continue
  if os.environ.get('LOG'):
   with open(os.environ['LOG'],'a') as f: f.write(json.dumps({'method':m,'params':r.get('params')})+'\n')
- if m=='initialize': v={'protocolVersion':1,'agentInfo':{'name':'qwen-code','version':'0.26.7'},'agentCapabilities':{'sessionCapabilities':{'resume':{}}}}
+ if m=='initialize': v={'protocolVersion':1,'agentInfo':{'name':'qwen-code','version':'99.0.0-b24.99'},'_meta':{'buzz':{'replyDelivery':{'version':1,'mode':'runtime_final'}}},'agentCapabilities':{'sessionCapabilities':{'resume':{}}}}
  elif m=='session/new':
   if os.environ.get('CASE')=='cancel_setup':time.sleep(.5)
   v={'sessionId':'new-session'}
@@ -106,6 +106,7 @@ async fn worker_with_peer(
     )
     .await
     .unwrap();
+    acp.request_runtime_final(true);
     acp.initialize().await.unwrap();
     acp.set_observer(Some(observer.clone()), 0);
     OwnedAgent {
@@ -133,7 +134,7 @@ fn context(relay: &MockRelay, dir: &Path) -> PromptContext {
     ctx.max_turn_duration = Duration::from_secs(10);
     ctx.rest_client.base_url = relay.url.clone();
     ctx.rest_client.keys = relay.keys.clone();
-    ctx.reply_contract = Some(crate::config::ReplyContract::b24());
+    ctx.reply_contract = Some(crate::config::ReplyContract::runtime_final());
     let version = dir.join("VERSION");
     std::fs::write(&version, "0.26.7-b24.8\n").unwrap();
     ctx.reply_build_file = Some(version);
@@ -176,6 +177,48 @@ fn states(observer: &crate::observer::ObserverHandle) -> Vec<String> {
         .filter(|event| event.kind == "work_state")
         .filter_map(|event| event.payload["state"].as_str().map(str::to_owned))
         .collect()
+}
+
+#[tokio::test]
+#[ignore = "requires rebuilt buzz CLI on PATH and BUZZ_TEST_BIN_DIR"]
+async fn runtime_final_missing_capability_stops_before_new_session_or_execution() {
+    checked_cli();
+    let relay = MockRelay::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("provider.jsonl");
+    let observer = crate::observer::ObserverHandle::in_process();
+    let peer = PEER.replace(
+        "'replyDelivery':{'version':1,'mode':'runtime_final'}",
+        "'replyDelivery':None",
+    );
+    let agent = worker_with_peer("plain", &log, &observer, &peer).await;
+    let ctx = Arc::new(context(&relay, dir.path()));
+    let (mut queue, _) = queue(&relay, dir.path());
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    run_prompt_task(
+        agent,
+        queue.flush_next(),
+        None,
+        ctx,
+        tx,
+        None,
+        "unsupported-delivery".into(),
+        crate::queue::PromptRouting::default(),
+    )
+    .await;
+    let mut result = rx.recv().await.unwrap();
+    assert!(
+        matches!(result.outcome, PromptOutcome::Error(AcpError::Protocol(ref reason)) if reason == "unsupported_runtime_delivery_contract")
+    );
+    let requests = std::fs::read_to_string(log).unwrap();
+    assert!(!requests.contains("session/new"));
+    assert!(!requests.contains("session/prompt"));
+    assert_eq!(
+        relay.readback().await.len(),
+        1,
+        "unsupported mode needs a visible failure outcome"
+    );
+    result.agent.acp.shutdown().await;
 }
 
 #[tokio::test]

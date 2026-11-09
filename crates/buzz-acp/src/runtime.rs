@@ -66,6 +66,7 @@ impl AgentRuntime {
 
 #[derive(Clone)]
 pub(crate) struct PoolStartup {
+    pub(crate) runtime_final: bool,
     pub(crate) agents: u32,
     pub(crate) command: String,
     pub(crate) args: Vec<String>,
@@ -79,6 +80,7 @@ pub(crate) struct PoolStartup {
 impl PoolStartup {
     fn from_config(config: &Config, observer: Option<observer::ObserverHandle>) -> Self {
         Self {
+            runtime_final: config.reply_contract.is_some(),
             agents: config.agents,
             command: config.agent_command.clone(),
             args: config.agent_args.clone(),
