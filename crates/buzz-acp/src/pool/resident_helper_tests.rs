@@ -264,7 +264,7 @@ async fn child_of_codex_host_queues_original_collection_before_releasing_slot() 
 }
 
 #[tokio::test]
-async fn sleep_inhibitor_exit_never_invents_collection_but_real_work_collects_once() {
+async fn sleep_inhibitor_retains_internal_work_and_collects_once() {
     use crate::process_tree::ProcessTree;
 
     for inhibitor in [
@@ -274,12 +274,35 @@ async fn sleep_inhibitor_exit_never_invents_collection_but_real_work_collects_on
     ] {
         for (work, inhibitor_parent, expected) in [
             ("", "990001", HashSet::new()),
-            ("990004 990001 S python3 task.py\n", "990001", HashSet::from([990004])),
-            ("990004 990001 S /bin/bash job.sh\n", "990004", HashSet::from([990004])),
-            ("990004 990001 S python3 task.py\n", "990004", HashSet::from([990004])),
-            ("990004 990001 S /bin/sh launcher.sh\n990005 990004 S python3 task.py\n", "990005", HashSet::from([990004])),
+            (
+                "990004 990001 S python3 task.py\n",
+                "990001",
+                HashSet::from([990004]),
+            ),
+            (
+                "990004 990001 S /bin/bash job.sh\n",
+                "990004",
+                HashSet::from([990004]),
+            ),
+            (
+                "990004 990001 S python3 task.py\n",
+                "990004",
+                HashSet::from([990004]),
+            ),
+            (
+                "990004 990001 S /bin/sh launcher.sh\n990005 990004 S python3 task.py\n",
+                "990005",
+                HashSet::from([990004]),
+            ),
         ] {
             let real_work = !expected.is_empty();
+            // The inhibitor can be the only OS child of an internal subagent.
+            // Nested inhibitors remain covered by their working ancestor.
+            let expected = if inhibitor_parent == "990001" {
+                expected.union(&HashSet::from([990002])).copied().collect()
+            } else {
+                expected
+            };
             let original = scope();
             let mut pool = AgentPool::from_slots(vec![Some(worker(0).await)]);
             bind(&mut pool, &original, 0);
@@ -293,8 +316,13 @@ async fn sleep_inhibitor_exit_never_invents_collection_but_real_work_collects_on
             let session = agent.state.sessions[&original].clone();
             let source = PromptSource::Channel(original.clone());
             agent.remember_background_context(&source, None, &session);
-            let inhibitor = inhibitor.replacen("990002 990001", &format!("990002 {inhibitor_parent}"), 1);
-            let after_exec = if real_work { "990004 990001 R /usr/bin/shasum -a 256 /dev/zero\n" } else { "" };
+            let inhibitor =
+                inhibitor.replacen("990002 990001", &format!("990002 {inhibitor_parent}"), 1);
+            let after_exec = if real_work {
+                "990004 990001 R /usr/bin/shasum -a 256 /dev/zero\n".to_owned()
+            } else {
+                inhibitor.clone()
+            };
             for rows in [
                 format!("{provider}{inhibitor}{work}"),
                 format!("{provider}{inhibitor}{work}"),
@@ -308,29 +336,37 @@ async fn sleep_inhibitor_exit_never_invents_collection_but_real_work_collects_on
                 ));
             }
             let running = agent.background_work_running(&source);
-            assert_eq!(agent.background_context.as_ref().unwrap().blocking_pids, expected, "{inhibitor}{work}");
+            assert_eq!(
+                agent.background_context.as_ref().unwrap().blocking_pids,
+                expected,
+                "{inhibitor}{work}"
+            );
             agent.prepare_background_return();
             pool.return_agent(agent);
             let held_before_exit = pool.has_runtime_hold();
             let mut queue = EventQueue::new(DedupMode::Queue);
             pool.queue_finished_background_work(&mut queue);
             pool.queue_finished_background_work(&mut queue);
-            assert!(!queue.has_pending_continuation(&original), "collection must wait for the exec'd work to exit: {inhibitor}{work}");
-            assert_eq!(pool.has_runtime_hold(), real_work);
-            if real_work {
-                assert_eq!(pool.runtime_holds[&0].blocking_pids, HashSet::from([990004]));
-                assert!(pool.try_claim(Some(&scope())).is_none());
-            }
+            assert!(
+                !queue.has_pending_continuation(&original),
+                "collection must wait for the exec'd work to exit: {inhibitor}{work}"
+            );
+            assert!(pool.has_runtime_hold());
+            assert_eq!(
+                pool.runtime_holds[&0].blocking_pids,
+                HashSet::from([if real_work { 990004 } else { 990002 }])
+            );
+            assert!(pool.try_claim(Some(&scope())).is_none());
             pool.queue_finished_background_work(&mut queue);
             pool.queue_finished_background_work(&mut queue);
             let batch = queue.flush_next();
             let duplicate = queue.flush_next();
             let held_after_exit = pool.has_runtime_hold();
             pool.agents[0].as_mut().unwrap().acp.shutdown().await;
-            assert_eq!(running, real_work, "{inhibitor}");
-            assert_eq!(held_before_exit, real_work, "{inhibitor}");
-            assert_eq!(batch.is_some(), real_work, "{inhibitor}");
-            assert_eq!(held_after_exit, real_work, "{inhibitor}");
+            assert!(running, "{inhibitor}");
+            assert!(held_before_exit, "{inhibitor}");
+            assert!(batch.is_some(), "{inhibitor}");
+            assert!(held_after_exit, "{inhibitor}");
             assert!(duplicate.is_none());
             if let Some(batch) = batch {
                 assert_eq!(batch.scope, original);
@@ -338,4 +374,141 @@ async fn sleep_inhibitor_exit_never_invents_collection_but_real_work_collects_on
             }
         }
     }
+}
+
+/// A model request runs in a thread of the adapter, with only its shared
+/// inhibitor visible as an OS child after the foreground prompt returns.
+#[cfg(target_os = "macos")]
+const INTERNAL_WORK_ADAPTER: &str = r#"
+import json, os, subprocess, sys, threading, time
+inhibitor = None
+def internal_work():
+    while not os.path.exists(os.path.join(sys.argv[1], 'finish')):
+        time.sleep(.01)
+    with open(os.path.join(sys.argv[1], 'result'), 'w') as result:
+        result.write('internal work completed')
+    inhibitor.terminate()
+    inhibitor.wait()
+for line in sys.stdin:
+    req = json.loads(line)
+    with open(os.path.join(sys.argv[1], 'requests'), 'a') as log:
+        log.write(line)
+    if req['method'] == 'initialize':
+        result = {'protocolVersion': 2, 'agentCapabilities': {}}
+    elif req['method'] == 'session/new':
+        result = {'sessionId': 'helper-session'}
+    elif req['method'] == 'session/prompt':
+        if inhibitor is None:
+            inhibitor = subprocess.Popen(['/usr/bin/caffeinate', '-is'])
+            threading.Thread(target=internal_work, daemon=True).start()
+        else:
+            assert open(os.path.join(sys.argv[1], 'result')).read() == 'internal work completed'
+        result = {'stopReason': 'end_turn'}
+    else:
+        continue
+    print(json.dumps({'jsonrpc': '2.0', 'id': req['id'], 'result': result}), flush=True)
+"#;
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn internal_work_with_only_caffeinate_survives_idle_deadline_and_collects() {
+    let dir = tempfile::tempdir().unwrap();
+    let acp = AcpClient::spawn(
+        "python3",
+        &[
+            "-u".into(),
+            "-c".into(),
+            INTERNAL_WORK_ADAPTER.into(),
+            dir.path().to_string_lossy().into_owned(),
+        ],
+        &[],
+        false,
+    )
+    .await
+    .unwrap();
+    let mut agent = owned_worker(0, acp);
+    agent.acp.initialize().await.unwrap();
+    agent.acp.capture_startup_children();
+    agent
+        .acp
+        .session_new("/tmp", vec![], None, None)
+        .await
+        .unwrap();
+    let original = scope();
+    let mut pool = AgentPool::from_slots(vec![Some(agent)]);
+    bind(&mut pool, &original, 0);
+    pool.agents[0]
+        .as_mut()
+        .unwrap()
+        .state
+        .sessions
+        .insert(original.clone(), "helper-session".into());
+    let mut agent = pool.try_claim(Some(&original)).unwrap();
+    agent.remember_background_context(
+        &PromptSource::Channel(original.clone()),
+        None,
+        "helper-session",
+    );
+    helper_prompt(&mut agent, "start").await;
+    // No fake process snapshot: the production scanner must see the native
+    // inhibitor even though the actual task has no OS process of its own.
+    agent.prepare_background_return();
+    pool.return_agent(agent);
+    let last = tokio::time::Instant::now();
+    assert!(
+        !crate::idle_pool_sleep_due(
+            true,
+            last,
+            last + Duration::from_secs(901),
+            Duration::from_secs(900),
+            false,
+            false,
+            false,
+            false,
+            pool.has_runtime_hold(),
+        ),
+        "idle shutdown must not terminate an internal request after end_turn"
+    );
+    assert!(pool.try_claim(Some(&scope())).is_none());
+    assert!(!dir.path().join("result").exists());
+    let mut queue = EventQueue::new(DedupMode::Queue);
+    let requests = pool.background_poll_requests();
+    let tree = crate::process_tree::snapshot().unwrap();
+    pool.apply_background_snapshot(&requests, Some(&tree), &mut queue);
+    assert!(!queue.has_pending_continuation(&original));
+    finish_child(&mut pool, &mut queue, &dir).await;
+    let batch = queue.flush_next().expect("collect completed internal work");
+    assert_eq!(batch.scope, original);
+    assert_eq!(
+        batch.continuation.as_ref().unwrap().session_id,
+        "helper-session"
+    );
+    assert!(queue.flush_next().is_none());
+    let mut agent = pool.try_claim(Some(&original)).unwrap();
+    helper_prompt(&mut agent, "collect").await;
+    agent.finish_background_collection();
+    agent.prepare_background_return();
+    pool.return_agent(agent);
+    assert!(crate::idle_pool_sleep_due(
+        true,
+        last,
+        last + Duration::from_secs(901),
+        Duration::from_secs(900),
+        false,
+        false,
+        false,
+        false,
+        pool.has_runtime_hold(),
+    ));
+    let log = std::fs::read_to_string(dir.path().join("requests")).unwrap();
+    let prompts: Vec<serde_json::Value> = log
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .filter(|request| request["method"] == "session/prompt")
+        .collect();
+    assert_eq!(prompts.len(), 2);
+    assert!(prompts
+        .iter()
+        .all(|request| request["params"]["sessionId"] == "helper-session"));
+    pool.agents[0].as_mut().unwrap().acp.shutdown().await;
 }

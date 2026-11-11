@@ -116,6 +116,32 @@ collection guarantee; successful ACP completion alone does not confirm publicati
 Process tracking follows children under the worker and resident providers;
 detached/reparented processes are outside that topology.
 
+Sleep inhibitors are conservative evidence of work, including a standalone
+`caffeinate -is` or `systemd-inhibit ... sleep infinity`. Qwen can keep a
+background model request inside its provider process after the foreground ACP
+prompt returns `end_turn`; its inhibitor may be the only visible child. Without
+negotiated, fresh provider activity, ignoring that child can authorize idle
+shutdown during a live request. Providers that keep an inhibitor alive after all
+work ends may therefore retain a slot unnecessarily. Inhibitors already present
+during startup/session setup follow the existing residency rules; an inhibitor
+is not a complete guarantee for every phase of an internal background task.
+
+The native macOS `internal_work_with_only_caffeinate` regression uses a local ACP
+peer with a marker-controlled in-process task and a real inhibitor, without model
+credentials. It checks the production idle-sleep predicate beyond its deadline,
+original-session collection and release after completion. Snapshot tests also
+cover Linux inhibitor trees, siblings, working ancestors and same-PID exec. A
+live Qwen integration remains a separate acceptance check:
+
+1. Use the rebuilt harness and Qwen with sleep prevention enabled and
+   `--lazy-pool --idle-pool-sleep 2`.
+2. Start a model-only background subagent and let the foreground turn end while
+   it is still active. With no other working OS children, the worker must stay
+   alive past two seconds and the result must remain available in its original
+   session.
+3. Let the task finish and its inhibitor exit. Collection must run once; after
+   collection and another quiet interval, the pool must be eligible to sleep.
+
 ### macOS/Linux Codex service processes and completed slots
 
 The Codex code-mode host may start after `session/new` and stay alive after a

@@ -5,8 +5,9 @@
 //! worker alive. Long-lived helpers such as MCP servers must not, or a
 //! lazy pool would never sleep. Agent CLIs often start MCP servers through
 //! launcher chains (`npm exec`, `sh -c`, a node launcher script); a chain
-//! whose every leaf is an MCP helper is a helper too. A sleep inhibitor only
-//! exempts itself; it cannot prove its parent has stopped working.
+//! whose every leaf is an MCP helper is a helper too. Sleep inhibitors remain
+//! work: a provider may hold one for an in-process background model request
+//! after its foreground ACP turn has ended.
 
 use std::collections::{HashMap, HashSet};
 
@@ -18,31 +19,11 @@ pub struct ChildProcess {
     pub command: String,
 }
 
-/// Whether the command identifies an MCP helper or a provider sleep inhibitor.
+/// Whether the command identifies an MCP helper.
 ///
 /// Arguments of ordinary work must not turn it into a resident just because a
 /// task mentions MCP, or a working directory happens to contain those letters.
 pub fn is_resident_helper(command: &str) -> bool {
-    is_sleep_inhibitor(command) || is_mcp_helper(command)
-}
-
-fn is_sleep_inhibitor(command: &str) -> bool {
-    let mut parts = command.split_whitespace();
-    let Some(executable) = parts.next() else {
-        return false;
-    };
-    let name = executable.rsplit('/').next().unwrap_or(executable);
-    if name == "caffeinate" {
-        // Only the provider's standalone inhibitor, never a wrapped task.
-        return parts.next() == Some("-is") && parts.next().is_none();
-    }
-    if name == "systemd-inhibit" {
-        return is_linux_sleep_inhibitor(command);
-    }
-    false
-}
-
-fn is_mcp_helper(command: &str) -> bool {
     let mut parts = command.split_whitespace();
     let Some(executable) = parts.next() else {
         return false;
@@ -59,22 +40,6 @@ fn is_mcp_helper(command: &str) -> bool {
         }
     }
     false
-}
-
-fn is_linux_sleep_inhibitor(command: &str) -> bool {
-    let mut parts = command.split_whitespace();
-    if parts.next().and_then(|path| path.rsplit('/').next()) != Some("systemd-inhibit") {
-        return false;
-    }
-    let arguments = parts.collect::<Vec<_>>().join(" ");
-    let arguments = arguments
-        .strip_prefix("--no-ask-password ")
-        .unwrap_or(&arguments);
-    // ps flattens argv, including spaces in the provider's who/why values.
-    // Match the full option sequence and inert payload, not just the program.
-    arguments
-        .strip_prefix("--what=sleep --who=Qwen Code --why=")
-        .is_some_and(|reason| reason.ends_with(" --mode=block sleep infinity"))
 }
 
 fn helper_name(path: &str) -> bool {
@@ -263,19 +228,16 @@ impl ProcessTree {
     }
 
     /// Helpers confirmed by executable identity, the command classifier, or a
-    /// launcher whose children are all MCP helpers. Sleep inhibitors exempt only
-    /// themselves: a parent can be working while keeping the machine awake.
+    /// launcher whose children are all MCP helpers. An inhibitor alone cannot
+    /// prove that its provider has finished its internal background work.
     pub fn is_resident_helper(&self, child: &ChildProcess) -> bool {
-        self.is_snapshot_helper(child.pid)
-            || is_resident_helper(&child.command)
-            || self.is_inhibitor_sleep(child)
-            || self.is_helper_within(child, MAX_LAUNCHER_DEPTH)
+        self.is_snapshot_helper(child.pid) || self.is_helper_within(child, MAX_LAUNCHER_DEPTH)
     }
 
     fn is_helper_within(&self, child: &ChildProcess, depth: usize) -> bool {
         if self.registered_services.contains(&child.pid)
             || self.resident_helpers.contains(&child.pid)
-            || is_mcp_helper(&child.command)
+            || is_resident_helper(&child.command)
         {
             return true;
         }
@@ -285,24 +247,6 @@ impl ProcessTree {
             && children
                 .iter()
                 .all(|grandchild| self.is_helper_within(grandchild, depth - 1))
-    }
-
-    fn is_inhibitor_sleep(&self, child: &ChildProcess) -> bool {
-        let mut parts = child.command.split_whitespace();
-        if parts.next().and_then(|path| path.rsplit('/').next()) != Some("sleep")
-            || parts.next() != Some("infinity")
-            || parts.next().is_some()
-        {
-            return false;
-        }
-        // systemd-inhibit spawns sleep rather than replacing itself. Only that
-        // direct child is bookkeeping; ordinary sleeps remain background work.
-        self.children.iter().any(|(parent, children)| {
-            children.iter().any(|candidate| candidate.pid == child.pid)
-                && self.children.values().flatten().any(|candidate| {
-                    candidate.pid == *parent && is_linux_sleep_inhibitor(&candidate.command)
-                })
-        })
     }
 
     /// Direct children in this snapshot.
