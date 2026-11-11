@@ -132,6 +132,13 @@ const GIT_DURATION_BUCKETS_S: [f64; 13] = [
     0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0,
 ];
 
+/// Mesh dial and reconcile-pass buckets. A pass dials peers serially, so a
+/// large or stale peer table can stretch it to minutes; the default
+/// five-second ceiling would hide exactly the stall these exist to show.
+const MESH_DURATION_BUCKETS_S: [f64; 14] = [
+    0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0,
+];
+
 /// Byte buckets for hydrated repositories and streamed clone/fetch responses.
 const GIT_BYTES_BUCKETS: [f64; 9] = [
     0.0,
@@ -234,6 +241,16 @@ fn configured_prometheus_builder(gauge_idle_timeout_secs: u64) -> PrometheusBuil
             &GIT_PACK_BUCKETS,
         )
         .expect("valid git compaction output pack-count bucket boundaries")
+        .set_buckets_for_metric(
+            Matcher::Full(buzz_relay_mesh::telemetry::DIAL_DURATION_SECONDS.to_owned()),
+            &MESH_DURATION_BUCKETS_S,
+        )
+        .expect("valid mesh dial bucket boundaries")
+        .set_buckets_for_metric(
+            Matcher::Full(buzz_relay_mesh::telemetry::RECONCILE_PASS_SECONDS.to_owned()),
+            &MESH_DURATION_BUCKETS_S,
+        )
+        .expect("valid mesh reconcile pass bucket boundaries")
         .set_buckets_for_metric(Matcher::Suffix("_seconds".to_owned()), &DURATION_BUCKETS_S)
         .expect("valid seconds bucket boundaries")
         .set_buckets_for_metric(
@@ -297,8 +314,11 @@ pub fn try_install(port: u16, gauge_idle_timeout_secs: u64) -> Result<(), Metric
     describe_community_admission_metrics();
     describe_db_pool_metrics();
     describe_auth_metrics();
+    describe_ws_read_metrics();
     crate::startup_steps::describe_metrics();
+    buzz_relay_mesh::telemetry::describe_metrics();
     initialize_auth_metric_series();
+    initialize_ws_read_metric_series();
     initialize_partition_audit_metric_series();
     tokio::spawn(exporter);
     Ok(())
@@ -521,6 +541,52 @@ pub(crate) fn initialize_auth_metric_series() {
         .increment(0);
     }
     metrics::gauge!("buzz_ws_authenticated_connections_active").set(0.0);
+}
+
+/// The `type` label of each WebSocket read counted by [`record_ws_read`].
+const WS_READ_TYPES: [&str; 3] = ["req", "count", "sync"];
+
+/// Register the WebSocket read counter.
+fn describe_ws_read_metrics() {
+    metrics::describe_counter!(
+        "buzz_ws_reads_total",
+        "WebSocket REQ (including NIP-AR sync) and COUNT frames received, by type, whatever the log level"
+    );
+    metrics::describe_histogram!(
+        "buzz_ws_read_seconds",
+        metrics::Unit::Seconds,
+        "WebSocket REQ, sync and COUNT reads from handler start to their end (REQ: EOSE queued; sync: initial set; COUNT: total sent), by type, outcome and reason, whatever the log level"
+    );
+}
+
+/// Export every WebSocket read series at zero.
+fn initialize_ws_read_metric_series() {
+    for kind in WS_READ_TYPES {
+        metrics::counter!("buzz_ws_reads_total", "type" => kind).increment(0);
+    }
+}
+
+/// Count one parsed WebSocket REQ, sync or COUNT frame, before admission.
+pub(crate) fn record_ws_read(kind: &'static str) {
+    metrics::counter!("buzz_ws_reads_total", "type" => kind).increment(1);
+}
+
+/// Record how one WebSocket read ended and how long it took. `outcome` is
+/// `served`, `denied`, `error` or `aborted`; `reason` is the fixed denial or
+/// error code, or `none`.
+pub(crate) fn record_ws_read_finished(
+    kind: &'static str,
+    outcome: &'static str,
+    reason: Option<&'static str>,
+    seconds: f64,
+) {
+    metrics::histogram!(
+        "buzz_ws_read_seconds",
+        "type" => kind,
+        "outcome" => outcome,
+        "reason" => reason.unwrap_or("none"),
+    )
+    .record(seconds);
 }
 
 /// Export the partition audit counters at zero before the first audit, so
@@ -1029,6 +1095,30 @@ mod contract_tests {
             assert!(!line.contains("reason="));
             assert!(!line.contains("connection_ordinal="));
         }
+    }
+
+    #[test]
+    fn ws_reads_count_by_type_from_zero() {
+        let (recorder, handle) = super::readiness_test_recorder();
+        metrics::with_local_recorder(&recorder, || {
+            super::describe_ws_read_metrics();
+            super::initialize_ws_read_metric_series();
+            assert!(handle
+                .render()
+                .contains("buzz_ws_reads_total{type=\"count\"} 0"));
+            super::record_ws_read("req");
+            super::record_ws_read("req");
+            super::record_ws_read("count");
+        });
+        let scrape = handle.render();
+        assert!(
+            scrape.contains("buzz_ws_reads_total{type=\"req\"} 2"),
+            "{scrape}"
+        );
+        assert!(
+            scrape.contains("buzz_ws_reads_total{type=\"count\"} 1"),
+            "{scrape}"
+        );
     }
 
     #[test]

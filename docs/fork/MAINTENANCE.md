@@ -5,7 +5,7 @@ For a tagged base, `base_tag` and `base_sha` identify that release. For a main
 snapshot, `base_ref` labels the snapshot, `base_sha` is its exact source revision,
 and `base_tag` is the desktop version floor rather than the snapshot's tag.
 The current candidate integrates upstream main at
-`2d289f720de0012fa36b5f6faa0e3bdd845ccfcf`, with floor `desktop-v0.5.28`.
+`64d12e29751981ad92ab3cc8edadaf3e3b5797f3` (writer checkpoint), with floor `desktop-v0.5.28`.
 This registry metadata does not attest human acceptance or authorize release.
 The 0.5.26 baseline and release evidence below is historical; see
 [the snapshot integration contract](UPSTREAM_SYNC_2026_10_22.md) for this candidate.

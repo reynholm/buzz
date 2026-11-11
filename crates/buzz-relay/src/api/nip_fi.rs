@@ -760,7 +760,7 @@ mod route_integration_tests {
 
     // ES256 key pair — same material as command.rs tests, known-good.
     const TEST_PRIVATE_KEY_PEM: &str =
-        "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgcnxDM4EiirH9dHUE\nWZc759TX4s5PAn8kO5ovXSnGxCWhRANCAARFb6ZnsfkqOOXyEhj3KBQphGKF4vTa\nzhebbavbZ1ZoklqkF1cGg+jTO7rONAVEzXvXUWtV6CdDV+rybiVmFP2w\n-----END PRIVATE KEY-----\n";
+        "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgcnxDM4EiirH9dHUE\nWZc759TX4s5PAn8kO5ovXSnGxCWhRANCAARFb6ZnsfkqOOXyEhj3KBQphGKF4vTa\nzhebbavbZ1ZoklqkF1cGg+jTO7rONAVEzXvXUWtV6CdDV+rybiVmFP2w\n-----END PRIVATE KEY-----\n"; // sadscan:disable np.pem.1 kingfisher.privkey.2 -- unchanged public ES256 test fixture
 
     const TEST_ISS: &str = "https://idp.test.example.com";
     const TEST_AUD: &str = "https://relay.test.example.com";
@@ -1300,12 +1300,17 @@ mod route_integration_tests {
         let community = buzz_core::tenant::CommunityId::from_uuid(uuid::Uuid::new_v4());
 
         let ctrl_b = CommunityConnectionControl::new(cancel_b.clone());
-        ctrl_b.set_proven_identity(k_b.to_bytes().to_vec(), Some(TEST_ISS.to_owned()));
+        ctrl_b.set_proven_identity(
+            k_b.to_bytes().to_vec(),
+            Some(crate::nip_fi_core::NipFiSession::new(TEST_ISS, None)),
+        );
         let _guard_b = registry.register(uuid::Uuid::new_v4(), community, ctrl_b);
 
         let ctrl_unrelated = CommunityConnectionControl::new(cancel_unrelated.clone());
-        ctrl_unrelated
-            .set_proven_identity(k_unrelated.to_bytes().to_vec(), Some(TEST_ISS.to_owned()));
+        ctrl_unrelated.set_proven_identity(
+            k_unrelated.to_bytes().to_vec(),
+            Some(crate::nip_fi_core::NipFiSession::new(TEST_ISS, None)),
+        );
         let _guard_unrelated = registry.register(uuid::Uuid::new_v4(), community, ctrl_unrelated);
 
         // Deliver k_b — capacity exhausted, no map entry added.
@@ -1420,7 +1425,7 @@ mod route_integration_tests {
                 state.conn_manager.set_authenticated_identity(
                     conn_id,
                     pubkey_bytes,
-                    Some(TEST_ISS.to_owned()),
+                    Some(crate::nip_fi_core::NipFiSession::new(TEST_ISS, None)),
                 );
                 (conn_id, cancel)
             };
@@ -1485,7 +1490,11 @@ mod route_integration_tests {
         let cancel_audio_target = CancellationToken::new();
         let _audio_target_guard = {
             let ctrl = CommunityConnectionControl::new(cancel_audio_target.clone());
-            audio_post_auth_register(&ctrl, target.to_bytes().to_vec(), Some(TEST_ISS.to_owned()));
+            audio_post_auth_register(
+                &ctrl,
+                target.to_bytes().to_vec(),
+                Some(crate::nip_fi_core::NipFiSession::new(TEST_ISS, None)),
+            );
             audio_registry.register(Uuid::new_v4(), community, ctrl)
         };
 
@@ -1498,7 +1507,7 @@ mod route_integration_tests {
             audio_post_auth_register(
                 &ctrl,
                 unrelated.to_bytes().to_vec(),
-                Some(TEST_ISS.to_owned()),
+                Some(crate::nip_fi_core::NipFiSession::new(TEST_ISS, None)),
             );
             audio_registry.register(Uuid::new_v4(), community, ctrl)
         };
@@ -1551,7 +1560,7 @@ mod route_integration_tests {
             audio_post_auth_register(
                 &ctrl,
                 target2.to_bytes().to_vec(),
-                Some(TEST_ISS.to_owned()),
+                Some(crate::nip_fi_core::NipFiSession::new(TEST_ISS, None)),
             );
             audio_registry.register(Uuid::new_v4(), community, ctrl)
         };
@@ -1930,6 +1939,7 @@ mod route_integration_tests {
             },
         )];
         config.nip_fi = NipFiRelayConfig {
+            profile_policies: Vec::new(),
             source: Default::default(),
             mode: NipFiMode::Enforce,
             registry: registry.clone(),
@@ -2111,14 +2121,14 @@ mod route_integration_tests {
             state.conn_manager.set_authenticated_identity(
                 conn_id,
                 key.to_bytes().to_vec(),
-                Some(issuer.to_owned()),
+                Some(crate::nip_fi_core::NipFiSession::new(issuer, None)),
             );
             let audio = CancellationToken::new();
             let ctrl = CommunityConnectionControl::new(audio.clone());
             crate::audio::handler::audio_post_auth_register(
                 &ctrl,
                 key.to_bytes().to_vec(),
-                Some(issuer.to_owned()),
+                Some(crate::nip_fi_core::NipFiSession::new(issuer, None)),
             );
             let _audio_guard =
                 state
@@ -2481,7 +2491,100 @@ mod route_integration_tests {
             state.config.nip_fi.registry.clone(),
             key_source,
         )));
+        state.nip_fi_policy = Arc::new(crate::nip_fi_policy::OptionalPolicy);
         Arc::new(state)
+    }
+
+    struct RequiredPolicy;
+    impl crate::nip_fi_policy::PolicySource for RequiredPolicy {
+        fn lookup<'a>(
+            &'a self,
+            _host: &'a str,
+        ) -> futures_util::future::BoxFuture<
+            'a,
+            Result<Option<buzz_db::community_auth::CommunityAuthPolicy>, ()>,
+        > {
+            Box::pin(async {
+                Ok(Some(buzz_db::community_auth::CommunityAuthPolicy {
+                    community_id: uuid::Uuid::nil(),
+                    requires_nip_fi: true,
+                    policy_generation: 1,
+                }))
+            })
+        }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::result_large_err)] // Real Axum admission closure.
+    async fn required_mode_matrix_validates_crypto_only_when_enabled() {
+        use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+        for mode in [
+            buzz_auth::NipFiMode::Off,
+            buzz_auth::NipFiMode::Shadow,
+            buzz_auth::NipFiMode::Enforce,
+        ] {
+            let mut state = (*http_enforce_state().await).clone();
+            Arc::make_mut(&mut state.config).nip_fi.mode = mode;
+            Arc::make_mut(&mut state.config)
+                .nip_fi
+                .max_connection_lifetime_secs = 3600;
+            state.nip_fi_policy = Arc::new(RequiredPolicy);
+            let key = nostr::Keys::generate().public_key();
+            let now = chrono::Utc::now().timestamp();
+            for bad in ["valid", "issuer", "audience", "key", "expiry", "signature"] {
+                let mut claims = serde_json::json!({"iss": TEST_ISS, "aud": TEST_AUD,
+                    "sub": TEST_SUB, "iat": now, "exp": now + 600,
+                    "nostr_pubkey": key.to_hex()});
+                match bad {
+                    "issuer" => claims["iss"] = serde_json::json!("https://untrusted.example"),
+                    "audience" => claims["aud"] = serde_json::json!("https://other.example"),
+                    "key" => {
+                        claims["nostr_pubkey"] =
+                            serde_json::json!(nostr::Keys::generate().public_key().to_hex())
+                    }
+                    "expiry" => {
+                        claims["iat"] = serde_json::json!(now - 1200);
+                        claims["exp"] = serde_json::json!(now - 600);
+                    }
+                    _ => {}
+                }
+                let mut header = Header::new(Algorithm::ES256);
+                header.typ = Some("nip-fi+jwt".to_owned());
+                header.kid = Some(TEST_KID.to_owned());
+                let encoding = EncodingKey::from_ec_pem(TEST_PRIVATE_KEY_PEM.as_bytes()).unwrap();
+                let mut token = encode(&header, &claims, &encoding).unwrap();
+                if bad == "signature" {
+                    let at = token.rfind('.').unwrap() + 1;
+                    let replacement = if token.as_bytes()[at] == b'A' {
+                        "B"
+                    } else {
+                        "A"
+                    };
+                    token.replace_range(at..at + 1, replacement);
+                }
+                let mut headers = crate::nip_fi_core::test_support::host_headers();
+                headers.insert(
+                    CLIENT_ATTACHED_HEADER,
+                    format!("Bearer {token}").parse().unwrap(),
+                );
+                let result = crate::nip_fi_http::admit_nip_fi_http_on_state(
+                    &state,
+                    &headers,
+                    &crate::access::AccessSlot::default(),
+                    || Ok(crate::nip_fi_http::Nip98Proof::new(key, ())),
+                )
+                .await;
+                if mode.is_off() || bad == "valid" {
+                    assert!(result.is_ok(), "{mode:?} valid assertion");
+                } else {
+                    assert_eq!(
+                        result.err().unwrap().status(),
+                        StatusCode::FORBIDDEN,
+                        "{mode:?} {bad}"
+                    );
+                }
+            }
+        }
     }
 
     /// Deny `key` under issuer A through the real disconnect route.
@@ -2524,9 +2627,12 @@ mod route_integration_tests {
                 .parse()
                 .expect("header value"),
         );
-        crate::nip_fi_http::admit_nip_fi_http_on_state(state, &headers, || {
-            Ok(crate::nip_fi_http::Nip98Proof::new(*key, ()))
-        })
+        crate::nip_fi_http::admit_nip_fi_http_on_state(
+            state,
+            &headers,
+            &crate::access::AccessSlot::default(),
+            || Ok(crate::nip_fi_http::Nip98Proof::new(*key, ())),
+        )
         .await
         .map(|_| ())
     }
@@ -2642,7 +2748,9 @@ mod route_integration_tests {
         // Off mode: the command route still records the entry, but HTTP
         // admission never consults the deny map — the NIP-98 closure result is
         // returned unchanged, byte for byte.
-        let state = build_test_state(1000).await;
+        let mut state = (*build_test_state(1000).await).clone();
+        state.nip_fi_policy = Arc::new(crate::nip_fi_policy::OptionalPolicy);
+        let state = Arc::new(state);
         assert!(matches!(
             state.config.nip_fi.mode,
             buzz_auth::NipFiMode::Off
@@ -2658,12 +2766,14 @@ mod route_integration_tests {
             "control: the route recorded the deny entry"
         );
 
-        let admitted =
-            crate::nip_fi_http::admit_nip_fi_http_on_state(&state, &HeaderMap::new(), || {
-                Ok(crate::nip_fi_http::Nip98Proof::new(key, 7u8))
-            })
-            .await
-            .expect("Off mode admits on NIP-98 success regardless of deny entries");
+        let admitted = crate::nip_fi_http::admit_nip_fi_http_on_state(
+            &state,
+            &crate::nip_fi_core::test_support::host_headers(),
+            &crate::access::AccessSlot::default(),
+            || Ok(crate::nip_fi_http::Nip98Proof::new(key, 7u8)),
+        )
+        .await
+        .expect("Off mode admits on NIP-98 success regardless of deny entries");
         assert_eq!(admitted.proven_pubkey(), &key);
         assert!(admitted.assertion().is_none());
         assert_eq!(*admitted.extra(), 7);
@@ -2677,7 +2787,8 @@ mod route_integration_tests {
         };
         let resp = crate::nip_fi_http::admit_nip_fi_http_on_state::<(), _>(
             &state,
-            &HeaderMap::new(),
+            &crate::nip_fi_core::test_support::host_headers(),
+            &crate::access::AccessSlot::default(),
             || Err(legacy()),
         )
         .await
@@ -3556,6 +3667,7 @@ mod route_integration_tests {
                 },
             )];
             config.nip_fi = NipFiRelayConfig {
+                profile_policies: Vec::new(),
                 source: Default::default(),
                 mode: NipFiMode::Shadow,
                 registry: registry.clone(),

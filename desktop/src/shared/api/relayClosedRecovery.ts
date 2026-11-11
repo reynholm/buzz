@@ -130,6 +130,9 @@ function recoverLiveSubscriptionFromClosed({
   message: string;
   sendReq: (subId: string, filter: RelaySubscriptionFilter) => Promise<void>;
 }) {
+  // A CLOSED subscription must not stamp a later socket coverage interval.
+  subscription.eoseGeneration = undefined;
+
   // A deadline on a live sub is treated as retryable: resubscribe with the
   // same filter under the 1-30s backoff, which can keep retrying at the cap.
   // `since` is deliberately not advanced to now; that could skip events
@@ -261,8 +264,10 @@ export function markReconnectLiveEose(
   generation: number,
 ) {
   const replay = subscription.reconnectReplay;
-  if (!replay || replay.generation !== generation) return;
+  if (!replay || replay.generation !== generation || replay.ignoreEose) return;
   replay.liveEose = true;
+  replay.liveEoseWaiter?.();
+  replay.liveEoseWaiter = undefined;
   if (replay.repairDone) subscription.reconnectReplay = undefined;
 }
 
@@ -290,8 +295,10 @@ export function handleSubscriptionEose({
   const subscription = subscriptions.get(subId);
   if (!subscription) return;
   if (subscription.mode === "live") {
-    if (generation !== undefined)
+    if (generation !== undefined) {
+      subscription.eoseGeneration = generation;
       markReconnectLiveEose(subscription, generation);
+    }
     subscription.onHealth?.("eose");
     subscription.resolveReady?.("eose");
     subscription.resolveReady = undefined;

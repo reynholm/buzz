@@ -6,6 +6,44 @@ import {
   BUZZ_RELEASES_URL,
 } from "../../src/shared/lib/buzz-download";
 
+const FORK_RELEASES_URL = "https://github.com/reynholm/buzz/releases";
+const FORK_RELEASES_API =
+  "https://api.github.com/repos/reynholm/buzz/releases?per_page=10";
+const stableAssets = [
+  "aarch64.dmg",
+  "x64.dmg",
+  "x64-setup.exe",
+  "amd64.AppImage",
+].map((suffix) => ({
+  name: `Buzz_0.4.9_${suffix}`,
+  browser_download_url: `${FORK_RELEASES_URL}/download/fork-v0.4.9/Buzz_0.4.9_${suffix}`,
+}));
+const releaseCandidates = [
+  {
+    draft: false,
+    prerelease: true,
+    assets: stableAssets.map((asset) => ({
+      ...asset,
+      browser_download_url: asset.browser_download_url.replace(
+        "fork-v0.4.9",
+        "candidate",
+      ),
+    })),
+  },
+  {
+    draft: true,
+    prerelease: false,
+    assets: stableAssets.map((asset) => ({
+      ...asset,
+      browser_download_url: asset.browser_download_url.replace(
+        "fork-v0.4.9",
+        "draft",
+      ),
+    })),
+  },
+  { draft: false, prerelease: false, assets: stableAssets },
+];
+
 test("home page loads with Buzz branding", async ({ page }) => {
   await page.goto("/");
   await expect(
@@ -35,53 +73,32 @@ test("invite requires age and legal consent before opening Buzz", async ({
       }),
     });
   });
+  expect(BUZZ_RELEASES_URL).toBe(FORK_RELEASES_URL);
+  await page.addInitScript(() => {
+    sessionStorage.setItem(
+      "buzz.latestDownload.v2",
+      JSON.stringify({
+        expiresAt: Date.now() + 60_000,
+        platform: { operatingSystem: "windows", architecture: "x64" },
+        url: "https://github.com/block/buzz-app/releases/download/candidate/stale.exe",
+      }),
+    );
+  });
   await page.route("https://api.github.com/**", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      headers: { "Access-Control-Allow-Origin": "*" },
-      body: JSON.stringify([
-        { draft: false, prerelease: false, assets: [] },
-        {
-          draft: false,
-          prerelease: false,
-          assets: [
-            {
-              name: "Buzz_0.4.9_aarch64.dmg",
-              browser_download_url:
-                "https://github.com/block/buzz/releases/download/v0.4.9/Buzz_0.4.9_aarch64.dmg",
-            },
-            {
-              name: "Buzz_0.4.9_x64.dmg",
-              browser_download_url:
-                "https://github.com/block/buzz/releases/download/v0.4.9/Buzz_0.4.9_x64.dmg",
-            },
-            {
-              name: "Buzz_0.4.9_amd64.AppImage",
-              browser_download_url:
-                "https://github.com/block/buzz/releases/download/v0.4.9/Buzz_0.4.9_amd64.AppImage",
-            },
-            {
-              name: "Buzz_0.4.9_x64-setup_alpha-unsigned.exe",
-              browser_download_url:
-                "https://github.com/block/buzz/releases/download/v0.4.9/Buzz_0.4.9_x64-setup_alpha-unsigned.exe",
-            },
-          ],
-        },
-      ]),
-    });
+    expect(route.request().url()).toBe(FORK_RELEASES_API);
+    await route.fulfill({ json: releaseCandidates });
   });
   await page.goto("/invite/demo-code");
 
   await expect(
-    page.getByRole("link", { name: "Download it now" }),
+    page.getByRole("link", { name: "Download Buzz" }),
   ).toHaveAttribute(
     "href",
-    "https://github.com/block/buzz/releases/download/v0.4.9/Buzz_0.4.9_x64-setup_alpha-unsigned.exe",
+    "https://github.com/reynholm/buzz/releases/download/fork-v0.4.9/Buzz_0.4.9_x64-setup.exe",
   );
-  await expect(
-    page.getByRole("link", { name: "Browse releases" }),
-  ).toHaveAttribute("href", "https://github.com/block/buzz/releases");
+  await expect(page.getByRole("link", { name: "Browse releases" })).toHaveCount(
+    0,
+  );
 
   const ageConfirmation = page.getByLabel("I am 18 years of age or older.");
   const agreementConfirmation = page.getByLabel(
@@ -209,64 +226,151 @@ test("invite can enroll a NIP-07 identity for browser access", async ({
   expect(claimObserved).toBe(true);
 });
 
-test("invite asks Safari users to choose their Mac download", async ({
-  browser,
-}) => {
-  const context = await browser.newContext({
-    userAgent:
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Version/26.5 Safari/605.1.15",
-  });
-  await context.addInitScript(() => {
-    Object.defineProperties(navigator, {
-      platform: { configurable: true, value: "MacIntel" },
-      maxTouchPoints: { configurable: true, value: 0 },
-      userAgentData: { configurable: true, value: undefined },
+for (const [sentinel, guidance] of [
+  [
+    "invite_restricted",
+    "This account, or the account that owns it, is restricted in this community. Contact a community administrator. If the restriction is temporary, try again after it ends.",
+  ],
+  [
+    "invite_owner_mismatch",
+    "This account does not match its recorded owner. Use the correct account or owner identity to join this community.",
+  ],
+]) {
+  test(`invite shows recovery for ${sentinel} without automatically retrying`, async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      Object.assign(window, {
+        nostr: {
+          async getPublicKey() {
+            return "ab".repeat(32);
+          },
+          async signEvent(event: Record<string, unknown>) {
+            return {
+              ...event,
+              id: "cd".repeat(32),
+              pubkey: "ab".repeat(32),
+              sig: "ef".repeat(64),
+            };
+          },
+        },
+      });
     });
-  });
-  const page = await context.newPage();
-  await page.route("**/api/join-policy", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ policy: null }),
+    await page.route("**/api/join-policy", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ policy: null }),
+      }),
+    );
+    let attempts = 0;
+    await page.route("**/api/invites/claim", async (route) => {
+      attempts++;
+      expect(route.request().postDataJSON()).toEqual({ code: "browser-code" });
+      await route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({ error: sentinel }),
+      });
     });
+    await page.goto("/invite/browser-code");
+    const join = page.getByRole("button", { name: "Join in browser" });
+    await join.click();
+    await expect(page.getByRole("alert")).toHaveText(guidance);
+    await expect(join).toBeEnabled();
+    expect(attempts).toBe(1);
+    await expect(page).toHaveURL(/\/invite\/browser-code$/);
+    await join.click();
+    await expect(page.getByRole("alert")).toHaveText(guidance);
+    expect(attempts).toBe(2);
   });
-  await page.route("https://api.github.com/**", async (route) => {
-    await route.fulfill({ status: 500 });
-  });
+}
 
-  await page.goto("/invite/demo-code");
-  const download = page.getByRole("link", { name: "Download it now" });
-  await expect(download).toHaveAttribute("aria-haspopup", "dialog");
-  await download.click();
-
-  const chooser = page.getByRole("dialog", {
-    name: "Which Mac do you have?",
-  });
-  await expect(chooser).toBeVisible();
-  await expect(chooser.getByRole("link", { name: /Newer Mac/ })).toContainText(
-    "2021 or later, or a late-2020 Mac with an Apple M1 chip",
-  );
-  await expect(chooser.getByRole("link", { name: /Older Mac/ })).toContainText(
-    "2019 or earlier, or a 2020 Mac with an Intel processor",
-  );
-  await expect(chooser.getByText("About This Mac")).toBeVisible();
-
-  const openedPagePromise = context.waitForEvent("page");
-  await chooser.getByRole("link", { name: /Newer Mac/ }).click();
-  const openedPage = await openedPagePromise;
-  await expect(chooser).toBeHidden();
-  await expect(openedPage).toHaveURL("https://github.com/block/buzz/releases");
-  await expect(page).toHaveURL(/\/invite\/demo-code$/);
-  await openedPage.close();
-
-  await download.click();
-  await expect(chooser).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(chooser).toBeHidden();
-  await expect(download).toBeFocused();
-  await context.close();
-});
+for (const architecture of ["unknown", "x64", "arm64"] as const) {
+  for (const choice of architecture === "unknown"
+    ? (["arm64", "x64"] as const)
+    : [architecture]) {
+    test(`invite downloads stable fork installer for Mac ${architecture} (${choice})`, async ({
+      browser,
+    }) => {
+      const context = await browser.newContext({
+        userAgent:
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Version/26.5 Safari/605.1.15",
+      });
+      await context.addInitScript((architecture) => {
+        Object.defineProperties(navigator, {
+          platform: { configurable: true, value: "MacIntel" },
+          maxTouchPoints: { configurable: true, value: 0 },
+          userAgentData: {
+            configurable: true,
+            value:
+              architecture === "unknown"
+                ? undefined
+                : {
+                    platform: "macOS",
+                    getHighEntropyValues: async () => ({
+                      architecture: architecture === "arm64" ? "arm" : "x86",
+                      bitness: "64",
+                    }),
+                  },
+          },
+        });
+      }, architecture);
+      await context.route(
+        "https://github.com/reynholm/buzz/releases/download/**",
+        (route) =>
+          route.fulfill({
+            contentType: "text/html",
+            body: "Installer destination",
+          }),
+      );
+      const page = await context.newPage();
+      await page.route("**/api/join-policy", (route) =>
+        route.fulfill({ json: { policy: null } }),
+      );
+      await page.route("https://api.github.com/**", (route) => {
+        expect(route.request().url()).toBe(FORK_RELEASES_API);
+        return route.fulfill({ json: releaseCandidates });
+      });
+      await page.goto("/invite/demo-code");
+      const download = page.getByRole("link", { name: "Download Buzz" });
+      const expectedUrl = `${FORK_RELEASES_URL}/download/fork-v0.4.9/Buzz_0.4.9_${choice === "arm64" ? "aarch64" : "x64"}.dmg`;
+      if (architecture !== "unknown") {
+        await expect(download).toHaveAttribute("href", expectedUrl);
+        await expect(download).not.toHaveAttribute("aria-haspopup");
+      } else {
+        await expect(download).toHaveAttribute("aria-haspopup", "dialog");
+        await download.click();
+        const chooser = page.getByRole("dialog", {
+          name: "Which Mac do you have?",
+        });
+        await expect(
+          chooser.getByRole("link", { name: /Apple Silicon Mac/ }),
+        ).toBeVisible();
+        await expect(
+          chooser.getByRole("link", { name: /Older Mac/ }),
+        ).toBeVisible();
+        await expect(chooser.getByText("About This Mac")).toBeVisible();
+        await page.keyboard.press("Escape");
+        await expect(chooser).toBeHidden();
+        await expect(download).toBeFocused();
+        await download.click();
+        const openedPromise = context.waitForEvent("page");
+        await chooser
+          .getByRole("link", {
+            name: choice === "arm64" ? /Apple Silicon Mac/ : /Older Mac/,
+          })
+          .click();
+        const opened = await openedPromise;
+        await expect(opened).toHaveURL(expectedUrl);
+        await expect(chooser).toBeHidden();
+        await expect(page).toHaveURL(/\/invite\/demo-code$/);
+        await opened.close();
+      }
+      await context.close();
+    });
+  }
+}
 
 test("invite download links to the appropriate platform destination", async ({
   browser,
@@ -339,6 +443,7 @@ test("invite download links to the appropriate platform destination", async ({
       });
     });
     await page.route("https://api.github.com/**", async (route) => {
+      expect(route.request().url()).toBe(FORK_RELEASES_API);
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -349,14 +454,9 @@ test("invite download links to the appropriate platform destination", async ({
             prerelease: false,
             assets: [
               {
-                name: "Buzz_0.4.9_x64.dmg",
-                browser_download_url:
-                  "https://github.com/block/buzz/releases/download/v0.4.9/Buzz_0.4.9_x64.dmg",
-              },
-              {
                 name: "Buzz_0.4.9_amd64.AppImage",
                 browser_download_url:
-                  "https://github.com/block/buzz/releases/download/v0.4.9/Buzz_0.4.9_amd64.AppImage",
+                  "https://github.com/reynholm/buzz/releases/download/v0.4.9/Buzz_0.4.9_amd64.AppImage",
               },
             ],
           },
@@ -366,19 +466,123 @@ test("invite download links to the appropriate platform destination", async ({
 
     await page.goto("/invite/demo-code");
     await expect(
-      page.getByRole("link", { name: "Download it now" }),
+      page.getByRole("link", { name: "Download Buzz" }),
       device.name,
     ).toHaveAttribute("href", device.expectedUrl);
     await expect(
       page.getByRole("link", { name: "Browse releases" }),
-      device.name,
-    ).toHaveAttribute("href", "https://github.com/block/buzz/releases");
+    ).toHaveCount(0);
     await context.route(device.expectedUrl, (route) =>
       route.fulfill({ contentType: "text/html", body: "Store destination" }),
     );
     const destination = context.waitForEvent("page");
-    await page.getByRole("link", { name: "Download it now" }).click();
+    await page.getByRole("link", { name: "Download Buzz" }).click();
     await expect(await destination).toHaveURL(device.expectedUrl);
     await context.close();
+  }
+});
+
+test("invite shows community artwork and name with a text-only fallback", async ({
+  page,
+}) => {
+  await page.route("**/api/join-policy", (route) =>
+    route.fulfill({ json: { policy: null } }),
+  );
+  await page.route("https://api.github.com/**", (route) =>
+    route.fulfill({ json: [] }),
+  );
+  let metadata: { name: string; icon?: string } = {
+    name: "Honeycomb Studios",
+    icon:
+      "data:image/svg+xml," +
+      encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" fill="#D7D72E"/></svg>',
+      ),
+  };
+  await page.route("http://127.0.0.1:4173/", (route) => {
+    if (route.request().headers().accept === "application/nostr+json")
+      return route.fulfill({ json: metadata });
+    return route.continue();
+  });
+  for (const width of [1280, 375]) {
+    await page.setViewportSize({ width, height: 850 });
+    await page.goto("/invite/visual-preview");
+    await expect(page.locator(".invite-community")).toHaveText(
+      "Honeycomb Studios",
+    );
+    await expect(page.locator(".invite-community-icon")).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Accept invite in Buzz" }),
+    ).toHaveAttribute(
+      "href",
+      "buzz://join?relay=ws%3A%2F%2F127.0.0.1%3A4173&code=visual-preview",
+    );
+    const widths = await page.evaluate(() => ({
+      button: document
+        .querySelector(".invite-actions a")
+        ?.getBoundingClientRect().width,
+      row: document.querySelector(".invite-actions")?.getBoundingClientRect()
+        .width,
+      overflow: document.documentElement.scrollWidth > innerWidth,
+    }));
+    expect(widths.button).toBe(widths.row);
+    expect(widths.overflow).toBe(false);
+  }
+  metadata = { name: "Honeycomb Studios", icon: "/missing-community-icon.png" };
+  await page.goto("/invite/visual-preview");
+  await expect(page.locator(".invite-community")).toHaveText(
+    "Honeycomb Studios",
+  );
+  await expect(page.locator(".invite-community-icon")).toBeHidden();
+  metadata = { name: "Buzz Relay" };
+  await page.goto("/invite/visual-preview");
+  await expect(page.locator(".invite-community")).toHaveText("127.0.0.1:4173");
+  await expect(page.locator(".invite-community-icon")).toHaveCount(0);
+});
+
+test("invite swarm follows width and height changes with reduced motion", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.route("**/api/join-policy", (route) =>
+    route.fulfill({ json: { policy: null } }),
+  );
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/invite/resize-preview");
+  const positions = () =>
+    page.locator(".bee-sprite").evaluateAll((sprites) =>
+      sprites.map((sprite) => {
+        const node = sprite.parentElement;
+        const field = node?.parentElement;
+        if (!node || !field) throw new Error("Missing bee field");
+        const transform = new DOMMatrix(getComputedStyle(node).transform);
+        return {
+          x: transform.m41 / field.clientWidth,
+          y: transform.m42 / field.clientHeight,
+        };
+      }),
+    );
+  await expect(page.locator(".bee-sprite")).toHaveCount(24);
+  const original = await positions();
+  for (const viewport of [
+    { width: 700, height: 1000 },
+    { width: 700, height: 700 },
+    { width: 1800, height: 1200 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expect
+      .poll(async () => {
+        const current = await positions();
+        return Math.max(
+          ...current.map((p, i) =>
+            Math.max(
+              Math.abs(p.x - original[i].x),
+              Math.abs(p.y - original[i].y),
+            ),
+          ),
+        );
+      })
+      .toBeLessThan(0.001);
+    await expect(page.locator(".bee-sprite")).toHaveCount(24);
   }
 });

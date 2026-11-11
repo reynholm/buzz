@@ -14,11 +14,13 @@ pub mod channel;
 pub mod channel_members;
 /// Community lifecycle and host-map persistence.
 pub mod community;
+/// Monotonic community auth policy and operator acceptance receipts.
+pub mod community_auth;
 /// Durable whole-community deletion lifecycle and PostgreSQL adapter.
 pub mod deletion;
 /// Direct message channel persistence.
 pub mod dm;
-/// Operator-global synthetic user-deletion request intake.
+/// Shared operator-global deletion workflow persistence.
 pub mod entity_deletion;
 /// Event storage and retrieval.
 pub mod event;
@@ -26,6 +28,10 @@ pub mod event;
 pub(crate) mod event_follow_up;
 /// Per-community NIP-FI issuer bindings.
 pub mod nip_fi_binding;
+/// User-specific deletion submission and inventory preparation.
+pub mod user_deletion;
+/// Operator-global user restrictions and identity-lock primitives.
+pub mod user_deletion_fences;
 
 #[cfg(test)]
 mod event_follow_up_postgres_tests;
@@ -34,6 +40,8 @@ mod event_follow_up_postgres_tests;
 pub mod feed;
 /// Git repository name registry (NIP-34 kind:30617).
 pub mod git_repo;
+/// Deployment-wide leader election over session advisory locks.
+pub mod leader_lock;
 /// Atomic managed report election.
 pub mod managed_delivery;
 /// Community moderation: reports, bans/timeouts, audit actions.
@@ -70,8 +78,6 @@ pub mod storage_accounting;
 pub mod thread;
 /// Strict newest-first thread windows and auxiliary scans.
 pub mod thread_window;
-/// Per-community usage rollup queries for Prometheus gauges.
-pub mod usage;
 /// User profile persistence.
 pub mod user;
 /// Workflow, run, and approval persistence.
@@ -81,6 +87,9 @@ pub mod workflow;
 pub mod artifact;
 
 mod artifact_query;
+/// Timestamp-based incremental artifact reads.
+pub mod artifact_sync;
+pub use artifact_query::{ArtifactSnapshot, SnapshotDenied};
 
 #[cfg(test)]
 mod artifact_postgres_tests;
@@ -89,4 +98,13 @@ mod artifact_postgres_tests;
 mod legacy_channel_types_postgres_tests;
 
 #[cfg(test)]
+mod unlisted_channels_postgres_tests;
+
+#[cfg(test)]
+mod channel_name_postgres_tests;
+
+#[cfg(test)]
 mod admission_postgres_tests;
+
+/// Durable NIP-FI verified-profile projection state.
+pub mod verified_profiles;

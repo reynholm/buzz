@@ -621,31 +621,27 @@ impl EventQueue {
                     .keys()
                     .find(|scope| !self.in_flight_scopes.contains(scope))
                     .cloned();
-                match cancelled_scope {
-                    Some(scope) => {
-                        // Move cancelled events into the regular events slot.
-                        // No new events to merge — re-dispatch the original batch.
-                        let cancelled = self.cancelled_batches.remove(&scope).unwrap_or_default();
-                        let cancel_reason = self.cancel_reasons.remove(&scope);
-                        self.in_flight_scopes.insert(scope.clone());
-                        self.in_flight_deadlines
-                            .insert(scope.clone(), now + self.in_flight_deadline);
-                        self.in_flight_batch_sizes
-                            .insert(scope.clone(), cancelled.len());
-                        self.record_in_flight_reply_route(&scope, &cancelled);
-                        let batch = FlushBatch {
-                            work: None,
-                            continuation: None,
-                            channel_id: scope.channel_id(),
-                            scope,
-                            events: cancelled,
-                            cancelled_events: vec![],
-                            cancel_reason,
-                        };
-                        return Some(self.attach_logical_work(batch));
-                    }
-                    None => return None,
-                }
+                let scope = cancelled_scope?;
+                // Move cancelled events into the regular events slot.
+                // No new events to merge — re-dispatch the original batch.
+                let cancelled = self.cancelled_batches.remove(&scope).unwrap_or_default();
+                let cancel_reason = self.cancel_reasons.remove(&scope);
+                self.in_flight_scopes.insert(scope.clone());
+                self.in_flight_deadlines
+                    .insert(scope.clone(), now + self.in_flight_deadline);
+                self.in_flight_batch_sizes
+                    .insert(scope.clone(), cancelled.len());
+                self.record_in_flight_reply_route(&scope, &cancelled);
+                let batch = FlushBatch {
+                    work: None,
+                    continuation: None,
+                    channel_id: scope.channel_id(),
+                    scope,
+                    events: cancelled,
+                    cancelled_events: vec![],
+                    cancel_reason,
+                };
+                return Some(self.attach_logical_work(batch));
             }
         };
         let channel_id = scope.channel_id();
@@ -1711,10 +1707,8 @@ pub fn extract_slash_command(content: &str, known_names: &[&str]) -> Option<Stri
                         .unwrap_or(after_at.len());
                     (len > 0).then_some(len)
                 });
-            match name_len {
-                Some(len) => rest = after_at[len..].trim_start(),
-                None => return None, // bare '@' — not a mention
-            }
+            let len = name_len?; // bare '@' — not a mention
+            rest = after_at[len..].trim_start();
         } else {
             break;
         }

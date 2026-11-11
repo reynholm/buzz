@@ -95,7 +95,7 @@ async fn old_report_recovery(already_accepted: bool, deleted: bool, recovery_kin
             let rejected =
                 ingest_event_inner(&state, &tracer, &tenant, event.clone(), auth()).await;
             assert!(
-                matches!(rejected, Err(IngestError::Internal(message)) if message.contains("replica-fence floor"))
+                matches!(rejected, Err(IngestError::Internal(message)) if message == "error: database error: database:23514")
             );
             let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM managed_deliveries WHERE community_id=$1 AND author=$2 AND delivery_key=$3")
                 .bind(community.as_uuid()).bind(author.public_key().to_bytes().as_slice())
@@ -1115,4 +1115,165 @@ async fn managed_recovery_mention_history_survives_lost_ack() {
     assert_eq!(count, 1, "ACK-loss replay must not duplicate mention rows");
     shutdown_tx.send(()).unwrap();
     server.await.unwrap();
+}
+
+/// Managed retries must consult current authority even when another pod has
+/// changed the owner or membership before this pod's cache expires.
+macro_rules! fresh_managed_authority_test {
+    ($name:ident, $restriction:literal) => {
+        #[tokio::test]
+        #[ignore = "requires Postgres and Redis"]
+        async fn $name() {
+            managed_retry_ignores_cached_authority($restriction).await;
+        }
+    };
+}
+fresh_managed_authority_test!(managed_retries_read_current_owner_ban, "ban");
+fresh_managed_authority_test!(managed_retries_read_current_owner_timeout, "timeout");
+fresh_managed_authority_test!(
+    managed_retries_read_current_private_membership,
+    "private-member"
+);
+fresh_managed_authority_test!(managed_retries_read_current_guest_role, "open-guest");
+
+async fn managed_retry_ignores_cached_authority(restriction: &str) {
+    for wrapper in [None, Some(20003), Some(20004)] {
+        let state = authenticated_http_state().await;
+        let (tenant, owner, agent) = owned_agent_fixture(&state, "fresh-managed").await;
+        let community = tenant.community();
+        let channel = Uuid::new_v4();
+        state
+            .db
+            .create_channel_with_id(
+                community,
+                channel,
+                "managed authority",
+                ChannelType::Stream,
+                if restriction == "open-guest" {
+                    ChannelVisibility::Open
+                } else {
+                    ChannelVisibility::Private
+                },
+                None,
+                owner.public_key().as_bytes(),
+                None,
+            )
+            .await
+            .unwrap();
+        state
+            .db
+            .add_member(
+                community,
+                channel,
+                agent.public_key().as_bytes(),
+                buzz_db::channel::MemberRole::Member,
+                Some(owner.public_key().as_bytes()),
+            )
+            .await
+            .unwrap();
+        let auth = || IngestAuth::Http {
+            pubkey: agent.public_key(),
+            scopes: vec![Scope::MessagesWrite],
+            auth_method: HttpAuthMethod::Nip98,
+        };
+        let original = EventBuilder::new(Kind::Custom(9), "previously accepted final report")
+            .custom_created_at(Timestamp::from(Timestamp::now().as_secs() - 3600))
+            .tags([
+                Tag::parse(["h", &channel.to_string()]).unwrap(),
+                Tag::parse(["buzz-delivery", &Uuid::new_v4().to_string()]).unwrap(),
+            ])
+            .sign_with_keys(&agent)
+            .unwrap();
+        let tracer: Arc<dyn buzz_conformance::Tracer> = Arc::new(VecTracer::default());
+        seed_previously_accepted_event(&state, &tracer, &tenant, original.clone(), auth()).await;
+        // Confirm the ordinary fast path has a warm allowed restriction.
+        state
+            .restriction_state_cached(community, agent.public_key().as_bytes())
+            .await
+            .unwrap();
+        match restriction {
+            "ban" => {
+                state
+                    .db
+                    .ban_community_member(
+                        community,
+                        owner.public_key().as_bytes(),
+                        owner.public_key().as_bytes(),
+                        None,
+                        None,
+                    )
+                    .await
+                    .unwrap();
+            }
+            "timeout" => {
+                state
+                    .db
+                    .timeout_community_member(
+                        community,
+                        owner.public_key().as_bytes(),
+                        owner.public_key().as_bytes(),
+                        Utc::now() + chrono::Duration::hours(1),
+                        None,
+                    )
+                    .await
+                    .unwrap();
+            }
+            "open-guest" => {
+                state
+                    .db
+                    .add_member(
+                        community,
+                        channel,
+                        agent.public_key().as_bytes(),
+                        buzz_db::channel::MemberRole::Guest,
+                        Some(owner.public_key().as_bytes()),
+                    )
+                    .await
+                    .unwrap();
+            }
+            _ => {}
+        }
+        state.membership_cache.insert(
+            (community, channel, agent.public_key().to_bytes().to_vec()),
+            matches!(restriction, "ban" | "timeout"),
+        );
+        let event = if let Some(kind) = wrapper {
+            let candidate = EventBuilder::new(original.kind, &original.content)
+                .tags(original.tags.clone())
+                .allow_self_tagging()
+                .sign_with_keys(&agent)
+                .unwrap();
+            EventBuilder::new(
+                Kind::Custom(kind),
+                serde_json::json!({
+                    "original": original, "candidate": ReportStamp::from(&candidate),
+                })
+                .to_string(),
+            )
+            .tag(Tag::parse(["h", &channel.to_string()]).unwrap())
+            .sign_with_keys(&agent)
+            .unwrap()
+        } else {
+            original
+        };
+        let result = ingest_event_inner(&state, &tracer, &tenant, event, auth()).await;
+        let diagnostic = format!("{:?}", result.as_ref().err());
+        match restriction {
+            "private-member" => assert!(
+                result.is_ok(),
+                "fresh member must recover despite cached absence: {diagnostic}"
+            ),
+            "open-guest" => assert!(
+                matches!(result, Err(IngestError::Rejected(ref message)) if message.contains("only members can post")),
+                "fresh guest must not use nonmember fallback: {diagnostic}"
+            ),
+            _ => assert!(
+                matches!(
+                    result,
+                    Err(IngestError::Ban { .. }) | Err(IngestError::AuthFailed(_))
+                ),
+                "fresh owner {restriction} must refuse managed report: {diagnostic}"
+            ),
+        }
+    }
 }

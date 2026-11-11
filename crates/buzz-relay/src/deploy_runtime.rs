@@ -73,6 +73,7 @@ impl RuntimeDependencies {
             "reminder-scheduler",
             "pool-lease-reaper",
             "usage-invite-reaper",
+            "storage-usage-delivery",
             WORKER,
         ])
     }

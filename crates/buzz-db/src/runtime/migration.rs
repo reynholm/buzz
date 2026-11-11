@@ -14,6 +14,10 @@ use crate::Result;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
 
+#[cfg(test)]
+#[path = "tests/schema_fence_bootstrap_postgres_tests.rs"]
+mod schema_fence_bootstrap_postgres_tests;
+
 /// Run all pending Buzz database migrations.
 ///
 /// The entire run holds the exclusive [`SCHEMA_DESTRUCTION_LOCK_KEY`] session
@@ -90,7 +94,6 @@ async fn run_migrations_locked(conn: &mut PgConnection) -> Result<()> {
     // guard, so migration fails closed if any is missing. (The fence probe
     // re-runs this same check at startup on non-migrating relays.)
     crate::replica_fence::verify_floor_guard_catalog(&mut *conn).await?;
-    crate::channel::verify_channel_roster_fence_catalog(&mut *conn).await?;
     Ok(())
 }
 
@@ -312,6 +315,7 @@ mod retirement_postgres_tests;
 #[cfg(test)]
 mod postgres_tests {
     use super::*;
+    use crate::test_support::ScratchDb;
     use std::{
         collections::BTreeSet,
         fs,
@@ -319,6 +323,50 @@ mod postgres_tests {
     };
 
     const TEST_DB_URL: &str = "postgres://buzz:buzz_dev@localhost:5432/buzz"; // sadscan:disable np.postgres.1
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn new_migration_ddl_never_expands_explicit_caller_timeouts() {
+        for (through, table) in [
+            (69, "entity_deletion_requests"),
+            (75, "relay_invites"),
+            (77, "artifact_heads"),
+        ] {
+            for policy in [
+                MigrationTimeouts {
+                    lock_timeout_ms: 100,
+                    statement_timeout_ms: 200,
+                },
+                MigrationTimeouts {
+                    lock_timeout_ms: 2_000,
+                    statement_timeout_ms: 100,
+                },
+            ] {
+                let admin = crate::test_support::database_url();
+                let (pool, _scratch) =
+                    ScratchDb::migrated_through(&admin, "migration_budget", through).await;
+                let mut blocker = pool.begin().await.unwrap();
+                sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "LOCK TABLE {table} IN ACCESS SHARE MODE"
+                )))
+                .execute(&mut *blocker)
+                .await
+                .unwrap();
+                let result = tokio::time::timeout(
+                    std::time::Duration::from_millis(800),
+                    run_migrations_with_timeouts(&pool, policy),
+                )
+                .await;
+                blocker.rollback().await.unwrap();
+                let error = result
+                    .unwrap_or_else(|_| {
+                        panic!("migration DDL widened the caller budgets: {policy:?}")
+                    })
+                    .expect_err("blocked DDL must stop at the explicit caller budget");
+                assert!(error.to_string().contains("timeout"), "{error}");
+            }
+        }
+    }
 
     /// Connection parameters parsed out of a PostgreSQL URL so the parity test
     /// can pass them to the `bin/pgschema` binary, which
@@ -663,7 +711,10 @@ mod postgres_tests {
             "product_feedback",
             "replica_heartbeat",
             "community_deletion_requests",
+            "entity_deletion_approvals",
             "entity_deletion_requests",
+            "entity_deletion_stage_history",
+            "user_deletion_fences",
             "community_deletion_approvals",
             "community_deletion_checkpoints",
             "community_deletion_manifest_keys",
@@ -677,6 +728,7 @@ mod postgres_tests {
             "storage_accounting_snapshots",
             "operator_listener_pubkeys",
             "operator_listener_outbox",
+            "community_auth_upgrades",
         ] {
             if normalized[insert_pos..].contains(&format!("'{value}'")) {
                 globals.insert(value.to_owned());
@@ -890,7 +942,18 @@ mod postgres_tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 69);
+        assert_eq!(migrations.len(), 83);
+        for (index, migration) in migrations.iter().enumerate() {
+            assert_eq!(migration.version, (index + 1) as i64);
+        }
+        assert!(migrations[80]
+            .sql
+            .as_str()
+            .contains("ADD COLUMN auto_join BOOLEAN NOT NULL DEFAULT false"));
+        assert!(migrations[71]
+            .sql
+            .as_str()
+            .contains("ADD COLUMN unlisted BOOLEAN NOT NULL DEFAULT FALSE"));
         assert_eq!(migrations[68].version, 69);
         assert!(migrations[68]
             .sql
@@ -908,6 +971,24 @@ mod postgres_tests {
         let desired_schema = crate::test_support::desired_state_schema_sql();
         assert!(!desired_schema.contains("events_refresh_channel_ttl"));
         assert!(!desired_schema.contains("refresh_channel_ttl_after_event_insert"));
+        assert!(desired_schema.contains("legacy_admission BOOLEAN NOT NULL DEFAULT true"));
+        assert_eq!(migrations[75].version, 76);
+        let invite_migration = strip_sql_comments(migrations[75].sql.as_str());
+        assert!(invite_migration.contains("current_setting('lock_timeout')"));
+        assert!(invite_migration.contains("current_setting('statement_timeout')"));
+        assert!(invite_migration.contains("LEAST(COALESCE(NULLIF("));
+        assert!(!invite_migration.contains("SET LOCAL lock_timeout"));
+        assert!(!invite_migration.contains("SET LOCAL statement_timeout"));
+        assert!(
+            invite_migration.contains("ADD COLUMN legacy_admission BOOLEAN NOT NULL DEFAULT true")
+        );
+        assert!(invite_migration.contains("ADD COLUMN revoked_at TIMESTAMPTZ"));
+        assert!(!invite_migration.to_ascii_uppercase().contains("UPDATE "));
+        assert!(!invite_migration
+            .to_ascii_uppercase()
+            .contains("CREATE FUNCTION"));
+        assert!(!desired_schema.contains("invite_admission_lock"));
+
         assert_eq!(migrations[59].version, 60);
         assert!(migrations[59].sql.as_str().contains("buzz.push_enabled"));
         assert_eq!(migrations[60].version, 61);
@@ -1709,6 +1790,32 @@ mod postgres_tests {
         assert!(
             apply_count > 0,
             "expected at least one pgschema apply caller"
+        );
+    }
+
+    /// The reconcile script repairs `events_pkey` after every apply, and
+    /// `start-relay-for-tests.sh` runs the same repair before apply so a reused
+    /// database reconciled before the repair existed can still be applied.
+    #[test]
+    fn events_pkey_repair_runs_before_reused_apply_and_matches_reconcile() {
+        let repair = include_str!("../../../../scripts/repair-events-pkey.sql");
+        let block = &repair[repair.find("DO $$").expect("repair script has a DO block")..];
+        assert!(
+            include_str!("../../../../scripts/reconcile-schema-after-pgschema.sql").contains(block),
+            "scripts/reconcile-schema-after-pgschema.sql must carry scripts/repair-events-pkey.sql's \
+             DO block verbatim"
+        );
+
+        let launcher = include_str!("../../../../scripts/start-relay-for-tests.sh");
+        let repair_at = launcher
+            .find("scripts/repair-events-pkey.sql")
+            .expect("start-relay-for-tests.sh runs scripts/repair-events-pkey.sql");
+        let apply_at = launcher
+            .find("./bin/pgschema apply")
+            .expect("start-relay-for-tests.sh runs pgschema apply");
+        assert!(
+            repair_at < apply_at,
+            "start-relay-for-tests.sh must repair events_pkey before pgschema apply"
         );
     }
 
@@ -2643,23 +2750,13 @@ mod postgres_tests {
     async fn cancelled_migration_cannot_expose_shared_lock_while_ddl_backend_lives() {
         use std::time::Instant;
 
-        use sqlx::AssertSqlSafe;
-
         // Dedicated database: the probe table and the orphaned backend must
         // stay invisible to concurrent tests in the shared database.
         let base_url = std::env::var("BUZZ_TEST_DATABASE_URL")
             .or_else(|_| std::env::var("DATABASE_URL"))
             .unwrap_or_else(|_| TEST_DB_URL.to_owned());
-        let admin = PgPool::connect(&base_url)
-            .await
-            .expect("connect admin database");
-        let probe_db = format!("buzz_lock_cancel_{}", uuid::Uuid::new_v4().simple());
-        sqlx::query(AssertSqlSafe(format!("CREATE DATABASE {probe_db}")))
-            .execute(&admin)
-            .await
-            .expect("create probe database");
-        let (base_prefix, _) = base_url.rsplit_once('/').expect("database url has a path");
-        let pool = PgPool::connect(&format!("{base_prefix}/{probe_db}"))
+        let probe_db = ScratchDb::create(&base_url, "buzz_lock_cancel").await;
+        let pool = PgPool::connect(probe_db.url())
             .await
             .expect("connect probe database");
         sqlx::query("CREATE TABLE schema_lock_cancel_probe (id int)")
@@ -2792,14 +2889,6 @@ mod postgres_tests {
             committed,
             "orphaned migration DDL commits after cancellation; the lock must cover it"
         );
-
-        pool.close().await;
-        sqlx::query(AssertSqlSafe(format!(
-            "DROP DATABASE {probe_db} WITH (FORCE)"
-        )))
-        .execute(&admin)
-        .await
-        .expect("drop probe database");
     }
 
     pub(super) async fn connect_test_pool() -> PgPool {
@@ -2912,10 +3001,15 @@ mod postgres_tests {
     /// test-relay launchers take — and migrates another through the latest
     /// migration, then asserts the admin and entity-intake tables have identical
     /// column definitions (name, type, nullability, default) and index shapes, including each
-    /// key's catalog sort/null options (`pg_index.indoption`). Columns are keyed
+    /// key's catalog sort/null options (`pg_index.indoption`), and that the
+    /// `channels` columns match. Columns are keyed
     /// by name, not ordinal, because migrations append via `ALTER TABLE` while
     /// `schema.sql` declares them inline — positions legitimately differ, shapes
     /// must not. Entity-intake constraints are also compared in the live catalog.
+    /// `events` and its partitions must carry the same primary key on both
+    /// probes, so the reconcile script's `events_pkey` rebuild cannot drift from
+    /// the migrations. Partitions are compared as a set of key definitions
+    /// because the two paths create different months.
     ///
     /// Driving the real binary is load-bearing: `pgschema` 1.7.4 discards
     /// per-key `NULLS FIRST`/`NULLS LAST` when it re-emits an index, so a naive
@@ -2927,8 +3021,6 @@ mod postgres_tests {
     #[tokio::test]
     #[ignore = "requires Postgres"]
     async fn admin_schema_parity_between_desired_state_and_migrations() {
-        use sqlx::AssertSqlSafe;
-
         async fn columns(
             pool: &PgPool,
             table: &str,
@@ -2988,29 +3080,34 @@ mod postgres_tests {
             .expect("read constraint definitions")
         }
 
+        // Distinct (is the parent, key definition) pairs across events and its
+        // partitions.
+        async fn events_key_defs(pool: &PgPool) -> Vec<(bool, String)> {
+            sqlx::query_as(
+                "SELECT DISTINCT conrelid = 'events'::regclass, pg_get_constraintdef(oid) \
+                 FROM pg_constraint \
+                 WHERE contype = 'p' AND conrelid IN ( \
+                     SELECT 'events'::regclass \
+                     UNION ALL \
+                     SELECT inhrelid FROM pg_inherits WHERE inhparent = 'events'::regclass) \
+                 ORDER BY 1, 2",
+            )
+            .fetch_all(pool)
+            .await
+            .expect("read events key definitions")
+        }
+
         let base_url = std::env::var("BUZZ_TEST_DATABASE_URL")
             .or_else(|_| std::env::var("DATABASE_URL"))
             .unwrap_or_else(|_| TEST_DB_URL.to_owned());
         let conn = parse_pg_url(&base_url);
-        let admin = PgPool::connect(&base_url)
-            .await
-            .expect("connect admin database");
-        let (base_prefix, _) = base_url.rsplit_once('/').expect("database url has a path");
 
-        let desired_db = format!("buzz_admin_desired_{}", uuid::Uuid::new_v4().simple());
-        let migrated_db = format!("buzz_admin_migrated_{}", uuid::Uuid::new_v4().simple());
-        sqlx::query(AssertSqlSafe(format!("CREATE DATABASE {desired_db}")))
-            .execute(&admin)
-            .await
-            .expect("create desired-state probe database");
-        sqlx::query(AssertSqlSafe(format!("CREATE DATABASE {migrated_db}")))
-            .execute(&admin)
-            .await
-            .expect("create migrated probe database");
+        let desired_db = ScratchDb::create(&base_url, "buzz_admin_desired").await;
+        let migrated_db = ScratchDb::create(&base_url, "buzz_admin_migrated").await;
 
-        // Bootstrap the desired-state probe through the real pgschema binary, the
-        // same invocation the test-relay launchers use.
-        let apply = pgschema(&conn, &desired_db, &["apply", "--auto-approve"]);
+        // Bootstrap the desired-state probe the way the test-relay launchers do:
+        // the real pgschema binary, then the post-apply reconcile script.
+        let apply = pgschema(&conn, desired_db.name(), &["apply", "--auto-approve"]);
         assert!(
             apply.status.success(),
             "pgschema apply failed: {}\n{}",
@@ -3018,7 +3115,7 @@ mod postgres_tests {
             String::from_utf8_lossy(&apply.stderr),
         );
 
-        let desired = PgPool::connect(&format!("{base_prefix}/{desired_db}"))
+        let desired = PgPool::connect(desired_db.url())
             .await
             .expect("connect desired-state probe database");
         sqlx::raw_sql(include_str!(
@@ -3027,7 +3124,7 @@ mod postgres_tests {
         .execute(&desired)
         .await
         .expect("reconcile desired-state probe database");
-        let migrated = PgPool::connect(&format!("{base_prefix}/{migrated_db}"))
+        let migrated = PgPool::connect(migrated_db.url())
             .await
             .expect("connect migrated probe database");
         MIGRATOR
@@ -3040,7 +3137,15 @@ mod postgres_tests {
             "relay_admin_outbox",
             "relay_operator_audit",
             "managed_deliveries",
+            "community_auth_upgrades",
+            "entity_deletion_approvals",
             "entity_deletion_requests",
+            "artifact_heads",
+            "artifact_revisions",
+            "channel_members",
+            "communities",
+            "entity_deletion_stage_history",
+            "user_deletion_fences",
         ] {
             assert_eq!(
                 columns(&desired, table).await,
@@ -3057,69 +3162,84 @@ mod postgres_tests {
                  migration and schema.sql must both use a representable shape."
             );
         }
-
+        // `channels` columns only: pgschema re-emits `idx_channels_id_live`
+        // without its `INCLUDE (community_id)`, an index drift that predates
+        // this check.
         assert_eq!(
-            constraints(&desired, "entity_deletion_requests").await,
-            constraints(&migrated, "entity_deletion_requests").await,
-            "constraint parity mismatch for entity_deletion_requests"
+            columns(&desired, "channels").await,
+            columns(&migrated, "channels").await,
+            "column parity mismatch for channels: schema.sql desired state has drifted \
+             from the migrations; update schema/tables/public/channels.sql to match"
+        );
+        assert_eq!(
+            events_key_defs(&desired).await,
+            events_key_defs(&migrated).await,
+            "events primary-key parity mismatch: the pgschema-bootstrapped, reconciled \
+             desired state has drifted from the migrations; update the events_pkey block in \
+             scripts/reconcile-schema-after-pgschema.sql and scripts/repair-events-pkey.sql"
         );
 
-        desired.close().await;
-        migrated.close().await;
-        for probe_db in [desired_db, migrated_db] {
-            sqlx::query(AssertSqlSafe(format!(
-                "DROP DATABASE {probe_db} WITH (FORCE)"
-            )))
-            .execute(&admin)
-            .await
-            .expect("drop probe database");
+        for table in [
+            "communities",
+            "community_auth_upgrades",
+            "entity_deletion_requests",
+            "entity_deletion_stage_history",
+            "user_deletion_fences",
+            "entity_deletion_approvals",
+        ] {
+            assert_eq!(
+                constraints(&desired, table).await,
+                constraints(&migrated, table).await,
+                "constraint parity mismatch for {table}"
+            );
         }
     }
 
-    /// Re-applying `schema/schema.sql` to a database a relay has used plans
-    /// `DROP TABLE IF EXISTS ... CASCADE` for every monthly the partition
-    /// manager created at runtime, and their rows go with them.
-    /// `.pgschemaignore` keeps those monthlies out of pgschema's view, and
-    /// pgschema does not compare partition bounds, so the advanced catch-all
-    /// is left alone too.
+    /// Re-applying `schema/schema.sql` to a database bootstrapped the way every
+    /// caller does it (pgschema apply, then the reconcile script) and then used
+    /// by a relay plans nothing. pgschema does not compare partition bounds, so
+    /// the advanced catch-alls do not show up in the plan. Two things keep the
+    /// rest of it empty:
+    ///
+    /// - `.pgschemaignore` hides the monthlies the partition manager created
+    ///   at runtime, which pgschema would otherwise drop, rows included, with
+    ///   `DROP TABLE IF EXISTS ... CASCADE`.
+    /// - The reconcile script rebuilds `events_pkey` in its declared order.
+    ///   pgschema creates it with the partition key first, then plans to drop
+    ///   and re-add it and every declared child's key, which fails once the
+    ///   children are attached.
     #[tokio::test]
     #[ignore = "requires Postgres"]
     async fn pgschema_reapply_keeps_runtime_partitions() {
         use crate::store::partition::{
             maintain_partitions, PartitionMaintenancePolicy, PARTITION_MANAGER_MONTHS_AHEAD,
         };
-        use sqlx::AssertSqlSafe;
 
         let base_url = crate::test_support::database_url();
         let conn = parse_pg_url(&base_url);
-        let admin = PgPool::connect(&base_url)
-            .await
-            .expect("connect admin database");
-        let (base_prefix, _) = base_url.rsplit_once('/').expect("database url has a path");
-        let database = format!("buzz_pgschema_reapply_{}", uuid::Uuid::new_v4().simple());
-        sqlx::query(AssertSqlSafe(format!("CREATE DATABASE {database}")))
-            .execute(&admin)
-            .await
-            .expect("create probe database");
+        let database = ScratchDb::create(&base_url, "buzz_pgschema_reapply").await;
 
-        let apply = pgschema(&conn, &database, &["apply", "--auto-approve"]);
-        assert!(
-            apply.status.success(),
-            "pgschema apply failed: {}\n{}",
-            String::from_utf8_lossy(&apply.stdout),
-            String::from_utf8_lossy(&apply.stderr),
-        );
-
-        let pool = PgPool::connect(&format!("{base_prefix}/{database}"))
+        let pool = PgPool::connect(database.url())
             .await
             .expect("connect probe database");
-        // Every pgschema caller attaches the declared children this way.
-        sqlx::raw_sql(include_str!(
-            "../../../../scripts/reconcile-schema-after-pgschema.sql"
-        ))
-        .execute(&pool)
-        .await
-        .expect("reconcile schema after pgschema");
+        // The bootstrap every pgschema caller runs; the reconcile script
+        // attaches the declared children.
+        let bootstrap = |round: &str| {
+            let apply = pgschema(&conn, database.name(), &["apply", "--auto-approve"]);
+            assert!(
+                apply.status.success(),
+                "{round} pgschema apply failed: {}\n{}",
+                String::from_utf8_lossy(&apply.stdout),
+                String::from_utf8_lossy(&apply.stderr),
+            );
+            sqlx::raw_sql(include_str!(
+                "../../../../scripts/reconcile-schema-after-pgschema.sql"
+            ))
+            .execute(&pool)
+        };
+        bootstrap("first")
+            .await
+            .expect("first post-apply reconciliation");
         async fn catch_all_bounds(pool: &PgPool) -> Vec<(String, Option<String>)> {
             sqlx::query_as(
                 "SELECT relname::text, pg_get_expr(relpartbound, oid) FROM pg_class \
@@ -3152,6 +3272,10 @@ mod postgres_tests {
         .await
         .expect("maintain partitions");
         let advanced_bounds = catch_all_bounds(&pool).await;
+        assert!(
+            advanced_bounds.len() == 2 && advanced_bounds.iter().all(|(_, bound)| bound.is_some()),
+            "maintenance dropped or detached a catch-all: {advanced_bounds:?}"
+        );
         for (declared, advanced) in declared_bounds.iter().zip(&advanced_bounds) {
             assert_ne!(declared, advanced, "catch-all did not advance");
         }
@@ -3179,7 +3303,6 @@ mod postgres_tests {
         .fetch_all(&pool)
         .await
         .expect("list partitions");
-        pool.close().await;
         let declared = declared_monthlies();
         let runtime: Vec<_> = children
             .iter()
@@ -3187,16 +3310,25 @@ mod postgres_tests {
                 child.starts_with(&format!("{parent}_p2")) && !declared.contains(child)
             })
             .collect();
-        for parent in ["events", "delivery_log"] {
-            // The first month the declared catch-all served.
-            let first = format!("{parent}_p2026_07");
+        for (catch_all, bound) in &declared_bounds {
+            // The first month the declared catch-all served, from its
+            // `FOR VALUES FROM ('YYYY-MM-01 ...')` lower bound.
+            let parent = catch_all
+                .strip_suffix("_p_future")
+                .expect("catch-all is named <parent>_p_future");
+            let month = bound
+                .as_deref()
+                .and_then(|bound| bound.split_once("FROM ('"))
+                .and_then(|(_, rest)| rest.get(..7))
+                .expect("declared catch-all has a dated lower bound");
+            let first = format!("{parent}_p{}", month.replace('-', "_"));
             assert!(
                 runtime.iter().any(|(_, child)| *child == first),
                 "maintenance did not advance into {first}: {children:?}"
             );
         }
 
-        let plan = pgschema(&conn, &database, &["plan", "--output-sql", "stdout"]);
+        let plan = pgschema(&conn, database.name(), &["plan", "--output-sql", "stdout"]);
         let plan_sql = String::from_utf8_lossy(&plan.stdout);
         assert!(
             plan.status.success(),
@@ -3204,31 +3336,13 @@ mod postgres_tests {
             String::from_utf8_lossy(&plan.stderr),
         );
         assert!(
-            !plan_sql.contains("DROP TABLE"),
-            "re-applying schema.sql would drop tables:\n{plan_sql}"
+            plan_sql.trim().is_empty(),
+            "re-applying schema.sql to a reconciled database must plan nothing; \
+             runtime monthlies {runtime:?}:\n{plan_sql}"
         );
-        for (_, child) in &runtime {
-            assert!(
-                !plan_sql.contains(child.as_str()),
-                "re-applying schema.sql would change runtime monthly {child}:\n{plan_sql}"
-            );
-        }
-
-        let apply_again = pgschema(&conn, &database, &["apply", "--auto-approve"]);
-        assert!(
-            apply_again.status.success(),
-            "reapply failed: {}",
-            String::from_utf8_lossy(&apply_again.stderr)
-        );
-        let pool = PgPool::connect(&format!("{base_prefix}/{database}"))
+        bootstrap("second")
             .await
-            .unwrap();
-        sqlx::raw_sql(include_str!(
-            "../../../../scripts/reconcile-schema-after-pgschema.sql"
-        ))
-        .execute(&pool)
-        .await
-        .unwrap();
+            .expect("second post-apply reconciliation");
         assert_managed_ledger_survives(&pool, ledger_community, ledger_channel, &ledger_event)
             .await;
         assert_eq!(catch_all_bounds(&pool).await, advanced_bounds);
@@ -3242,13 +3356,6 @@ mod postgres_tests {
         .unwrap();
         assert_eq!(partition_after, partition_before);
         pool.close().await;
-
-        sqlx::query(AssertSqlSafe(format!(
-            "DROP DATABASE {database} WITH (FORCE)"
-        )))
-        .execute(&admin)
-        .await
-        .expect("drop probe database");
     }
 
     #[tokio::test]

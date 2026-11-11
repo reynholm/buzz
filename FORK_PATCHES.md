@@ -3,7 +3,7 @@
 Generated from `scripts/fork/patches.json`; regenerate with
 `python3 scripts/fork/sync.py render`.
 
-Base snapshot: `upstream-main` (`2d289f720de0012fa36b5f6faa0e3bdd845ccfcf`). Release floor: `desktop-v0.5.28`.
+Base snapshot: `upstream/main writer checkpoint 64d12e297` (`64d12e29751981ad92ab3cc8edadaf3e3b5797f3`). Release floor: `desktop-v0.5.28`.
 
 ## `docs/superpowers/plans/2026-10-03-buzz-fork-maintenance.md`
 
@@ -584,6 +584,7 @@ Safe hostname default; patched ZIP 9 extraction, maintained Opus backend, and im
 
 New module: `false`.
 
+- Required symbol: `9e7c2fb2181f66bea1f325c633e5a4364164d6fd`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/Cargo.lock`
@@ -2614,15 +2615,9 @@ Pin the Android lane to Temurin JDK 17 for Gradle 8.14.5 and explicitly select t
 
 New module: `false`.
 
-- Required symbol: `- name: Set up Android JDK
-        if: matrix.lane == 'android'
-        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
-        with:
-          distribution: temurin
-          java-version: '17'`
-- Required symbol: `- name: Select Android JDK for Flutter
-        if: matrix.lane == 'android'
-        run: flutter config --jdk-dir="$JAVA_HOME"`
+- Required symbol: `uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0`
+- Required symbol: `java-version: "17"`
+- Required symbol: `run: flutter config --jdk-dir="$JAVA_HOME"`
 - Verify: `node --test scripts/ci-selection.test.mjs scripts/ci-required-gates.test.mjs scripts/ci-apt-retry.test.mjs`
 - Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
 
@@ -2724,7 +2719,8 @@ Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Sel
 
 New module: `false`.
 
-- Required symbol: `test(=mesh_boot::tests::demo_echo_keeps_inflight_read_across_ticks_and_still_drains)`
+- Required symbol: `test(/^mesh_boot::tests::/)`
+- Required symbol: `${BUZZ_STAGING_RELAY_URL:?Set BUZZ_STAGING_RELAY_URL to the staging relay}`
 - Verify: `just ci`
 - Verify: `just test-unit`
 
@@ -3442,6 +3438,9 @@ Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
 New module: `false`.
 
+- Invocation: `crates/buzz-relay/src/connection.rs` → `track_accepted_child`; exact call `let span =
+                tracing::info_span!("ws.artifact_sync", conn_id = %conn.conn_id, sub_id = %sub_id);
+            let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);`; behavior test `deployment_message_tasks_are_owned_before_spawn_and_outlive_socket`; verify `cargo test -p buzz-relay`
 - Verify: `just ci`
 
 ## `crates/buzz-relay/src/handlers/admin_action_worker.rs`
@@ -3506,6 +3505,24 @@ Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
 New module: `false`.
 
+- Invocation: `crates/buzz-relay/src/handlers/ingest.rs` → `enforce_write_restriction_with_authority`; exact call `enforce_write_restriction_with_authority(
+        state,
+        tenant,
+        kind_u32,
+        auth.pubkey(),
+        fresh_managed_authority,
+    )
+    .await?;`; behavior test `managed_retries_read_current_owner_ban`; verify `scripts/postgres-test-run.sh`
+- Invocation: `crates/buzz-relay/src/handlers/ingest.rs` → `check_channel_membership_with_authority`; exact call `check_channel_membership_with_authority(
+                tenant.community(),
+                state,
+                ch_id,
+                &pubkey_bytes,
+                channel_row.as_ref(),
+                ChannelWrite::for_kind(kind_u32),
+                fresh_managed_authority,
+            )
+            .await;`; behavior test `managed_retries_read_current_private_membership`; verify `scripts/postgres-test-run.sh`
 - Verify: `just ci`
 
 ## `crates/buzz-relay/src/handlers/moderation_commands.rs`
@@ -3554,6 +3571,7 @@ Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
 New module: `false`.
 
+- Required symbol: `runtime_dependencies.own(tokio::spawn(delivery), cancel);`
 - Verify: `just ci`
 
 ## `crates/buzz-relay/src/nip11.rs`
@@ -4612,14 +4630,6 @@ New module: `false`.
 
 - Verify: `just ci`
 
-## `mobile/ios/Runner/NativeMessageMenu.swift`
-
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
-
-New module: `false`.
-
-- Verify: `just ci`
-
 ## `mobile/ios/Runner/NativeMessagePresentationCoordinator.swift`
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
@@ -5020,14 +5030,6 @@ New module: `false`.
 
 - Verify: `just ci`
 
-## `mobile/lib/shared/success_haptic.dart`
-
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
-
-New module: `false`.
-
-- Verify: `just ci`
-
 ## `mobile/lib/shared/widgets/native_message_presentation.dart`
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
@@ -5367,8 +5369,8 @@ Model real reader scroll intent before passive virtualized coverage regression
 New module: `false`.
 
 - Required symbol: `fast middle-page scroll settles with continuous mounted coverage`
-- Required symbol: `scrollTopBeforeWheel`
-- Required symbol: `page.mouse.wheel(0, -300)`
+- Required symbol: `scrollHeightBeforePrepend`
+- Required symbol: `page.mouse.wheel(0, -120)`
 - Required symbol: `viewportCoverage`
 - Verify: `pnpm -C desktop exec playwright test --project=smoke tests/e2e/scroll-history.spec.ts`
 - Verify: `python3 scripts/fork/sync.py validate`
@@ -6038,8 +6040,9 @@ Preserve one in-flight demo echo receive across drain ticks; retain bounded expl
 
 New module: `false`.
 
-- Required symbol: `tokio::pin!(receive);`
+- Required symbol: `tokio::pin!(recv);`
 - Required symbol: `demo_echo_keeps_inflight_read_across_ticks_and_still_drains`
+- Required symbol: `demo_echo_retains_pending_receive_across_housekeeping_ticks`
 - Verify: `cargo test -p buzz-relay -- --test-threads=1`
 
 ## `crates/buzz-acp/src/process_tree/codex_helpers.rs`
@@ -6100,8 +6103,8 @@ Bind duplicate voice-note playback assertions to stable emitted message IDs thro
 
 New module: `false`.
 
-- Required symbol: `const messageIds = await page.evaluate(`
-- Required symbol: `const firstCard = page.locator(`
+- Required symbol: `const [firstId, secondId] = await page.evaluate(`
+- Required symbol: `.locator(`[data-message-id="${firstId}"]`)`
 - Required symbol: `(player as HTMLAudioElement).loop = true;`
 - Verify: `cd desktop && pnpm exec playwright test --project=smoke tests/e2e/voice-note.spec.ts --retries=0`
 
@@ -6874,6 +6877,7 @@ Preserve YAML consumer compatibility while removing the unmaintained dependency 
 
 New module: `false`.
 
+- Required symbol: `rmcp = { version = "3.9",`
 - Verify: `just ci`
 - Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
 
@@ -6883,6 +6887,7 @@ Preserve YAML consumer compatibility while removing the unmaintained dependency 
 
 New module: `false`.
 
+- Required symbol: `rmcp = { version = "3.9",`
 - Verify: `just ci`
 - Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
 
@@ -7792,6 +7797,7 @@ Use the same immutable patched MeshLLM source as the desktop consumer to avoid d
 
 New module: `false`.
 
+- Required symbol: `9e7c2fb2181f66bea1f325c633e5a4364164d6fd`
 - Verify: `cargo test -p buzz-mesh-smoke`
 
 ## `desktop/src-tauri/src/commands/agent_discovery/managed_node.rs`
@@ -7881,8 +7887,7 @@ Exercise the edited thread head only after making its hover-only Reply action ac
 
 New module: `false`.
 
-- Required symbol: `await timelineRow.hover();`
-- Required symbol: `await replyButton.click();`
+- Required symbol: `await pressRowAction(page.getByTestId(`reply-message-${rootId}`));`
 - Required symbol: `deferThreadReplies: true`
 - Verify: `pnpm --dir desktop exec playwright test --project=smoke tests/e2e/thread-head-stale-edit.spec.ts`
 
@@ -8272,7 +8277,7 @@ New module: `false`.
 
 ## `crates/buzz-db/src/runtime/push_enqueue.rs`
 
-Use the existing durable match queue in the event transaction instead of the transient post-commit producer.
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
 
 New module: `false`.
 
@@ -8324,7 +8329,7 @@ New module: `false`.
 
 ## `migrations/0056_personal_read_state.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
 
 New module: `false`.
 
@@ -8334,7 +8339,7 @@ Registered upstream deletion: `true`.
 
 ## `migrations/0057_personal_read_started_at.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
 
 New module: `false`.
 
@@ -8360,7 +8365,7 @@ New module: `true`.
 
 ## `migrations/0058_personal_read_through_message.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
 
 New module: `false`.
 
@@ -8378,7 +8383,7 @@ New module: `true`.
 
 ## `migrations/0059_push_rollback_gate.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
 
 New module: `false`.
 
@@ -8396,7 +8401,7 @@ New module: `true`.
 
 ## `migrations/0060_push_single_application.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
 
 New module: `false`.
 
@@ -8406,7 +8411,7 @@ Registered upstream deletion: `true`.
 
 ## `migrations/0061_channel_labels.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
 
 New module: `false`.
 
@@ -8432,7 +8437,7 @@ New module: `true`.
 
 ## `migrations/0062_system_channel_type.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
 
 New module: `false`.
 
@@ -8442,7 +8447,7 @@ Registered upstream deletion: `true`.
 
 ## `migrations/0063_retire_push_match_trigger.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
 
 New module: `false`.
 
@@ -8460,7 +8465,7 @@ New module: `true`.
 
 ## `migrations/0064_profile_name_fields.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
 
 New module: `false`.
 
@@ -8486,7 +8491,7 @@ New module: `true`.
 
 ## `migrations/0065_retire_channel_ttl_trigger.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
 
 New module: `false`.
 
@@ -8496,7 +8501,7 @@ Registered upstream deletion: `true`.
 
 ## `migrations/0066_community_nip_fi_issuers.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
 
 New module: `false`.
 
@@ -8514,7 +8519,7 @@ New module: `true`.
 
 ## `migrations/0067_channel_join_role.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
 
 New module: `false`.
 
@@ -8540,7 +8545,7 @@ New module: `true`.
 
 ## `migrations/0068_entity_deletion_requests.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
 
 New module: `false`.
 
@@ -8721,7 +8726,8 @@ Wait for visible virtual targets before acknowledging navigation and preserve te
 
 New module: `false`.
 
-- Required symbol: `const needsRealization`
+- Required symbol: `pendingRealization: !visible`
+- Required symbol: `if (!visible) return false;`
 - Required symbol: `else if (!virtualizerOwnsPrependAnchoring)`
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test "src/features/messages/ui/useAnchoredScroll*.test.mjs"`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
@@ -8976,6 +8982,7 @@ Retain dependency readers and audit until accepted work and workers finish
 
 New module: `true`.
 
+- Required symbol: `"storage-usage-delivery"`
 - Verify: `just test`
 - Verify: `just ci`
 
@@ -8994,6 +9001,8 @@ Connect deployment lifecycle ownership to the existing relay or workflow path
 
 New module: `false`.
 
+- Invocation: `crates/buzz-relay/src/handlers/side_effects.rs` → `track_accepted_child`; exact call `|| state.track_accepted_child(crate::deploy_drain::WorkKind::Background),`; behavior test `deployment_summary_spawn_retains_work_and_failed_lookup_is_unresolved`; verify `cargo test -p buzz-relay`
+- Invocation: `crates/buzz-relay/src/handlers/side_effects.rs` → `track_accepted_child`; exact call `let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);`; behavior test `channel_delete_notifies_every_member_after_cleanup`; verify `scripts/postgres-test-run.sh`
 - Verify: `just test`
 - Verify: `just ci`
 
@@ -9831,3 +9840,564 @@ New module: `true`.
 - Required symbol: `linux_inhibitor_and_payload_retain_background_work`
 - Required symbol: `native_caffeinate_and_ordinary_sleep_both_block`
 - Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `.github/workflows/_ci-flake.yml`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `actionlint .github/workflows/_ci-flake.yml`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `.github/workflows/loadgen-image.yml`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Required symbol: `vars.GHCR_LOADGEN_IMAGE`
+- Required symbol: `github.repository == 'block/buzz'`
+- Verify: `actionlint .github/workflows/loadgen-image.yml`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `RELEASING.md`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `VISION_MOBILE.md`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `crates/buzz-db/src/store/community_auth/postgres_tests.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-db/src/store/entity_deletion_postgres_tests.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-db/src/store/relay_invite/upgrade_postgres_tests.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-relay/src/handlers/artifact_sync.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Invocation: `crates/buzz-relay/src/handlers/artifact_sync.rs` → `track_accepted_child`; exact call `let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);`; behavior test `failed_live_publish_retains_retry_work_after_its_parent_finishes`; verify `cargo test -p buzz-relay`
+- Verify: `cargo test -p buzz-relay`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-relay/src/handlers/coalesced_refresh.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Required symbol: `pub fn request_tracked`
+- Required symbol: `complete &= success`
+- Required symbol: `work.scope(run).await`
+- Verify: `cargo test -p buzz-relay`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-relay/src/handlers/membership_notice_postgres_tests.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-relay`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-relay/src/storage_usage_delivery.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Invocation: `crates/buzz-relay/src/storage_usage_delivery.rs` → `deployment_worker`; exact call `state.deployment_worker("storage-usage-delivery")`; behavior test `storage_delivery_registers_before_spawn_and_quiesces_without_a_tick`; verify `cargo test -p buzz-relay`
+- Verify: `cargo test -p buzz-relay`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-relay/src/storage_usage_delivery/postgres_tests.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-relay`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-relay/src/storage_usage_delivery/tests.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-relay`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-relay/src/verified_profiles.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Invocation: `crates/buzz-relay/src/verified_profiles.rs` → `track_accepted_child`; exact call `let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);`; behavior test `admitted_profile_owns_work_before_spawn_and_after_socket_parent_finishes`; verify `cargo test -p buzz-relay`
+- Verify: `cargo test -p buzz-relay`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-relay/tests/boot_lifecycle.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-relay`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-search/src/query.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-search`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `docs/artifact-sync-deployment.md`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `docs/profile-search.md`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `migrations/0069_entity_deletion_approval.sql`
+
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0070_entity_deletion_approval.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0070_validate_entity_deletion_status.sql`
+
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0071_channel_unlisted.sql`
+
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0071_validate_entity_deletion_status.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0072_channel_unlisted.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0072_user_deletion_target.sql`
+
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0073_user_deletion_target.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0073_validate_user_deletion_target.sql`
+
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0074_user_deletion_fences.sql`
+
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0074_validate_user_deletion_target.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0075_invite_revocation.sql`
+
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0075_user_deletion_fences.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0076_artifact_revision_lookup.sql`
+
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0076_invite_revocation.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0077_artifact_revision_lookup.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0077_artifact_sync_timestamps.sql`
+
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0078_artifact_sync_indexes.sql`
+
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0078_artifact_sync_timestamps.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0079_artifact_sync_indexes.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0079_nip_fi_verified_profiles.sql`
+
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0080_channel_auto_join.sql`
+
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0080_nip_fi_verified_profiles.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0081_channel_auto_join.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0081_nip_fi_profile_head_names.sql`
+
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0082_community_auth_upgrades.sql`
+
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0082_nip_fi_profile_head_names.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0083_community_auth_upgrades.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `mobile/lib/shared/agents/owned_agent_directory.dart`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `just mobile-test`
+
+## `mobile/test/features/agents/agent_ordering_test.dart`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `just mobile-test`
+
+## `mobile/test/features/agents/agents_harness.dart`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `just mobile-test`
+
+## `mobile/test/features/agents/agents_sheet_test.dart`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `just mobile-test`
+
+## `mobile/test/shared/agents/owned_agent_directory_test.dart`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `just mobile-test`
+
+## `perf/LOADGEN.md`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `web/src/features/invite/ui/InvitePage.tsx`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `pnpm --dir web test:e2e`
+- Verify: `pnpm --dir web check`
+
+## `web/src/shared/lib/buzz-download.ts`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Required symbol: `https://github.com/reynholm/buzz/releases`
+- Required symbol: `release.draft || release.prerelease`
+- Required symbol: `buzz.latestDownload.reynholm-buzz.stable.v3`
+- Required symbol: `/_x64\.dmg$/i`
+- Verify: `pnpm --dir web test:e2e`
+- Verify: `pnpm --dir web check`
+
+## `web/tests/e2e/smoke.spec.ts`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `pnpm --dir web test:e2e`
+- Verify: `pnpm --dir web check`
+
+## `crates/buzz-agent/src/mcp.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`

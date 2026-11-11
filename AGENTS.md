@@ -755,13 +755,19 @@ Key files:
 
 The mobile app lives in `mobile/` — a Flutter app using Riverpod + Hooks.
 
+Desktop and mobile are supported clients. Preserve their shared behavior and
+cross-client wire compatibility, including event payloads documented in code
+(such as the `channel-sort` NIP-78 payload). Written product intent takes
+priority over implementation precedent; presentation and interaction should
+suit each platform.
+
 ### Architecture
 
 - **State management:** Riverpod + `flutter_hooks` (`HookConsumerWidget`)
-- **Theme:** Catppuccin Latte (light) / Macchiato (dark) — matches desktop
+- **Theme:** Catppuccin Latte (light) / Macchiato (dark)
 - **Features:** Isolated under `lib/features/`, shared code in `lib/shared/`
 - **Nostr models:** `lib/shared/relay/nostr_models.dart` — event kinds must
-  stay in sync with `desktop/src/shared/constants/kinds.ts`
+  stay in sync with `crates/buzz-core/src/kind.rs`
 
 ### Rules
 
