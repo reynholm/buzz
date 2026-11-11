@@ -5840,10 +5840,21 @@
     },
     {
       "path": "crates/buzz-relay/src/handlers/auth.rs",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Preserve accepted default-join background lineage through AUTH socket cleanup and drain.",
       "is_new": false,
-      "required_symbols": [],
-      "invocation_seams": [],
+      "required_symbols": [
+        "let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);",
+        "include!(\"auth_deploy_postgres_tests.rs\");"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-relay/src/handlers/auth.rs",
+          "callee_symbol": "run_accepted",
+          "invocation": "tokio::spawn(crate::deploy_drain::run_accepted(work, async move {",
+          "behavior_test": "root_auth_first_default_join_remains_owned_after_socket_closes",
+          "verification_command": "scripts/postgres-test-run.sh -p buzz-relay --lib"
+        }
+      ],
       "verification_commands": [
         "just ci"
       ]
@@ -15447,6 +15458,18 @@
       "invocation_seams": [],
       "verification_commands": [
         "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/handlers/auth_deploy_postgres_tests.rs",
+      "responsibility": "Drive actual WebSocket AUTH and a blocked membership write to prove a writer default join remains drain-owned after socket cleanup.",
+      "is_new": true,
+      "required_symbols": [
+        "root_auth_first_default_join_remains_owned_after_socket_closes"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "scripts/postgres-test-run.sh -p buzz-relay --lib"
       ]
     }
   ],

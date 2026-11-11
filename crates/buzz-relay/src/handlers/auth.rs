@@ -1002,7 +1002,10 @@ pub async fn handle_auth(event: nostr::Event, conn: Arc<ConnectionState>, state:
                 let state = Arc::clone(&state);
                 let tenant = conn.tenant.clone();
                 let gate = Arc::clone(&conn.nip_fi_gate);
-                tokio::spawn(async move {
+                // Capture the accepted AUTH lineage before the detached task
+                // can outlive its socket.
+                let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);
+                tokio::spawn(crate::deploy_drain::run_accepted(work, async move {
                     crate::handlers::side_effects::auto_join_never_joined_channels(
                         &tenant,
                         &state,
@@ -1010,7 +1013,7 @@ pub async fn handle_auth(event: nostr::Event, conn: Arc<ConnectionState>, state:
                         &gate,
                     )
                     .await;
-                });
+                }));
             }
             // A test waits on every admission's auto-join outcome, so a skip
             // reports here as the spawned task does when it finishes.
@@ -1966,6 +1969,8 @@ mod tests {
 
     mod postgres_tests {
         use super::*;
+
+        include!("auth_deploy_postgres_tests.rs");
 
         // Shadow records the deny-set check where enforce runs it, and admits
         // with OK(true) either way, as Off does. Mutation: deleting root's

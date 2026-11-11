@@ -3469,10 +3469,13 @@ New module: `false`.
 
 ## `crates/buzz-relay/src/handlers/auth.rs`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Preserve accepted default-join background lineage through AUTH socket cleanup and drain.
 
 New module: `false`.
 
+- Required symbol: `let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);`
+- Required symbol: `include!("auth_deploy_postgres_tests.rs");`
+- Invocation: `crates/buzz-relay/src/handlers/auth.rs` → `run_accepted`; exact call `tokio::spawn(crate::deploy_drain::run_accepted(work, async move {`; behavior test `root_auth_first_default_join_remains_owned_after_socket_closes`; verify `scripts/postgres-test-run.sh -p buzz-relay --lib`
 - Verify: `just ci`
 
 ## `crates/buzz-relay/src/handlers/community_provisioning.rs`
@@ -10401,3 +10404,12 @@ Preserve fork behavior while integrating the upstream writer checkpoint.
 New module: `false`.
 
 - Verify: `python3 scripts/fork/sync.py validate`
+
+## `crates/buzz-relay/src/handlers/auth_deploy_postgres_tests.rs`
+
+Drive actual WebSocket AUTH and a blocked membership write to prove a writer default join remains drain-owned after socket cleanup.
+
+New module: `true`.
+
+- Required symbol: `root_auth_first_default_join_remains_owned_after_socket_closes`
+- Verify: `scripts/postgres-test-run.sh -p buzz-relay --lib`
