@@ -1,12 +1,18 @@
 use super::*;
 
 #[test]
-fn sleep_inhibitor_commands_exclude_ordinary_work() {
+fn sleep_inhibitors_cannot_prove_provider_work_is_finished() {
     for (command, helper) in [
-        ("caffeinate -is", true),
-        ("/usr/bin/caffeinate -is", true),
-        ("systemd-inhibit --what=sleep --who=Qwen Code --why=Working on a request --mode=block sleep infinity", true),
-        ("/usr/bin/systemd-inhibit --no-ask-password --what=sleep --who=Qwen Code --why=Working --mode=block sleep infinity", true),
+        ("caffeinate -is", false),
+        ("/usr/bin/caffeinate -is", false),
+        (
+            "systemd-inhibit --what=sleep --who=Qwen Code --why=Working on a request --mode=block sleep infinity",
+            false,
+        ),
+        (
+            "/usr/bin/systemd-inhibit --no-ask-password --what=sleep --who=Qwen Code --why=Working --mode=block sleep infinity",
+            false,
+        ),
         ("caffeinate", false),
         ("caffeinate -is make test", false),
         ("caffeinate -is -t 60", false),
@@ -14,9 +20,18 @@ fn sleep_inhibitor_commands_exclude_ordinary_work() {
         ("my-caffeinate -is", false),
         ("/bin/sh -c caffeinate -is", false),
         ("python3 task.py --label caffeinate -is", false),
-        ("systemd-inhibit --what=sleep --who=Qwen Code --why=Working --mode=block sleep 60", false),
-        ("systemd-inhibit --what=sleep --who=Qwen Code --why=Working --mode=block make test", false),
-        ("systemd-inhibit --what=sleep --who=Other --why=Working --mode=block sleep infinity", false),
+        (
+            "systemd-inhibit --what=sleep --who=Qwen Code --why=Working --mode=block sleep 60",
+            false,
+        ),
+        (
+            "systemd-inhibit --what=sleep --who=Qwen Code --why=Working --mode=block make test",
+            false,
+        ),
+        (
+            "systemd-inhibit --what=sleep --who=Other --why=Working --mode=block sleep infinity",
+            false,
+        ),
         ("systemd-inhibit --help", false),
         ("sleep infinity", false),
     ] {
@@ -25,11 +40,11 @@ fn sleep_inhibitor_commands_exclude_ordinary_work() {
 }
 
 #[test]
-fn linux_inhibitor_sleep_is_only_resident_under_the_matching_parent() {
+fn linux_inhibitor_and_payload_retain_background_work() {
     for (child, expected) in [
-        ("/usr/bin/sleep infinity", HashSet::from([30])),
-        ("sleep 60", HashSet::from([21, 30])),
-        ("python3 task.py", HashSet::from([21, 30])),
+        ("/usr/bin/sleep infinity", HashSet::from([20, 21, 30])),
+        ("sleep 60", HashSet::from([20, 21, 30])),
+        ("python3 task.py", HashSet::from([20, 21, 30])),
     ] {
         let tree = parse_snapshot(&format!(
             "20 10 S /usr/bin/systemd-inhibit --what=sleep --who=Qwen Code --why=Working --mode=block sleep infinity\n\
@@ -45,7 +60,7 @@ fn linux_inhibitor_sleep_is_only_resident_under_the_matching_parent() {
 
 #[cfg(target_os = "macos")]
 #[tokio::test]
-async fn native_caffeinate_is_resident_while_ordinary_sleep_blocks() {
+async fn native_caffeinate_and_ordinary_sleep_both_block() {
     use std::time::{Duration, Instant};
 
     let mut inhibitor = tokio::process::Command::new("/usr/bin/caffeinate")
@@ -80,6 +95,6 @@ async fn native_caffeinate_is_resident_while_ordinary_sleep_blocks() {
     inhibitor.kill().await.unwrap();
     work.kill().await.unwrap();
     let blocking = observed.expect("native processes reached their executable identities");
-    assert!(!blocking.contains(&inhibitor_pid));
+    assert!(blocking.contains(&inhibitor_pid));
     assert!(blocking.contains(&work_pid));
 }
