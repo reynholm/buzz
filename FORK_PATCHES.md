@@ -2719,13 +2719,15 @@ New module: `false`.
 
 ## `Justfile`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Select the infra-free demo echo cancellation regression in the required nextest unit lane.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Select the infra-free demo echo cancellation regression in the required nextest unit lane. Select artifact sync recovery and operational subscriber regressions in the required nextest unit lanes.
 
 New module: `false`.
 
 - Required symbol: `test(/^mesh_boot::tests::/)`
 - Required symbol: `${BUZZ_STAGING_RELAY_URL:?Set BUZZ_STAGING_RELAY_URL to the staging relay}`
 - Required symbol: `scripts/test-manual-relay-image-workflow.py`
+- Required symbol: `test(/^handlers::artifact_sync::/)`
+- Required symbol: `test(/^subscriber::tests::/)`
 - Verify: `just ci`
 - Verify: `just test-unit`
 
@@ -3284,11 +3286,16 @@ New module: `false`.
 
 ## `crates/buzz-pubsub/src/lib.rs`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Publish a fixed artifact sync loss control without retaining event or tenant payloads.
 
 New module: `false`.
 
+- Required symbol: `pub async fn publish_sync_loss(`
+- Required symbol: `.arg(subscriber::SYNC_LOSS_CHANNEL)`
+- Required symbol: `.arg("resync")`
 - Verify: `just ci`
+- Verify: `cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture`
+- Verify: `cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture`
 
 ## `crates/buzz-pubsub/src/nip_fi_command_replay.rs`
 
@@ -5303,12 +5310,14 @@ New module: `false`.
 
 ## `scripts/run-tests.sh`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Keep the cargo-test fallback selecting the same demo echo receive-retention regression as nextest.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Keep the cargo-test fallback selecting the same demo echo receive-retention regression as nextest. Keep the Cargo fallback selecting artifact sync recovery and operational subscriber regressions.
 
 New module: `false`.
 
 - Required symbol: `buzz-relay demo echo receive retention`
 - Required symbol: `scripts/test-manual-relay-image-workflow.py`
+- Required symbol: `cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture`
+- Required symbol: `cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture`
 - Verify: `just ci`
 - Verify: `bash -n scripts/run-tests.sh`
 - Verify: `just test-unit`
@@ -9921,13 +9930,17 @@ New module: `false`.
 
 ## `crates/buzz-relay/src/handlers/artifact_sync.rs`
 
-Preserve fork behavior while integrating the upstream writer checkpoint.
+Preserve fork behavior while integrating the upstream writer checkpoint. Coalesce failed live fanout into one accepted recovery worker with a dirty bit, race-safe retirement and a persistent retry interval.
 
 New module: `false`.
 
+- Required symbol: `publish_recovery: StdMutex<PublishRecovery>`
+- Required symbol: `const RECOVERY_INTERVAL: Duration = Duration::from_secs(5);`
 - Invocation: `crates/buzz-relay/src/handlers/artifact_sync.rs` → `track_accepted_child`; exact call `let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);`; behavior test `failed_live_publish_retains_retry_work_after_its_parent_finishes`; verify `cargo test -p buzz-relay`
+- Invocation: `crates/buzz-relay/src/handlers/artifact_sync.rs` → `publish_sync_loss`; exact call `let published = state.pubsub.publish_sync_loss().await.is_ok();`; behavior test `loss_during_ack_and_after_retirement_keeps_one_owned_rate_limited_worker`; verify `cargo test -p buzz-relay --lib handlers::artifact_sync::publish_tests::loss_during_ack_and_after_retirement_keeps_one_owned_rate_limited_worker -- --exact`
 - Verify: `cargo test -p buzz-relay`
 - Verify: `scripts/postgres-test-run.sh`
+- Verify: `cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture`
 
 ## `crates/buzz-relay/src/handlers/coalesced_refresh.rs`
 
@@ -10905,3 +10918,197 @@ New module: `true`.
 - Required symbol: `root_auth_first_default_join_remains_owned_after_socket_closes`
 - Required symbol: `root_auth_pending_default_join_remains_owned_after_socket_closes`
 - Verify: `scripts/postgres-test-run.sh -p buzz-relay --lib`
+
+## `crates/buzz-pubsub/src/subscriber.rs`
+
+Subscribe to operational loss before readiness and advance the live loss epoch without forwarding a client Event.
+
+New module: `false`.
+
+- Required symbol: `pub(crate) const SYNC_LOSS_CHANNEL: &str = "buzz:control:artifact-sync-loss";`
+- Invocation: `crates/buzz-pubsub/src/subscriber.rs` → `subscribe`; exact call `sink.subscribe(SYNC_LOSS_CHANNEL).await?;`; behavior test `control_subscription_covers_ready_readers_and_never_forwards_events`; verify `cargo test -p buzz-pubsub --lib subscriber::tests::control_subscription_covers_ready_readers_and_never_forwards_events -- --exact`
+- Invocation: `crates/buzz-pubsub/src/subscriber.rs` → `mark_loss`; exact call `if channel_name == SYNC_LOSS_CHANNEL {
+                    // Even an unfamiliar control payload means possible loss.
+                    mark_loss(link, true);`; behavior test `control_subscription_covers_ready_readers_and_never_forwards_events`; verify `cargo test -p buzz-pubsub --lib subscriber::tests::control_subscription_covers_ready_readers_and_never_forwards_events -- --exact`
+- Verify: `cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture`
+
+## `crates/buzz-relay/src/handlers/artifact_sync_publish_tests.rs`
+
+Exercise real recovery publication against a controlled Redis transport: concurrent loss, retry spacing, retirement and drain acknowledgement.
+
+New module: `true`.
+
+- Required symbol: `async fn loss_during_ack_and_after_retirement_keeps_one_owned_rate_limited_worker()`
+- Verify: `cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture`
+
+## `docs/nips/NIP-AR.md`
+
+Specify bounded coalesced artifact loss recovery, accepted drain ownership and coordinated operational-topic rollout.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture`
+- Verify: `cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture`
+
+## `mobile/ios/RunnerTests/BrowserAuthBridgeTests.swift`
+
+Use fictional organization hosts in the native browser login allow/refuse table while preserving production URL policy and every assertion.
+
+New module: `false`.
+
+- Required symbol: `func testAllowsOnlyBuilderlabLoginPages()`
+- Required symbol: `https://example-org.builderlab.xyz/api/goose/v1/auth/login?type=cli`
+- Verify: `cd mobile && xcodebuild test -workspace ios/Runner.xcworkspace -scheme Runner -destination "${BUZZ_IOS_TEST_DESTINATION:?Set an available iOS Simulator destination}" -only-testing:RunnerTests/BrowserAuthBridgeTests`
+
+## `mobile/lib/shared/hosted/builderlab_account.dart`
+
+Expose same-subject session revisions and reject retired queued operations before credentials or network side effects.
+
+New module: `false`.
+
+- Required symbol: `ValueListenable<int> get sessionChanges`
+- Required symbol: `void Function()? checkCurrent`
+- Invocation: `mobile/lib/shared/hosted/builderlab_account.dart` → `checkCurrent`; exact call `return _serial(() async {
+      checkCurrent?.call();
+      final credential = _credential;`; behavior test `callback exchange waits for an in-flight startup restore`; verify `cd mobile && flutter test --no-pub test/shared/hosted/builderlab_account_test.dart --plain-name 'callback exchange waits'`
+- Verify: `cd mobile && flutter test --no-pub test/shared/hosted/builderlab_account_test.dart --plain-name 'callback exchange waits'`
+
+## `mobile/lib/shared/agents/remote_agents.dart`
+
+Pin agent creation to its original account, identity slot, community and generation; retain recovery in the original storage scope and fence late UI/network effects.
+
+New module: `false`.
+
+- Required symbol: `void Function() _sessionCheck()`
+- Required symbol: `account.sessionChanges.addListener(_accountChanged);`
+- Required symbol: `_savePending(value, scope, check);`
+- Invocation: `mobile/lib/shared/agents/remote_agents.dart` → `_accountChanged`; exact call `controller._accountChanged();`; behavior test `creation journal retires on community away and back and remains resumable`; verify `cd mobile && flutter test --no-pub test/shared/agents/remote_agent_session_test.dart --plain-name 'community away and back'`
+- Invocation: `mobile/lib/shared/agents/remote_agents.dart` → `check`; exact call `check();
+    pending = value;`; behavior test `creation journal retires on different account and remains resumable`; verify `cd mobile && flutter test --no-pub test/shared/agents/remote_agent_session_test.dart`
+- Invocation: `mobile/lib/shared/agents/remote_agents.dart` → `submitSignedEventOnce`; exact call `await submitSignedEventOnce(
+        wsUrl: config.wsUrl,
+        headers: headers,
+        checkCurrent: check,`; behavior test `registrations use a WebSocket URL for https-saved communities`; verify `cd mobile && flutter test --no-pub test/shared/agents/remote_agents_test.dart --plain-name 'registrations use a WebSocket URL for https-saved communities'`
+- Verify: `cd mobile && flutter test --no-pub test/shared/agents/remote_agent_session_test.dart`
+- Verify: `cd mobile && flutter test --no-pub test/shared/agents/remote_agents_test.dart --plain-name 'registrations use a WebSocket URL for https-saved communities'`
+
+## `mobile/lib/shared/relay/signed_event_relay.dart`
+
+Allow scoped callers to retire a one-shot signed publication immediately before EVENT send after socket authentication.
+
+New module: `false`.
+
+- Required symbol: `void Function()? checkCurrent`
+- Invocation: `mobile/lib/shared/relay/signed_event_relay.dart` → `checkCurrent`; exact call `onConnected: () {
+      checkCurrent?.call();
+      socket.send`; behavior test `registrations use a WebSocket URL for https-saved communities`; verify `cd mobile && flutter test --no-pub test/shared/agents/remote_agents_test.dart --plain-name 'registrations use a WebSocket URL for https-saved communities'`
+- Verify: `cd mobile && flutter test --no-pub test/shared/agents/remote_agents_test.dart --plain-name 'registrations use a WebSocket URL for https-saved communities'`
+
+## `mobile/lib/shared/me/me_chat_creation.dart`
+
+Preserve uncertain expired first-message identity when exact visible history cannot prove acceptance; never resurrect deleted text by signing a replacement.
+
+New module: `false`.
+
+- Required symbol: `Confirm acceptance without replacing an expired identity`
+- Required symbol: `The first message’s delivery is uncertain and it is too old to retry.`
+- Verify: `cd mobile && flutter test --no-pub test/shared/me/me_chat_creation_test.dart`
+
+## `mobile/test/shared/agents/remote_agent_session_test.dart`
+
+Exercise real account/controller and provider lifetime fences across account changes, same-subject renewal and community away/back; retain original durable recovery.
+
+New module: `true`.
+
+- Verify: `cd mobile && flutter test --no-pub test/shared/agents/remote_agent_session_test.dart`
+
+## `mobile/test/shared/agents/remote_agents_test.dart`
+
+Exercise policy publication retirement during delayed socket connection and isolate the absent-community presence fixture.
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test --no-pub test/shared/agents/remote_agents_test.dart --plain-name 'registrations use a WebSocket URL for https-saved communities'`
+- Verify: `cd mobile && flutter test --no-pub test/shared/agents/remote_agents_test.dart`
+
+## `mobile/test/shared/hosted/builderlab_account_test.dart`
+
+Exercise the real serialized account queue with a session revision guard after same-subject credential renewal.
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test --no-pub test/shared/hosted/builderlab_account_test.dart --plain-name 'callback exchange waits'`
+
+## `mobile/test/shared/me/me_chat_creation_test.dart`
+
+Cover expired absent, visible and deleted first-message acceptance, original intent retention and explicit discard; retain unexpired same-ID retry checks.
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test --no-pub test/shared/me/me_chat_creation_test.dart`
+
+## `mobile/test/helpers/hosted_communities_fixture.dart`
+
+Keep external account fixture signatures compatible with the optional queued operation guard.
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test --no-pub test/shared/hosted`
+
+## `mobile/test/helpers/remote_agents_fixture.dart`
+
+Keep external account fixture signatures compatible with the optional queued operation guard.
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test --no-pub test/shared/agents test/shared/hosted`
+
+## `mobile/test/shared/hosted/device_identity_reconciliation_test.dart`
+
+Keep external account fixture signatures compatible with the optional queued operation guard.
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test --no-pub test/shared/hosted/device_identity_reconciliation_test.dart`
+
+## `mobile/test/shared/hosted/hosted_admission_test.dart`
+
+Keep external account fixture signatures compatible with the optional queued operation guard.
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test --no-pub test/shared/hosted/hosted_admission_test.dart`
+
+## `mobile/test/shared/hosted/hosted_backup_service_test.dart`
+
+Keep external account fixture signatures compatible with the optional queued operation guard.
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test --no-pub test/shared/hosted/hosted_backup_service_test.dart`
+
+## `mobile/test/shared/hosted/hosted_environment_flow_test.dart`
+
+Keep external account fixture signatures compatible with the optional queued operation guard.
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test --no-pub test/shared/hosted/hosted_environment_flow_test.dart`
+
+## `crates/buzz-test-client/src/loadgen/desktop.rs`
+
+Wait for the asserted legacy unread repair before stopping the fixture; retain the production clients, timeout and all post-drive assertions.
+
+New module: `false`.
+
+- Required symbol: `&& o.count("desktop_unread") >= 4`
+- Verify: `cargo test -p buzz-test-client --lib loadgen::desktop::tests::legacy_ticks_reread_and_replace_batches_every_tick -- --exact`
+
+## `mobile/test/shared/relay/media_disk_cache_test.dart`
+
+Observe durable bytes before cold cache reopen instead of assuming image decoding completes asynchronous disk writes; preserve production and assertions.
+
+New module: `false`.
+
+- Required symbol: `if (!listEquals((await cache.read(url))?.bytes, _pngBytes))`
+- Verify: `cd mobile && flutter test --no-pub test/shared/relay/media_disk_cache_test.dart`
