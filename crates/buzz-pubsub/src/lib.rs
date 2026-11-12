@@ -418,6 +418,18 @@ impl PubSubManager {
         publisher::publish_event(&self.pool, ctx, topic, event).await
     }
 
+    /// Notify every subscriber node of uncertain artifact live delivery.
+    /// This fixed operational signal contains no tenant data or client event;
+    /// subscribers advance their loss epoch and reauthorize fresh snapshots.
+    pub async fn publish_sync_loss(&self) -> Result<i64, PubSubError> {
+        let mut conn = self.pool.get().await?;
+        Ok(redis::cmd("PUBLISH")
+            .arg(subscriber::SYNC_LOSS_CHANNEL)
+            .arg("resync")
+            .query_async(&mut conn)
+            .await?)
+    }
+
     /// Set presence with 180s TTL. Call on connect and every 60s heartbeat.
     pub async fn set_presence(
         &self,

@@ -104,6 +104,13 @@ run_unit_tests() {
   run_test_step "buzz-pubsub conn_control tests" \
     cargo test -p buzz-pubsub --lib conn_control::tests:: -- --nocapture
 
+  # Artifact loss controls are part of the production Redis subscription loop.
+  run_test_step "buzz-pubsub subscriber tests" \
+    cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture
+
+  run_test_step "buzz-relay artifact sync tests" \
+    cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture
+
   run_test_step "buzz-voice tests" \
     cargo test -p buzz-voice --lib -- --nocapture
 
