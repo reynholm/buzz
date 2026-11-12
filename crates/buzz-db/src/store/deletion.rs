@@ -94,6 +94,8 @@ pub const EXPECTED_SCOPED_TABLES: &[&str] = &[
     "git_repo_names",
     "join_policy_acceptances",
     "managed_deliveries",
+    "media_uploaders",
+    "media_publications",
     "moderation_actions",
     "moderation_reports",
     "parameterized_event_watermarks",
@@ -139,6 +141,8 @@ pub const PURGE_SCOPED_TABLES: &[&str] = &[
     "workflow_runs",
     "push_wake_outbox",
     "join_policy_acceptances",
+    "media_uploaders",
+    "media_publications",
     "moderation_reports",
     "subscriptions",
     "api_tokens",
@@ -4578,37 +4582,8 @@ mod postgres_tests {
         (db, store)
     }
 
-    #[tokio::test]
-    #[ignore = "requires Postgres"]
-    async fn migration_schema_fence_objects_are_optional_for_serving_and_deletion() {
-        let db = Db::new(&DbConfig {
-            database_url: crate::test_support::database_url(),
-            max_connections: 5,
-            min_connections: 0,
-            ..DbConfig::default()
-        })
-        .await
-        .expect("connect isolated migration DB");
-        crate::migration::run_migrations(&db.pool)
-            .await
-            .expect("migrate with fence objects present");
-        let store = db.deletion_store();
-        let legacy_fenced_tables = store.live_fenced_tables().await.expect("legacy fences");
-        // Include current tables without requiring new application-admitted
-        // tables to acquire legacy database fence triggers.
-        db.migrate()
-            .await
-            .expect("migrate current deletion catalog");
-        let community = db
-            .ensure_configured_community("optional-fences.example")
-            .await
-            .expect("community")
-            .id;
-        for objects_present in [true, false] {
-            if !objects_present {
-                // Drop the fence objects by hand, as the retirement migration
-                // will; this change itself ships no schema changes.
-                sqlx::raw_sql(r#"
+    async fn retire_legacy_write_fences(pool: &PgPool) {
+        sqlx::raw_sql(r#"
 DROP TRIGGER IF EXISTS community_write_fence_api_tokens ON api_tokens;
 DROP TRIGGER IF EXISTS community_write_fence_archived_identities ON archived_identities;
 DROP TRIGGER IF EXISTS community_write_fence_artifact_heads ON artifact_heads;
@@ -4651,9 +4626,42 @@ DROP FUNCTION community_write_allowed(UUID);
 DROP FUNCTION community_write_fence_excluded_table(NAME);
 
                 "#)
-                .execute(&db.pool)
+                .execute(pool)
                 .await
                 .expect("retire only universal fence objects");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn migration_schema_fence_objects_are_optional_for_serving_and_deletion() {
+        let db = Db::new(&DbConfig {
+            database_url: crate::test_support::database_url(),
+            max_connections: 5,
+            min_connections: 0,
+            ..DbConfig::default()
+        })
+        .await
+        .expect("connect isolated migration DB");
+        crate::migration::run_migrations(&db.pool)
+            .await
+            .expect("migrate with fence objects present");
+        let store = db.deletion_store();
+        let legacy_fenced_tables = store.live_fenced_tables().await.expect("legacy fences");
+        // Include current tables without requiring new application-admitted
+        // tables to acquire legacy database fence triggers.
+        db.migrate()
+            .await
+            .expect("migrate current deletion catalog");
+        let community = db
+            .ensure_configured_community("optional-fences.example")
+            .await
+            .expect("community")
+            .id;
+        for objects_present in [true, false] {
+            if !objects_present {
+                // Drop the fence objects by hand, as the retirement migration
+                // will; this change itself ships no schema changes.
+                retire_legacy_write_fences(&db.pool).await;
             }
             store
                 .validate_serving_catalog()
@@ -8071,7 +8079,23 @@ DROP FUNCTION community_write_fence_excluded_table(NAME);
     #[tokio::test]
     #[ignore = "requires Postgres"]
     async fn checkpointed_resume_is_idempotent_and_tombstone_blocks_name_reuse() {
+        checkpointed_resume_contract(false).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn migration_schema_checkpointed_resume_purges_media_and_managed_receipts_with_optional_fences(
+    ) {
+        for retire_fences in [false, true] {
+            checkpointed_resume_contract(retire_fences).await;
+        }
+    }
+
+    async fn checkpointed_resume_contract(retire_fences: bool) {
         let (db, store) = store().await;
+        if retire_fences {
+            retire_legacy_write_fences(&db.pool).await;
+        }
         let (request, inventory) = inventoried_request(&db, &store).await;
         let host = request.community_host.clone();
         let read_state_d_tag = format!("read-state:{}", "a".repeat(32));
@@ -8092,6 +8116,29 @@ DROP FUNCTION community_write_fence_excluded_table(NAME);
         .execute(&db.pool)
         .await
         .expect("insert guarded NIP-RS row");
+        let receipt_channel = Uuid::new_v4();
+        let receipt_key = Uuid::new_v4();
+        let receipt = nostr::EventBuilder::new(
+            nostr::Kind::Custom(9),
+            "canonical report retained until purge",
+        )
+        .tags([
+            nostr::Tag::parse(["h", &receipt_channel.to_string()]).unwrap(),
+            nostr::Tag::parse(["buzz-delivery", &receipt_key.to_string()]).unwrap(),
+        ])
+        .sign_with_keys(&nostr::Keys::generate())
+        .unwrap();
+        sqlx::query("INSERT INTO managed_deliveries (community_id,author,delivery_key,channel_id,event,received_at) VALUES ($1,$2,$3,$4,$5,clock_timestamp())")
+            .bind(request.community_id.as_uuid()).bind(receipt.pubkey.to_bytes().as_slice())
+            .bind(receipt_key).bind(receipt_channel).bind(serde_json::to_value(&receipt).unwrap())
+            .execute(&db.pool).await.expect("seed canonical recovery receipt");
+        let media_hash = "a".repeat(64);
+        db.record_media_upload(request.community_id, &media_hash, &[7; 32])
+            .await
+            .expect("upload proof");
+        db.record_media_publications(request.community_id, vec![media_hash.clone()])
+            .await
+            .expect("publication boundary");
         store
             .approve(request.id, "approver", None)
             .await
@@ -8102,6 +8149,14 @@ DROP FUNCTION community_write_fence_excluded_table(NAME);
             .expect("claim")
             .expect("won claim");
         store.begin_quiescing(&claim.lease).await.expect("quiesce");
+        assert!(db
+            .record_media_upload(request.community_id, &media_hash, &[8; 32])
+            .await
+            .is_err());
+        assert!(db
+            .record_media_publications(request.community_id, vec!["b".repeat(64)])
+            .await
+            .is_err());
         let generation = store.fence(&claim.lease).await.expect("fence");
         let token = LeaseToken {
             fence_generation: Some(generation),
@@ -8157,6 +8212,9 @@ DROP FUNCTION community_write_fence_excluded_table(NAME);
             .await
             .expect("bindings");
         let first = store.purge_postgres(&token).await.expect("purge postgres");
+        assert_eq!(first["managed_deliveries"], 1);
+        assert_eq!(first["media_uploaders"], 1);
+        assert_eq!(first["media_publications"], 1);
         let expected_tables: BTreeSet<&str> = EXPECTED_SCOPED_TABLES
             .iter()
             .chain(RELAY_ADMIN_TABLES.iter().map(|(table, _)| table))
@@ -8719,12 +8777,12 @@ DROP FUNCTION community_write_fence_excluded_table(NAME);
         let deleted = store.purge_postgres(&token).await.expect("purge postgres");
 
         let upgrade = db
-            .community_auth_upgrade_status(upgrade_id, "operator")
+            .community_auth_policy_status(upgrade_id, "operator")
             .await
             .unwrap()
             .expect("receipt survives purge");
-        assert_eq!(upgrade.community_id, community);
-        assert_eq!(upgrade.state, "unavailable");
+        assert_eq!(upgrade.acceptance.community_id, community);
+        assert_eq!(upgrade.acceptance.state, "unavailable");
         let retained: Uuid = sqlx::query_scalar(
             "SELECT target_community_id FROM entity_deletion_stage_history WHERE id = $1",
         )

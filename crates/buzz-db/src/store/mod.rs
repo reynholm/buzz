@@ -24,10 +24,15 @@ pub mod dm;
 pub mod entity_deletion;
 /// Event storage and retrieval.
 pub mod event;
+/// Atomic event deletion and retention-free purging.
+mod event_deletion;
 /// App-owned push enqueue and channel TTL refresh for inserted events.
 pub(crate) mod event_follow_up;
+mod event_hydration;
 /// Per-community NIP-FI issuer bindings.
 pub mod nip_fi_binding;
+/// Recent-first passes for newest-first `events` page reads.
+pub(crate) mod recent_pass;
 /// User-specific deletion submission and inventory preparation.
 pub mod user_deletion;
 /// Operator-global user restrictions and identity-lock primitives.
@@ -44,6 +49,8 @@ pub mod git_repo;
 pub mod leader_lock;
 /// Atomic managed report election.
 pub mod managed_delivery;
+/// Compact viewer membership projections.
+pub mod membership_snapshot;
 /// Community moderation: reports, bans/timeouts, audit actions.
 pub mod moderation;
 /// Deployment-global operator-listener mention registrations and delivery queues.
@@ -108,3 +115,11 @@ mod admission_postgres_tests;
 
 /// Durable NIP-FI verified-profile projection state.
 pub mod verified_profiles;
+
+/// Live reference authorization and upload possession.
+pub mod media;
+
+#[cfg(test)]
+mod media_postgres_tests;
+#[cfg(test)]
+mod message_edit_state_postgres_tests;

@@ -1,5 +1,5 @@
 diff --git a/lib/index.cjs b/lib/index.cjs
-index e02dfd0b3db60faff2cc705d7ce0aa51cb958f5a..b12677a356f748ebccf6e16cb781efe1315bb55b 100644
+index e02dfd0b3db60faff2cc705d7ce0aa51cb958f5a..bae64c41463558a778a3e1a4719126c30c28b0d7 100644
 --- a/lib/index.cjs
 +++ b/lib/index.cjs
 @@ -35,10 +35,18 @@ const r = null, {min: n, max: s, abs: i, floor: l} = Math, c = (e, t, o) => n(o,
@@ -54,7 +54,8 @@ index e02dfd0b3db60faff2cc705d7ce0aa51cb958f5a..b12677a356f748ebccf6e16cb781efe1
              }
              l && (d = 1 + (2147483647 & d), o && z && ($ += z, z = 0), O.forEach(([e, t]) => {
                  l & e && t(n);
-@@ -186,6 +198,8 @@ const r = null, {min: n, max: s, abs: i, floor: l} = Math, c = (e, t, o) => n(o,
+@@ -185,7 +197,9 @@ const r = null, {min: n, max: s, abs: i, floor: l} = Math, c = (e, t, o) => n(o,
+     })(), g = () => {
          c = l(), d && (a = !0), i && e.q(6, i()), e.q(1, n()), h();
      }, p = t => {
 -        if (f || !e.M() || t.ctrlKey) return;
@@ -64,16 +65,76 @@ index e02dfd0b3db60faff2cc705d7ce0aa51cb958f5a..b12677a356f748ebccf6e16cb781efe1
          const r = l() - c;
          150 > r && 50 < r && (o ? t.deltaX : t.deltaY) && (f = !0);
      }, v = () => {
-@@ -266,7 +279,7 @@ const r = null, {min: n, max: s, abs: i, floor: l} = Math, c = (e, t, o) => n(o,
+@@ -210,9 +224,10 @@ const r = null, {min: n, max: s, abs: i, floor: l} = Math, c = (e, t, o) => n(o,
+         }
+     };
+ }, C = (e, t, o) => {
+-    let r;
++    let r, generation = 0;
+     return [ async (n, s) => {
+-        if (!await t()) return;
++        const requestGeneration = ++generation;
++        if (!await t() || requestGeneration !== generation) return;
+         r && r();
+         const i = () => {
+             const [t, o] = d();
+@@ -224,6 +239,7 @@ const r = null, {min: n, max: s, abs: i, floor: l} = Math, c = (e, t, o) => n(o,
+         };
+         if (s && y()) e.q(8, n()), u(async () => {
+             for (;;) {
++                if (requestGeneration !== generation) return;
+                 let t = !0;
+                 for (let [o, r] = e.m(); o <= r; o++) if (e.I(o)) {
+                     t = !1;
+@@ -239,6 +255,7 @@ const r = null, {min: n, max: s, abs: i, floor: l} = Math, c = (e, t, o) => n(o,
+             }
+             e.q(7), o(n(), s);
+         }); else for (;;) {
++            if (requestGeneration !== generation) return;
+             const [t, r] = i();
+             try {
+                 if (e.q(7), o(n()), !await t) return;
+@@ -247,31 +264,34 @@ const r = null, {min: n, max: s, abs: i, floor: l} = Math, c = (e, t, o) => n(o,
+             }
+         }
+     }, () => {
++        generation++;
+         r && r();
+     } ];
+ }, M = (e, t) => {
+-    let o, r, n = d(), s = !1;
+-    const i = t ? "scrollLeft" : "scrollTop", l = t ? "overflowX" : "overflowY", [f, u] = C(e, () => n[0], (e, r) => {
++    let o, r, n = d(), s = !1, kk = 0;
++    const i = t ? "scrollLeft" : "scrollTop", l = t ? "overflowX" : "overflowY", ss = t ? "scrollWidth" : "scrollHeight", cc = t ? "clientWidth" : "clientHeight", [f, u] = C(e, () => n[0], (e, r) => {
+         e = R(e, s), r ? o.scrollTo({
+             [t ? "left" : "top"]: e,
+             behavior: "smooth"
+-        }) : o[i] = e;
++        }) : (o[i] = e, kk = R(o[i], s));
+     });
+     return {
+         L(c, f) {
+-            o = f, t && (s = "rtl" === getComputedStyle(f).direction), r = T(e, f, t, () => R(f[i], s), (t, o, r) => {
++            o = f, t && (s = "rtl" === getComputedStyle(f).direction), r = T(e, f, t, () => kk = R(f[i], s), (t, o, r) => {
+                 if (r) {
+                     const e = f.style, t = e[l];
+                     e[l] = "hidden", k(() => {
                          e[l] = t;
                      });
                  }
 -                f[i] = R(e.C() + t, s), o && u();
-+                f[i] = R((o ? R(f[i], s) : e.C()) + t, s), o && u();
++                const dd = R(f[i], s);
++                f[i] = R((o ? dd < kk && dd >= f[ss] - f[cc] - 1 ? kk : dd : e.C()) + t, s), kk = R(f[i], s), o && u();
              }), n[1](!0);
          },
          v() {
-@@ -519,11 +532,11 @@ const r = null, {min: n, max: s, abs: i, floor: l} = Math, c = (e, t, o) => n(o,
+             r && r.J(), n[1](!1), n = d();
+         },
++        cancelScroll: u,
+         N: () => s,
+         P(e) {
+             f(() => e);
+@@ -519,11 +539,11 @@ const r = null, {min: n, max: s, abs: i, floor: l} = Math, c = (e, t, o) => n(o,
      })(e);
      return [ e => t[e], t.length ];
  }, [ e, o ]), j = /*#__PURE__*/ t.forwardRef(({children: r, data: n, bufferSize: s, itemSize: i, shift: l, horizontal: c, keepMounted: d, cache: a, startMargin: h = 0, ssrCount: g, as: p = "div", item: v = "div", scrollRef: _, onScroll: w, onScrollEnd: S}, m) => {
@@ -88,8 +149,18 @@ index e02dfd0b3db60faff2cc705d7ce0aa51cb958f5a..b12677a356f748ebccf6e16cb781efe1
      const [H, q] = t.useReducer(T._, void 0, T._), B = T.M(), L = T.h(), j = O.N(), D = [], U = t => {
          const o = $(t);
          return e.jsx(Y, {
+@@ -573,7 +593,8 @@ const r = null, {min: n, max: s, abs: i, floor: l} = Math, c = (e, t, o) => n(o,
+         getItemSize: T.R,
+         scrollToIndex: O.Y,
+         scrollTo: O.P,
+-        scrollBy: O.X
++        scrollBy: O.X,
++        cancelScroll: O.cancelScroll
+     }), []), d) {
+         const e = new Set(d);
+         for (let [t, o] = T.m(s); t <= o; t++) e.add(t);
 diff --git a/lib/index.js b/lib/index.js
-index 110ac3858a002a6cdb698da2b56350bc1bf609d2..db83efc83fb3b6d7aa07d83b7463d6ed7746287e 100644
+index 110ac3858a002a6cdb698da2b56350bc1bf609d2..6f3b72f9fed5bcecde5f9931aeaf795e51fc84bc 100644
 --- a/lib/index.js
 +++ b/lib/index.js
 @@ -1,7 +1,7 @@
@@ -152,7 +223,8 @@ index 110ac3858a002a6cdb698da2b56350bc1bf609d2..db83efc83fb3b6d7aa07d83b7463d6ed
              }
              d && (i = 1 + (2147483647 & i), o && p && (g += p, p = 0), O.forEach(([e, t]) => {
                  d & e && t(n);
-@@ -190,6 +202,8 @@ const u = null, {min: d, max: a, abs: h, floor: g} = Math, p = (e, t, o) => d(o,
+@@ -189,7 +201,9 @@ const u = null, {min: d, max: a, abs: h, floor: g} = Math, p = (e, t, o) => d(o,
+     })(), g = () => {
          l = i(), d && (a = !0), s && e.B(6, s()), e.B(1, n()), h();
      }, p = t => {
 -        if (c || !e.M() || t.ctrlKey) return;
@@ -162,16 +234,76 @@ index 110ac3858a002a6cdb698da2b56350bc1bf609d2..db83efc83fb3b6d7aa07d83b7463d6ed
          const n = i() - l;
          150 > n && 50 < n && (o ? t.deltaX : t.deltaY) && (c = !0);
      }, v = () => {
-@@ -270,7 +283,7 @@ const u = null, {min: d, max: a, abs: h, floor: g} = Math, p = (e, t, o) => d(o,
+@@ -214,9 +228,10 @@ const u = null, {min: d, max: a, abs: h, floor: g} = Math, p = (e, t, o) => d(o,
+         }
+     };
+ }, J = (e, t, o) => {
+-    let n;
++    let n, generation = 0;
+     return [ async (r, s) => {
+-        if (!await t()) return;
++        const requestGeneration = ++generation;
++        if (!await t() || requestGeneration !== generation) return;
+         n && n();
+         const i = () => {
+             const [t, o] = _();
+@@ -228,6 +243,7 @@ const u = null, {min: d, max: a, abs: h, floor: g} = Math, p = (e, t, o) => d(o,
+         };
+         if (s && M()) e.B(8, r()), m(async () => {
+             for (;;) {
++                if (requestGeneration !== generation) return;
+                 let t = !0;
+                 for (let [o, n] = e.S(); o <= n; o++) if (e.I(o)) {
+                     t = !1;
+@@ -243,6 +259,7 @@ const u = null, {min: d, max: a, abs: h, floor: g} = Math, p = (e, t, o) => d(o,
+             }
+             e.B(7), o(r(), s);
+         }); else for (;;) {
++            if (requestGeneration !== generation) return;
+             const [t, n] = i();
+             try {
+                 if (e.B(7), o(r()), !await t) return;
+@@ -251,31 +268,34 @@ const u = null, {min: d, max: a, abs: h, floor: g} = Math, p = (e, t, o) => d(o,
+             }
+         }
+     }, () => {
++        generation++;
+         n && n();
+     } ];
+ }, A = (e, t) => {
+-    let o, n, r = _(), s = !1;
+-    const i = t ? "scrollLeft" : "scrollTop", l = t ? "overflowX" : "overflowY", [c, f] = J(e, () => r[0], (e, n) => {
++    let o, n, r = _(), s = !1, kk = 0;
++    const i = t ? "scrollLeft" : "scrollTop", l = t ? "overflowX" : "overflowY", ss = t ? "scrollWidth" : "scrollHeight", cc = t ? "clientWidth" : "clientHeight", [c, f] = J(e, () => r[0], (e, n) => {
+         e = W(e, s), n ? o.scrollTo({
+             [t ? "left" : "top"]: e,
+             behavior: "smooth"
+-        }) : o[i] = e;
++        }) : (o[i] = e, kk = W(o[i], s));
+     });
+     return {
+         N(c, u) {
+-            o = u, t && (s = "rtl" === getComputedStyle(u).direction), n = B(e, u, t, () => W(u[i], s), (t, o, n) => {
++            o = u, t && (s = "rtl" === getComputedStyle(u).direction), n = B(e, u, t, () => kk = W(u[i], s), (t, o, n) => {
+                 if (n) {
+                     const e = u.style, t = e[l];
+                     e[l] = "hidden", H(() => {
                          e[l] = t;
                      });
                  }
 -                u[i] = W(e.C() + t, s), o && f();
-+                u[i] = W((o ? W(u[i], s) : e.C()) + t, s), o && f();
++                const dd = W(u[i], s);
++                u[i] = W((o ? dd < kk && dd >= u[ss] - u[cc] - 1 ? kk : dd : e.C()) + t, s), kk = W(u[i], s), o && f();
              }), r[1](!0);
          },
          v() {
-@@ -523,11 +536,11 @@ const u = null, {min: d, max: a, abs: h, floor: g} = Math, p = (e, t, o) => d(o,
+             n && n.A(), r[1](!1), r = _();
+         },
++        cancelScroll: f,
+         P: () => s,
+         V(e) {
+             c(() => e);
+@@ -523,11 +543,11 @@ const u = null, {min: d, max: a, abs: h, floor: g} = Math, p = (e, t, o) => d(o,
      })(e);
      return [ e => o[e], o.length ];
  }, [ e, t ]), Z = /*#__PURE__*/ i(({children: t, data: o, bufferSize: r, itemSize: s, shift: i, horizontal: u, keepMounted: d, cache: a, startMargin: h = 0, ssrCount: g, as: p = "div", item: _ = "div", scrollRef: w, onScroll: S, onScrollEnd: $}, z) => {
@@ -186,11 +318,30 @@ index 110ac3858a002a6cdb698da2b56350bc1bf609d2..db83efc83fb3b6d7aa07d83b7463d6ed
      const [W, B] = l(T.m, void 0, T.m), J = T.M(), L = T.h(), N = M.P(), P = [], X = t => {
          const o = b(t);
          return e(K, {
+@@ -577,7 +597,8 @@ const u = null, {min: d, max: a, abs: h, floor: g} = Math, p = (e, t, o) => d(o,
+         getItemSize: T.R,
+         scrollToIndex: M.Y,
+         scrollTo: M.V,
+-        scrollBy: M.X
++        scrollBy: M.X,
++        cancelScroll: M.cancelScroll
+     }), []), d) {
+         const e = new Set(d);
+         for (let [t, o] = T.S(r); t <= o; t++) e.add(t);
 diff --git a/lib/react/Virtualizer.d.ts b/lib/react/Virtualizer.d.ts
-index 46c5d0765641bb1b4afeb9782b64e5fd71e6a1c8..e82091f3514fdccf064bf28c0a1b22c8615fbdf2 100644
+index 46c5d0765641bb1b4afeb9782b64e5fd71e6a1c8..d449a8020678d5f48b8cec6b9ec308ca65743cf7 100644
 --- a/lib/react/Virtualizer.d.ts
 +++ b/lib/react/Virtualizer.d.ts
-@@ -78,7 +78,7 @@ export interface VirtualizerProps<T = unknown> {
+@@ -52,6 +52,8 @@ export interface VirtualizerHandle {
+      * @param offset offset from current position
+      */
+     scrollBy(offset: number): void;
++    /** Retire the pending imperative scroll request before reader navigation. */
++    cancelScroll(): void;
+ }
+ /**
+  * Props of {@link Virtualizer}.
+@@ -78,7 +80,7 @@ export interface VirtualizerProps<T = unknown> {
       * - If not set, initial item sizes will be automatically estimated from measured sizes. This is recommended for most cases.
       * - If set, you can opt out estimation and use the value as initial item size.
       */

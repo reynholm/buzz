@@ -43,6 +43,24 @@ pub enum CliError {
     /// key, route and journal is safe; never replace it with a fresh send.
     #[error("{0}")]
     ManagedDeliveryPending(String),
+    /// The NIP-FA identity adapter stayed unavailable through its bounded
+    /// retries. Nothing was sent to the relay, so the command is safe to
+    /// re-run later; relay retry loops never repeat it.
+    #[error("identity adapter error: {0}")]
+    Adapter(String),
+
+    /// The local credential provider stayed `rate_limited` through its
+    /// bounded waits. It refused before acting, so a later re-run is safe.
+    /// Only the Unix desktop provider reports it.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    #[error("rate limited: {0}")]
+    Throttled(String),
+
+    /// The relay or the Buzz desktop could not be used now (the relay kept
+    /// closing the WebSocket before sign-in, or the desktop's same-user check
+    /// timed out). Nothing was sent, so a later re-run is safe.
+    #[error("unavailable: {0}")]
+    Unavailable(String),
 
     /// Catch-all for unexpected failures
     #[error("{0}")]
@@ -52,7 +70,7 @@ pub enum CliError {
 /// Walk the full `std::error::Error::source()` chain on a `reqwest::Error`
 /// and render it as a colon-separated string, e.g.
 /// `error sending request: dns error: failed to lookup address information: ...`
-fn fmt_reqwest_error(e: &reqwest::Error) -> String {
+pub(crate) fn fmt_reqwest_error(e: &reqwest::Error) -> String {
     let mut msg = e.to_string();
     let mut source: &dyn std::error::Error = e;
     while let Some(cause) = source.source() {
@@ -70,7 +88,9 @@ fn fmt_reqwest_error(e: &reqwest::Error) -> String {
 ///
 /// Transport-level network errors (connect failure, timeout, mid-request,
 /// mid-body transfer, or body decode failure) and relay overload responses
-/// (429 / 502 / 503 / 504) are retryable.  `DeliveryUnknown` is never
+/// (429 / 502 / 503 / 504) are retryable, as are a desktop that stayed
+/// `rate_limited` (`Throttled`) and an adapter that stayed
+/// unavailable (`Adapter`: nothing reached the relay).  `DeliveryUnknown` is never
 /// retryable: the operation may already have executed.  All other errors
 /// indicate a permanent failure: auth, bad input, builder errors, or logic
 /// errors.
@@ -85,6 +105,7 @@ pub fn is_retryable_error(e: &CliError) -> bool {
         }
         CliError::Relay { status, .. } => matches!(status, 429 | 502 | 503 | 504),
         CliError::ManagedDeliveryPending(_) => true,
+        CliError::Adapter(_) | CliError::Throttled(_) | CliError::Unavailable(_) => true,
         CliError::DeliveryUnknown(_) => false,
         _ => false,
     }
@@ -109,6 +130,7 @@ pub fn exit_code(e: &CliError) -> i32 {
         CliError::Conflict(_) => 5,
         CliError::NotFound(_) => 1,
         CliError::DeliveryUnknown(_) | CliError::ManagedDeliveryPending(_) => 2,
+        CliError::Adapter(_) | CliError::Throttled(_) | CliError::Unavailable(_) => 2,
         CliError::Other(_) => 4,
     }
 }
@@ -132,6 +154,9 @@ pub fn print_error(e: &CliError) {
         CliError::NotFound(_) => "not_found",
         CliError::DeliveryUnknown(_) => "delivery_unknown",
         CliError::ManagedDeliveryPending(_) => "managed_delivery_pending",
+        CliError::Adapter(_) => "adapter_error",
+        CliError::Throttled(_) => "rate_limited",
+        CliError::Unavailable(_) => "unavailable",
         CliError::Other(_) => "error",
     };
     let obj = serde_json::json!({

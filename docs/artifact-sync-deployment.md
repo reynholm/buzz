@@ -13,8 +13,11 @@ New application writers stamp every head change, grant, rejoin, removal,
 redaction, and move source. Changes to channel listing also require recovery. Old application updates do not maintain all these
 stamps, so mixed-version serving cannot advertise incremental correctness.
 
-For a populated database, first build the revision lookup index outside a
-transaction, before migration `0077`:
+Relay startup migration and `buzz-admin migrate` build the indexes below
+themselves within the migrations' budgets. A deployment too large for those
+budgets runs with auto-migration off; before applying the migrations out of
+band, first build the revision lookup index outside a transaction, before
+migration `0077`:
 
 ```sql
 CREATE INDEX CONCURRENTLY idx_artifact_revisions_artifact
@@ -39,10 +42,20 @@ CREATE INDEX CONCURRENTLY artifact_revisions_moves
 ```
 
 Migration `0079` verifies each index definition and its valid, ready, and live
-flags. It refuses a populated table whose index is missing. A fresh empty
+flags. Applied directly as SQL, it refuses a populated table whose index is
+missing. A fresh empty
 database can build the indexes under the migration's short budgets.
 Migration `0077` also verifies the exact definition and all three flags.
 Remove an invalid index with `DROP INDEX CONCURRENTLY` before a new build.
+
+Relay startup migration and `buzz-admin migrate` build any of these indexes
+that are missing before applying `0077` and `0079`. They use at most the migrations'
+one-second lock and five-second statement budgets, retaining a tighter configured
+migration policy. This is enough for a small
+database. Each index builds in its own transaction. A database too large for that
+budget fails closed with an error that points here. The migration whose index
+failed is not recorded, while earlier migrations and indexes stay committed.
+Prebuild the rest concurrently as above, then retry.
 
 After all index builds succeed, run `buzz-admin migrate` with the target
 `DATABASE_URL`. It verifies and records `0077`, reapplies the idempotent `0078`,
@@ -54,6 +67,13 @@ migration ledger.
 All instances must use the same configured relay signing key, because that key
 authenticates the progress tokens. NIP-11 advertises `artifacts.incremental`.
 Every serving writer must maintain the modification timestamps.
+
+Drain every old HTTP, WebSocket, background and maintenance writer before
+admitting the new serving fleet. There is no flag-off compatibility mode for
+the old artifact writers. After the drain, clients must perform a new initial
+sync before relying on incremental progress tokens; tokens issued by a mixed
+fleet need another initial sync. Keep the same relay signing key across this
+transition.
 
 The 120-second stamp-to-visibility bound remains an operating assumption.
 Runtime measurements are tracked separately.

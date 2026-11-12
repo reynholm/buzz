@@ -163,3 +163,7 @@ impl std::fmt::Debug for AdmittedTx {
             .finish_non_exhaustive()
     }
 }
+
+#[cfg(test)]
+#[path = "admitted_tx/postgres_tests.rs"]
+mod postgres_tests;

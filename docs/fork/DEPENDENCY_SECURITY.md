@@ -110,9 +110,13 @@ The Mesh compatibility pin also moves its two SQLite consumers to `rusqlite`
 Its only additional changes are the two manifest requirements and their lockfile
 entries; Mesh protocol and runtime sources remain unchanged. Buzz uses the same
 immutable Mesh source in the native client and smoke harnesses. SQLx's optional
-SQLite resolver constraint advances to the public upstream
-[compatibility fix](https://github.com/launchbadge/sqlx/commit/10462fa4414c6c7f1ed1d39bb31678e3b726878c),
-allowing the fixed SQLite ABI while PostgreSQL remains Buzz's enabled SQLx driver.
+SQLite resolver constraint uses a minimal
+[compatibility revision](https://github.com/reynholm/sqlx/commit/b159f0cc4779562bb997379aa60aeed680911840)
+based on `c3735abf`: it changes only the optional SQLite upper bound to allow
+the fixed 0.39 ABI. All seven SQLx crates share that source and retain the
+whole-return deadline and cancelled-BEGIN rollback fixes. PostgreSQL remains
+Buzz's enabled SQLx driver. Remove this revision only when a replacement
+retains all three fixes.
 The shipping Rust 1.98.1 toolchain satisfies the new SQLite dependency minimum.
 
 Both graphs use `rmcp` 3.9.0, addressing

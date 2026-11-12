@@ -5,26 +5,44 @@ use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
 
 use axum::{extract::State, routing::post, Json, Router};
-use nostr::{Event, Keys};
+use nostr::{Event, EventBuilder, Keys, Kind, Tag};
 use uuid::Uuid;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct Relay {
     requests: Arc<Mutex<usize>>,
     events: Arc<Mutex<Vec<Event>>>,
+    original: Event,
 }
 
 async fn relay() -> (String, Relay, tokio::task::JoinHandle<()>) {
-    let state = Relay::default();
+    let original = EventBuilder::new(Kind::Custom(9), "original")
+        .tags([Tag::parse(["h", &Uuid::nil().to_string()]).unwrap()])
+        .sign_with_keys(&Keys::generate())
+        .unwrap();
+    let state = Relay {
+        requests: Arc::default(),
+        events: Arc::default(),
+        original,
+    };
     let app = Router::new()
         .route(
             "/query",
-            post(|State(state): State<Relay>| async move {
-                *state.requests.lock().unwrap() += 1;
-                Json(serde_json::json!([{
-                    "tags": [["h", Uuid::nil().to_string()]]
-                }]))
-            }),
+            post(
+                |State(state): State<Relay>, Json(queries): Json<Vec<serde_json::Value>>| async move {
+                    *state.requests.lock().unwrap() += 1;
+                    let query = &queries[0];
+                    if query.get("effective_edit") == Some(&serde_json::json!(1)) {
+                        Json(serde_json::json!({
+                            "effective_edit": 1,
+                            "original": state.original,
+                            "edit": null
+                        }))
+                    } else {
+                        Json(serde_json::json!([state.original]))
+                    }
+                },
+            ),
         )
         .route(
             "/events",
@@ -161,7 +179,7 @@ async fn blank_message_commands_fail_before_any_relay_request() {
 async fn message_commands_preserve_stdin_bytes_in_signed_events() {
     let (url, state, task) = relay().await;
     let channel = Uuid::nil().to_string();
-    let event = "a".repeat(64);
+    let event = state.original.id.to_hex();
     let content = "  text with `backticks` and $variables\n\n";
     for args in [
         vec!["messages", "send", "--channel", &channel, "--content", "-"],

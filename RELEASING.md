@@ -12,8 +12,9 @@ with an optional stable source branch:
 
 The lanes version independently. Desktop reads its manifests, relay reads its
 crate manifest, and mobile derives both source and marketing version from the
-exact candidate tag. The mobile handoff to the private `buzz-releases` pipeline
-remains manual because OSS CI cannot trigger private CI.
+exact candidate tag. Mobile candidate tags are pushed by a human release
+manager, not by CI or a GitHub App. The handoff to the private `buzz-releases`
+pipeline remains manual because OSS CI cannot trigger private CI.
 
 ## Quick Start
 
@@ -33,6 +34,7 @@ just release-relay
 just release-relay 0.4.0
 
 # Publish the next mobile candidate from the exact current remote main commit
+# (requires configured fork policies and exact-source qualification, see Mobile)
 scripts/mobile-release.sh candidate 0.5.0
 ```
 
@@ -48,6 +50,20 @@ or mobile GitHub Release.
 ## How It Works
 
 ### Desktop
+
+Repository admins can manually validate an existing candidate with:
+
+```sh
+gh workflow run desktop-release-candidate.yml --repo block/buzz --ref main -f version=0.5.3
+```
+
+This checks out `version-bump/0.5.3` and runs the same immutable-candidate
+validator as the PR check. Dispatch from `main`; both the original caller and
+anyone rerunning the workflow must currently have repository admin permission.
+GitHub allows users with write access to dispatch workflows, but this workflow
+fails their manual runs before checkout. Permission lookup failures also stop
+the run. Manual validation does not create a candidate, publish a release, or
+replace the required checks on the candidate PR.
 
 1. Run `just release-desktop <version>` from a clean, up-to-date `main` checkout.
    The script creates one deterministic candidate commit and records both its
@@ -88,8 +104,11 @@ prior release's recorded squash commit; tag ancestry is deliberately irrelevant.
    `debug-0.3.0` and `debug-latest`) for native profiling. The ordinary tags
    remain stripped and are the default for deployments that do not need it.
 
-Every push to `main` continues to publish the rolling relay `:main` and
-`:sha-<7>` tags, plus matching `:debug-main` and `:debug-sha-<7>` variants.
+Every push to `main` that changes the image build context continues to
+publish the rolling relay `:main` and `:sha-<7>` tags, plus matching
+`:debug-main` and `:debug-sha-<7>` variants. Pushes that only touch paths
+`.dockerignore` excludes (such as `desktop/`, `mobile/` and `docs/`) publish
+nothing.
 
 #### NIP-FI upload proof freshness (relay floor)
 
@@ -110,30 +129,42 @@ deployment authorization.
 
 ### Mobile
 
-1. **Publish a candidate.** From a clean checkout whose `origin` is the
-   canonical `block/buzz` repository, run
-   `scripts/mobile-release.sh candidate X.Y.Z`. The script resolves and fetches
-   a snapshot of `origin/main`, derives the next number from exact
-   remote tags for that marketing version, and publishes an annotated
-   `mobile-vX.Y.Z-rc.N` tag there through the dedicated `buzz-release-bot`
-   GitHub App. It never uses the operator's checked-out commit and never moves
-   an existing candidate. To select a historical commit, add `--commit FULL_SHA`.
-   Both operator and publisher require that commit to be in the selected source
-   branch's history. Later branch advances do not change or invalidate the tag.
-2. **Build the exact tag.** Enter the candidate tag as `mobile_ref` in the
-   private Buzz mobile Buildkite pipeline. OSS CI deliberately cannot trigger
-   that private pipeline. The tag supplies both source commit and release
-   version. Flutter receives clean marketing version `X.Y.Z`; Buildkite's
-   monotonically increasing build number supplies the platform build number.
-3. **Promote tested artifacts.** Promote the already-built signed artifact for
-   each platform through its store workflow. Record the exact tag with the
-   build or rollout record. No source ref is changed and no final build is cut.
+Mobile candidate publication in this fork is limited to `reynholm/buzz` and
+GitHub operator `reynholm`. It is **closed until the operator configures and
+verifies the fork release policies and exact-source qualification below**.
+There are no default ruleset IDs and no fallback to upstream settings. The
+removed mobile candidate workflows remain removed; this command does not
+dispatch a workflow, build a mobile artifact, or publish to an app store.
 
-The iOS and Android artifacts for one marketing version may come from different
-RC tags. For example, iOS can ship `mobile-v0.5.0-rc.2` while Android ships
-`mobile-v0.5.0-rc.3`. Each platform's exact candidate tag is its source record.
-There is intentionally no single selected or final candidate for the marketing
-version.
+1. **Qualify an immutable source.** Required checks must finish successfully for
+   the exact selected commit in the protected source history. A different local
+   HEAD or a later branch tip cannot supply its qualification. Missing, failed,
+   skipped, pending, wrong-producer or wrong-workflow checks stop publication.
+2. **Publish a candidate only after those gates hold.** From a clean checkout
+   whose configured and effective `origin` fetch/push URLs all identify the
+   authorized fork, run `scripts/mobile-release.sh candidate X.Y.Z`. The script
+   snapshots `origin/main`, checks the authenticated operator and configured
+   policies, verifies the selected commit's trusted checks, then creates an
+   annotated `mobile-vX.Y.Z-rc.N` tag and pushes exactly that one ref. Your Git
+   author/tag-signing configuration remains separate from GitHub authorization.
+   Existing tags are never moved or forced, and other local tags are not pushed.
+   Use `--commit FULL_SHA` to select a qualified historical ancestor. A later
+   branch advance does not change the selected commit or its required checks.
+3. **Verify publication before using it.** GitHub must report the exact tag
+   object in the authorized fork, and an independent remote fetch must resolve
+   the annotated tag to the selected source SHA. If a rejected push left no
+   remote tag, the local tag is removed for a clean retry. An ambiguous push or
+   unavailable readback retains the local evidence and reports failure rather
+   than claiming publication.
+4. **Build and distribute separately.** A source tag is not a signed native
+   artifact or an app-store acceptance record. A separately authorized fork
+   build/distribution process must record the exact tag, source SHA, platform
+   artifact identity and native acceptance. This repository does not grant
+   access to or dispatch upstream's private mobile build pipeline.
+
+Each iOS or Android artifact records its exact candidate tag. Different platform
+artifacts can use different RC tags for the same marketing version; no mutable
+stable alias or finalization ref is created.
 
 ### Optional stable release branches
 
@@ -147,18 +178,12 @@ scripts/mobile-release.sh candidate 0.25.0 --source-branch mobile-v0.25
 
 The branch must match the marketing version's major and minor components:
 `mobile-v0.25` accepts 0.25.x, but rejects 0.26.x and 1.25.x. Without the option,
-the source remains `main`. Both the operator and publisher validate the source;
+the source remains `main`. The script validates the source;
 a missing branch or a commit outside its history fails rather than falling back
-to `main`. `--commit FULL_SHA` also works with a stable source branch, whose
-review and check protections remain required.
-The GitHub workflow itself continues to run from reviewed `main`. The private
-pipeline still builds only the resulting immutable candidate tag.
-
-For the October 2026 stabilization period, all distributed mobile builds,
-including Company Portal dogfood builds, must come from `mobile-v0.25` until
-after the conference. Do not upload builds from `main` or a later minor version
-that would displace the stable dogfood build. The branch starts from
-`mobile-v0.24.0-rc.2`, the source of uploaded iOS 0.24.0 (7).
+to `main`. `--commit FULL_SHA` also works with a stable source branch. Its
+review and check protections must cover the selected branch without bypass
+actors, including the release operator. The same exact-source qualification is
+required for `main` and stable sources; there is no main-branch exemption.
 
 General fix PRs must target `main` and land there first. At each fix landing,
 ask the release owner whether to
@@ -239,16 +264,16 @@ repairs the versioned draft if publication did not complete. It does not
 promote that version to the auto-updater; promotion is a separate manual
 action. Do not recreate, move, or push the immutable tag again.
 
-Mobile intentionally has no branch or arbitrary-ref fallback. The private
-Buildkite pipeline accepts only an exact candidate tag.
+Mobile intentionally has no branch or arbitrary-ref fallback. A separately
+configured fork build process must consume the exact qualified candidate tag.
 
 ---
 
 ## Internal Releases
 
-For mobile, trigger the private
-[Release Mobile pipeline](https://buildkite.com/runway/buzz-mobile-releases) with
-an exact RC tag for the platform build being cut. For desktop, start
+Fork mobile builds do not use upstream's private release pipeline. Configure
+and qualify a separate build/distribution process before using an exact mobile
+RC tag. For upstream desktop internal builds, start
 [Release Desktop](https://buildkite.com/runway/sprout-releases) and enter the
 exact public source tag as `desktop_ref=desktop-v<version>`; a generic
 `v<version>` tag is intentionally rejected. See the
@@ -318,10 +343,13 @@ host's Wayland/GStreamer/graphics stack and requires GLib >= 2.72
 - The Default `main` ruleset configured for squash-only merging, strict required
   checks, stale-review dismissal, and the **Desktop Release Candidate** check
 - Release tag ruleset [`14378754`](https://github.com/block/buzz/rules/14378754)
-  active for `desktop-v*` and `mobile-v*`, with creation, update, deletion, and
+  active for all tags (`~ALL`), with creation, update, deletion, and
   non-fast-forward protections and `buzz-release-bot` as its sole always-bypass
-  actor
-- The `buzz-release-bot` App credentials configured for GitHub Actions
+  actor. It must exclude `refs/tags/mobile-*`: rulesets stack, so otherwise it
+  rejects release managers' mobile tag pushes. `scripts/mobile-release.sh`
+  checks that exclusion before tagging.
+- The `buzz-release-bot` App credentials configured for GitHub Actions (desktop,
+  relay, and chart lanes only; mobile does not use them)
 - The following **GitHub Actions variables and secrets** configured for the
   desktop release lane:
 
@@ -335,21 +363,54 @@ host's Wayland/GStreamer/graphics stack and requires GLib >= 2.72
   | `TAURI_SIGNING_PRIVATE_KEY` | Secret | Tauri updater private key |
   | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Secret | Password for the private key |
 
-Mobile candidate publication requires workflow-dispatch access and the existing
-release App because strict tag protection denies direct human creation. The App
-must be installed on `block/buzz`, have Contents write and Metadata read, and
-retain an `always` bypass on the immutable `mobile-v*` tag rules. It does not
-require GitHub Releases permissions or repository Administration permission.
-Stable sources additionally require active branch ruleset `19321162` covering
-`refs/heads/mobile-v*`, with no exclusions or bypass actors, deletion and
-force-push prevention, at least one approval, stale-approval dismissal, last-push
-approval, resolved review threads, and strict required `Mobile` and `DCO Check`
-checks. An administrator must configure and audit the empty bypass list; GitHub
-hides that list from non-admin tokens. Both operator and publisher verify the
-public policy and their effective lack of branch bypass on every publication.
-The publisher validates the App token's effective
-`current_user_can_bypass` value rather than reading the ruleset's hidden bypass
-actor list.
+### Fork mobile publication gates
+
+The desktop/relay prerequisites above do not configure mobile release authority.
+For mobile, an operator must first establish and independently verify two active
+rulesets in `reynholm/buzz`, then supply their actual IDs through
+`BUZZ_MOBILE_RELEASE_TAG_RULESET_ID` and
+`BUZZ_MOBILE_RELEASE_BRANCH_RULESET_ID`. Empty, invalid, inaccessible or
+mismatched policy is an error before tag creation. Do not copy upstream IDs or
+weaken protection to make a release command succeed. The script never creates
+or edits repository settings.
+
+- The tag policy targets only `refs/tags/mobile-*` or `refs/tags/mobile-v*`, has
+  no exclusions, and prevents creation, update, deletion and non-fast-forward
+  changes. Its sole always-bypass actor is the verified GitHub user `reynholm`;
+  no team or App substitutes for that operator. The authenticated user's
+  effective bypass must also be `always`.
+- The branch policy always covers `refs/heads/main` and also the selected stable
+  branch (explicitly or with `refs/heads/mobile-v*`), without exclusions or bypass
+  actors. It prevents deletion/force pushes, requires at least one current
+  approval, dismisses stale approvals, requires last-push approval and resolved
+  review threads, and enforces strict required checks.
+- At least the existing `Mobile` and `DCO Check` contexts are required.
+  Allowlisted CI contexts are pinned to GitHub Actions (App ID 15368).
+  `DCO Check` must explicitly select a positive integer `integration_id` in the
+  authenticated fork branch policy. The operator must establish that this App
+  is the intended DCO producer when configuring protection; no inherited
+  upstream ID, public App discovery or fixture establishes its installation or
+  authority in the fork. An absent, null, zero, negative, fractional or string
+  ID is refused. The latest exact-source DCO check must succeed and match that
+  configured App; a same-name check from another App cannot substitute.
+  Every additional context in that branch policy is also verified and must be
+  one of the existing fork CI gates: `Rust Lint`, `Unit Tests`, `Security`,
+  `Windows Rust (x86_64-pc-windows-msvc)`, `Desktop`, `Desktop Build (macOS)`,
+  `Desktop E2E Relay`, `Desktop E2E Integration`,
+  `Backend Integration (relay e2e)`, `PostgreSQL Tests`, `Relay E2E` or `Web`.
+  An unknown producer/context fails closed instead of being silently ignored.
+- The latest trusted check for each required context must be completed with
+  `success` on the selected full SHA. GitHub Actions checks must belong to the
+  fork's `.github/workflows/ci.yml`, with matching workflow, run, check suite
+  and source identities, and a successful internal push/PR run. A copied check
+  name, skipped context, another repository/workflow, or a successful older
+  attempt cannot authorize publication. Local development hooks do not replace
+  this qualification and are not bypassed by the release script.
+
+Absent policy configuration or qualification is a release configuration gate,
+not completed acceptance. Configuring rulesets, generating trusted CI receipts,
+creating tags, building signed artifacts and distributing them are separately
+authorized operator actions.
 
 ---
 
@@ -379,9 +440,9 @@ its own exact tag.
 
 ### The source branch advances during candidate publication
 
-Publication remains pinned to the selected SHA. The publisher verifies that it
-is an ancestor of a resolved source-branch snapshot, then creates and verifies
-an immutable annotated tag for that exact SHA. The operator verifies the tag,
+Publication remains pinned to the selected SHA. The script verifies that it
+is an ancestor of a resolved source-branch snapshot, then creates, pushes, and
+verifies an immutable annotated tag for that exact SHA. It verifies the tag,
 not the branch's later tip. A newer commit does not require retrying or creating
 another candidate. Missing or unverifiable ancestry still fails closed.
 
@@ -393,10 +454,12 @@ increasing remote identities.
 
 ### A mobile candidate publication is rejected by repository rules
 
-Confirm `buzz-release-bot` remains the sole always-bypass actor for the active
-`mobile-v*` ruleset and that its Actions credentials are available. Do not grant
-direct human creation or weaken update or deletion protection. Existing
-candidate tags must remain immutable.
+Confirm the authenticated operator and configured fork policies match the
+mobile publication gates above. Missing policy or exact-source qualification
+must be resolved before creating a tag. A rejected push removes its local tag
+only when the remote certainly has none; retry after an administrator verifies
+the intended configuration. Do not add bypass actors or weaken update/deletion
+protection to force a release. Existing candidate tags remain immutable.
 
 ### Auto-updater reports "no update available"
 Verify that the `buzz-desktop-latest` release exists and contains a

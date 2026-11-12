@@ -130,9 +130,13 @@ export function useVirtualizedBottomSettle(
     if (!(scroller instanceof HTMLDivElement)) return;
     return listenForReaderScroll(scroller, () => {
       cancel();
+      // Retire work already handed to Virtua as well as our queued frame.
+      // Generic intent cleanup also follows target acceptance, so only reader
+      // navigation may cancel the actual imperative request.
+      listRef.current?.cancelScroll();
       onReaderNavigation?.();
     });
-  }, [cancel, hostRef, onReaderNavigation, scrollRef]);
+  }, [cancel, hostRef, listRef, onReaderNavigation, scrollRef]);
 
   React.useLayoutEffect(() => {
     const scroller = scrollRef?.current ?? hostRef.current?.firstElementChild;

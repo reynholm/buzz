@@ -211,9 +211,7 @@ async fn authenticated_http_state() -> Arc<crate::state::AppState> {
         floor, "960",
         "the recovery path must retain the production writer floor"
     );
-    let redis = deadpool_redis::Config::from_url(&config.redis_url)
-        .create_pool(Some(deadpool_redis::Runtime::Tokio1))
-        .unwrap();
+    let redis = buzz_pubsub::redis_connection(&config.redis_url).unwrap();
     let pubsub = Arc::new(
         buzz_pubsub::PubSubManager::new(&config.redis_url, redis.clone())
             .await
@@ -1233,10 +1231,28 @@ async fn managed_retry_ignores_cached_authority(restriction: &str) {
             }
             _ => {}
         }
-        state.membership_cache.insert(
-            (community, channel, agent.public_key().to_bytes().to_vec()),
-            matches!(restriction, "ban" | "timeout"),
-        );
+        // Seed the real full-set cache with the stale answer this recovery
+        // must bypass, using its normal publication path.
+        let stale_member = matches!(restriction, "ban" | "timeout");
+        state
+            .membership_cache
+            .contains(
+                (community, agent.public_key().to_bytes().to_vec()),
+                channel,
+                async {
+                    Ok(buzz_db::ReadAt {
+                        value: if stale_member {
+                            vec![channel]
+                        } else {
+                            Vec::new()
+                        },
+                        read_at: std::time::Instant::now(),
+                    })
+                },
+                async { Ok(stale_member) },
+            )
+            .await
+            .unwrap();
         let event = if let Some(kind) = wrapper {
             let candidate = EventBuilder::new(original.kind, &original.content)
                 .tags(original.tags.clone())

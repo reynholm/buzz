@@ -1,5 +1,10 @@
 const DEFAULT_DATABASE_URL: &str = "postgres://buzz:buzz_dev@localhost:5432/buzz"; // sadscan:disable np.postgres.1 -- local test-only credentials
 
+/// Threads currently acquiring the tracing guard, used to force the real
+/// tracing/config interleaving in the bounded lock-order regression test.
+pub(crate) static TRACING_DISPATCH_LOCK_WAITERS: std::sync::Mutex<Vec<std::thread::ThreadId>> =
+    std::sync::Mutex::new(Vec::new());
+
 /// Serialize lib tests whose assertions depend on which tracing dispatchers
 /// are live: log-capture and callsite-interest tests, and tests that fire the
 /// callsites they assert on. tracing-core caches each callsite's interest
@@ -12,7 +17,17 @@ const DEFAULT_DATABASE_URL: &str = "postgres://buzz:buzz_dev@localhost:5432/buzz
 /// `api/bridge/thread_window/postgres_tests/failure_postgres_tests.rs`.
 pub(crate) fn tracing_dispatch_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    let thread = std::thread::current().id();
+    TRACING_DISPATCH_LOCK_WAITERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(thread);
+    let guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    TRACING_DISPATCH_LOCK_WAITERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .retain(|waiter| *waiter != thread);
+    guard
 }
 
 /// Resolve the database URL shared by PostgreSQL-backed relay tests.

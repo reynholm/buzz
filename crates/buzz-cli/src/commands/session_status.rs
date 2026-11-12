@@ -52,8 +52,7 @@ pub(crate) fn message_status_tags(
     let Some(directory) = client.session_status_dir() else {
         return Vec::new();
     };
-    let Ok(identity) = canonical_identity(client.relay_url(), &client.keys().public_key().to_hex())
-    else {
+    let Ok(identity) = canonical_identity(client.relay_url(), &client.public_key().to_hex()) else {
         return Vec::new();
     };
     let root = root.map(nostr::EventId::to_hex);

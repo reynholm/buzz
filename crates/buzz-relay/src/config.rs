@@ -159,6 +159,11 @@ pub struct Config {
     /// `0` (the default) disables bounded-staleness replica routing; see
     /// [`buzz_db::DbConfig::replica_read_max_age_ms`].
     pub replica_read_max_age_ms: u64,
+    /// Replica fence heartbeat interval in milliseconds
+    /// (`BUZZ_REPLICA_FENCE_PROBE_INTERVAL_MS`). Unset (`0`) selects the
+    /// default; set values must lie within the accepted range. See
+    /// [`buzz_db::DbConfig::replica_fence_probe_interval_ms`].
+    pub replica_fence_probe_interval_ms: u64,
 
     /// Upper bound, in milliseconds, of the per-connection random delay applied
     /// when sending the `1012 Service Restart` close frame during graceful
@@ -175,12 +180,6 @@ pub struct Config {
     pub drain_jitter_ms: u64,
     /// Redis connection URL used by the pub/sub manager.
     pub redis_url: String,
-    /// Maximum connections in the shared Redis pool. Defaults to 16.
-    ///
-    /// deadpool's own default is `CPU_COUNT * 2`, which on a 2-vCPU relay
-    /// pod is only 4 — small enough that rate-limit checks, presence, and
-    /// pub/sub publishes queue behind each other under load.
-    pub redis_pool_size: usize,
     /// Maximum connections in the Postgres writer/reader pools. Defaults to 50.
     ///
     /// The `buzz-db` default of 20 was sized for a handful of pods against
@@ -224,6 +223,10 @@ pub struct Config {
     pub require_auth_token: bool,
     /// Opt-in private accessory API; disabled until explicitly deployed.
     pub buzz_v1_enabled: bool,
+    /// Opt-in NIP-CL compact membership projection; dark by default.
+    pub membership_snapshot_enabled: bool,
+    /// Opt-in NIP-CL public memberships, independent of self discovery.
+    pub membership_public_enabled: bool,
     /// Author-time unread tracking duration, independent of NIP-RS retention.
     pub buzz_v1_retention_seconds: u32,
     /// Comma-separated list of allowed CORS origins.
@@ -353,6 +356,8 @@ pub struct Config {
 
     /// Media storage configuration (S3/MinIO).
     pub media: buzz_media::MediaConfig,
+    /// Channel media authorization rollout: off, shadow, or enforce.
+    pub media_read_mode: crate::api::media_access::MediaReadMode,
     /// Maximum concurrent media uploads handled by one relay process.
     pub media_max_concurrent_uploads: usize,
     /// Maximum concurrent media uploads accepted from one pubkey.
@@ -448,9 +453,9 @@ pub struct Config {
     /// Parsed whatever the NIP-FI mode, since creation happens in every mode.
     pub nip_fi_provision_binding: Option<buzz_auth::ProvisionBindingPolicy>,
 
-    /// Permit new irreversible FI upgrade acceptances. Default off; receipt
-    /// recovery/status remain available (`BUZZ_NIP_FI_UPGRADES_ENABLED`).
-    pub nip_fi_upgrades_enabled: bool,
+    /// Permit new community FI policy enables and disables. Default off; receipt
+    /// recovery/status remain available (`BUZZ_NIP_FI_CHANGES`).
+    pub nip_fi_changes: bool,
 
     /// Database resolver bounds (`BUZZ_NIP_FI_RESOLVER_*`,
     /// `BUZZ_NIP_FI_SNAPSHOT_*`). Validated in every mode, so a bad value
@@ -770,6 +775,28 @@ impl Config {
             Err(_) => 0,
         };
 
+        // Fence heartbeat interval: unset or empty selects the default. An
+        // out-of-range value fails startup rather than being clamped, so the
+        // deployed cadence is always the configured one.
+        let replica_fence_probe_interval_ms =
+            match std::env::var("BUZZ_REPLICA_FENCE_PROBE_INTERVAL_MS") {
+                Ok(raw) if !raw.trim().is_empty() => {
+                    let min = buzz_db::replica_fence::MIN_PROBE_INTERVAL.as_millis() as u64;
+                    let max = buzz_db::replica_fence::MAX_PROBE_INTERVAL.as_millis() as u64;
+                    raw.trim()
+                        .parse::<u64>()
+                        .ok()
+                        .filter(|ms| (min..=max).contains(ms))
+                        .ok_or_else(|| {
+                            ConfigError::InvalidValue(format!(
+                                "BUZZ_REPLICA_FENCE_PROBE_INTERVAL_MS must be an integer \
+                                 between {min} and {max}"
+                            ))
+                        })?
+                }
+                _ => 0,
+            };
+
         // Drain jitter: 0 = off (default). Clamp oversized values so every
         // delayed close is initiated with ten seconds left in the relay's
         // hard-drain budget. An empty/whitespace-only value is treated as unset
@@ -791,12 +818,6 @@ impl Config {
 
         let redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
-
-        let redis_pool_size = std::env::var("BUZZ_REDIS_POOL_SIZE")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|&v| v > 0)
-            .unwrap_or(16);
 
         let db_pool_size = std::env::var("BUZZ_DB_POOL_SIZE")
             .ok()
@@ -1080,6 +1101,15 @@ impl Config {
                     "BUZZ_S3_ADDRESSING_STYLE must be valid Unicode and one of 'path' or 'virtual'"
                         .to_string(),
                 ));
+            }
+        };
+        let media_read_mode = match std::env::var("BUZZ_MEDIA_READ_MODE") {
+            Ok(value) => value.parse().map_err(ConfigError::InvalidValue)?,
+            Err(std::env::VarError::NotPresent) => crate::api::media_access::MediaReadMode::Off,
+            Err(_) => {
+                return Err(ConfigError::InvalidValue(
+                    "BUZZ_MEDIA_READ_MODE must be valid Unicode".into(),
+                ))
             }
         };
         let media = buzz_media::MediaConfig {
@@ -1515,9 +1545,9 @@ impl Config {
             database_url,
             read_database_url,
             replica_read_max_age_ms,
+            replica_fence_probe_interval_ms,
             drain_jitter_ms,
             redis_url,
-            redis_pool_size,
             db_pool_size,
             db_read_pool_size,
             db_search_pool_size,
@@ -1533,6 +1563,10 @@ impl Config {
             auth,
             require_auth_token,
             buzz_v1_enabled,
+            membership_snapshot_enabled: std::env::var("BUZZ_MEMBERSHIP_SNAPSHOT_ENABLED")
+                .is_ok_and(|v| v == "true"),
+            membership_public_enabled: std::env::var("BUZZ_MEMBERSHIP_PUBLIC_ENABLED")
+                .is_ok_and(|v| v == "true"),
             buzz_v1_retention_seconds,
             cors_origins,
             relay_private_key,
@@ -1555,6 +1589,7 @@ impl Config {
             allow_nip_oa_auth,
             klipy,
             media,
+            media_read_mode,
             media_max_concurrent_uploads,
             media_max_concurrent_uploads_per_pubkey,
             media_uploads_per_minute,
@@ -1580,7 +1615,7 @@ impl Config {
             web_dir,
             serve_git_web_gui,
             nip_fi_provision_binding,
-            nip_fi_upgrades_enabled: parse_bool("BUZZ_NIP_FI_UPGRADES_ENABLED", false)?,
+            nip_fi_changes: parse_bool("BUZZ_NIP_FI_CHANGES", false)?,
             nip_fi_resolver_bounds,
             nip_fi,
         };
@@ -1704,33 +1739,27 @@ mod tests {
     }
 
     #[test]
-    fn nip_fi_upgrade_acceptance_is_explicitly_default_off() {
+    fn nip_fi_changes_are_explicitly_default_off() {
         let (_fi, _cfg) = env_guards();
-        let before = std::env::var("BUZZ_NIP_FI_UPGRADES_ENABLED").ok();
-        std::env::remove_var("BUZZ_NIP_FI_UPGRADES_ENABLED");
-        assert!(!Config::from_env().unwrap().nip_fi_upgrades_enabled);
+        let before = std::env::var("BUZZ_NIP_FI_CHANGES").ok();
+        std::env::remove_var("BUZZ_NIP_FI_CHANGES");
+        assert!(!Config::from_env().unwrap().nip_fi_changes);
         for value in ["true", "TRUE", "1", "on", " On "] {
-            std::env::set_var("BUZZ_NIP_FI_UPGRADES_ENABLED", value);
-            assert!(
-                Config::from_env().unwrap().nip_fi_upgrades_enabled,
-                "{value}"
-            );
+            std::env::set_var("BUZZ_NIP_FI_CHANGES", value);
+            assert!(Config::from_env().unwrap().nip_fi_changes, "{value}");
         }
         for value in ["false", "FALSE", "0", "off", "", " Off "] {
-            std::env::set_var("BUZZ_NIP_FI_UPGRADES_ENABLED", value);
-            assert!(
-                !Config::from_env().unwrap().nip_fi_upgrades_enabled,
-                "{value}"
-            );
+            std::env::set_var("BUZZ_NIP_FI_CHANGES", value);
+            assert!(!Config::from_env().unwrap().nip_fi_changes, "{value}");
         }
-        std::env::set_var("BUZZ_NIP_FI_UPGRADES_ENABLED", "treu");
+        std::env::set_var("BUZZ_NIP_FI_CHANGES", "treu");
         assert!(
             matches!(Config::from_env(), Err(ConfigError::InvalidValue(message))
-            if message.contains("BUZZ_NIP_FI_UPGRADES_ENABLED must be true or false"))
+            if message.contains("BUZZ_NIP_FI_CHANGES must be true or false"))
         );
         match before {
-            Some(value) => std::env::set_var("BUZZ_NIP_FI_UPGRADES_ENABLED", value),
-            None => std::env::remove_var("BUZZ_NIP_FI_UPGRADES_ENABLED"),
+            Some(value) => std::env::set_var("BUZZ_NIP_FI_CHANGES", value),
+            None => std::env::remove_var("BUZZ_NIP_FI_CHANGES"),
         }
     }
 
@@ -1871,7 +1900,6 @@ mod tests {
         assert!(config.bind_addr.port() > 0);
         assert!(!config.database_url.is_empty());
         assert!(!config.redis_url.is_empty());
-        assert_eq!(config.redis_pool_size, 16);
         assert_eq!(config.db_pool_size, 50);
         assert!(config.max_connections > 0);
         assert!(config.send_buffer_size > 0);
@@ -1955,12 +1983,16 @@ mod tests {
     /// warning fired. The `BUZZ_ADMIN_TOKEN` warning is the sole behavioral
     /// value of retaining the guards (the variable is otherwise inert), so it
     /// must be regression-protected: deleting a warn block has to fail a test.
+    /// Owns the guards in tracing → FI env → config env order; callers must
+    /// not already hold `env_guards()`, since shadow fixtures acquire tracing
+    /// before calling `Config::for_test()`.
     fn config_with_admin_env_capturing_logs(
         values: &[(&str, Option<&str>)],
     ) -> (Result<Config, ConfigError>, String) {
         use std::sync::{Arc, Mutex};
 
         let _tracing = crate::test_support::tracing_dispatch_lock();
+        let _guards = env_guards();
 
         #[derive(Clone)]
         struct CapturingMakeWriter {
@@ -2035,9 +2067,46 @@ mod tests {
     const SOME_ADMIN_TOKEN: &str =
         "5f0e1d2c3b4a59687786958493a2b1c0decadebeefcafe0123456789abcdef01";
 
+    /// The real admin log helper must not hold the FI env lock while waiting
+    /// for a tracing dispatcher: shadow log tests hold tracing before building
+    /// their Config::for_test fixture. The child deadline contains regressions.
+    #[test]
+    fn admin_log_capture_does_not_invert_fixture_lock_order() {
+        const CHILD: &str = "BUZZ_TEST_ADMIN_LOG_FIXTURE_LOCK_ORDER";
+        const NAME: &str = "config::tests::admin_log_capture_does_not_invert_fixture_lock_order";
+        if std::env::var_os(CHILD).is_none() {
+            // Copy a stable environment into the child; mutexes in its new
+            // process cannot protect against a parent's in-flight env writer.
+            let _guards = env_guards();
+            crate::test_support::run_exact_test_child(NAME, CHILD);
+            return;
+        }
+        let tracing = crate::test_support::tracing_dispatch_lock();
+        let admin = std::thread::spawn(admin_token_set_is_ignored_and_warns_at_startup);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            let waiting = crate::test_support::TRACING_DISPATCH_LOCK_WAITERS
+                .lock()
+                .unwrap()
+                .contains(&admin.thread().id());
+            if waiting {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "admin warning test never reached the tracing acquisition"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let _config = Config::for_test();
+        drop(tracing);
+        admin
+            .join()
+            .expect("admin environment and log assertions pass");
+    }
+
     #[test]
     fn admin_token_set_is_ignored_and_warns_at_startup() {
-        let _guards = env_guards();
         // Token authentication was removed. A lingering BUZZ_ADMIN_TOKEN with a
         // host is ignored (logged as a warning) and never changes the resolved
         // auth mode: unset/nip98 stay nip98, disabled stays disabled.
@@ -2164,7 +2233,6 @@ mod tests {
 
     #[test]
     fn admin_token_without_a_host_is_ignored_and_warns() {
-        let _guards = env_guards();
         // Even without BUZZ_ADMIN_HOST, a lingering BUZZ_ADMIN_TOKEN is ignored
         // (logged as a warning) — token auth was removed and the admin surface
         // stays absent because the host is unset, not because of the token.
@@ -2469,31 +2537,6 @@ mod tests {
     }
 
     #[test]
-    fn redis_pool_size_env_override_and_invalid_fallback() {
-        let _guards = env_guards();
-        let previous = std::env::var_os("BUZZ_REDIS_POOL_SIZE");
-
-        std::env::set_var("BUZZ_REDIS_POOL_SIZE", "32");
-        let overridden = Config::from_env().expect("config").redis_pool_size;
-
-        std::env::set_var("BUZZ_REDIS_POOL_SIZE", "0");
-        let zero = Config::from_env().expect("config").redis_pool_size;
-
-        std::env::set_var("BUZZ_REDIS_POOL_SIZE", "not-a-number");
-        let junk = Config::from_env().expect("config").redis_pool_size;
-
-        if let Some(value) = previous {
-            std::env::set_var("BUZZ_REDIS_POOL_SIZE", value);
-        } else {
-            std::env::remove_var("BUZZ_REDIS_POOL_SIZE");
-        }
-
-        assert_eq!(overridden, 32);
-        assert_eq!(zero, 16, "zero must fall back to the default");
-        assert_eq!(junk, 16, "unparsable value must fall back to the default");
-    }
-
-    #[test]
     fn db_pool_size_env_override_and_invalid_fallback() {
         let _guards = env_guards();
         let previous = std::env::var_os("BUZZ_DB_POOL_SIZE");
@@ -2676,6 +2719,44 @@ mod tests {
                 "the error must name the replacement env var, got: {message}"
             ),
             other => panic!("old env name must hard-fail startup, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replica_fence_probe_interval_defaults_and_rejects_out_of_range() {
+        let _guards = env_guards();
+        let previous = std::env::var_os("BUZZ_REPLICA_FENCE_PROBE_INTERVAL_MS");
+        let read = |value: Option<&str>| {
+            match value {
+                Some(value) => std::env::set_var("BUZZ_REPLICA_FENCE_PROBE_INTERVAL_MS", value),
+                None => std::env::remove_var("BUZZ_REPLICA_FENCE_PROBE_INTERVAL_MS"),
+            }
+            Config::from_env().map(|config| config.replica_fence_probe_interval_ms)
+        };
+
+        let unset = read(None);
+        let empty = read(Some(" "));
+        let set = read(Some("500"));
+        let rejected =
+            ["soon", "0", "299", "10001", "-400"].map(|value| (value, read(Some(value))));
+
+        if let Some(value) = previous {
+            std::env::set_var("BUZZ_REPLICA_FENCE_PROBE_INTERVAL_MS", value);
+        } else {
+            std::env::remove_var("BUZZ_REPLICA_FENCE_PROBE_INTERVAL_MS");
+        }
+
+        assert_eq!(unset.expect("unset"), 0, "unset selects the default");
+        assert_eq!(empty.expect("empty"), 0, "empty selects the default");
+        assert_eq!(set.expect("set"), 500);
+        for (value, result) in rejected {
+            match result {
+                Err(ConfigError::InvalidValue(message)) => assert!(
+                    message.contains("BUZZ_REPLICA_FENCE_PROBE_INTERVAL_MS"),
+                    "{value}: {message}"
+                ),
+                other => panic!("{value} must fail startup, got {other:?}"),
+            }
         }
     }
 

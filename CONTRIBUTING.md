@@ -83,7 +83,7 @@ We review as capacity allows — focused PRs that follow this guide move fastest
 | Rust | 1.88+ | Install via [rustup](https://rustup.rs/) |
 | Node.js | 24+ | Required for desktop app commands and `just ci` |
 | pnpm | 10+ | Required for desktop app commands and `just ci` |
-| Flutter | 3.47.7+ | Required for mobile app — install via [flutter.dev](https://docs.flutter.dev/get-started/install) |
+| Flutter | 3.47.9+ | Required for mobile app — install via [flutter.dev](https://docs.flutter.dev/get-started/install) |
 | Xcode | 27.1 recommended; 26 supported | Required for iOS builds; see [iOS toolchain setup](mobile/README.md#ios-toolchain) |
 | Docker | 24+ | For Postgres, Redis, MinIO |
 | `just` | latest | Task runner — `cargo install just` |
@@ -495,20 +495,18 @@ to existing clients.
 ## Ecosystem
 
 Buzz is developed across multiple repositories. This repo (`block/buzz`)
-is the open-source home for all application code — the relay, desktop app,
-mobile app, CLI, and agent harness. Internal repositories handle
-enterprise-signed builds and infrastructure deployment.
+is the open-source home for the relay, mobile app, CLI, and agent harness.
+This fork also supports `desktop/`, its Tauri desktop app. Upstream's
+next-generation desktop and web app lives in
+[block/buzz-app](https://github.com/block/buzz-app). Distributor-specific
+builds and infrastructure deployment belong in distributor configuration.
 
 See [AGENTS.md § Ecosystem](AGENTS.md#ecosystem) for the full repo table and
 dependency diagram.
 
-**External contributors:** Fork `block/buzz`, open a PR, and CI runs
-automatically. No special access is required.
-
-**Block team members:** See the internal
-[sprout-releases CONTRIBUTING.md](https://github.com/squareup/sprout-releases/blob/main/CONTRIBUTING.md)
-for team access setup, onboarding, and the full repo inventory. See
-[RELEASING.md](RELEASING.md) for the release process.
+Contributors can fork this repository, open a PR, and run CI without
+organization-specific access. See [RELEASING.md](RELEASING.md) for the release
+process.
 
 ---
 

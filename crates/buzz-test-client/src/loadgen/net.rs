@@ -16,6 +16,9 @@ use super::scenario::{Community, Scenario};
 #[derive(Clone)]
 pub struct Net {
     http: reqwest::Client,
+    /// Explicit community destinations bypass ambient proxies; operator and
+    /// ordinary requests keep the normal client's proxy policy.
+    direct_http: Option<reqwest::Client>,
     connect_addr: Option<String>,
     /// Community hosts that resolve to `connect_addr`.
     plaintext_hosts: HashSet<String>,
@@ -24,24 +27,31 @@ pub struct Net {
 
 impl Net {
     pub async fn new(scenario: &Scenario) -> anyhow::Result<Self> {
-        let mut builder = reqwest::Client::builder()
-            .timeout(Duration::from_secs(60))
-            .pool_max_idle_per_host(1024);
+        let builder = || {
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .pool_max_idle_per_host(1024)
+        };
         let mut plaintext_hosts = HashSet::new();
-        if let Some(addr) = &scenario.target.connect_addr {
+        let direct_http = if let Some(addr) = &scenario.target.connect_addr {
+            let mut direct = builder().no_proxy();
             let resolved: SocketAddr = tokio::net::lookup_host(addr)
                 .await?
                 .next()
                 .ok_or_else(|| anyhow::anyhow!("connect_addr {addr} did not resolve"))?;
             for community in scenario.communities() {
                 if let Some(host) = community.host {
-                    builder = builder.resolve(&host, resolved);
+                    direct = direct.resolve(&host, resolved);
                     plaintext_hosts.insert(host);
                 }
             }
-        }
+            Some(direct.build()?)
+        } else {
+            None
+        };
         Ok(Self {
-            http: builder.build()?,
+            http: builder().build()?,
+            direct_http,
             connect_addr: scenario.target.connect_addr.clone(),
             plaintext_hosts,
             connect_timeout: Duration::from_secs_f64(scenario.target.connect_timeout_secs),
@@ -75,15 +85,27 @@ impl Net {
     /// community host dialled at `connect_addr`, otherwise `url` itself.
     fn transport_url(&self, url: &str) -> String {
         match url.strip_prefix("https://") {
-            Some(rest)
-                if self
-                    .plaintext_hosts
-                    .contains(rest.split(['/', '?']).next().unwrap_or_default()) =>
-            {
+            Some(rest) if self.is_mapped_host(url) => {
                 format!("http://{rest}")
             }
             _ => url.to_string(),
         }
+    }
+
+    fn is_mapped_host(&self, url: &str) -> bool {
+        url.split_once("://").is_some_and(|(_, rest)| {
+            self.plaintext_hosts
+                .contains(rest.split(['/', '?']).next().unwrap_or_default())
+        })
+    }
+
+    fn request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
+        let client = self
+            .direct_http
+            .as_ref()
+            .filter(|_| self.is_mapped_host(url))
+            .unwrap_or(&self.http);
+        client.request(method, self.transport_url(url))
     }
 
     /// `POST {base}{path}` with a NIP-98 header; returns status and body.
@@ -97,8 +119,7 @@ impl Net {
     ) -> anyhow::Result<(reqwest::StatusCode, String)> {
         let url = format!("{base}{path}");
         let mut request = self
-            .http
-            .post(self.transport_url(&url))
+            .request(reqwest::Method::POST, &url)
             .header(
                 "Authorization",
                 identity::nip98_header(keys, "POST", &url, &body),
@@ -119,8 +140,7 @@ impl Net {
         url: &str,
     ) -> anyhow::Result<(reqwest::StatusCode, String)> {
         let response = self
-            .http
-            .get(self.transport_url(url))
+            .request(reqwest::Method::GET, url)
             .header(
                 "Authorization",
                 identity::nip98_header(keys, "GET", url, &[]),
@@ -134,8 +154,7 @@ impl Net {
     /// `GET {base}/` for the relay's NIP-11 information document.
     pub async fn relay_info(&self, base: &str) -> anyhow::Result<(reqwest::StatusCode, String)> {
         let response = self
-            .http
-            .get(self.transport_url(&format!("{base}/")))
+            .request(reqwest::Method::GET, &format!("{base}/"))
             .header("Accept", "application/nostr+json")
             .send()
             .await?;
@@ -184,6 +203,179 @@ pub fn http_reason(status: reqwest::StatusCode, body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A local proxy makes routing observable without depending on the
+    /// operator's proxy configuration or mutating the parent test environment.
+    #[tokio::test]
+    async fn connect_addr_bypasses_proxy_only_for_mapped_community_hosts() {
+        const CHILD: &str = "BUZZ_TEST_LOADGEN_PROXY_CHILD";
+        const NAME: &str =
+            "loadgen::net::tests::connect_addr_bypasses_proxy_only_for_mapped_community_hosts";
+        if std::env::var_os(CHILD).is_none() {
+            use std::sync::{
+                atomic::{AtomicUsize, Ordering},
+                Arc,
+            };
+            use tokio::io::AsyncReadExt;
+            let calls = Arc::new(AtomicUsize::new(0));
+            let observed = calls.clone();
+            let proxy = crate::loadgen::seed::tests::fake_http(move |_, _, _| {
+                observed.fetch_add(1, Ordering::SeqCst);
+                (200, "proxy".to_owned())
+            })
+            .await;
+            let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", NAME, "--nocapture"])
+                .env(CHILD, "1")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .kill_on_drop(true);
+            for key in [
+                "HTTP_PROXY",
+                "HTTPS_PROXY",
+                "ALL_PROXY",
+                "http_proxy",
+                "https_proxy",
+                "all_proxy",
+            ] {
+                command.env(key, format!("http://{proxy}"));
+            }
+            command.env("NO_PROXY", "").env("no_proxy", "");
+            let mut child = command.spawn().unwrap();
+            let capture = |reader: Option<tokio::process::ChildStdout>| async move {
+                let mut bytes = Vec::new();
+                reader
+                    .unwrap()
+                    .take(65_537)
+                    .read_to_end(&mut bytes)
+                    .await
+                    .unwrap();
+                bytes
+            };
+            let stdout = tokio::spawn(capture(child.stdout.take()));
+            let stderr = child.stderr.take().unwrap();
+            let stderr = tokio::spawn(async move {
+                let mut bytes = Vec::new();
+                stderr.take(65_537).read_to_end(&mut bytes).await.unwrap();
+                bytes
+            });
+            let status = tokio::time::timeout(Duration::from_secs(10), child.wait()).await;
+            let timed_out = status.is_err();
+            let status = match status {
+                Ok(status) => status.unwrap(),
+                Err(_) => {
+                    child.kill().await.unwrap();
+                    child.wait().await.unwrap()
+                }
+            };
+            let stdout = stdout.await.unwrap();
+            let stderr = stderr.await.unwrap();
+            assert!(
+                stdout.len() <= 65_536 && stderr.len() <= 65_536,
+                "proxy child exceeded its capture budget"
+            );
+            let output = format!(
+                "{}{}",
+                String::from_utf8_lossy(&stdout),
+                String::from_utf8_lossy(&stderr)
+            );
+            assert!(!timed_out, "proxy child exceeded its deadline: {output}");
+            assert!(status.success(), "proxy child failed: {output}");
+            assert!(
+                output.contains("running 1 test") && output.contains(NAME),
+                "{output}"
+            );
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                4,
+                "only the operator and ordinary requests use the proxy"
+            );
+            return;
+        }
+        let direct =
+            crate::loadgen::seed::tests::fake_http(|_, _, _| (200, "direct".to_owned())).await;
+        let scenario = Scenario::parse(&format!(
+            r#"
+run_id = "proxy"
+[target]
+ws_url = "wss://public.example"
+http_url = "https://public.example"
+community_host_template = "lg-{{run}}-{{i}}.example"
+connect_addr = "{direct}"
+[shape]
+communities = 1
+channels_per_community = 1
+[population]
+humans = 1
+agents = 0
+channels_per_member = 1
+[[ramp]]
+users = 1.0
+hold_secs = 1
+"#
+        ))
+        .unwrap();
+        let net = Net::new(&scenario).await.unwrap();
+        let community = scenario.communities().remove(0);
+        let keys = Keys::generate();
+        for base in [
+            community.http_url.clone(),
+            community.http_url.replacen("https://", "http://", 1),
+        ] {
+            let (status, body) = net
+                .post(&keys, &base, "/events", b"{}".to_vec(), None)
+                .await
+                .unwrap();
+            assert!(status.is_success(), "{status}: {body}");
+            assert_eq!(
+                body, "direct",
+                "connect_addr must select the actual HTTP destination"
+            );
+            assert_eq!(
+                net.get(&keys, &format!("{base}/read")).await.unwrap().1,
+                "direct"
+            );
+            assert_eq!(net.relay_info(&base).await.unwrap().1, "direct");
+        }
+        assert_eq!(
+            net.post(
+                &keys,
+                "http://operator.example",
+                "/operator/communities",
+                b"{}".to_vec(),
+                None
+            )
+            .await
+            .unwrap()
+            .1,
+            "proxy"
+        );
+        assert_eq!(
+            net.get(&keys, "http://operator.example/policy")
+                .await
+                .unwrap()
+                .1,
+            "proxy"
+        );
+        assert_eq!(
+            net.relay_info("http://operator.example").await.unwrap().1,
+            "proxy"
+        );
+        let mut ordinary = scenario.clone();
+        ordinary.target.connect_addr = None;
+        ordinary.target.community_host_template = None;
+        ordinary.target.http_url = "http://ordinary.example".to_owned();
+        ordinary.target.ws_url = "ws://ordinary.example".to_owned();
+        let net = Net::new(&ordinary).await.unwrap();
+        assert_eq!(
+            net.get(&keys, "http://ordinary.example/read")
+                .await
+                .unwrap()
+                .1,
+            "proxy"
+        );
+    }
 
     #[tokio::test]
     async fn stalled_upgrade_fails_at_the_connect_deadline() {

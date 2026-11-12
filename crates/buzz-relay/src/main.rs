@@ -345,11 +345,15 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
         "Prometheus metrics exporter started"
     );
 
+    // Before the database: a provider misconfiguration fails startup at once.
+    let feature_flags = Arc::new(buzz_relay::feature_flags::FeatureFlags::from_env().await?);
+
     let db_config = DbConfig {
         push_enabled: config.push_enabled,
         database_url: config.database_url.clone(),
         read_database_url: config.read_database_url.clone(),
         replica_read_max_age_ms: config.replica_read_max_age_ms,
+        replica_fence_probe_interval_ms: config.replica_fence_probe_interval_ms,
         max_connections: config.db_pool_size,
         read_max_connections: config.db_read_pool_size,
         ..DbConfig::default()
@@ -611,18 +615,14 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     };
 
     let step = StepTimer::start(StartupStep::RedisConnect);
-    let redis_pool = {
-        let mut cfg = deadpool_redis::Config::from_url(&config.redis_url);
-        cfg.pool = Some(deadpool_redis::PoolConfig::new(config.redis_pool_size));
-        cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1))
-            .map_err(|e| anyhow::anyhow!("Redis pool creation failed: {e}"))?
-    };
+    // One-time bootstrap gate, deliberately before AppState and therefore before
+    // the health listener binds. Post-start Redis failures are dependency
+    // failures and must never move readiness; never having connected at all is
+    // a broken deployment, not a blip.
+    buzz_relay::state::verify_redis_command_path(&config.redis_url).await?;
+    let redis_pool = buzz_pubsub::redis_connection(&config.redis_url)
+        .map_err(|e| anyhow::anyhow!("Redis connection setup failed: {e}"))?;
     let redis_health_pool = redis_pool.clone(); // cheap Arc clone — shared with AppState
-                                                // One-time bootstrap gate, deliberately before AppState and therefore before
-                                                // the health listener binds. Post-start Redis failures are dependency
-                                                // failures and must never move readiness; never having connected at all is
-                                                // a broken deployment, not a blip.
-    buzz_relay::state::verify_redis_command_path(&redis_health_pool).await?;
     info!("Redis command path connected");
     let pubsub = Arc::new(
         PubSubManager::new(&config.redis_url, redis_pool)
@@ -767,6 +767,26 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
         },
     );
     let state = Arc::new(app_state);
+    // Concurrency caps follow their flags from the first request: apply them
+    // once before serving, then keep re-reading them.
+    let concurrency_gates = buzz_relay::concurrency_limits::relay_gates(&state);
+    buzz_relay::concurrency_limits::apply(&feature_flags, &concurrency_gates);
+    let concurrency_limits_cancel = CancellationToken::new();
+    let flags_for_shutdown = Arc::clone(&feature_flags);
+    let limits_cancel = concurrency_limits_cancel.clone();
+    runtime_dependencies.own(
+        tokio::spawn(async move {
+            buzz_relay::concurrency_limits::run(
+                Arc::clone(&flags_for_shutdown),
+                concurrency_gates,
+                limits_cancel,
+            )
+            .await;
+            flags_for_shutdown.close().await;
+        }),
+        concurrency_limits_cancel.clone(),
+    );
+    runtime_dependencies.own_fence_probe(state.db.clone(), state.deploy_drain.clone());
     if let Some(tenant) = &deployment_community {
         state
             .run_startup_work(
@@ -903,41 +923,12 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
         None
     };
 
-    // Inter-relay mesh (BUZZ_MESH seam). `boot_mesh` returns None when the
-    // kill switch is off — nothing is bound, published, or spawned, so the
-    // relay behaves byte-identically to a build without the mesh. When
-    // enabled, a misconfigured mesh is fatal here (bind/Redis failure): an
-    // operator who asked for the mesh gets it or gets told why not.
-    let step = StepTimer::start(StartupStep::MeshBoot);
-    if let Some(handle) = buzz_relay::mesh_boot::boot_mesh(
-        &state.config,
-        state.redis_pool.clone(),
-        state.db.clone(),
-        &state.relay_keypair,
-        Arc::clone(&state.shutting_down),
-    )
-    .await?
-    {
-        let runtime_id = handle.local_runtime_id;
-        // Register the per-profile inbound consumers (huddle datagram fan-in,
-        // HuddleControl accept loop, reliable-stream accept + optional
-        // BUZZ_MESH_DEMO_ECHO) before peers can route traffic here.
-        handle.wire_consumers(
-            Arc::clone(&state.audio_rooms),
-            state.config.mesh_demo_echo,
-            Arc::clone(&state.shutting_down),
-        );
-        if state.mesh.set(handle).is_err() {
-            unreachable!("mesh handle is set exactly once, right here");
-        }
-        info!(runtime_id = %runtime_id, "Inter-relay mesh started");
-    }
-    step.finish();
-
     // Git-on-object-storage: admit the configured S3/MinIO backend against the
     // linearizable conditional-write axiom (A3) before serving git traffic.
     // Failure is fatal: a backend that cannot satisfy pointer CAS invalidates
     // the manifest-pointer protocol. This is a deployment gate, not a proof.
+    // It runs before the mesh boots so a pod that fails it never publishes a
+    // mesh ready record for peers to dial.
     if std::env::var("BUZZ_GIT_CONFORMANCE_PROBE")
         .map(|v| v != "false")
         .unwrap_or(true)
@@ -973,6 +964,37 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
             "git object-store backend admitted: A3 conformance probe passed"
         );
     }
+
+    // Inter-relay mesh (BUZZ_MESH seam). `boot_mesh` returns None when the
+    // kill switch is off — nothing is bound, published, or spawned, so the
+    // relay behaves byte-identically to a build without the mesh. When
+    // enabled, a misconfigured mesh is fatal here (bind/Redis failure): an
+    // operator who asked for the mesh gets it or gets told why not.
+    let step = StepTimer::start(StartupStep::MeshBoot);
+    if let Some(handle) = buzz_relay::mesh_boot::boot_mesh(
+        &state.config,
+        state.redis_pool.clone(),
+        state.db.clone(),
+        &state.relay_keypair,
+        Arc::clone(&state.shutting_down),
+    )
+    .await?
+    {
+        let runtime_id = handle.local_runtime_id;
+        // Register the per-profile inbound consumers (huddle datagram fan-in,
+        // HuddleControl accept loop, reliable-stream accept + optional
+        // BUZZ_MESH_DEMO_ECHO) before peers can route traffic here.
+        handle.wire_consumers(
+            Arc::clone(&state.audio_rooms),
+            state.config.mesh_demo_echo,
+            Arc::clone(&state.shutting_down),
+        );
+        if state.mesh.set(handle).is_err() {
+            unreachable!("mesh handle is set exactly once, right here");
+        }
+        info!(runtime_id = %runtime_id, "Inter-relay mesh started");
+    }
+    step.finish();
 
     // Repair legacy NIP-29 channel rosters that were persisted while the
     // canonical member query still truncated at 1,000 rows.
@@ -1153,37 +1175,17 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
         &state,
     )));
 
-    // Multi-node fan-out consumer: receive events from Redis pub/sub
-    // (published by other relay instances) and fan out to local WS subscribers.
-    {
-        let state_for_sub = Arc::clone(&state);
-        let mut rx = state_for_sub.pubsub.subscribe_local();
-        runtime_dependencies.spawn_reader(async move {
-            loop {
-                match rx.recv().await {
-                    Ok(channel_event) => {
-                        buzz_relay::handlers::event::fan_out_pubsub_event(
-                            &state_for_sub,
-                            channel_event,
-                        )
-                        .await;
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        metrics::counter!("buzz_multinode_fanout_lag_total").increment(n);
-                        tracing::warn!("Multi-node fan-out lagged by {n} messages");
-                        // Skipped messages are not replayed (NIP-AR Sync rule 5).
-                        state_for_sub
-                            .artifact_syncs
-                            .resync_all("resync: live delivery lagged");
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        tracing::error!("Multi-node fan-out broadcast channel closed");
-                        break;
-                    }
-                }
-            }
-        });
-    }
+    // Multi-node fan-out: deliver events other relay instances published to
+    // Redis to local WS subscribers (see `handlers::multinode_fanout`).
+    let fanout_cancel = runtime_dependencies.cancellation();
+    runtime_dependencies.own(
+        buzz_relay::handlers::multinode_fanout::spawn_with_cancel(
+            Arc::clone(&state),
+            state.pubsub.subscribe_local(),
+            fanout_cancel.clone(),
+        ),
+        fanout_cancel,
+    );
 
     // Cross-pod cache-invalidation consumer: receive cache-key drops from Redis
     // pub/sub (published by other relay instances when membership/visibility
@@ -1313,7 +1315,8 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
     let router = build_router(Arc::clone(&state));
     let health_router = build_health_router(Arc::clone(&state));
 
-    // Pool metrics: periodic background task polling DB + Redis pool stats.
+    // Pool metrics: periodic background task polling DB pool stats and probing
+    // the shared Redis command connection.
     {
         let pool_state = Arc::clone(&state);
         let interval_secs = std::env::var("BUZZ_POOL_METRICS_INTERVAL_SECS")
@@ -1362,11 +1365,7 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
                             }
                         }
 
-                        let rs = pool_state.redis_pool.status();
-                        metrics::gauge!("buzz_redis_pool_available").set(rs.available as f64);
-                        metrics::gauge!("buzz_redis_pool_size").set(rs.size as f64);
-                        metrics::gauge!("buzz_redis_pool_max").set(rs.max_size as f64);
-                        metrics::gauge!("buzz_redis_pool_waiting").set(rs.waiting as f64);
+                        relay_metrics::probe_redis_command_connection(&pool_state.redis_pool).await;
 
                         let deletion_store = pool_state.db.deletion_store();
                         let reaped = deletion_store.reap_expired_serving_write_leases(1000).await;
@@ -1495,6 +1494,7 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
         }
     }
     state.community_revalidator_cancel.cancel();
+    concurrency_limits_cancel.cancel();
     state.dependency_sampler_cancel.cancel();
     state.dependency_completion_publisher_cancel.cancel();
 
@@ -1900,7 +1900,7 @@ async fn run_community_revalidator(
         if closed > 0 {
             tracing::info!(
                 closed,
-                "closed sockets for inactive communities during lifecycle revalidation"
+                "closed sockets for inactive communities or required authentication policy"
             );
         }
     })
@@ -3908,6 +3908,66 @@ mod composition_tests {
     #[test]
     fn composition_log_does_not_leak_issuer_url() {
         use std::io::Write;
+
+        // Other binary tests rebuild tracing's process-wide callsite interest
+        // while this test captures shared JWKS callsites. Run this exact test
+        // alone in a child so a peer's dispatcher cannot suppress those logs.
+        const CHILD: &str = "BUZZ_TEST_JWKS_COMPOSITION_LOG_CHILD";
+        const NAME: &str = "composition_tests::composition_log_does_not_leak_issuer_url";
+        if std::env::var_os(CHILD).is_none() {
+            use std::io::Read;
+            use std::process::{Command, Stdio};
+            use std::time::Instant;
+
+            const MAX_CAPTURE: u64 = 1024 * 1024;
+            fn capture(stream: impl Read) -> Vec<u8> {
+                let mut bytes = Vec::new();
+                stream
+                    .take(MAX_CAPTURE + 1)
+                    .read_to_end(&mut bytes)
+                    .expect("read isolated test output");
+                assert!(bytes.len() as u64 <= MAX_CAPTURE, "test output limit");
+                bytes
+            }
+
+            let mut child = Command::new(std::env::current_exe().expect("test executable"))
+                .args(["--exact", NAME, "--nocapture"])
+                .env(CHILD, "1")
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("spawn isolated log test");
+            let stdout = child.stdout.take().expect("child stdout");
+            let stderr = child.stderr.take().expect("child stderr");
+            let stdout = std::thread::spawn(move || capture(stdout));
+            let stderr = std::thread::spawn(move || capture(stderr));
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let (status, timed_out) = loop {
+                if let Some(status) = child.try_wait().expect("poll isolated log test") {
+                    break (status, false);
+                }
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    break (child.wait().expect("reap isolated log test"), true);
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            };
+            let stdout = stdout.join().expect("capture child stdout");
+            let stderr = stderr.join().expect("capture child stderr");
+            let output = format!(
+                "{}{}",
+                String::from_utf8_lossy(&stdout),
+                String::from_utf8_lossy(&stderr)
+            );
+            assert!(!timed_out, "isolated log test timed out:\n{output}");
+            assert!(status.success(), "isolated log test failed:\n{output}");
+            assert!(
+                output.contains("running 1 test") && output.contains(NAME),
+                "exact selector must execute the log test:\n{output}"
+            );
+            return;
+        }
 
         // Sentinel must be lowercase: JwksSourceContract::new() canonicalizes
         // the URI and lowercases the host component. An uppercase sentinel would

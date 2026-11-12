@@ -2869,10 +2869,15 @@ hold_secs = 1
 
     #[tokio::test]
     async fn legacy_ticks_reread_and_replace_batches_every_tick() {
+        // Roster reads and batch closes can finish before the unread repair.
         let out = drive(
             rig(2, 25, "mode = \"legacy\"\ntick_secs = 1.0"),
             Duration::ZERO,
-            |o| o.count("desktop_roster") >= 4 && o.saw("CLOSE", "batch-1-2"),
+            |o| {
+                o.count("desktop_roster") >= 4
+                    && o.count("desktop_unread") >= 4
+                    && o.saw("CLOSE", "batch-1-2")
+            },
         )
         .await;
         no_errors(&out);

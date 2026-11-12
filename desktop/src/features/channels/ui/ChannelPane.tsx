@@ -66,6 +66,7 @@ import { useChannelIntro } from "@/features/channels/ui/useChannelIntro";
 import type { ChannelPaneProps } from "@/features/channels/ui/ChannelPane.types";
 import * as agentSessionSelection from "@/features/channels/ui/agentSessionSelection";
 import { usePrepareDmSendChannel } from "@/features/channels/ui/usePrepareDmSendChannel";
+import { useOwnSendArm } from "@/features/channels/ui/useOwnSendArm";
 import { useChannelPaneMessages } from "@/features/channels/ui/useChannelPaneMessages";
 import { useRoutedMessageEdit } from "@/features/channels/ui/useRoutedMessageEdit";
 import { Button } from "@/shared/ui/button";
@@ -283,6 +284,11 @@ export const ChannelPane = React.memo(function ChannelPane({
     }
     return pubkeys;
   }, [activityAgents, agentPubkeys, agentSessionAgents]);
+  const getTimelineChannelId = React.useCallback(
+    () => activeChannelIdRef.current,
+    [],
+  );
+  const armOwnSend = useOwnSendArm(messageTimelineRef, getTimelineChannelId);
   const handleSendMessage = React.useCallback(
     async (
       content: string,
@@ -299,15 +305,24 @@ export const ChannelPane = React.memo(function ChannelPane({
         isActiveWelcomeChannel &&
         (containsWelcomePersonaMention(content) ||
           mentionsKnownAgent(mentionPubkeys, knownAgentPubkeys));
-      messageTimelineRef.current?.scrollToBottomOnNextUpdate();
-      await onSendMessage(
-        content,
-        mentionPubkeys,
-        mediaTags,
-        channelId,
-        threadContext,
-        forceRest,
-      );
+      // A send prepared into another channel (a DM message that mentions an
+      // agent outside the DM) lands its row there, so this timeline never sees
+      // it, and the arm skips it. The pane navigates there once the send
+      // succeeds.
+      const disarmOwnSend = armOwnSend(channelId ?? activeChannelId);
+      try {
+        await onSendMessage(
+          content,
+          mentionPubkeys,
+          mediaTags,
+          channelId,
+          threadContext,
+          forceRest,
+        );
+      } catch (error) {
+        disarmOwnSend();
+        throw error;
+      }
       if (
         channelId &&
         channelId !== activeChannelId &&
@@ -322,6 +337,7 @@ export const ChannelPane = React.memo(function ChannelPane({
     },
     [
       activeChannelId,
+      armOwnSend,
       completeWelcomeComposerBanner,
       goChannel,
       isActiveWelcomeChannel,
@@ -365,11 +381,8 @@ export const ChannelPane = React.memo(function ChannelPane({
     [activeChannel, currentPubkey, profiles],
   );
   const handleWelcomeAddAgent = React.useCallback(() => {
-    onAddAgent?.({
-      beforeSend: () =>
-        messageTimelineRef.current?.scrollToBottomOnNextUpdate(),
-    });
-  }, [onAddAgent]);
+    onAddAgent?.({ beforeSend: armOwnSend });
+  }, [armOwnSend, onAddAgent]);
   const standardChannelIntro = useChannelIntro({
     activeChannel,
     onAddAgent,
