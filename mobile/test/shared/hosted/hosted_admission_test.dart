@@ -271,7 +271,10 @@ class _Account extends BuilderlabAccountClient {
   BuilderlabAccount get account =>
       BuilderlabAccount(subject: 'owner', expiresAt: DateTime.utc(2100));
   @override
-  Future<Map<String, dynamic>> currentIdentity() async {
+  Future<Map<String, dynamic>> currentIdentity({
+    String? expectedSubject,
+    void Function()? checkCurrent,
+  }) async {
     bindingReads++;
     onBinding?.call();
     return {

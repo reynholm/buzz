@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -679,7 +680,11 @@ void main() {
       final kinds = <int>[];
       final registrations = <Map<String, dynamic>>[];
       final published = <NostrEvent>[];
+      Completer<void>? upgradeEntered;
+      Completer<void>? upgradeRelease;
       server.listen((request) async {
+        upgradeEntered?.complete();
+        await upgradeRelease?.future;
         final peer = await WebSocketTransformer.upgrade(request);
         addTearDown(peer.close);
         peer.listen((frame) {
@@ -720,6 +725,19 @@ void main() {
       });
       expect(registrations.single['picture'], 'https://example.com/avatar.png');
       await controller.removePolicy(relay, fakeAgent);
+      expect(kinds, [30177, 5]);
+      // Authentication/connection can outlive the account that began setup.
+      // Retiring it before upgrade completes must prevent the policy EVENT.
+      upgradeEntered = Completer<void>();
+      upgradeRelease = Completer<void>();
+      final retired = controller.publishPolicy(relay, {
+        'pubkey': fakeAgent,
+        'name': 'Retired setup',
+      });
+      await upgradeEntered.future;
+      registry.signedIn = false;
+      upgradeRelease.complete();
+      await expectLater(retired, throwsA(AccountFailure.differentAccount));
       expect(kinds, [30177, 5]);
     },
   );
@@ -1151,6 +1169,7 @@ void main() {
           myPubkeyProvider.overrideWithValue(fakeOwner.public),
           presenceCacheProvider.overrideWith(_Presence.new),
           availableRemoteAgentsProvider.overrideWith((ref) async => {'remote'}),
+          activeCommunityProvider.overrideWith((ref) async => null),
         ],
       );
       addTearDown(container.dispose);

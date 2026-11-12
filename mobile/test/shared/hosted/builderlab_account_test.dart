@@ -259,9 +259,13 @@ void main() {
       storageKey: record('account-1', 'old'),
     });
     final restoreVerified = Completer<void>();
+    Completer<void>? exchangeGate;
+    var mutations = 0;
     final client = BuilderlabAccountClient(
       httpClient: MockClient((request) async {
+        if (request.url.path.endsWith('/register-agent')) mutations++;
         if (request.url.path.endsWith('/exchange')) {
+          await exchangeGate?.future;
           return http.Response(
             jsonEncode({'session_credential': 'new', 'expires_at': expiry}),
             200,
@@ -282,6 +286,29 @@ void main() {
     expect((await restoring)!.subject, 'account-1');
     expect((await exchanging).subject, 'account-1');
     expect(jsonDecode((await stored())!)['credential'], 'new');
+    // The same subject can adopt a new session ahead of an already queued
+    // mutation. The operation fence must run inside the serialized queue.
+    final generation = client.sessionChanges.value;
+    exchangeGate = Completer<void>();
+    final renewed = client.exchange(code: 'another-code', verifier: verifier);
+    final rejected = expectLater(
+      client.post(
+        '/v3/beekeeper/register-agent',
+        {},
+        expectedSubject: 'account-1',
+        checkCurrent: () {
+          if (client.sessionChanges.value != generation) {
+            throw AccountFailure.differentAccount;
+          }
+        },
+      ),
+      throwsA(AccountFailure.differentAccount),
+    );
+    exchangeGate.complete();
+    await renewed;
+    await rejected;
+    expect(mutations, 0);
+    client.dispose();
   });
 
   test('concurrent restores share one adopted account', () async {

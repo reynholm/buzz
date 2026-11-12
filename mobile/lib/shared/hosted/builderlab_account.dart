@@ -126,6 +126,10 @@ class BuilderlabAccountClient {
   ValueListenable<String?> get subjectChanges => _subject;
   final _subject = ValueNotifier<String?>(null);
 
+  /// Changes whenever a session is adopted or cleared, even for the same subject.
+  ValueListenable<int> get sessionChanges => _session;
+  final _session = ValueNotifier<int>(0);
+
   /// Runs operations one at a time in call order, so a callback exchange that
   /// arrives during startup restore waits instead of failing.
   Future<T> _serial<T>(Future<T> Function() operation) {
@@ -250,6 +254,7 @@ class BuilderlabAccountClient {
     // Assigned before notifying, so subject listeners see the new account.
     _account = verified;
     _subject.value = verified.subject;
+    _session.value++;
     _unshared = credential;
     _share();
     return verified;
@@ -301,8 +306,15 @@ class BuilderlabAccountClient {
 
   /// Public identity metadata only. Private-key recovery belongs to the identity
   /// storage owner, which must derive and verify the key before any persistence.
-  Future<Map<String, dynamic>> currentIdentity() =>
-      post('/v1/buzz/nostr-identities/current', {});
+  Future<Map<String, dynamic>> currentIdentity({
+    String? expectedSubject,
+    void Function()? checkCurrent,
+  }) => post(
+    '/v1/buzz/nostr-identities/current',
+    {},
+    expectedSubject: expectedSubject,
+    checkCurrent: checkCurrent,
+  );
 
   /// Saves a successfully admitted destination to the same account, even if
   /// another session operation was queued before this request runs.
@@ -319,17 +331,26 @@ class BuilderlabAccountClient {
   /// Authenticated JSON POST to a Buzz account route on the fixed origin. The
   /// credential never leaves this client. A 401 clears the stored session only
   /// when the session check also rejects it; otherwise it is [AccountFailure.denied].
+  /// [checkCurrent] fences an operation again inside the serialized queue,
+  /// immediately before using credentials for its request.
   Future<Map<String, dynamic>> post(
     String path,
     Map<String, dynamic> body, {
     String? expectedSubject,
-  }) => _post(path, body, expectedSubject: expectedSubject);
+    void Function()? checkCurrent,
+  }) => _post(
+    path,
+    body,
+    expectedSubject: expectedSubject,
+    checkCurrent: checkCurrent,
+  );
 
   Future<Map<String, dynamic>> _post(
     String path,
     Map<String, dynamic> body, {
     String? signingKey,
     String? expectedSubject,
+    void Function()? checkCurrent,
   }) {
     if (!RegExp(r'^/v1/buzz(/[a-z0-9_-]+)+$').hasMatch(path) &&
         !_beekeeperRoutes.contains(path)) {
@@ -340,6 +361,7 @@ class BuilderlabAccountClient {
       );
     }
     return _serial(() async {
+      checkCurrent?.call();
       final credential = _credential;
       if (credential == null) throw AccountFailure.signedOut;
       _share();
@@ -447,7 +469,10 @@ class BuilderlabAccountClient {
     _credential = null;
     _unshared = null;
     _account = null;
-    if (!_disposed) _subject.value = null;
+    if (!_disposed) {
+      _subject.value = null;
+      _session.value++;
+    }
   }
 
   Future<void> _unshare() async {
@@ -527,6 +552,7 @@ class BuilderlabAccountClient {
     _signedOut = null;
     _account = null;
     _subject.dispose();
+    _session.dispose();
     _http.close();
   }
 }

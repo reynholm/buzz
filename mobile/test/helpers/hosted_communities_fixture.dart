@@ -61,6 +61,7 @@ class WidgetDiscoveryAccount extends BuilderlabAccountClient {
     String path,
     Map<String, dynamic> body, {
     String? expectedSubject,
+    void Function()? checkCurrent,
   }) async {
     fixture.requests.add(path);
     if (path.endsWith('/current')) {

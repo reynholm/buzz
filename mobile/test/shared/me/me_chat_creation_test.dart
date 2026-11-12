@@ -81,9 +81,10 @@ void main() {
       expect(MeChatCreation.pending(service()), isNull);
     },
   );
-  for (final accepted in [false, true]) {
+  for (final status in ['absent', 'visible', 'deleted']) {
+    final accepted = status == 'visible';
     test(
-      'expired first message resumes without duplication: accepted=$accepted',
+      'expired first message preserves uncertainty: status=$status',
       () async {
         SharedPreferences.setMockInitialValues({});
         final prefs = await SharedPreferences.getInstance();
@@ -106,7 +107,8 @@ void main() {
             createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000 - 86400,
           ).toMap(),
         );
-        if (accepted) relay.messages[old.id] = old;
+        if (status != 'absent') relay.messages[old.id] = old;
+        if (status == 'deleted') relay.deleted.add(old.id);
         final intent = MeChatCreation(
           'chat',
           'Yesterday’s draft',
@@ -122,21 +124,31 @@ void main() {
           isPlaced: () async => true,
           place: () async => throw StateError('already placed'),
         );
+        await intent.save(sync);
+        await prefs.reload();
+        final resumed = MeChatCreation.pending(sync)!;
         if (!accepted) {
-          await expectLater(run(intent), throwsStateError);
+          await expectLater(
+            run(resumed),
+            throwsA(
+              isA<StateError>().having(
+                (error) => error.message,
+                'message',
+                contains('Discard'),
+              ),
+            ),
+          );
           await prefs.reload();
           final pending = MeChatCreation.pending(sync)!;
-          expect(pending.initialMessage!.id, isNot(old.id));
-          expect(pending.initialMessage!.content, old.content);
-          expect(pending.initialMessage!.pubkey, owner.public);
-          expect(pending.initialMessage!.tags, old.tags);
-          expect(await run(pending), 'chat');
-          expect(relay.attempts.toSet(), {pending.initialMessage!.id});
-        } else {
-          expect(await run(intent), 'chat');
+          expect(pending.initialMessage!.toJson(), old.toJson());
           expect(relay.attempts, isEmpty);
+          expect(relay.messages.length, status == 'deleted' ? 1 : 0);
+          await pending.discard(sync);
+        } else {
+          expect(await run(resumed), 'chat');
+          expect(relay.attempts, isEmpty);
+          expect(relay.messages.length, 1);
         }
-        expect(relay.messages.length, 1);
         expect(MeChatCreation.pending(sync), isNull);
       },
     );
@@ -349,13 +361,15 @@ class _FailingStore extends InMemorySharedPreferencesStore {
 class _MessageRelay extends RelaySessionNotifier {
   final messages = <String, NostrEvent>{};
   final attempts = <String>[];
+  final deleted = <String>{};
   @override
   Future<List<NostrEvent>> fetchHistory(
     NostrFilter filter, {
     Duration timeout = const Duration(seconds: 8),
   }) async => [
     for (final message in messages.values)
-      if (filter.ids!.contains(message.id)) message,
+      if (filter.ids!.contains(message.id) && !deleted.contains(message.id))
+        message,
   ];
   @override
   Future<NostrEvent> publish(

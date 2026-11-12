@@ -156,13 +156,36 @@ Rules:
 5. **No silent loss.** Live fan-out can lose entries: a publish can fail, a node's pub/sub connection can drop for seconds, and a node's local fan-out can lag. Pub/sub does not replay any of these. A sync MUST NOT lose a change silently. So:
    - A node MUST send `CLOSED "resync: ..."` to every sync it serves that a loss on that node can affect: its pub/sub connection dropped or reconnected; its local fan-out lagged or dropped entries, including a message that it could not decode; it could not check the reader's access to a change for that sync (for example, a failed membership lookup); or the connection's own send queue was full and dropped an entry for that sync. One drop is enough: the slow-client grace limit does not apply to a sync. It MAY resync every sync it serves.
    - If the node cannot queue the `CLOSED "resync: ..."` itself (for example, because the same send queue is full), it MUST close the connection. A client starts a new sync on any disconnect (rule 7), so a resync is never lost.
-   - A node MUST retry a failed publish until it succeeds or the node stops. Delivery order does not matter. For a sync, a live entry is only a signal that one `d` changed. The reader's node never sends the published event itself to a sync; it reads the current head (rule 3). So a late retry of an older change sends the current head or nothing, never an older one (rule 4).
+   - A node MUST retry a failed publish until it succeeds or the node stops. It MAY coalesce failed publications into a bounded loss signal if every potentially affected live reader either receives a resync or detects a disconnected pub/sub link before continuing. Such a signal MUST be acknowledged before its accepted delivery work completes. Delivery order does not matter. For a sync, a live entry is only a signal that one `d` changed. The reader's node never sends the published event itself to a sync; it reads the current head (rule 3). So a late retry of an older change sends the current head or nothing, never an older one (rule 4).
 
    So a sync that is open and has had no resync has received every change, except when a node crashes after it commits a change and before it publishes it. A client that must bound that window can sync again on its own schedule. The relay does not read the set again on a timer.
 6. **Retirement.** A moderation redaction that retires the current revision of an artifact in scope makes the relay send `CLOSED "resync: ..."`. The relay withholds the redacted head, so a new sync is the only way the client learns that the artifact left the set. A relay MUST NOT retire a head in any other way that open syncs cannot observe, such as an operator delete outside NIP-29; it refuses such deletes or ends the affected syncs with `resync`.
 7. **Commit point.** A client MUST replace its local set only when it receives `EOSE`. If the connection drops before `EOSE`, it discards what it received. After `EOSE`, it applies each live entry as it arrives. On any disconnect it starts a new sync; there is no resume. Before a new sync after a resync, an error or a dropped connection, the client waits a random delay that grows after each failure in a row (backoff with jitter).
 8. **No partial success.** If the relay cannot deliver the full set within its limits or budget, it MUST send `CLOSED` and MUST NOT send `EOSE`. A closed connection without `EOSE` is never proof of an empty set. The relay bounds its buffers for a sync in bytes as well as in count, and it ends the snapshot and its reads as soon as the client disconnects or sends `CLOSE`.
 9. **Resync.** The relay MUST send `CLOSED "resync: ..."` when the reader's access to a channel that `#h` names changes: membership, channel visibility or channel deletion. This closes the whole sync, also when `#h` names other channels. An ordinary `REQ` can keep its other channels; a sync cannot, because its set is no longer exact. Archive does not change reads (see Home channel lifecycle), so it does not cause a resync.
+
+**Cluster loss recovery.** The implementation coalesces failed live publications
+into one pending bit and one accepted background worker per node. The fixed
+Redis control topic `buzz:control:artifact-sync-loss` carries only `resync`, never
+an event, community identifier or content. Every subscriber confirms this topic
+before advertising its link as ready. A signal advances the existing link epoch
+and closes every local sync; clients back off with jitter and start a fresh,
+authorized, community-scoped snapshot. Disconnected subscribers already resync
+on link loss/reconnect. Ordinary non-sync subscriptions retain their existing
+best-effort delivery contract.
+
+At most one recovery PUBLISH per node runs every five seconds, including across
+successful worker restarts. Failures arriving during an in-flight signal require
+a later acknowledged signal. This bounds retained payloads, accepted tasks and
+aggregate background retry traffic even if event topics reject PUBLISH while
+the control topic still accepts it. An outstanding worker blocks SafeToStop;
+a process crash retains the already documented commit-before-publish window.
+
+All subscriber nodes in a shared Redis trust domain must support this control
+topic before a writer uses coalesced recovery. Drain older serving nodes before
+enabling the new writers; Redis ACLs must allow the control subscription and
+publication. Do not mix old subscribers with these writers during rollout or
+rollback. No database migration is required.
 
 **Short-lived clients.** A CLI that needs the set one time sends the same `REQ`, waits for `EOSE`, then sends `CLOSE`. It gets the cut of rule 2: a complete set that includes every change the relay accepted before it received the `REQ`. It does not see changes after the cut. A writer catches those with `prev` (NIP-AR compare-and-set). There is no separate one-shot request.
 

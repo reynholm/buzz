@@ -158,6 +158,7 @@ impl SyncHandle {
 #[derive(Default)]
 pub struct ArtifactSyncs {
     syncs: DashMap<(ConnId, SubId), Arc<SyncHandle>>,
+    publish_recovery: StdMutex<PublishRecovery>,
 }
 
 impl ArtifactSyncs {
@@ -289,9 +290,22 @@ pub async fn watch_link(state: Arc<AppState>) {
     }
 }
 
-/// Publish `stored` to Redis. A failed publish of a kind that syncs consume
-/// is retried in the background until it succeeds or the node stops (rule
-/// 5): order does not matter, because a sync reads the current head.
+/// One node-wide loss bit replaces arbitrarily many failed event payloads.
+/// AppState clones share this through ArtifactSyncs. The deadline survives a
+/// successful worker retirement so partial topic failures cannot cause a storm
+/// of successful cluster-wide resyncs.
+#[derive(Default)]
+struct PublishRecovery {
+    running: bool,
+    dirty: bool,
+    next_attempt: Option<tokio::time::Instant>,
+}
+
+const RECOVERY_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Publish `stored` to Redis. Failed sync signals coalesce into one owned
+/// retry of a cluster-wide loss notification. All readers then obtain a fresh
+/// authoritative snapshot, including deletions and access changes (rule 5).
 pub(crate) async fn publish_reliably(
     state: &Arc<AppState>,
     tenant: &buzz_core::TenantContext,
@@ -305,22 +319,63 @@ pub(crate) async fn publish_reliably(
         return false;
     }
     metrics::counter!("buzz_artifact_sync_publish_retry_total").increment(1);
-    let state = Arc::clone(state);
-    let tenant = tenant.clone();
-    let event = stored.event.clone();
+    let mut recovery = state
+        .artifact_syncs
+        .publish_recovery
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    recovery.dirty = true;
+    if recovery.running {
+        return true;
+    }
+    recovery.running = true;
+    recovery
+        .next_attempt
+        .get_or_insert_with(|| tokio::time::Instant::now() + RECOVERY_INTERVAL);
     let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);
-    tokio::spawn(crate::deploy_drain::run_accepted(work, async move {
-        let mut delay = Duration::from_millis(100);
+    let state = Arc::clone(state);
+    tokio::spawn(async move {
         loop {
-            tokio::time::sleep(delay).await;
-            if publish_once(&state, &tenant, topic, &event).await {
+            let deadline = {
+                let recovery = state
+                    .artifact_syncs
+                    .publish_recovery
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                recovery
+                    .next_attempt
+                    .unwrap_or_else(tokio::time::Instant::now)
+            };
+            tokio::time::sleep_until(deadline).await;
+            {
+                let mut recovery = state
+                    .artifact_syncs
+                    .publish_recovery
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                // A failure during the await below sets this again, requiring
+                // a second acknowledged signal after that committed change.
+                recovery.dirty = false;
+                recovery.next_attempt = Some(tokio::time::Instant::now() + RECOVERY_INTERVAL);
+            }
+            let published = state.pubsub.publish_sync_loss().await.is_ok();
+            let mut recovery = state
+                .artifact_syncs
+                .publish_recovery
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if published && !recovery.dirty {
+                // Complete ownership under the same lock as retirement: a new
+                // failure either belongs to this worker or starts its successor.
+                if let Some(work) = work {
+                    work.complete();
+                }
+                recovery.running = false;
                 return;
             }
-            delay = (delay * 2).min(Duration::from_secs(5));
+            recovery.dirty = true;
         }
-    }));
-    // The accepted child owns retries until Redis acknowledges the publish.
-    // Deployment cannot attest stop while that child remains outstanding.
+    });
     true
 }
 
@@ -848,6 +903,10 @@ pub(crate) mod test_seam {
 }
 
 #[cfg(test)]
+#[path = "artifact_sync_publish_tests.rs"]
+mod publish_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use nostr::{EventBuilder, Keys, Tag};
@@ -870,14 +929,16 @@ mod tests {
             "sync.test",
         );
         let event = stored(45010, Uuid::new_v4());
-        parent
-            .scope(publish_reliably(
-                &state,
-                &tenant,
-                EventTopic::Global,
-                &event,
-            ))
-            .await;
+        for _ in 0..32 {
+            parent
+                .scope(publish_reliably(
+                    &state,
+                    &tenant,
+                    EventTopic::Global,
+                    &event,
+                ))
+                .await;
+        }
         let op = Uuid::new_v4();
         let boot = drain.begin(op).unwrap().boot_id;
         drain.fence_http(op, boot, "test-edge-retired").unwrap();
@@ -886,7 +947,7 @@ mod tests {
         assert!(!drain.snapshot().safe_to_stop);
     }
 
-    fn stored(kind: u16, d: Uuid) -> StoredEvent {
+    pub(super) fn stored(kind: u16, d: Uuid) -> StoredEvent {
         let event = EventBuilder::new(Kind::Custom(kind), "")
             .tags([Tag::parse(["d", &d.to_string()]).unwrap()])
             .sign_with_keys(&Keys::generate())

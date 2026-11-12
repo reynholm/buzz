@@ -67,6 +67,7 @@ class SignedEventRelay {
 ///
 /// This is used for community-removal tombstones because the community being
 /// removed is not necessarily the app's active relay session.
+/// [checkCurrent] can retire an operation while connecting, before EVENT is sent.
 Future<NostrEvent> submitSignedEventOnce({
   required String wsUrl,
   required String nsec,
@@ -76,6 +77,7 @@ Future<NostrEvent> submitSignedEventOnce({
   int? createdAt,
   Duration timeout = const Duration(seconds: 12),
   Map<String, String> headers = const {},
+  void Function()? checkCurrent,
 }) async {
   final privateKey = nostr.Nip19.decode(payload: nsec).data;
   if (privateKey.isEmpty) throw const FormatException('Invalid nsec');
@@ -117,7 +119,10 @@ Future<NostrEvent> submitSignedEventOnce({
         }
       }
     },
-    onConnected: () => socket.send(['EVENT', event.toJson()]),
+    onConnected: () {
+      checkCurrent?.call();
+      socket.send(['EVENT', event.toJson()]);
+    },
     onDisconnected: (error) {
       if (!result.isCompleted) {
         result.completeError(error ?? Exception('Relay disconnected'));

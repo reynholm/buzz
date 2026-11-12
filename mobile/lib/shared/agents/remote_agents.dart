@@ -114,6 +114,16 @@ final remoteAgentControllerProvider = Provider<RemoteAgentController>((ref) {
     },
     relayAuth: ref.watch(hostedRelayAuthProvider),
   );
+  // The controller survives navigation. Retire work even if the user switches
+  // away and back to the original community before an awaited step completes.
+  ref.listen(activeCommunityProvider, (previous, next) {
+    final before = previous?.value;
+    final after = next.value;
+    if ((before?.id, before?.relayUrl, before?.pubkey) !=
+        (after?.id, after?.relayUrl, after?.pubkey)) {
+      controller._accountChanged();
+    }
+  });
   ref.onDispose(controller.dispose);
   return controller;
 });
@@ -215,6 +225,7 @@ class RemoteAgentController extends ChangeNotifier {
     this.onCreated,
   }) : _keys = keys {
     account.subjectChanges.addListener(_accountChanged);
+    account.sessionChanges.addListener(_accountChanged);
   }
 
   final BuilderlabAccountClient account;
@@ -226,6 +237,7 @@ class RemoteAgentController extends ChangeNotifier {
 
   bool busy = false;
   int _operation = 0;
+  int _generation = 0;
 
   /// Why the last [run] failed, or empty.
   String failure = '';
@@ -276,6 +288,8 @@ class RemoteAgentController extends ChangeNotifier {
     agents = [];
     owner = null;
     pending = null;
+    created = null;
+    failure = '';
     deletedAgents = {};
     listingFailed = false;
     registryLoaded = false;
@@ -284,10 +298,26 @@ class RemoteAgentController extends ChangeNotifier {
 
   /// Drops another account's registry as soon as the account changes.
   void _accountChanged() {
-    if (_scope == null || _scope == _currentScope) return;
+    _generation++;
     _clearAccountState();
     _loadedRelay = null;
     _notify();
+  }
+
+  // Capture once for the entire operation, including queued HTTP requests.
+  void Function() _sessionCheck() {
+    final subject = account.account?.subject;
+    final generation = _generation;
+    final session = account.sessionChanges.value;
+    return () {
+      if (_disposed ||
+          subject == null ||
+          account.account?.subject != subject ||
+          _generation != generation ||
+          account.sessionChanges.value != session) {
+        throw AccountFailure.differentAccount;
+      }
+    };
   }
 
   /// Loads the registry once per community; opening Agents always refreshes.
@@ -305,11 +335,13 @@ class RemoteAgentController extends ChangeNotifier {
     account.lastRejectedRequest = null;
     failure = '';
     final operation = ++_operation;
+    final generation = _generation;
     notifyListeners();
     try {
       await action();
       return true;
     } catch (error) {
+      if (_disposed || generation != _generation) return false;
       // Account failures never carry credentials or response bodies.
       failure = switch (error) {
         AccountFailure.signedOut => 'Sign in to Builderlab again.',
@@ -351,11 +383,12 @@ class RemoteAgentController extends ChangeNotifier {
   bool registryLoaded = false;
 
   Future<void> refresh() async {
+    final generation = _generation;
     try {
       await _refresh();
       listingFailed = false;
     } catch (_) {
-      listingFailed = true;
+      if (generation == _generation && !_disposed) listingFailed = true;
       rethrow;
     }
   }
@@ -366,18 +399,24 @@ class RemoteAgentController extends ChangeNotifier {
       _clearAccountState();
       return;
     }
+    final checkSession = _sessionCheck();
     await ensureBinding();
+    checkSession();
     final boundOwner = owner!;
     final scope = _storageScope;
     void check() {
+      checkSession();
       if (_currentScope != scope || owner != boundOwner) {
         throw StateError('Account changed. Reopen Agents.');
       }
     }
 
-    final result = await account.post('/v3/beekeeper/list-agents', {
-      'include_instructions': true,
-    }, expectedSubject: session.subject);
+    final result = await account.post(
+      '/v3/beekeeper/list-agents',
+      {'include_instructions': true},
+      expectedSubject: session.subject,
+      checkCurrent: check,
+    );
     check();
     requireStatus(result, 'SUCCESS', 1);
     final rows = result['agents'] ?? [];
@@ -410,16 +449,24 @@ class RemoteAgentController extends ChangeNotifier {
     )) {
       throw StateError('Could not save agent availability. Retry refresh.');
     }
+    check();
   }
 
   /// Requires this account's saved key to be its current server binding.
   Future<void> ensureBinding() async {
     final subject = account.account?.subject;
     if (subject == null) throw AccountFailure.signedOut;
+    final checkCurrent = _sessionCheck();
     if (_scope != _storageScope) _clearAccountState();
-    final slot = keys;
+    final scope = _storageScope;
+    final slot = _keys.forSubject(subject);
     var local = await slot.read();
-    final response = await account.currentIdentity();
+    checkCurrent();
+    final response = await account.currentIdentity(
+      expectedSubject: subject,
+      checkCurrent: checkCurrent,
+    );
+    checkCurrent();
     if (account.account?.subject != subject) {
       throw AccountFailure.differentAccount;
     }
@@ -431,12 +478,6 @@ class RemoteAgentController extends ChangeNotifier {
     if (local == null &&
         bound is String &&
         RegExp(r'^[0-9a-f]{64}$').hasMatch(bound)) {
-      void checkCurrent() {
-        if (_disposed || account.account?.subject != subject) {
-          throw AccountFailure.differentAccount;
-        }
-      }
-
       final device = DeviceIdentitySource();
       final choices = await device.choices();
       checkCurrent();
@@ -453,10 +494,11 @@ class RemoteAgentController extends ChangeNotifier {
     }
     if (local == null) throw AccountIdentityFailure.absent;
     if (bound != local.pubkey) throw AccountIdentityFailure.mismatch;
+    checkCurrent();
     owner = local.pubkey;
-    final scope = _storageScope;
     if (_scope == scope) return;
     final prefs = await SharedPreferences.getInstance();
+    checkCurrent();
     final raw = prefs.getString('$scope:pending');
     final restored = raw == null
         ? null
@@ -465,6 +507,7 @@ class RemoteAgentController extends ChangeNotifier {
       final instructions = await accountSecureStorage.read(
         key: '$scope:instructions:${restored!['request']}',
       );
+      checkCurrent();
       if (instructions == null) {
         // Preferences can outlive device-only secure storage, for example
         // after a device restore. Keep the setup and ask for them again.
@@ -473,6 +516,7 @@ class RemoteAgentController extends ChangeNotifier {
         restored['instructions'] = instructions;
       }
     }
+    checkCurrent();
     deletedAgents = prefs.getStringList('$scope:deleted')?.toSet() ?? {};
     pending = restored;
     _scope = scope;
@@ -482,11 +526,14 @@ class RemoteAgentController extends ChangeNotifier {
   Future<List<RemoteAgentModel>> modelCatalog() async {
     final subject = account.account?.subject;
     if (subject == null) throw AccountFailure.signedOut;
+    final check = _sessionCheck();
     final result = await account.post(
       '/v3/beekeeper/get-model-catalog',
       {},
       expectedSubject: subject,
+      checkCurrent: check,
     );
+    check();
     if (account.account?.subject != subject) {
       throw AccountFailure.differentAccount;
     }
@@ -565,9 +612,14 @@ class RemoteAgentController extends ChangeNotifier {
     }
   });
 
-  Future<void> _savePending(Map<String, dynamic> value) async {
-    final scope = _storageScope;
+  Future<void> _savePending(
+    Map<String, dynamic> value,
+    String scope,
+    void Function() check,
+  ) async {
+    check();
     final prefs = await SharedPreferences.getInstance();
+    check();
     final persisted = Map<String, dynamic>.from(value)
       ..remove('instructions')
       ..remove('hasInstructions');
@@ -577,11 +629,13 @@ class RemoteAgentController extends ChangeNotifier {
         key: '$scope:instructions:${value['request']}',
         value: instructions,
       );
+      check();
       persisted['hasInstructions'] = true;
     }
     if (!await prefs.setString('$scope:pending', jsonEncode(persisted))) {
       throw StateError('Could not save unfinished setup.');
     }
+    check();
     pending = value;
   }
 
@@ -610,13 +664,27 @@ class RemoteAgentController extends ChangeNotifier {
     if (!HostedEnvironment.supportsRelay(Uri.parse(community.relayUrl))) {
       throw StateError('This community does not support remote agents.');
     }
+    final checkSession = _sessionCheck();
+    final subject = account.account?.subject;
     await ensureBinding();
+    checkSession();
     if (community.pubkey != owner) {
       throw StateError(
         'Sign in with the Builderlab account you use in this community.',
       );
     }
     final scope = _storageScope;
+    final boundOwner = owner!;
+    final slot = _keys.forSubject(subject!);
+    void check() {
+      checkSession();
+      if (owner != boundOwner || community.pubkey != boundOwner) {
+        throw AccountIdentityFailure.mismatch;
+      }
+    }
+
+    Future<void> save(Map<String, dynamic> value) =>
+        _savePending(value, scope, check);
     created = null;
     final resuming = pending != null;
     final selectedModel = modelId ?? pending?['model_id'] as String?;
@@ -639,7 +707,8 @@ class RemoteAgentController extends ChangeNotifier {
         throw StateError('Use at most 20,000 characters for instructions.');
       }
       await validateModel(selectedModel, selectedEffort);
-      await _savePending({
+      check();
+      await save({
         'name': trimmed,
         'instructions': instructions.trim(),
         'picture': ?pictureUrl,
@@ -663,33 +732,40 @@ class RemoteAgentController extends ChangeNotifier {
       throw StateError('Finish the pending setup in its original community.');
     }
     if (resuming) await validateModel(selectedModel, selectedEffort);
-    await _savePending(setup);
+    check();
+    await save(setup);
     if (setup['instructionsMissing'] == true) {
       if (instructions.trim().length > 20000) {
         throw StateError('Use at most 20,000 characters for instructions.');
       }
       setup = {...setup, 'instructions': instructions.trim()}
         ..remove('instructionsMissing');
-      await _savePending(setup);
+      await save(setup);
     }
     if (setup['pubkey'] == null) {
       // Once sent, the server may allocate an identity even if the response is
       // lost. Only Resume, with the same idempotency key, can recover it.
       setup = {...setup, 'registering': true};
-      await _savePending(setup);
+      await save(setup);
       // An explicit rejection allocated nothing, so it can be discarded.
       Future<void> refused() async {
         setup = {...setup}..remove('registering');
-        await _savePending(setup);
+        await save(setup);
       }
 
       final Map<String, dynamic> result;
       try {
-        result = await account.post('/v3/beekeeper/register-agent', {
-          'agent_name': setup['name'],
-          if (setup['picture'] != null) 'agent_picture_url': setup['picture'],
-          'idempotency_key': setup['request'],
-        });
+        result = await account.post(
+          '/v3/beekeeper/register-agent',
+          {
+            'agent_name': setup['name'],
+            if (setup['picture'] != null) 'agent_picture_url': setup['picture'],
+            'idempotency_key': setup['request'],
+          },
+          expectedSubject: subject,
+          checkCurrent: check,
+        );
+        check();
       } on AccountFailure catch (failure) {
         if (failure == AccountFailure.rejected) await refused();
         rethrow;
@@ -707,7 +783,7 @@ class RemoteAgentController extends ChangeNotifier {
         throw StateError('Invalid registration response. Retry this setup.');
       }
       setup = {...setup, 'pubkey': pubkey, 'id': result['agent_id']};
-      await _savePending(setup);
+      await save(setup);
     }
     if (elsewhere) {
       throw StateError(
@@ -715,37 +791,58 @@ class RemoteAgentController extends ChangeNotifier {
       );
     }
     final pubkey = setup['pubkey'] as String;
-    final auth = await keys.withKeys(
-      (key) async => signOwnerAuthorization(key, pubkey),
+    final auth = await slot.withKeys((key) async {
+      check();
+      if (key.public != boundOwner) throw AccountIdentityFailure.mismatch;
+      return signOwnerAuthorization(key, pubkey);
+    });
+    check();
+    final result = await account.post(
+      '/v3/beekeeper/attest-agent',
+      {
+        'agent_pubkey': pubkey,
+        'owner_auth_tag_json': jsonEncode(auth),
+        'community_url': RelayConfig(baseUrl: community.relayUrl).wsUrl,
+      },
+      expectedSubject: subject,
+      checkCurrent: check,
     );
-    final result = await account.post('/v3/beekeeper/attest-agent', {
-      'agent_pubkey': pubkey,
-      'owner_auth_tag_json': jsonEncode(auth),
-      'community_url': RelayConfig(baseUrl: community.relayUrl).wsUrl,
-    });
+    check();
     requireStatus(result, 'ACTIVE', 1);
-    await account.post('/v3/beekeeper/update-agent', {
-      'agent_pubkey': pubkey,
-      'agent_instructions': setup['instructions'] ?? '',
-      'model_id': setup['model_id'],
-      'reasoning_effort': setup['reasoning_effort'],
-    });
+    await account.post(
+      '/v3/beekeeper/update-agent',
+      {
+        'agent_pubkey': pubkey,
+        'agent_instructions': setup['instructions'] ?? '',
+        'model_id': setup['model_id'],
+        'reasoning_effort': setup['reasoning_effort'],
+      },
+      expectedSubject: subject,
+      checkCurrent: check,
+    );
+    check();
     await publishPolicy(community.relayUrl, setup);
+    check();
     _registrationsChanged();
     // Retain the completed registration if the listing refresh fails, so Retry
     // resumes the same identity instead of creating another agent.
     await refresh();
+    check();
     await onCreated?.call(community, pubkey);
+    check();
     // Drop the record before its instructions, so an interrupted cleanup never
     // leaves a pending setup whose instructions are gone.
     final prefs = await SharedPreferences.getInstance();
+    check();
     if (!await prefs.remove('$scope:pending')) {
       throw StateError('Could not clear the finished setup. Retry.');
     }
+    check();
     pending = null;
     await accountSecureStorage.delete(
       key: '$scope:instructions:${setup['request']}',
     );
+    check();
     created = pubkey;
   });
 
@@ -760,6 +857,7 @@ class RemoteAgentController extends ChangeNotifier {
   /// one whose registration the server rejects. Setups that have or may have
   /// an identity can only be resumed, so no registered agent is orphaned.
   Future<bool> discardPending() => run(() async {
+    final check = _sessionCheck();
     final setup = pending;
     if (setup == null) return;
     if (!canDiscardPending) {
@@ -767,9 +865,11 @@ class RemoteAgentController extends ChangeNotifier {
     }
     final scope = _storageScope;
     final prefs = await SharedPreferences.getInstance();
+    check();
     if (!await prefs.remove('$scope:pending')) {
       throw StateError('Could not discard unfinished setup.');
     }
+    check();
     pending = null;
     await accountSecureStorage.delete(
       key: '$scope:instructions:${setup['request']}',
@@ -779,18 +879,29 @@ class RemoteAgentController extends ChangeNotifier {
   /// Publishes the owner's agent registration after attest-agent confirms
   /// activation and enrollment in the requested community.
   Future<void> publishPolicy(String relay, Map<String, dynamic> setup) async {
+    final check = _sessionCheck();
+    final scope = _storageScope;
+    final slot = keys;
+    final boundOwner = owner;
     final pubkey = setup['pubkey'] as String;
     final prefs = await SharedPreferences.getInstance();
-    if (prefs.getStringList('$_storageScope:deleting')?.contains(pubkey) ==
-        true) {
+    check();
+    if (prefs.getStringList('$scope:deleting')?.contains(pubkey) == true) {
       throw StateError('Agent deletion is pending. Retry Delete.');
     }
-    await keys.withKeys((key) async {
+    await slot.withKeys((key) async {
+      check();
+      if (boundOwner != null && key.public != boundOwner) {
+        throw AccountIdentityFailure.mismatch;
+      }
       // Saved communities may store an https relay URL; sockets need wss.
       final config = RelayConfig(baseUrl: relay, nsec: key.nsec);
+      final headers = await relayAuth.headers(config, fresh: true);
+      check();
       await submitSignedEventOnce(
         wsUrl: config.wsUrl,
-        headers: await relayAuth.headers(config, fresh: true),
+        headers: headers,
+        checkCurrent: check,
         nsec: key.nsec,
         kind: 30177,
         content: jsonEncode({
@@ -946,6 +1057,7 @@ class RemoteAgentController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     account.subjectChanges.removeListener(_accountChanged);
+    account.sessionChanges.removeListener(_accountChanged);
     super.dispose();
   }
 }

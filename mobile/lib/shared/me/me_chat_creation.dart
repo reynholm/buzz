@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import '../crypto/nip44.dart';
-import '../crypto/event_signing.dart';
 import '../relay/nostr_models.dart';
 import 'me_sync.dart';
 import 'me_journal.dart';
@@ -56,9 +55,7 @@ class MeChatCreation {
   }
 
   /// Persist before any relay mutation. Do not replace another pending intent.
-  Future<void> save(MeSync sync) => _save(sync);
-
-  Future<void> _save(MeSync sync, {String? replacingMessageId}) async {
+  Future<void> save(MeSync sync) async {
     if (sync.disposed) throw StateError('Your community changed. Try again.');
     final previous = pending(sync);
     if (previous != null &&
@@ -66,9 +63,7 @@ class MeChatCreation {
             previous.name != name ||
             previous.agent != agent ||
             previous.project != project ||
-            (previous.initialMessage?.id != initialMessage?.id &&
-                (replacingMessageId == null ||
-                    previous.initialMessage?.id != replacingMessageId)))) {
+            previous.initialMessage?.id != initialMessage?.id)) {
       throw StateError('Resume the pending chat before starting another.');
     }
     // A matching cached value does not prove a previous disk write succeeded.
@@ -159,10 +154,10 @@ class MeChatCreation {
   }
 
   // Relay ingestion rejects events older than 15 minutes, even duplicates.
-  // Confirm acceptance before replacing an expired identity; a lost OK must
+  // Confirm acceptance without replacing an expired identity; a lost OK must
   // never turn one first message into two messages.
   Future<String> _deliverInitialMessage(MeSync sync, String record) async {
-    var message = initialMessage!;
+    final message = initialMessage!;
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     if ((message.createdAt - now).abs() >= 14 * 60) {
       final existing = await sync.session.fetchHistory(
@@ -186,23 +181,13 @@ class MeChatCreation {
       )) {
         return record;
       }
-      message = NostrEvent.fromJson(
-        signNostrEvent(
-          kind: message.kind,
-          content: message.content,
-          tags: message.tags,
-          secretKey: sync.privateHex,
-        ).toMap(),
+      // Deleted accepted events are absent from ordinary history too. A new
+      // identity could resurrect text the user removed on another device.
+      throw StateError(
+        'The first message’s delivery is uncertain and it is too old to retry. '
+        'Your message is saved. Check the chat in Home; use Discard setup '
+        'to stop recovery without sending it again.',
       );
-      await MeChatCreation(
-        id,
-        name,
-        agent,
-        project: project,
-        initialMessage: message,
-      )._save(sync, replacingMessageId: initialMessage!.id);
-      sync.check();
-      record = sync.prefs!.getString(storageKey(sync))!;
     }
     await sync.session.publish(message);
     sync.check();

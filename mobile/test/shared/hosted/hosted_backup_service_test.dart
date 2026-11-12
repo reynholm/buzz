@@ -26,6 +26,7 @@ class FakeAccount extends BuilderlabAccountClient {
     String path,
     Map<String, dynamic> body, {
     String? expectedSubject,
+    void Function()? checkCurrent,
   }) async {
     if (path.endsWith('/enrollment')) {
       enrollments++;
@@ -62,6 +63,7 @@ class StalledAccount extends BuilderlabAccountClient {
     String path,
     Map<String, dynamic> body, {
     String? expectedSubject,
+    void Function()? checkCurrent,
   }) {
     if (!enrolling.isCompleted) enrolling.complete();
     return Completer<Map<String, dynamic>>().future;
