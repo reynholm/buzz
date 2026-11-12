@@ -4513,11 +4513,13 @@
     },
     {
       "path": "Justfile",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Select the infra-free demo echo cancellation regression in the required nextest unit lane.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Select the infra-free demo echo cancellation regression in the required nextest unit lane. Select artifact sync recovery and operational subscriber regressions in the required nextest unit lanes.",
       "is_new": false,
       "required_symbols": [
         "test(/^mesh_boot::tests::/)",
-        "${BUZZ_STAGING_RELAY_URL:?Set BUZZ_STAGING_RELAY_URL to the staging relay}"
+        "${BUZZ_STAGING_RELAY_URL:?Set BUZZ_STAGING_RELAY_URL to the staging relay}",
+        "test(/^handlers::artifact_sync::/)",
+        "test(/^subscriber::tests::/)"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -5598,12 +5600,18 @@
     },
     {
       "path": "crates/buzz-pubsub/src/lib.rs",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Publish a fixed artifact sync loss control without retaining event or tenant payloads.",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "pub async fn publish_sync_loss(",
+        ".arg(subscriber::SYNC_LOSS_CHANNEL)",
+        ".arg(\"resync\")"
+      ],
       "invocation_seams": [],
       "verification_commands": [
-        "just ci"
+        "just ci",
+        "cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture",
+        "cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture"
       ]
     },
     {
@@ -8138,10 +8146,12 @@
     },
     {
       "path": "scripts/run-tests.sh",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Keep the cargo-test fallback selecting the same demo echo receive-retention regression as nextest.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Keep the cargo-test fallback selecting the same demo echo receive-retention regression as nextest. Keep the Cargo fallback selecting artifact sync recovery and operational subscriber regressions.",
       "is_new": false,
       "required_symbols": [
-        "buzz-relay demo echo receive retention"
+        "buzz-relay demo echo receive retention",
+        "cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture",
+        "cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -14843,9 +14853,12 @@
     },
     {
       "path": "crates/buzz-relay/src/handlers/artifact_sync.rs",
-      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint. Coalesce failed live fanout into one accepted recovery worker with a dirty bit, race-safe retirement and a persistent retry interval.",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "publish_recovery: StdMutex<PublishRecovery>",
+        "const RECOVERY_INTERVAL: Duration = Duration::from_secs(5);"
+      ],
       "invocation_seams": [
         {
           "caller_path": "crates/buzz-relay/src/handlers/artifact_sync.rs",
@@ -14853,11 +14866,20 @@
           "invocation": "let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);",
           "behavior_test": "failed_live_publish_retains_retry_work_after_its_parent_finishes",
           "verification_command": "cargo test -p buzz-relay"
+        },
+        {
+          "caller_path": "crates/buzz-relay/src/handlers/artifact_sync.rs",
+          "callee_symbol": "publish_sync_loss",
+          "invocation": "let published = state.pubsub.publish_sync_loss().await.is_ok();",
+          "behavior_test": "loss_during_ack_and_after_retirement_keeps_one_owned_rate_limited_worker",
+          "verification_command": "cargo test -p buzz-relay --lib handlers::artifact_sync::publish_tests::loss_during_ack_and_after_retirement_keeps_one_owned_rate_limited_worker -- --exact",
+          "coverage": "Removing operational publication makes the controlled Redis acknowledgement journey time out; accepted ownership and retirement are checked by the same journey."
         }
       ],
       "verification_commands": [
         "cargo test -p buzz-relay",
-        "scripts/postgres-test-run.sh"
+        "scripts/postgres-test-run.sh",
+        "cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture"
       ]
     },
     {
@@ -15470,6 +15492,71 @@
       "invocation_seams": [],
       "verification_commands": [
         "scripts/postgres-test-run.sh -p buzz-relay --lib"
+      ]
+    },
+    {
+      "path": "crates/buzz-pubsub/src/subscriber.rs",
+      "responsibility": "Subscribe to operational loss before readiness and advance the live loss epoch without forwarding a client Event.",
+      "is_new": false,
+      "required_symbols": [
+        "pub(crate) const SYNC_LOSS_CHANNEL: &str = \"buzz:control:artifact-sync-loss\";"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-pubsub/src/subscriber.rs",
+          "callee_symbol": "subscribe",
+          "invocation": "sink.subscribe(SYNC_LOSS_CHANNEL).await?;",
+          "behavior_test": "control_subscription_covers_ready_readers_and_never_forwards_events",
+          "verification_command": "cargo test -p buzz-pubsub --lib subscriber::tests::control_subscription_covers_ready_readers_and_never_forwards_events -- --exact",
+          "coverage": "Removing the control subscription fails the observed subscription-before-readiness assertion."
+        },
+        {
+          "caller_path": "crates/buzz-pubsub/src/subscriber.rs",
+          "callee_symbol": "mark_loss",
+          "invocation": "if channel_name == SYNC_LOSS_CHANNEL {\n                    // Even an unfamiliar control payload means possible loss.\n                    mark_loss(link, true);",
+          "behavior_test": "control_subscription_covers_ready_readers_and_never_forwards_events",
+          "verification_command": "cargo test -p buzz-pubsub --lib subscriber::tests::control_subscription_covers_ready_readers_and_never_forwards_events -- --exact",
+          "coverage": "Removing this control-message epoch update fails the production subscriber journey waiting for loss."
+        }
+      ],
+      "verification_commands": [
+        "cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/handlers/artifact_sync_publish_tests.rs",
+      "responsibility": "Exercise real recovery publication against a controlled Redis transport: concurrent loss, retry spacing, retirement and drain acknowledgement.",
+      "is_new": true,
+      "required_symbols": [
+        "async fn loss_during_ack_and_after_retirement_keeps_one_owned_rate_limited_worker()"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture"
+      ]
+    },
+    {
+      "path": "docs/nips/NIP-AR.md",
+      "responsibility": "Specify bounded coalesced artifact loss recovery, accepted drain ownership and coordinated operational-topic rollout.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture",
+        "cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture"
+      ]
+    },
+    {
+      "path": "mobile/ios/RunnerTests/BrowserAuthBridgeTests.swift",
+      "responsibility": "Use fictional organization hosts in the native browser login allow/refuse table while preserving production URL policy and every assertion.",
+      "is_new": false,
+      "required_symbols": [
+        "func testAllowsOnlyBuilderlabLoginPages()",
+        "https://example-org.builderlab.xyz/api/goose/v1/auth/login?type=cli"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && xcodebuild test -workspace ios/Runner.xcworkspace -scheme Runner -destination \"${BUZZ_IOS_TEST_DESTINATION:?Set an available iOS Simulator destination}\" -only-testing:RunnerTests/BrowserAuthBridgeTests"
       ]
     }
   ],

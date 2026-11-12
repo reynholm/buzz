@@ -2715,12 +2715,14 @@ New module: `false`.
 
 ## `Justfile`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Select the infra-free demo echo cancellation regression in the required nextest unit lane.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Select the infra-free demo echo cancellation regression in the required nextest unit lane. Select artifact sync recovery and operational subscriber regressions in the required nextest unit lanes.
 
 New module: `false`.
 
 - Required symbol: `test(/^mesh_boot::tests::/)`
 - Required symbol: `${BUZZ_STAGING_RELAY_URL:?Set BUZZ_STAGING_RELAY_URL to the staging relay}`
+- Required symbol: `test(/^handlers::artifact_sync::/)`
+- Required symbol: `test(/^subscriber::tests::/)`
 - Verify: `just ci`
 - Verify: `just test-unit`
 
@@ -3279,11 +3281,16 @@ New module: `false`.
 
 ## `crates/buzz-pubsub/src/lib.rs`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Publish a fixed artifact sync loss control without retaining event or tenant payloads.
 
 New module: `false`.
 
+- Required symbol: `pub async fn publish_sync_loss(`
+- Required symbol: `.arg(subscriber::SYNC_LOSS_CHANNEL)`
+- Required symbol: `.arg("resync")`
 - Verify: `just ci`
+- Verify: `cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture`
+- Verify: `cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture`
 
 ## `crates/buzz-pubsub/src/nip_fi_command_replay.rs`
 
@@ -5293,11 +5300,13 @@ New module: `false`.
 
 ## `scripts/run-tests.sh`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Keep the cargo-test fallback selecting the same demo echo receive-retention regression as nextest.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Keep the cargo-test fallback selecting the same demo echo receive-retention regression as nextest. Keep the Cargo fallback selecting artifact sync recovery and operational subscriber regressions.
 
 New module: `false`.
 
 - Required symbol: `buzz-relay demo echo receive retention`
+- Required symbol: `cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture`
+- Required symbol: `cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture`
 - Verify: `just ci`
 - Verify: `bash -n scripts/run-tests.sh`
 - Verify: `just test-unit`
@@ -9909,13 +9918,17 @@ New module: `false`.
 
 ## `crates/buzz-relay/src/handlers/artifact_sync.rs`
 
-Preserve fork behavior while integrating the upstream writer checkpoint.
+Preserve fork behavior while integrating the upstream writer checkpoint. Coalesce failed live fanout into one accepted recovery worker with a dirty bit, race-safe retirement and a persistent retry interval.
 
 New module: `false`.
 
+- Required symbol: `publish_recovery: StdMutex<PublishRecovery>`
+- Required symbol: `const RECOVERY_INTERVAL: Duration = Duration::from_secs(5);`
 - Invocation: `crates/buzz-relay/src/handlers/artifact_sync.rs` → `track_accepted_child`; exact call `let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);`; behavior test `failed_live_publish_retains_retry_work_after_its_parent_finishes`; verify `cargo test -p buzz-relay`
+- Invocation: `crates/buzz-relay/src/handlers/artifact_sync.rs` → `publish_sync_loss`; exact call `let published = state.pubsub.publish_sync_loss().await.is_ok();`; behavior test `loss_during_ack_and_after_retirement_keeps_one_owned_rate_limited_worker`; verify `cargo test -p buzz-relay --lib handlers::artifact_sync::publish_tests::loss_during_ack_and_after_retirement_keeps_one_owned_rate_limited_worker -- --exact`
 - Verify: `cargo test -p buzz-relay`
 - Verify: `scripts/postgres-test-run.sh`
+- Verify: `cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture`
 
 ## `crates/buzz-relay/src/handlers/coalesced_refresh.rs`
 
@@ -10413,3 +10426,44 @@ New module: `true`.
 
 - Required symbol: `root_auth_first_default_join_remains_owned_after_socket_closes`
 - Verify: `scripts/postgres-test-run.sh -p buzz-relay --lib`
+
+## `crates/buzz-pubsub/src/subscriber.rs`
+
+Subscribe to operational loss before readiness and advance the live loss epoch without forwarding a client Event.
+
+New module: `false`.
+
+- Required symbol: `pub(crate) const SYNC_LOSS_CHANNEL: &str = "buzz:control:artifact-sync-loss";`
+- Invocation: `crates/buzz-pubsub/src/subscriber.rs` → `subscribe`; exact call `sink.subscribe(SYNC_LOSS_CHANNEL).await?;`; behavior test `control_subscription_covers_ready_readers_and_never_forwards_events`; verify `cargo test -p buzz-pubsub --lib subscriber::tests::control_subscription_covers_ready_readers_and_never_forwards_events -- --exact`
+- Invocation: `crates/buzz-pubsub/src/subscriber.rs` → `mark_loss`; exact call `if channel_name == SYNC_LOSS_CHANNEL {
+                    // Even an unfamiliar control payload means possible loss.
+                    mark_loss(link, true);`; behavior test `control_subscription_covers_ready_readers_and_never_forwards_events`; verify `cargo test -p buzz-pubsub --lib subscriber::tests::control_subscription_covers_ready_readers_and_never_forwards_events -- --exact`
+- Verify: `cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture`
+
+## `crates/buzz-relay/src/handlers/artifact_sync_publish_tests.rs`
+
+Exercise real recovery publication against a controlled Redis transport: concurrent loss, retry spacing, retirement and drain acknowledgement.
+
+New module: `true`.
+
+- Required symbol: `async fn loss_during_ack_and_after_retirement_keeps_one_owned_rate_limited_worker()`
+- Verify: `cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture`
+
+## `docs/nips/NIP-AR.md`
+
+Specify bounded coalesced artifact loss recovery, accepted drain ownership and coordinated operational-topic rollout.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture`
+- Verify: `cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture`
+
+## `mobile/ios/RunnerTests/BrowserAuthBridgeTests.swift`
+
+Use fictional organization hosts in the native browser login allow/refuse table while preserving production URL policy and every assertion.
+
+New module: `false`.
+
+- Required symbol: `func testAllowsOnlyBuilderlabLoginPages()`
+- Required symbol: `https://example-org.builderlab.xyz/api/goose/v1/auth/login?type=cli`
+- Verify: `cd mobile && xcodebuild test -workspace ios/Runner.xcworkspace -scheme Runner -destination "${BUZZ_IOS_TEST_DESTINATION:?Set an available iOS Simulator destination}" -only-testing:RunnerTests/BrowserAuthBridgeTests`
