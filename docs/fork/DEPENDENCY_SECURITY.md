@@ -49,9 +49,9 @@ plugin-manager ZIP dependencies and removes the unused host-runtime ZIP
 reference. It does not change the mesh protocol or require a full MeshLLM
 feature migration. All MeshLLM dependencies must resolve to the same immutable
 fork commit to avoid duplicate protocol/runtime types. The current pin is
-[`eaa05df0`](https://github.com/reynholm/mesh-llm/commit/eaa05df056694754b6efbdab00f1e1754676008f),
+[`9e7c2fb2`](https://github.com/reynholm/mesh-llm/commit/9e7c2fb2181f66bea1f325c633e5a4364164d6fd),
 based on upstream `a0c1e66b` (v0.76.2). Remove this pin when an
-upstream release compatible with Buzz provides the patched ZIP graph.
+upstream release compatible with Buzz provides the patched ZIP and SQLite graph.
 
 The native lockfile also retains ZIP 4 for the updater plugin on Windows.
 That dependency is excluded from both requested macOS/Linux shipping graphs;
@@ -93,6 +93,42 @@ The patched arithmetic removes secret-dependent branches. SEC1 point extraction
 uses the current API names with the same uncompressed encoding; existing App
 Attest certificate, authenticator and signed assertion tests exercise the
 verification boundary. No advisory exception is added.
+
+## DNS, SQLite and MCP bounds
+
+Both workspaces select `hickory-proto` 0.26.2 to fix
+[RUSTSEC-2026-0487](https://rustsec.org/advisories/RUSTSEC-2026-0487.html),
+[RUSTSEC-2026-0488](https://rustsec.org/advisories/RUSTSEC-2026-0488.html),
+[RUSTSEC-2026-0489](https://rustsec.org/advisories/RUSTSEC-2026-0489.html),
+[RUSTSEC-2026-0490](https://rustsec.org/advisories/RUSTSEC-2026-0490.html) and
+[RUSTSEC-2026-0491](https://rustsec.org/advisories/RUSTSEC-2026-0491.html).
+These fixes bound DNS allocations and reject malformed DNS text and wire inputs.
+
+The Mesh compatibility pin also moves its two SQLite consumers to `rusqlite`
+0.41.1 with `libsqlite3-sys` 0.39.1, bundling SQLite 3.54.1 and addressing
+[RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459.html).
+Its only additional changes are the two manifest requirements and their lockfile
+entries; Mesh protocol and runtime sources remain unchanged. Buzz uses the same
+immutable Mesh source in the native client and smoke harnesses. SQLx's optional
+SQLite resolver constraint uses a minimal
+[compatibility revision](https://github.com/reynholm/sqlx/commit/b159f0cc4779562bb997379aa60aeed680911840)
+based on `c3735abf`: it changes only the optional SQLite upper bound to allow
+the fixed 0.39 ABI. All seven SQLx crates share that source and retain the
+whole-return deadline and cancelled-BEGIN rollback fixes. PostgreSQL remains
+Buzz's enabled SQLx driver. Remove this revision only when a replacement
+retains all three fixes.
+The shipping Rust 1.98.1 toolchain satisfies the new SQLite dependency minimum.
+
+Both graphs use `rmcp` 3.9.0, addressing
+[RUSTSEC-2026-0457](https://rustsec.org/advisories/RUSTSEC-2026-0457.html),
+[RUSTSEC-2026-0461](https://rustsec.org/advisories/RUSTSEC-2026-0461.html) and
+[RUSTSEC-2026-0462](https://rustsec.org/advisories/RUSTSEC-2026-0462.html).
+The agent retains child-process transport, discovery and call deadlines,
+process-tree cleanup and bounded tool-result text/images through the new
+`ContentBlock` API. The transport now rejects stdio lines above 16 MiB; regression
+coverage distinguishes that boundary from the existing 128-tool metadata limit.
+No vulnerability exception is added. Rebuilt native graphs and the complete
+agent suite must be verified alongside the advisory checks above.
 
 ## Temporary transitive maintenance exceptions
 

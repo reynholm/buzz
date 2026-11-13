@@ -71,6 +71,14 @@ pub(super) fn prepare_persona_publication(
     shared_override: Option<bool>,
 ) -> Result<PreparedPersonaPublication, String> {
     let scope = crate::managed_agents::retention::active_retention_scope(app, state)?;
+    prepare_persona_publication_in_scope(scope, persona, shared_override)
+}
+
+pub(super) fn prepare_persona_publication_in_scope(
+    scope: RetentionScope,
+    persona: &AgentDefinition,
+    shared_override: Option<bool>,
+) -> Result<PreparedPersonaPublication, String> {
     let (event, retained, persona) = prepare_persona_publication_at(
         &scope.db_path,
         &scope.owner_keys,
@@ -161,7 +169,7 @@ fn project_scoped_persona_sharing(
     }
 }
 
-fn project_persona_sharing_at(
+pub(super) fn project_persona_sharing_at(
     db_path: &std::path::Path,
     owner_pubkey: &str,
     personas: &mut [AgentDefinition],

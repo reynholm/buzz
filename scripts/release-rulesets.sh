@@ -1,54 +1,69 @@
 #!/usr/bin/env bash
 
-readonly RELEASE_TAG_RULESET_ID=14378754
+# This checkout's release authority. Credentials and Git attribution remain
+# separate: the authenticated GitHub operator never supplies a Git author.
+readonly MOBILE_RELEASE_REPOSITORY=reynholm/buzz
+readonly MOBILE_RELEASE_OPERATOR=reynholm
+# The fork has no configured release policies yet. Missing IDs fail closed;
+# upstream IDs must never silently authorize a fork publication.
+readonly MOBILE_RELEASE_TAG_RULESET_ID="${BUZZ_MOBILE_RELEASE_TAG_RULESET_ID:-}"
+readonly MOBILE_RELEASE_BRANCH_RULESET_ID="${BUZZ_MOBILE_RELEASE_BRANCH_RULESET_ID:-}"
 
 fail_release_ruleset() {
   echo "Error: $*" >&2
   return 1
 }
 
-require_canonical_repository() {
-  local origin_url
-
-  origin_url="$(git config --get remote.origin.url 2>/dev/null)" || \
-    fail_release_ruleset "origin is required and must point to block/buzz" || return 1
-  case "$origin_url" in
-    git@github.com:block/buzz.git|ssh://git@github.com/block/buzz.git|https://github.com/block/buzz.git|https://github.com/block/buzz)
-      ;;
-    *)
-      fail_release_ruleset "origin must point to canonical block/buzz, not '$origin_url'" || return 1
-      ;;
-  esac
+mobile_release_api() {
+  GH_HOST=github.com gh api "$@"
 }
 
-require_release_tag_ruleset() {
-  local ruleset_endpoint state can_bypass rule_types includes excludes
+require_canonical_repository() {
+  local origin_url effective_url
+  origin_url="$(git config --get remote.origin.url 2>/dev/null)" || \
+    fail_release_ruleset "origin must point to authorized $MOBILE_RELEASE_REPOSITORY" || return 1
+  effective_url="$(git remote get-url origin)" || return 1
+  # Check both configured and rewritten fetch destinations before any tag is
+  # created. API readback alone is too late to prevent a push into another repo.
+  for url in "$origin_url" "$effective_url"; do
+    case "$url" in
+      git@github.com:reynholm/buzz.git|ssh://git@github.com/reynholm/buzz.git|https://github.com/reynholm/buzz.git|https://github.com/reynholm/buzz) ;;
+      *) fail_release_ruleset "origin must point to authorized $MOBILE_RELEASE_REPOSITORY, not '$url'"; return 1 ;;
+    esac
+  done
+  [[ "$(git remote get-url --push --all origin)" == "$effective_url" ]] || \
+    fail_release_ruleset "origin pushes somewhere other than it fetches from" || return 1
+}
 
-  command -v gh >/dev/null 2>&1 || fail_release_ruleset "gh is required" || return 1
-  ruleset_endpoint="repos/block/buzz/rulesets/$RELEASE_TAG_RULESET_ID"
+require_mobile_release_operator() {
+  local actor
+  [[ "$MOBILE_RELEASE_TAG_RULESET_ID" =~ ^[1-9][0-9]*$ &&
+     "$MOBILE_RELEASE_BRANCH_RULESET_ID" =~ ^[1-9][0-9]*$ ]] || {
+    fail_release_ruleset "configure numeric BUZZ_MOBILE_RELEASE_TAG_RULESET_ID and BUZZ_MOBILE_RELEASE_BRANCH_RULESET_ID for $MOBILE_RELEASE_REPOSITORY before publication"
+    return 1
+  }
+  actor="$(mobile_release_api user)" || {
+    fail_release_ruleset "could not verify the authenticated mobile release operator"; return 1
+  }
+  MOBILE_RELEASE_OPERATOR_ID="$(jq -er --arg login "$MOBILE_RELEASE_OPERATOR" \
+    'select(.login == $login) | .id | select(type == "number" and . > 0)' <<<"$actor")" || {
+    fail_release_ruleset "mobile publication requires authenticated operator $MOBILE_RELEASE_OPERATOR"; return 1
+  }
+}
 
-  state="$(gh api "$ruleset_endpoint" --jq .enforcement)" || \
-    fail_release_ruleset "could not verify Release tag ruleset $RELEASE_TAG_RULESET_ID" || return 1
-  [[ "$state" == "active" ]] || \
-    fail_release_ruleset "Release tag ruleset $RELEASE_TAG_RULESET_ID is '$state'" || return 1
-
-  can_bypass="$(gh api "$ruleset_endpoint" --jq .current_user_can_bypass)" || \
-    fail_release_ruleset "could not verify the release App's tag-ruleset bypass" || return 1
-  [[ "$can_bypass" == "always" ]] || \
-    fail_release_ruleset "release App cannot always bypass Release tag ruleset $RELEASE_TAG_RULESET_ID (reported '$can_bypass')" || return 1
-
-  rule_types="$(gh api "$ruleset_endpoint" --jq '[.rules[].type] | sort | join(",")')" || \
-    fail_release_ruleset "could not verify Release tag ruleset $RELEASE_TAG_RULESET_ID rules" || return 1
-  [[ "$rule_types" == "creation,deletion,non_fast_forward,update" ]] || \
-    fail_release_ruleset "Release tag ruleset $RELEASE_TAG_RULESET_ID has unexpected rules: '$rule_types'" || return 1
-
-  includes="$(gh api "$ruleset_endpoint" --jq '[.conditions.ref_name.include[]] | sort | join(",")')" || \
-    fail_release_ruleset "could not verify Release tag ruleset $RELEASE_TAG_RULESET_ID scope" || return 1
-  [[ ",$includes," == *",refs/tags/mobile-v*,"* ]] || \
-    fail_release_ruleset "Release tag ruleset $RELEASE_TAG_RULESET_ID does not include refs/tags/mobile-v*" || return 1
-
-  excludes="$(gh api "$ruleset_endpoint" --jq '[.conditions.ref_name.exclude[]] | sort | join(",")')" || \
-    fail_release_ruleset "could not verify Release tag ruleset $RELEASE_TAG_RULESET_ID exclusions" || return 1
-  [[ -z "$excludes" ]] || \
-    fail_release_ruleset "Release tag ruleset $RELEASE_TAG_RULESET_ID has unexpected exclusions: '$excludes'" || return 1
+require_mobile_release_tag_ruleset() {
+  local policy
+  policy="$(mobile_release_api "repos/$MOBILE_RELEASE_REPOSITORY/rulesets/$MOBILE_RELEASE_TAG_RULESET_ID")" || {
+    fail_release_ruleset "could not verify configured mobile tag protection"; return 1
+  }
+  jq -e --argjson operator "$MOBILE_RELEASE_OPERATOR_ID" '
+    .target == "tag" and .enforcement == "active" and .current_user_can_bypass == "always"
+    and (.bypass_actors == [{actor_id:$operator,actor_type:"User",bypass_mode:"always"}])
+    and ([.rules[].type] | sort == ["creation","deletion","non_fast_forward","update"])
+    and (.conditions.ref_name.exclude == [])
+    and (.conditions.ref_name.include | . == ["refs/tags/mobile-*"] or . == ["refs/tags/mobile-v*"])
+  ' <<<"$policy" >/dev/null || {
+    fail_release_ruleset "mobile tag ruleset $MOBILE_RELEASE_TAG_RULESET_ID must protect immutable mobile tags with only operator $MOBILE_RELEASE_OPERATOR as its bypass actor"
+    return 1
+  }
 }

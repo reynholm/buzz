@@ -40,6 +40,23 @@ impl RuntimeDependencies {
         self.cancellations.push(cancel);
     }
 
+    /// Retain the replica probe and its dedicated connection pool until serving
+    /// dependencies stop; a failed join leaves the deployment barrier closed.
+    pub fn own_fence_probe(&mut self, db: buzz_db::Db, drain: DrainController) {
+        let cancel = self.cancellation();
+        let stop = cancel.clone();
+        self.own(
+            tokio::spawn(async move {
+                stop.cancelled().await;
+                if let Err(error) = db.shutdown_fence_probe().await {
+                    drain.record_fault("replica-probe-join-failed");
+                    tracing::error!(%error, "Replica probe shutdown failed");
+                }
+            }),
+            cancel,
+        );
+    }
+
     /// Cancel read-only loops and join every owned task. No timeout fabricates
     /// completion, and a panic keeps the deployment stop barrier closed.
     pub async fn shutdown(self) -> Result<(), tokio::task::JoinError> {
@@ -73,6 +90,7 @@ impl RuntimeDependencies {
             "reminder-scheduler",
             "pool-lease-reaper",
             "usage-invite-reaper",
+            "storage-usage-delivery",
             WORKER,
         ])
     }

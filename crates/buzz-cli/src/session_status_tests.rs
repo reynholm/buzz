@@ -16,6 +16,7 @@ use buzz_core::session_status::{
     GENERATIONS_DIR, INSTANCE_LOCK_FILE, MAX_SNAPSHOT_BYTES, SESSION_INFO_TAG, SESSION_TAG,
 };
 use fs2::FileExt;
+use nostr::Keys;
 use nostr::{Event, EventBuilder, Kind, Tag};
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File, OpenOptions};
@@ -287,9 +288,12 @@ fn expected_b(transition: Uuid, kind: &str) -> Vec<Vec<String>> {
 // ---------------------------------------------------------------------------
 
 fn client(r: &Relay, url: &str, status_dir: Option<&Path>) -> BuzzClient {
-    BuzzClient::new(url.into(), r.keys.clone(), None, None)
-        .unwrap()
-        .with_session_status_dir(status_dir.map(Path::to_owned))
+    BuzzClient::new(
+        url.into(),
+        crate::credentials::Credentials::from_keys(r.keys.clone()),
+    )
+    .unwrap()
+    .with_session_status_dir(status_dir.map(Path::to_owned))
 }
 
 /// Run `buzz messages <args>` through the production dispatcher and return
@@ -396,9 +400,8 @@ async fn status_reply_carries_thread_status_and_keeps_existing_tags() {
     let auth = buzz_sdk::nip_oa::parse_auth_tag(&auth_json).unwrap();
     let client = BuzzClient::new(
         url.clone(),
-        r.keys.clone(),
-        Some(auth.clone()),
-        Some(auth_json),
+        crate::credentials::Credentials::from_keys(r.keys.clone())
+            .with_auth_tag(auth.clone(), auth_json),
     )
     .unwrap()
     .with_session_status_dir(Some(producer.dir.clone()));

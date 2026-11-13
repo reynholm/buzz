@@ -9,6 +9,89 @@ import 'package:buzz/features/channels/send_message_provider.dart';
 import 'package:buzz/shared/relay/relay.dart';
 
 void main() {
+  for (final nested in [false, true]) {
+    for (final media in [false, true]) {
+      test(
+        'signed Solo stream reply keeps channel, root, parent and media: nested=$nested media=$media',
+        () async {
+          final session = _PendingPublishRelaySession();
+          final key = nostr.Keys.generate();
+          final recipient = 'b' * 64;
+          final root = '1' * 64;
+          final parent = nested ? '2' * 64 : root;
+          final local = <NostrEvent>[];
+          final send = SendMessage(
+            signedEventRelay: SignedEventRelay(
+              session: session,
+              nsec: key.nsec,
+            ),
+            fetchMembers: (_) async => [
+              _member(key.public),
+              _member(recipient),
+            ],
+            readUserCache: () => const {},
+            addLocalMessage: (_, event) => local.add(event),
+            completeLocalMessage: (_, _) {},
+            removeLocalMessage: (_, _) {},
+          );
+          const imeta = [
+            'imeta',
+            'url https://example.org/reply.png',
+            'm image/png',
+            'alt Branch attachment',
+          ];
+          final result = send(
+            channelId: _channelId,
+            content: media
+                ? '![Branch attachment](https://example.org/reply.png)'
+                : 'Continue the branch',
+            channel: Channel(
+              id: _channelId,
+              name: 'Solo',
+              channelType: 'stream',
+              visibility: 'private',
+              labels: const ['buzz.solo'],
+              description: '',
+              createdBy: key.public,
+              createdAt: DateTime(2026),
+              memberCount: 2,
+              isMember: true,
+            ),
+            parentEventId: parent,
+            rootEventId: root,
+            mentionPubkeys: [recipient],
+            mediaTags: media ? const [imeta] : const [],
+          );
+          await session.published;
+          final event = session.event;
+          expect(event.kind, EventKind.streamMessage);
+          expect(
+            event.tags,
+            containsAll([
+              ['h', _channelId],
+              if (nested) ['e', root, '', 'root'],
+              ['e', parent, '', 'reply'],
+              ['p', recipient],
+            ]),
+          );
+          expect(event.threadReference.rootId, root);
+          expect(event.threadReference.parentId, parent);
+          expect(
+            event.tags.where((tag) => tag.first == 'imeta').toList(),
+            media ? [imeta] : isEmpty,
+          );
+          expect(local.single.toJson(), event.toJson());
+          expect(
+            nostr.Event.fromMap(event.toJson(), verify: true).isValid(),
+            isTrue,
+          );
+          session.accept();
+          await result;
+        },
+      );
+    }
+  }
+
   test(
     'adds the signed message locally before relay acknowledgement',
     () async {

@@ -289,7 +289,7 @@ async fn check_membership(client: &BuzzClient, channel: &str) -> Result<(), CliE
             "membership snapshot does not identify the original channel",
         ));
     }
-    let signer = client.keys().public_key().to_hex();
+    let signer = client.public_key().to_hex();
     if !event.tags.iter().any(|tag| {
         let parts = tag.as_slice();
         parts.first().map(String::as_str) == Some("p") && parts.get(1) == Some(&signer)
@@ -362,7 +362,7 @@ pub(super) async fn deliver(
         std::env::current_dir().map_err(error)?.join(dir)
     };
     let relay = relay_namespace(client)?;
-    let signer = client.keys().public_key().to_hex();
+    let signer = client.public_key().to_hex();
     let id = namespace(&relay, &signer, &key)?;
     let _lock = lock(&dir).await?;
     let mut journal = read(&dir)?;
@@ -404,6 +404,7 @@ pub(super) async fn deliver(
                 broadcast: false,
                 files: vec![],
                 mentions,
+                from_thread: None,
             },
             Some(&key),
         )
@@ -451,11 +452,16 @@ pub(super) async fn deliver(
             .as_ref()
             .is_none_or(|e| recovery_now.saturating_sub(e.created_at) > 600)
         {
-            let signed = EventBuilder::new(original.kind, &original.content)
-                .tags(original.tags.clone())
-                .allow_self_tagging()
-                .sign_with_keys(client.keys())
-                .map_err(error)?;
+            // The journal already contains the original delegation and metadata.
+            // Re-sign those exact tags through the credential signer without
+            // injecting a second ambient NIP-OA auth tag.
+            let signed = client
+                .sign_event_unchecked(
+                    EventBuilder::new(original.kind, &original.content)
+                        .tags(original.tags.clone())
+                        .allow_self_tagging(),
+                )
+                .await?;
             record.recovery_candidate = Some(ReportStamp::from(&signed));
         }
         let candidate = record
@@ -472,13 +478,15 @@ pub(super) async fn deliver(
                 "recovery payload exceeds protocol limit; original retained",
             ));
         }
-        client.sign_event(
-            EventBuilder::new(
-                Kind::Custom(buzz_core::kind::KIND_MANAGED_DELIVERY_RECOVERY as u16),
-                body,
+        client
+            .sign_event(
+                EventBuilder::new(
+                    Kind::Custom(buzz_core::kind::KIND_MANAGED_DELIVERY_RECOVERY as u16),
+                    body,
+                )
+                .tag(Tag::parse(["h", &record.channel]).map_err(error)?),
             )
-            .tag(Tag::parse(["h", &record.channel]).map_err(error)?),
-        )?
+            .await?
     } else {
         original.clone()
     };

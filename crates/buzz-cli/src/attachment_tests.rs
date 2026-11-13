@@ -70,7 +70,11 @@ async fn relay(store: Store) -> (String, tokio::task::JoinHandle<()>) {
 async fn uploads_documents_archives_and_markdown_with_original_names() {
     let store = Store::default();
     let (url, task) = relay(store.clone()).await;
-    let client = BuzzClient::new(url, Keys::generate(), None, None).unwrap();
+    let client = BuzzClient::new(
+        url,
+        crate::credentials::Credentials::from_keys(Keys::generate()),
+    )
+    .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let fixtures: &[(&str, &[u8], &str)] = &[
         ("report.pdf", b"%PDF-1.4\n%%EOF\n", "application/pdf"),
@@ -120,7 +124,11 @@ async fn legacy_upload_keeps_filename_metadata() {
         ..Store::default()
     })
     .await;
-    let client = BuzzClient::new(url, Keys::generate(), None, None).unwrap();
+    let client = BuzzClient::new(
+        url,
+        crate::credentials::Credentials::from_keys(Keys::generate()),
+    )
+    .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("notes.md");
     std::fs::write(&path, b"# Notes\n").unwrap();
@@ -144,7 +152,11 @@ async fn messages_emit_file_links_for_multiple_attachments_and_keep_media_markup
                 b"\x00\x00\x00\x18ftypisom\x00\x00\x00\x00isommp41",
             ),
         ];
-        let client = BuzzClient::new(url, Keys::generate(), None, None).unwrap();
+        let client = BuzzClient::new(
+            url,
+            crate::credentials::Credentials::from_keys(Keys::generate()),
+        )
+        .unwrap();
         let mut files = Vec::new();
         for &(name, bytes) in fixtures {
             let path = dir.path().join(name);
@@ -161,6 +173,7 @@ async fn messages_emit_file_links_for_multiple_attachments_and_keep_media_markup
                 broadcast: false,
                 files,
                 mentions: vec![],
+                from_thread: None,
             },
         )
         .await
@@ -201,7 +214,11 @@ async fn messages_emit_file_links_for_multiple_attachments_and_keep_media_markup
 #[tokio::test]
 async fn upload_sanitizes_filename_for_relay_imeta_validation() {
     let (url, task) = relay(Store::default()).await;
-    let client = BuzzClient::new(url, Keys::generate(), None, None).unwrap();
+    let client = BuzzClient::new(
+        url,
+        crate::credentials::Credentials::from_keys(Keys::generate()),
+    )
+    .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("report\n[draft].md");
     std::fs::write(&path, b"# Notes\n").unwrap();
@@ -214,7 +231,11 @@ async fn upload_sanitizes_filename_for_relay_imeta_validation() {
 async fn rejects_detected_executables_before_upload() {
     let store = Store::default();
     let (url, task) = relay(store.clone()).await;
-    let client = BuzzClient::new(url, Keys::generate(), None, None).unwrap();
+    let client = BuzzClient::new(
+        url,
+        crate::credentials::Credentials::from_keys(Keys::generate()),
+    )
+    .unwrap();
     let mut file = tempfile::NamedTempFile::new().unwrap();
     use std::io::Write;
     file.write_all(&[b"\x7fELF".as_slice(), &[0u8; 60]].concat())

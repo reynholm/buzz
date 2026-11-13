@@ -5,6 +5,7 @@ import 'package:nostr/nostr.dart' as nostr;
 import 'nostr_models.dart';
 import 'relay_session.dart';
 import 'relay_socket.dart';
+import 'package:buzz/shared/crypto/event_signing.dart';
 
 /// Signs and submits Nostr events through the relay WebSocket connection.
 class SignedEventRelay {
@@ -23,7 +24,7 @@ class SignedEventRelay {
     if (nsec == null || nsec.isEmpty) return null;
     final privkeyHex = nostr.Nip19.decode(payload: nsec).data;
     if (privkeyHex.isEmpty) return null;
-    return nostr.Keys(privkeyHex).public;
+    return derivePublicKeyHex(privkeyHex);
   }
 
   /// Sign and submit an event. Returns the relay's OK response as a [NostrEvent]
@@ -34,7 +35,7 @@ class SignedEventRelay {
     required String content,
     required List<List<String>> tags,
     int? createdAt,
-    void Function(NostrEvent event)? onSigned,
+    FutureOr<void> Function(NostrEvent event)? onSigned,
   }) async {
     final nsec = _nsec;
     if (nsec == null || nsec.isEmpty) {
@@ -46,17 +47,18 @@ class SignedEventRelay {
       throw Exception('Invalid nsec');
     }
 
-    final event = nostr.Event.from(
+    final event = signNostrEvent(
       kind: kind,
       content: content,
       tags: tags,
       secretKey: privkeyHex,
       createdAt: createdAt,
-      verify: false,
     );
 
     final nostrEvent = NostrEvent.fromJson(event.toMap());
-    onSigned?.call(nostrEvent);
+    // Durable callers must finish journaling the exact signed bytes before
+    // the relay can accept an event whose acknowledgement might be lost.
+    await onSigned?.call(nostrEvent);
     return _session.publish(nostrEvent);
   }
 }
@@ -65,6 +67,7 @@ class SignedEventRelay {
 ///
 /// This is used for community-removal tombstones because the community being
 /// removed is not necessarily the app's active relay session.
+/// [checkCurrent] can retire an operation while connecting, before EVENT is sent.
 Future<NostrEvent> submitSignedEventOnce({
   required String wsUrl,
   required String nsec,
@@ -73,16 +76,17 @@ Future<NostrEvent> submitSignedEventOnce({
   required List<List<String>> tags,
   int? createdAt,
   Duration timeout = const Duration(seconds: 12),
+  Map<String, String> headers = const {},
+  void Function()? checkCurrent,
 }) async {
   final privateKey = nostr.Nip19.decode(payload: nsec).data;
   if (privateKey.isEmpty) throw const FormatException('Invalid nsec');
-  final signed = nostr.Event.from(
+  final signed = signNostrEvent(
     kind: kind,
     content: content,
     tags: tags,
     secretKey: privateKey,
     createdAt: createdAt,
-    verify: false,
   );
   final event = NostrEvent.fromJson(signed.toMap());
   final result = Completer<NostrEvent>();
@@ -115,13 +119,17 @@ Future<NostrEvent> submitSignedEventOnce({
         }
       }
     },
-    onConnected: () => socket.send(['EVENT', event.toJson()]),
+    onConnected: () {
+      checkCurrent?.call();
+      socket.send(['EVENT', event.toJson()]);
+    },
     onDisconnected: (error) {
       if (!result.isCompleted) {
         result.completeError(error ?? Exception('Relay disconnected'));
       }
     },
   );
+  socket.headers = headers;
   final resultFuture = result.future.timeout(timeout);
   try {
     await socket.connect();

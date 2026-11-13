@@ -956,11 +956,11 @@ pub(crate) fn truncate_middle(s: &str, max: usize) -> String {
 /// with a marker; text is middle-elided so the head (what ran) and tail
 /// (how it ended) both survive. Every elision leaves an inline marker.
 fn tool_result_content(
-    blocks: &[rmcp::model::Content],
+    blocks: &[rmcp::model::ContentBlock],
     max_bytes: usize,
     max_text_bytes: usize,
 ) -> Vec<ToolResultContent> {
-    use rmcp::model::RawContent;
+    use rmcp::model::ContentBlock;
     let mut out = Vec::new();
     let mut text = String::new();
     let mut used = 0usize; // total bytes emitted (text + images)
@@ -994,9 +994,9 @@ fn tool_result_content(
     };
 
     for c in blocks {
-        match &c.raw {
-            RawContent::Text(t) => append(&mut text, &t.text),
-            RawContent::Image(i) => {
+        match c {
+            ContentBlock::Text(t) => append(&mut text, &t.text),
+            ContentBlock::Image(i) => {
                 flush_text(&mut out, &mut text, &mut used, &mut text_used);
                 let image_bytes = i.data.len().saturating_add(i.mime_type.len());
                 if used.saturating_add(image_bytes) <= max_bytes {
@@ -1016,7 +1016,7 @@ fn tool_result_content(
                     );
                 }
             }
-            RawContent::Audio(a) => append(
+            ContentBlock::Audio(a) => append(
                 &mut text,
                 &format!(
                     "[audio elided: {}, {} bytes]",
@@ -1024,10 +1024,11 @@ fn tool_result_content(
                     a.data.len()
                 ),
             ),
-            RawContent::ResourceLink(r) => {
+            ContentBlock::ResourceLink(r) => {
                 append(&mut text, &format!("[resource: {}]", short(&r.uri)));
             }
-            RawContent::Resource(_) => append(&mut text, "[resource elided]"),
+            ContentBlock::Resource(_) => append(&mut text, "[resource elided]"),
+            _ => append(&mut text, "[unsupported content elided]"),
         }
     }
     flush_text(&mut out, &mut text, &mut used, &mut text_used);
@@ -1090,7 +1091,7 @@ mod content_tests {
             );
         }
     }
-    use rmcp::model::Content;
+    use rmcp::model::ContentBlock as Content;
 
     #[cfg(windows)]
     #[test]

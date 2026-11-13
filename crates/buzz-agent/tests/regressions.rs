@@ -157,9 +157,11 @@ async fn mcp_init_timeout_kills_child() {
     h.shutdown().await;
 }
 
-/// A real MCP server that returns 200 tools with 100KB descriptions must
+/// A real MCP server that returns 129 tools with 100KB descriptions must
 /// be capped: tool count ≤ MAX_TOOLS_PER_SESSION (128) — we expect spawn_all
-/// to either reject (too many) OR truncate. We assert the spawn succeeds with
+/// to either reject (too many) OR truncate. Keep this fixture below the
+/// transport's 16 MiB line limit so it reaches semantic metadata admission.
+/// We assert the spawn succeeds with
 /// a bounded count, and that descriptions sent to the LLM are ≤ 1024 bytes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tool_metadata_caps_enforced() {
@@ -182,7 +184,7 @@ async fn tool_metadata_caps_enforced() {
                 "command": fake_mcp,
                 "args": [],
                 "env": [
-                    { "name": "FAKE_MCP_TOOL_COUNT", "value": "200" },
+                    { "name": "FAKE_MCP_TOOL_COUNT", "value": "129" },
                     { "name": "FAKE_MCP_HUGE_DESC", "value": "1" },
                 ],
             }],
@@ -193,7 +195,7 @@ async fn tool_metadata_caps_enforced() {
         .recv_until(|v| v.get("result").is_some() || v.get("error").is_some())
         .await;
 
-    // Either spawn rejects (200 > 128 cap) — that's acceptable hardening —
+    // Either spawn rejects (129 > 128 cap) — that's acceptable hardening —
     // OR it accepts and we verify the LLM request stays bounded.
     if r.get("error").is_some() {
         let msg = r["error"]["message"].as_str().unwrap_or("");
@@ -222,6 +224,75 @@ async fn tool_metadata_caps_enforced() {
             "description not capped: {} bytes",
             desc.len()
         );
+    }
+    h.shutdown().await;
+}
+
+/// Stdio metadata above the transport cap is discarded before semantic
+/// admission. The bounded discovery deadline must still reap its child.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oversized_mcp_metadata_is_refused_and_its_child_is_reaped() {
+    let llm = spawn_capturing_llm(vec![]).await;
+    let mut h = Harness::spawn(&llm.url).await;
+    let directory = tempfile::tempdir().unwrap();
+    let pid_file = directory.path().join("oversized-mcp.pid");
+    h.send(
+        "initialize",
+        json!({"protocolVersion":1,"clientCapabilities":{}}),
+    )
+    .await;
+    let _ = h.recv().await;
+    let started = Instant::now();
+    h.send(
+        "session/new",
+        json!({
+            "cwd": "/tmp",
+            "mcpServers": [{
+                "name": "oversized",
+                "command": env!("CARGO_BIN_EXE_fake-mcp"),
+                "args": [],
+                "env": [
+                    { "name": "FAKE_MCP_TOOL_COUNT", "value": "200" },
+                    { "name": "FAKE_MCP_HUGE_DESC", "value": "1" },
+                    { "name": "FAKE_MCP_PID_FILE", "value": pid_file },
+                ],
+            }],
+        }),
+    )
+    .await;
+    let response = h
+        .recv_until(|v| v.get("result").is_some() || v.get("error").is_some())
+        .await;
+    let error = response["error"]["message"].as_str().unwrap_or("");
+    assert!(
+        error.contains("list_tools oversized: timeout after 2s"),
+        "oversized transport input must not reach tool admission: {response}"
+    );
+    assert!(started.elapsed() < Duration::from_secs(8));
+    h.wait_for_stderr(
+        "Incoming message exceeded the maximum line length",
+        Duration::from_secs(2),
+    )
+    .await;
+    assert!(llm.captured.lock().await.is_empty());
+    #[cfg(unix)]
+    {
+        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while tokio::process::Command::new("kill")
+                .args(["-0", pid.trim()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .await
+                .unwrap()
+                .success()
+            {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("refused MCP child must be reaped before session cleanup");
     }
     h.shutdown().await;
 }
@@ -1425,6 +1496,10 @@ async fn cancel_kills_inflight_tool_via_mcp_notification() {
     ])
     .await;
 
+    // The agent stops buzz-dev-mcp with SIGKILL, so the server never deletes
+    // its own temp dirs. Point its TMPDIR at a dir this test owns and removes.
+    // Declared before `h` so it drops after the harness.
+    let dev_mcp_tmp = tempfile::TempDir::new().expect("create buzz-dev-mcp TMPDIR");
     let mut h = Harness::spawn(&llm.url).await;
     let sid = init_session(
         &mut h,
@@ -1432,7 +1507,7 @@ async fn cancel_kills_inflight_tool_via_mcp_notification() {
             "name": "dev",
             "command": &dev_mcp_bin,
             "args": [],
-            "env": []
+            "env": [{"name": "TMPDIR", "value": dev_mcp_tmp.path()}]
         }]),
     )
     .await;

@@ -11,6 +11,7 @@ use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
+use tauri::Manager;
 
 #[derive(Default)]
 struct Data {
@@ -18,6 +19,8 @@ struct Data {
     profiles: Vec<nostr::Event>,
     requests: Vec<(String, nostr::Event)>,
     fail_upload: bool,
+    enforce_possession: bool,
+    uploaders: std::collections::HashSet<(String, nostr::PublicKey)>,
     reject_profile: bool,
     redirect: Option<String>,
     upload_url: Option<String>,
@@ -92,6 +95,8 @@ async fn upload(State(state): State<ServerState>, headers: HeaderMap, bytes: Byt
     }
     let hash = hex::encode(Sha256::digest(&bytes));
     assert_eq!(headers["x-sha-256"].to_str().unwrap(), hash);
+    let signer = data.requests.last().unwrap().1.pubkey;
+    data.uploaders.insert((hash.clone(), signer));
     data.blobs.insert(format!("{hash}.png"), bytes.to_vec());
     Json(serde_json::json!({
         "url": data.upload_url.clone().unwrap_or_else(|| format!("{}/media/{hash}.png", state.base)),
@@ -106,7 +111,24 @@ async fn publish(
     auth(&headers, "profile", &state);
     event.verify().unwrap();
     let mut data = state.data.lock().unwrap();
-    let accepted = !data.reject_profile;
+    let owns_avatar = if data.enforce_possession {
+        let profile: serde_json::Value = serde_json::from_str(&event.content).unwrap();
+        profile["picture"].as_str().is_none_or(|picture| {
+            let urls = buzz_core_pkg::media::animated_avatar_urls(picture)
+                .map(|(poster, animation)| vec![poster, animation])
+                .unwrap_or_else(|| vec![picture.to_owned()]);
+            urls.into_iter().all(|value| {
+                let url = url::Url::parse(&value).unwrap();
+                url.origin() != url::Url::parse(&state.base).unwrap().origin()
+                    || data
+                        .uploaders
+                        .contains(&(media_hash(&url).unwrap().to_owned(), event.pubkey))
+            })
+        })
+    } else {
+        true
+    };
+    let accepted = !data.reject_profile && owns_avatar;
     let id = event.id.to_hex();
     if accepted {
         data.profiles.push(event);
@@ -225,6 +247,37 @@ async fn two_communities_add_edit_restart_keeps_local_images_and_fixed_agent_sig
     }
     let path = projected.split("/media/").nth(1).unwrap();
     assert_eq!(a.state.data.lock().unwrap().blobs[path], image(2));
+    // Animated profiles localize both assets, and retain both projections after
+    // the source community is removed without authenticating back to it.
+    let poster = seed(&b, image(6));
+    let animation = seed(&b, image(7));
+    let descriptor = format!(
+        "{poster}#buzz-anim={}",
+        percent_encoding::utf8_percent_encode(&animation, percent_encoding::NON_ALPHANUMERIC)
+    );
+    sync(&state, &a, &keys, &descriptor).await.unwrap();
+    let (projected_poster, projected_animation) =
+        buzz_core_pkg::media::animated_avatar_urls(&picture(&a)).unwrap();
+    assert_eq!(
+        projected_poster,
+        poster.replace(&b.state.base, &a.state.base)
+    );
+    assert_eq!(
+        projected_animation,
+        animation.replace(&b.state.base, &a.state.base)
+    );
+    for (value, bytes) in [
+        (projected_poster, image(6)),
+        (projected_animation, image(7)),
+    ] {
+        let path = value.split("/media/").nth(1).unwrap();
+        assert_eq!(a.state.data.lock().unwrap().blobs[path], bytes);
+    }
+    let source_requests = b.state.data.lock().unwrap().requests.len();
+    b.state.data.lock().unwrap().blobs.clear();
+    *state.agent_avatar_communities.lock().unwrap() = vec![a.state.base.clone()];
+    sync(&state, &a, &keys, &descriptor).await.unwrap();
+    assert_eq!(b.state.data.lock().unwrap().requests.len(), source_requests);
 }
 
 #[tokio::test]
@@ -550,3 +603,330 @@ async fn removed_source_projection_query_uses_fixed_signer_and_cannot_redirect()
     assert!(trap.state.data.lock().unwrap().requests.is_empty());
     assert_eq!(picture(&b), projected);
 }
+
+fn profile_app(
+    state: AppState,
+    agent: &Keys,
+) -> (
+    tempfile::TempDir,
+    tauri::App<tauri::test::MockRuntime>,
+    crate::managed_agents::device_runtime::RuntimeFence,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+    context.config_mut().identifier = dir.path().to_str().unwrap().into();
+    let app = tauri::test::mock_builder()
+        .manage(state)
+        .build(context)
+        .unwrap();
+    let (mut records, _) = crate::managed_agents::device_home_migration::tests::records();
+    records[0].share_across_devices = Some(true);
+    records[1].pubkey = agent.public_key().to_hex();
+    records[1].private_key_nsec = agent.secret_key().to_secret_hex();
+    crate::managed_agents::device_home_migration::tests::write(
+        &crate::managed_agents::managed_agents_base_dir(app.handle()).unwrap(),
+        &records,
+    );
+    let fence =
+        crate::managed_agents::device_runtime::capture_runtime_fence(&app.state::<AppState>())
+            .unwrap();
+    (dir, app, fence)
+}
+
+#[tokio::test]
+async fn creation_transfers_only_chosen_bytes_from_owner_to_agent() {
+    let target = server().await;
+    let state = state(&[&target]);
+    let owner = Keys::generate();
+    let agent = Keys::generate();
+    let poster = seed(&target, image(3));
+    let animation = seed(&target, image(5));
+    let avatar = format!(
+        "{poster}#buzz-anim={}",
+        percent_encoding::utf8_percent_encode(&animation, percent_encoding::NON_ALPHANUMERIC)
+    );
+    let external = server().await;
+    *state.keys.lock().unwrap() = owner.clone();
+    *state.relay_url_override.lock().unwrap() = Some(target.state.base.clone());
+    let (_dir, app, fence) = profile_app(state, &agent);
+    let state = app.state::<AppState>();
+    assert_eq!(
+        crate::publish_created_agent_profile(
+            app.handle(),
+            &state,
+            &agent.public_key().to_hex(),
+            &fence,
+            &target.state.base,
+            &owner,
+            &agent,
+            "Carl",
+            Some(&avatar),
+            None,
+            None
+        )
+        .await,
+        None
+    );
+    {
+        let data = target.state.data.lock().unwrap();
+        for (method, signer) in [("read", owner.public_key()), ("upload", agent.public_key())] {
+            let requests: Vec<_> = data
+                .requests
+                .iter()
+                .filter(|(verb, _)| verb == method)
+                .collect();
+            assert_eq!(
+                requests.len(),
+                2,
+                "both animated avatar assets must transfer"
+            );
+            assert!(requests.iter().all(|(_, event)| event.pubkey == signer));
+        }
+        let uploads: std::collections::BTreeSet<String> = data
+            .requests
+            .iter()
+            .filter(|(method, _)| method == "upload")
+            .map(|(_, event)| {
+                event
+                    .tags
+                    .iter()
+                    .find(|tag| tag.as_slice().first().map(String::as_str) == Some("x"))
+                    .unwrap()
+                    .as_slice()[1]
+                    .clone()
+            })
+            .collect();
+        assert_eq!(
+            uploads,
+            std::collections::BTreeSet::from([
+                media_hash(&url::Url::parse(&poster).unwrap())
+                    .unwrap()
+                    .to_owned(),
+                media_hash(&url::Url::parse(&animation).unwrap())
+                    .unwrap()
+                    .to_owned(),
+            ]),
+            "agent possession must cover both distinct avatar assets"
+        );
+        assert_eq!(data.profiles.last().unwrap().pubkey, agent.public_key());
+    }
+    // Arbitrary external URLs never receive the owner's credentials.
+    transfer_created_avatar(
+        &state,
+        &target.state.base,
+        &owner,
+        &agent,
+        Some(&seed(&external, image(4))),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(external.state.data.lock().unwrap().requests.is_empty());
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ExplicitAvatarFlow {
+    TeamImport,
+    AgentImport,
+}
+
+async fn explicit_avatar_flow(
+    flow: ExplicitAvatarFlow,
+    app: &tauri::AppHandle<tauri::test::MockRuntime>,
+    fence: &crate::managed_agents::device_runtime::RuntimeFence,
+    relay: &str,
+    owner: &Keys,
+    agent: &Keys,
+    avatar: &str,
+) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    match flow {
+        ExplicitAvatarFlow::TeamImport => {
+            match crate::publish_imported_team_member_profile(
+                app,
+                &state,
+                &agent.public_key().to_hex(),
+                fence,
+                relay,
+                owner,
+                agent,
+                "Imported Agent",
+                Some(avatar),
+                None,
+                None,
+            )
+            .await
+            {
+                Some(error) => Err(error),
+                None => Ok(()),
+            }
+        }
+        ExplicitAvatarFlow::AgentImport => {
+            let persona = serde_json::from_value(serde_json::json!({
+                "id":"imported", "display_name":"Imported Agent", "system_prompt":"Be helpful",
+                "created_at":"2026-11-06T00:00:00Z", "updated_at":"2026-11-06T00:00:00Z"
+            }))
+            .unwrap();
+            match crate::publish_persona_profile(
+                app,
+                &state,
+                &agent.public_key().to_hex(),
+                fence,
+                relay,
+                owner,
+                agent,
+                "Imported Agent",
+                Some(avatar),
+                &persona,
+                None,
+            )
+            .await
+            {
+                Some(error) => Err(error),
+                None => Ok(()),
+            }
+        }
+    }
+}
+
+async fn explicit_avatar_journey(flow: ExplicitAvatarFlow) {
+    let target = server().await;
+    target.state.data.lock().unwrap().enforce_possession = true;
+    let external = server().await;
+    let state = state(&[&target]);
+    let owner = Keys::generate();
+    let agent = Keys::generate();
+    let poster = seed(&target, image(21));
+    let animation = seed(&target, image(22));
+    let avatar = format!(
+        "{poster}#buzz-anim={}",
+        percent_encoding::utf8_percent_encode(&animation, percent_encoding::NON_ALPHANUMERIC)
+    );
+    *state.keys.lock().unwrap() = owner.clone();
+    *state.relay_url_override.lock().unwrap() = Some(target.state.base.clone());
+    let (_dir, app, fence) = profile_app(state, &agent);
+    let state = app.state::<AppState>();
+    explicit_avatar_flow(
+        flow,
+        app.handle(),
+        &fence,
+        &target.state.base,
+        &owner,
+        &agent,
+        &avatar,
+    )
+    .await
+    .unwrap();
+    {
+        let data = target.state.data.lock().unwrap();
+        for (method, signer) in [("read", owner.public_key()), ("upload", agent.public_key())] {
+            let requests: Vec<_> = data
+                .requests
+                .iter()
+                .filter(|(verb, _)| verb == method)
+                .collect();
+            assert_eq!(requests.len(), 2, "{flow:?}: both assets must transfer");
+            assert!(requests.iter().all(|(_, event)| event.pubkey == signer));
+        }
+        assert_eq!(data.uploaders.len(), 2);
+        assert_eq!(data.profiles.last().unwrap().pubkey, agent.public_key());
+    }
+    let public_avatar = seed(&external, image(23));
+    explicit_avatar_flow(
+        flow,
+        app.handle(),
+        &fence,
+        &target.state.base,
+        &owner,
+        &agent,
+        &public_avatar,
+    )
+    .await
+    .unwrap();
+    assert!(external.state.data.lock().unwrap().requests.is_empty());
+    let before = target.state.data.lock().unwrap().profiles.len();
+    target.state.data.lock().unwrap().fail_upload = true;
+    let error = explicit_avatar_flow(
+        flow,
+        app.handle(),
+        &fence,
+        &target.state.base,
+        &owner,
+        &agent,
+        &avatar,
+    )
+    .await
+    .unwrap_err();
+    assert!(error.contains("503"), "{flow:?}: {error}");
+    assert_eq!(
+        target.state.data.lock().unwrap().profiles.len(),
+        before,
+        "failed transfer cannot publish a new profile"
+    );
+    target.state.data.lock().unwrap().fail_upload = false;
+    // Delayed transfer may complete in its original community, but a lost key
+    // or switched workspace must stop the subsequent profile publication.
+    for switch_workspace in [false, true] {
+        *state.keys.lock().unwrap() = owner.clone();
+        *state.relay_url_override.lock().unwrap() = Some(target.state.base.clone());
+        state
+            .identity_lost
+            .store(false, std::sync::atomic::Ordering::Release);
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        target.state.data.lock().unwrap().pause_read = Some((entered.clone(), release.clone()));
+        let publish = explicit_avatar_flow(
+            flow,
+            app.handle(),
+            &fence,
+            &target.state.base,
+            &owner,
+            &agent,
+            &avatar,
+        );
+        tokio::pin!(publish);
+        tokio::select! { _ = entered.notified() => {}, result = &mut publish => panic!("profile finished before paused transfer: {result:?}") }
+        if switch_workspace {
+            *state.keys.lock().unwrap() = Keys::generate();
+            *state.relay_url_override.lock().unwrap() = Some(external.state.base.clone());
+        } else {
+            state
+                .identity_lost
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+        target.state.data.lock().unwrap().pause_read = None;
+        release.notify_one();
+        assert!(
+            publish.await.is_err(),
+            "{flow:?}: stale authority published a profile"
+        );
+        assert_eq!(target.state.data.lock().unwrap().profiles.len(), before);
+        assert!(external.state.data.lock().unwrap().requests.is_empty());
+    }
+    // An already-stale invocation cannot acquire any owner transfer authority.
+    let reads = target.state.data.lock().unwrap().requests.len();
+    assert!(explicit_avatar_flow(
+        flow,
+        app.handle(),
+        &fence,
+        &target.state.base,
+        &owner,
+        &agent,
+        &avatar
+    )
+    .await
+    .is_err());
+    assert_eq!(target.state.data.lock().unwrap().requests.len(), reads);
+}
+
+#[tokio::test]
+async fn team_import_transfers_both_assets_and_reports_failure() {
+    explicit_avatar_journey(ExplicitAvatarFlow::TeamImport).await;
+}
+
+#[tokio::test]
+async fn individual_import_transfers_both_assets_and_reports_failure() {
+    explicit_avatar_journey(ExplicitAvatarFlow::AgentImport).await;
+}
+
+mod persona_edit;

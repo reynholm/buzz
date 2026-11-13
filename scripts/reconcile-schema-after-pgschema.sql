@@ -181,26 +181,52 @@ BEGIN
     END IF;
 END $$;
 
--- pgschema 1.7.4 emits partition keys first in the initial events PK,
--- despite the declared tenant-leading order. Once children are attached,
--- normalize only that known permutation through the parent. A later apply
--- must not attempt to drop inherited child constraints independently.
+-- pgschema moves the partition key to the front of a partitioned table's
+-- primary key when it creates the table, so events gets
+-- PRIMARY KEY (created_at, community_id, id) instead of the declared
+-- (community_id, created_at, id). Every later plan then drops and re-adds
+-- events_pkey and each declared child's key, which fails once the children are
+-- attached because their keys are inherited. Rebuild the key on the parent in
+-- the declared order; PostgreSQL recreates each partition's key with it.
+-- delivery_log already declares its partition key first. This block is a
+-- verbatim copy of scripts/repair-events-pkey.sql; keep the two identical.
 DO $$
 DECLARE
-    key_columns TEXT[];
+    declared CONSTANT text := 'PRIMARY KEY (community_id, created_at, id)';
 BEGIN
-    SELECT array_agg(attribute.attname::text ORDER BY key.ordinality)
-    INTO key_columns
-    FROM pg_constraint AS constraint_row
-    CROSS JOIN LATERAL unnest(constraint_row.conkey) WITH ORDINALITY AS key(attnum, ordinality)
-    JOIN pg_attribute AS attribute
-      ON attribute.attrelid = constraint_row.conrelid AND attribute.attnum = key.attnum
-    WHERE constraint_row.conrelid = 'events'::regclass AND constraint_row.contype = 'p';
-    IF key_columns = ARRAY['created_at', 'community_id', 'id']::TEXT[] THEN
-        ALTER TABLE events DROP CONSTRAINT events_pkey;
-        ALTER TABLE events ADD CONSTRAINT events_pkey PRIMARY KEY (community_id, created_at, id);
-    ELSIF key_columns IS DISTINCT FROM ARRAY['community_id', 'created_at', 'id']::TEXT[] THEN
-        RAISE EXCEPTION 'unexpected events primary key after pgschema apply: %', key_columns;
+    -- Also runs before pgschema apply, when events may not exist yet.
+    IF to_regclass('events') IS NULL THEN
+        RETURN;
+    END IF;
+
+    IF (
+        SELECT pg_get_constraintdef(oid) FROM pg_constraint
+        WHERE conrelid = 'events'::regclass AND contype = 'p'
+    ) IS DISTINCT FROM declared THEN
+        -- The rebuild locks events and every partition ACCESS EXCLUSIVE. Fail
+        -- fast instead of queueing behind a relay that still uses them.
+        BEGIN
+            PERFORM set_config('lock_timeout', '10s', true);
+            ALTER TABLE events DROP CONSTRAINT IF EXISTS events_pkey;
+            ALTER TABLE events
+                ADD CONSTRAINT events_pkey PRIMARY KEY (community_id, created_at, id);
+        EXCEPTION WHEN lock_not_available THEN
+            RAISE EXCEPTION 'timed out locking events to rebuild events_pkey'
+                USING HINT = 'Stop any relay using this database, then rerun.';
+        END;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE contype = 'p'
+          AND conrelid IN (
+              SELECT 'events'::regclass
+              UNION ALL
+              SELECT inhrelid FROM pg_inherits WHERE inhparent = 'events'::regclass
+          )
+          AND pg_get_constraintdef(oid) <> declared
+    ) THEN
+        RAISE EXCEPTION 'events and its partitions must have %', declared;
     END IF;
 END $$;
 
@@ -255,3 +281,37 @@ BEGIN
         RAISE EXCEPTION 'replica_heartbeat must contain its singleton row after pgschema apply';
     END IF;
 END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'relay_invites'
+          AND column_name = 'revoked_at'
+          AND data_type = 'timestamp with time zone'
+          AND is_nullable = 'YES'
+          AND column_default IS NULL
+    ) THEN
+        RAISE EXCEPTION 'relay_invites.revoked_at must remain nullable without a default';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'relay_invites'
+          AND column_name = 'legacy_admission'
+          AND data_type = 'boolean'
+          AND is_nullable = 'NO'
+          AND column_default = 'true'
+    ) THEN
+        RAISE EXCEPTION 'relay_invites.legacy_admission must default to true and be not null';
+    END IF;
+    IF (SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal
+        AND tgname IN ('invite_restriction_lock', 'invite_issuer_revocation',
+                       'invite_owner_lock', 'invite_owner_revocation')) <> 0 THEN
+        RAISE EXCEPTION 'invitation revocation must use supported application writers, not triggers';
+    END IF;
+END
+$$;

@@ -6,10 +6,14 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use nostr::JsonUtil;
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex};
 
 use crate::topic::EventTopicKey;
-use crate::ChannelEvent;
+use crate::{ChannelEvent, LinkState};
+
+/// Operational loss channel shared only within this Redis trust domain. It
+/// carries no event or tenant identity and is never forwarded to clients.
+pub(crate) const SYNC_LOSS_CHANNEL: &str = "buzz:control:artifact-sync-loss";
 
 /// Initial reconnect backoff (1 second).
 const BACKOFF_INITIAL_SECS: u64 = 1;
@@ -21,12 +25,24 @@ pub(crate) type DesiredTopics = Arc<Mutex<HashMap<EventTopicKey, usize>>>;
 
 /// Commands sent from relay subscription registration/removal to the Redis
 /// pub/sub task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 pub(crate) enum SubscriptionCommand {
     /// Ensure the topic is subscribed on the current Redis pub/sub connection.
     Subscribe(EventTopicKey),
     /// Unsubscribe only if the desired refcount is still zero when processed.
     UnsubscribeIfIdle(EventTopicKey),
+    /// Subscribe if needed, then answer with the link epoch on which the
+    /// server has confirmed the subscription.
+    Confirm(EventTopicKey, oneshot::Sender<u64>),
+}
+
+/// Record a possible loss of messages: the epoch advances, so every reader
+/// that started on the old epoch can tell.
+fn mark_loss(link: &watch::Sender<LinkState>, up: bool) {
+    link.send_modify(|state| {
+        state.epoch += 1;
+        state.up = up;
+    });
 }
 
 /// Runs a dynamically scoped subscriber and forwards events to broadcast.
@@ -39,18 +55,24 @@ pub(crate) async fn run_subscriber(
     broadcast_tx: broadcast::Sender<ChannelEvent>,
     desired_topics: DesiredTopics,
     mut subscription_rx: mpsc::Receiver<SubscriptionCommand>,
+    link: watch::Sender<LinkState>,
 ) {
     let mut backoff_secs = BACKOFF_INITIAL_SECS;
 
     loop {
-        match connect_and_subscribe(
+        let result = connect_and_subscribe(
             &redis_url,
             &broadcast_tx,
             desired_topics.clone(),
             &mut subscription_rx,
+            &link,
         )
-        .await
-        {
+        .await;
+        if link.borrow().up {
+            // Messages published while the link is down are not replayed.
+            mark_loss(&link, false);
+        }
+        match result {
             Ok(()) => {
                 // Stream ended cleanly (Redis returned None). The connection was
                 // established and ran successfully, so reset backoff to the initial
@@ -77,11 +99,16 @@ async fn connect_and_subscribe(
     broadcast_tx: &broadcast::Sender<ChannelEvent>,
     desired_topics: DesiredTopics,
     subscription_rx: &mut mpsc::Receiver<SubscriptionCommand>,
+    link: &watch::Sender<LinkState>,
 ) -> Result<(), redis::RedisError> {
     let client = redis::Client::open(redis_url)?;
     let conn = client.get_async_pubsub().await?;
     let (mut sink, mut stream) = conn.split();
     let mut active_topics = HashSet::new();
+
+    // Confirm the loss channel before advertising an up link or confirming
+    // any event topic. A reader can never be live without loss coverage.
+    sink.subscribe(SYNC_LOSS_CHANNEL).await?;
 
     let initial_topics: Vec<EventTopicKey> = {
         let desired = desired_topics.lock().await;
@@ -101,6 +128,7 @@ async fn connect_and_subscribe(
         topic_count = active_topics.len(),
         "Redis pub/sub subscriber connected with dynamic scoped subscriptions"
     );
+    mark_loss(link, true);
 
     loop {
         tokio::select! {
@@ -111,6 +139,14 @@ async fn connect_and_subscribe(
                         if active_topics.insert(channel.clone()) {
                             sink.subscribe(&channel).await?;
                         }
+                    }
+                    SubscriptionCommand::Confirm(topic, reply) => {
+                        let channel = topic.redis_channel();
+                        if !active_topics.contains(&channel) {
+                            sink.subscribe(&channel).await?;
+                            active_topics.insert(channel);
+                        }
+                        let _ = reply.send(link.borrow().epoch);
                     }
                     SubscriptionCommand::UnsubscribeIfIdle(topic) => {
                         if desired_refcount(&desired_topics, topic).await == 0 {
@@ -132,11 +168,17 @@ async fn connect_and_subscribe(
                     Ok(p) => p,
                     Err(e) => {
                         tracing::warn!("Failed to get pub/sub message payload: {e}");
+                        mark_loss(link, true);
                         continue;
                     }
                 };
 
                 let channel_name = msg.get_channel_name();
+                if channel_name == SYNC_LOSS_CHANNEL {
+                    // Even an unfamiliar control payload means possible loss.
+                    mark_loss(link, true);
+                    continue;
+                }
                 let topic_key = match EventTopicKey::parse_redis_channel(channel_name) {
                     Ok(topic_key) => topic_key,
                     Err(_) => {
@@ -149,6 +191,7 @@ async fn connect_and_subscribe(
                     Ok(e) => e,
                     Err(e) => {
                         tracing::warn!("Failed to deserialize event from pub/sub: {e}");
+                        mark_loss(link, true);
                         continue;
                     }
                 };
@@ -189,6 +232,122 @@ mod tests {
     fn topic(id: u128) -> EventTopicKey {
         let ctx = TenantContext::resolved(CommunityId::from_uuid(Uuid::from_u128(id)), "test");
         EventTopicKey::from_context(&ctx, crate::EventTopic::Global)
+    }
+
+    // A fake Redis transport drives the production subscriber. Removing the
+    // control subscription or epoch update makes this journey fail.
+    #[tokio::test]
+    async fn control_subscription_covers_ready_readers_and_never_forwards_events() {
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("redis://{}", listener.local_addr().unwrap());
+        let subscriptions = Arc::new(Mutex::new(Vec::new()));
+        let seen = subscriptions.clone();
+        let (frames, mut incoming) = mpsc::channel::<Option<String>>(4);
+        let peer = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let (read, mut write) = socket.into_split();
+            let mut read = BufReader::new(read);
+            loop {
+                tokio::select! {
+                    frame = incoming.recv() => {
+                        let Some(Some(frame)) = frame else { return; };
+                        write.write_all(frame.as_bytes()).await.unwrap();
+                    }
+                    command = async {
+                        let mut line = String::new();
+                        read.read_line(&mut line).await.unwrap();
+                        let count: usize = line.trim().strip_prefix('*').unwrap().parse().unwrap();
+                        let mut args = Vec::new();
+                        for _ in 0..count {
+                            line.clear();
+                            read.read_line(&mut line).await.unwrap();
+                            let len: usize = line.trim().strip_prefix('$').unwrap().parse().unwrap();
+                            let mut bytes = vec![0; len + 2];
+                            read.read_exact(&mut bytes).await.unwrap();
+                            args.push(String::from_utf8(bytes[..len].to_vec()).unwrap());
+                        }
+                        args
+                    } => {
+                        if command[0].eq_ignore_ascii_case("subscribe") {
+                            seen.lock().await.push(command[1].clone());
+                            let response = format!("*3\r\n$9\r\nsubscribe\r\n${}\r\n{}\r\n:1\r\n", command[1].len(), command[1]);
+                            write.write_all(response.as_bytes()).await.unwrap();
+                        } else {
+                            write.write_all(b"+OK\r\n").await.unwrap();
+                        }
+                    }
+                }
+            }
+        });
+        let (broadcast, mut events) = broadcast::channel(4);
+        let (commands, command_rx) = mpsc::channel(4);
+        let link = watch::Sender::new(LinkState::default());
+        let mut status = link.subscribe();
+        let task = tokio::spawn(run_subscriber(
+            url,
+            broadcast,
+            Arc::default(),
+            command_rx,
+            link,
+        ));
+        tokio::time::timeout(Duration::from_secs(2), status.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(status.borrow_and_update().up);
+        assert_eq!(
+            *subscriptions.lock().await,
+            ["buzz:control:artifact-sync-loss"]
+        );
+        let (reply, confirmed) = oneshot::channel();
+        commands
+            .send(SubscriptionCommand::Confirm(topic(1), reply))
+            .await
+            .unwrap();
+        let epoch = confirmed.await.unwrap();
+        assert_eq!(epoch, status.borrow().epoch);
+        for (channel, payload) in [
+            (
+                "buzz:control:artifact-sync-loss".to_string(),
+                "$6\r\nresync\r\n",
+            ),
+            (
+                "buzz:control:artifact-sync-loss".to_string(),
+                "$7\r\nunknown\r\n",
+            ),
+            ("buzz:control:artifact-sync-loss".to_string(), "*-1\r\n"),
+            (topic(1).redis_channel(), "$3\r\nbad\r\n"),
+        ] {
+            let before = status.borrow_and_update().epoch;
+            frames
+                .send(Some(format!(
+                    "*3\r\n$7\r\nmessage\r\n${}\r\n{}\r\n{}",
+                    channel.len(),
+                    channel,
+                    payload
+                )))
+                .await
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(2), status.changed())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(status.borrow_and_update().epoch > before);
+            assert!(
+                events.try_recv().is_err(),
+                "Control and undecodable entries must never become client events"
+            );
+        }
+        frames.send(None).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), status.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!status.borrow().up);
+        peer.await.unwrap();
+        task.abort();
     }
 
     #[tokio::test]

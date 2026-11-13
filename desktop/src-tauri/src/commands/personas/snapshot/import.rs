@@ -528,7 +528,7 @@ pub(crate) fn build_agent_snapshot_import_preview(
 ///      `AgentDefinition` + `ManagedAgentRecord` through the same primitives
 ///      used by the normal create flow.
 ///   3. Publish — kind:30175 definition via retention path; kind:0 profile
-///      via `sync_managed_agent_profile`.
+///      via `publish_created_agent_profile`.
 ///   4. Memory — for each opted-in entry, build a fresh `kind:30174` event
 ///      with `engram::build_event` under the new agent↔owner conversation
 ///      key and POST it to the relay. Failures are collected and returned as
@@ -543,28 +543,33 @@ pub async fn confirm_agent_snapshot_import(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AgentSnapshotImportResult, String> {
-    let (context, import_fence) = {
+    let (context, import_fence, owner_keys, captured_relay) = {
         let _guard = state
             .managed_agents_store_lock
             .lock()
             .map_err(|e| e.to_string())?;
-        (
-            crate::managed_agents::persona_device_view::load_device_policy_context(&app, &state)?,
-            crate::managed_agents::device_runtime::capture_runtime_fence(&state)?,
-        )
+        let context =
+            crate::managed_agents::persona_device_view::load_device_policy_context(&app, &state)?;
+        let fence = crate::managed_agents::device_runtime::capture_runtime_fence(&state)?;
+        crate::managed_agents::device_creation::assert_creation_scope(
+            &fence.scope,
+            &context.scope,
+        )?;
+        let (owner, relay) = crate::commands::agents::creation_authority(&state, &fence, "")?;
+        (context, fence, owner, relay)
     };
     // ── Phase 1: validate (no writes) ────────────────────────────────────────
     // Locked cards unlock only via this machine's exact key endpoints;
     // anything else fails closed here, before key generation.
     let snapshot = {
-        let owner_keys = state.signing_keys().ok();
         let _store_guard = state
             .managed_agents_store_lock
             .lock()
             .map_err(|e| e.to_string())?;
+        crate::managed_agents::device_runtime::assert_runtime_fence(&state, &import_fence)?;
         decode_snapshot_for_import_readonly(
             &input.file_bytes,
-            owner_keys.as_ref(),
+            Some(&owner_keys),
             &crate::managed_agents::managed_agents_store_path(&app)?,
             &context.proof,
             crate::managed_agents::storage::resolve_agent_key_readonly,
@@ -594,6 +599,7 @@ pub async fn confirm_agent_snapshot_import(
         snapshot.profile.avatar_data_url.as_deref(),
         snapshot.profile.avatar_url.as_deref(),
         || {
+            crate::managed_agents::device_runtime::assert_runtime_fence(&state, &import_fence)?;
             crate::managed_agents::device_creation::assert_creation_scope(
                 &crate::managed_agents::device_home_sync::capture_scope(&state)?,
                 &context.scope,
@@ -618,12 +624,12 @@ pub async fn confirm_agent_snapshot_import(
     };
 
     // ── Phase 2: mint keys + auth tag (sync, outside lock) ───────────────────
+    crate::managed_agents::device_runtime::assert_runtime_fence(&state, &import_fence)?;
     crate::managed_agents::device_creation::assert_creation_scope(
         &crate::managed_agents::device_home_sync::capture_scope(&state)?,
         &context.scope,
     )?;
     let (agent_keys, private_key_nsec, pubkey, auth_tag) = {
-        let owner_keys = state.signing_keys()?;
         let agent_keys = nostr::Keys::generate();
         let pubkey = agent_keys.public_key().to_hex();
         let private_key_nsec = agent_keys
@@ -650,6 +656,7 @@ pub async fn confirm_agent_snapshot_import(
             .lock()
             .map_err(|e| e.to_string())?;
 
+        crate::managed_agents::device_runtime::assert_runtime_fence(&state, &import_fence)?;
         crate::managed_agents::device_creation::assert_creation_scope(
             &crate::managed_agents::device_home_sync::capture_scope(&state)?,
             &context.scope,
@@ -782,7 +789,8 @@ pub async fn confirm_agent_snapshot_import(
         &state,
         &record.pubkey,
         &import_fence,
-        &record.relay_url,
+        &captured_relay,
+        &owner_keys,
         &agent_keys,
         &display_name,
         effective_avatar.as_deref(),

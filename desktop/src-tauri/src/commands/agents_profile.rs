@@ -412,11 +412,25 @@ pub(super) fn profile_needs_sync(
     }
 }
 
-/// Publish a managed agent's kind:0 profile with the authored public
-/// description as `about`, resolving the effective
-/// relay URL from the record's stored value. Returns the sync error (if any)
-/// rather than failing the caller — profile publish is best-effort in the
-/// create and snapshot-import flows that share this helper.
+/// Capture explicit creation authority while the authorizing workspace is active.
+pub(crate) fn creation_authority(
+    state: &AppState,
+    fence: &crate::managed_agents::device_runtime::RuntimeFence,
+    relay: &str,
+) -> Result<(nostr::Keys, String), String> {
+    crate::managed_agents::device_runtime::assert_runtime_fence(state, fence)?;
+    let owner = state.signing_keys()?;
+    crate::relay::assert_expected_signer(
+        Some(&fence.scope.owner_pubkey),
+        &owner.public_key().to_hex(),
+    )?;
+    Ok((
+        owner,
+        crate::relay::effective_agent_relay_url(relay, &fence.scope.relay_url),
+    ))
+}
+
+/// Publish an existing instance profile using its original device authority.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn publish_agent_profile_with_about<R: tauri::Runtime>(
     app: &AppHandle<R>,
@@ -430,6 +444,9 @@ pub(crate) async fn publish_agent_profile_with_about<R: tauri::Runtime>(
     about: Option<&str>,
     auth_tag: Option<&str>,
 ) -> Option<String> {
+    if agent_keys.public_key().to_hex() != pubkey {
+        return Some("profile target mismatch".into());
+    }
     publish_profile_with(
         app,
         state,
@@ -454,16 +471,75 @@ pub(crate) async fn publish_agent_profile_with_about<R: tauri::Runtime>(
     .err()
 }
 
-/// Publish a fresh persona-backed agent's kind:0 profile, computing the
-/// effective public `about` from the persona itself.
-/// Shared by flows in files at the size ratchet (snapshot import).
+/// Explicit creation transfers verified bytes before publishing. Both effects
+/// require the original device authority; reconcile never receives an owner key.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn publish_persona_profile(
-    app: &AppHandle,
+pub(crate) async fn publish_created_agent_profile<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     state: &AppState,
     pubkey: &str,
     fence: &crate::managed_agents::device_runtime::RuntimeFence,
-    record_relay_url: &str,
+    relay: &str,
+    owner: &nostr::Keys,
+    agent: &nostr::Keys,
+    name: &str,
+    avatar: Option<&str>,
+    about: Option<&str>,
+    auth_tag: Option<&str>,
+) -> Option<String> {
+    if agent.public_key().to_hex() != pubkey {
+        return Some("profile target mismatch".into());
+    }
+    if let Err(error) = crate::relay::assert_expected_signer(
+        Some(&fence.scope.owner_pubkey),
+        &owner.public_key().to_hex(),
+    ) {
+        return Some(error);
+    }
+    publish_profile_with(
+        app,
+        state,
+        pubkey,
+        fence,
+        relay,
+        crate::managed_agents::persona_device_view::load_device_policy_context,
+        |relay_url| async move {
+            crate::relay::profile_avatar::transfer_created_avatar(
+                state, &relay_url, owner, agent, avatar, auth_tag,
+            )
+            .await?;
+            // A transfer can await network I/O. Revalidate before kind:0 signing
+            // so key loss, a community switch or host changes cannot publish.
+            publish_profile_with(
+                app,
+                state,
+                pubkey,
+                fence,
+                &relay_url,
+                crate::managed_agents::persona_device_view::load_device_policy_context,
+                |relay_url| async move {
+                    crate::relay::sync_managed_agent_profile(
+                        state, &relay_url, agent, name, avatar, about, auth_tag,
+                    )
+                    .await
+                },
+            )
+            .await
+        },
+    )
+    .await
+    .err()
+}
+
+/// Publish an imported persona's profile with its captured owner and device fence.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn publish_persona_profile<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    state: &AppState,
+    pubkey: &str,
+    fence: &crate::managed_agents::device_runtime::RuntimeFence,
+    relay_url: &str,
+    owner_keys: &nostr::Keys,
     agent_keys: &nostr::Keys,
     display_name: &str,
     avatar_url: Option<&str>,
@@ -471,12 +547,13 @@ pub(crate) async fn publish_persona_profile(
     auth_tag: Option<&str>,
 ) -> Option<String> {
     let about = crate::managed_agents::effective_agent_description(persona.description.as_deref());
-    publish_agent_profile_with_about(
+    publish_created_agent_profile(
         app,
         state,
         pubkey,
         fence,
-        record_relay_url,
+        relay_url,
+        owner_keys,
         agent_keys,
         display_name,
         avatar_url,

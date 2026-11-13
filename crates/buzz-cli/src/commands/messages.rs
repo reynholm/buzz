@@ -1,9 +1,12 @@
+mod edit;
+
 use buzz_sdk::{DeleteMessageOptions, DiffMeta, ThreadRef, VoteDirection};
 use nostr::PublicKey;
 use uuid::Uuid;
 
 use crate::client::{normalize_events, normalize_write_response, BuzzClient};
 use crate::commands::event_output::{format_events, thread_markers};
+use crate::commands::sent_from_thread;
 use crate::error::CliError;
 use crate::validate::{
     infer_language, parse_event_id, parse_uuid, read_or_stdin, truncate_diff,
@@ -347,10 +350,7 @@ pub async fn cmd_get_messages(
 
     // If specific kinds requested, override
     if let Some(k) = kinds {
-        let kind_list: Vec<u64> = k.split(',').filter_map(|s| s.trim().parse().ok()).collect();
-        if !kind_list.is_empty() {
-            filter["kinds"] = serde_json::json!(kind_list);
-        }
+        filter["kinds"] = serde_json::json!(parse_kinds(k)?);
     }
 
     if let Some(b) = before {
@@ -492,7 +492,7 @@ pub async fn cmd_search(
 /// must match exactly one user (case-insensitive, on `display_name` or
 /// `name`) — ambiguity is an error listing the candidates rather than a
 /// silent mix of authors.
-async fn resolve_author(client: &BuzzClient, author: &str) -> Result<String, CliError> {
+pub(crate) async fn resolve_author(client: &BuzzClient, author: &str) -> Result<String, CliError> {
     let author = author.trim();
     if author.len() == 64 && author.chars().all(|c| c.is_ascii_hexdigit()) {
         return Ok(author.to_ascii_lowercase());
@@ -580,6 +580,46 @@ pub struct SendMessageParams {
     pub broadcast: bool,
     pub files: Vec<String>,
     pub mentions: Vec<String>,
+    pub from_thread: Option<String>,
+}
+
+/// Verify the thread root exists in `channel` and build the provenance tag
+/// desktop's "Send to channel" attaches.
+async fn resolve_sent_from_thread_tag(
+    client: &BuzzClient,
+    channel: Uuid,
+    root_event_id: &str,
+) -> Result<nostr::Tag, CliError> {
+    let root_hex = parse_event_id(root_event_id)?.to_hex();
+    let root = fetch_event(client, &root_hex).await?;
+    sent_from_thread_tag_for_root(channel, &root_hex, &root)
+}
+
+fn sent_from_thread_tag_for_root(
+    channel: Uuid,
+    root_hex: &str,
+    root: &serde_json::Value,
+) -> Result<nostr::Tag, CliError> {
+    if channel_id_from_event(root_hex, root)? != channel {
+        return Err(CliError::Usage(format!(
+            "--from-thread event {root_hex} is not in channel {channel}"
+        )));
+    }
+    if root.get("kind").and_then(|k| k.as_u64()) != Some(9) {
+        return Err(CliError::Usage(format!(
+            "--from-thread event {root_hex} is not an ordinary channel message (kind 9)"
+        )));
+    }
+    if let Some(real_root) = root.get("tags").and_then(find_root_from_tags) {
+        return Err(CliError::Usage(format!(
+            "--from-thread takes a thread root, but {root_hex} is a reply; use {real_root}"
+        )));
+    }
+    let content = root.get("content").and_then(|c| c.as_str()).unwrap_or("");
+    Ok(sent_from_thread::build_tag(
+        root_hex,
+        sent_from_thread::summarize_thread_root(content).as_deref(),
+    ))
 }
 
 pub async fn cmd_send_message(client: &BuzzClient, p: SendMessageParams) -> Result<(), CliError> {
@@ -616,6 +656,15 @@ pub(super) async fn prepare_message(
         validate_hex64(r)?;
     }
     let channel_uuid = parse_uuid(&p.channel_id)?;
+    if p.from_thread.is_some() && !matches!(p.kind, None | Some(9)) {
+        return Err(CliError::Usage(
+            "--from-thread only applies to kind 9 messages".into(),
+        ));
+    }
+    let sent_from_thread_tag = match p.from_thread.as_deref() {
+        Some(root) => Some(resolve_sent_from_thread_tag(client, channel_uuid, root).await?),
+        None => None,
+    };
 
     let explicit_mentions = normalize_explicit_mentions(&p.mentions)?;
     let stripped = strip_code_regions(&p.content);
@@ -645,10 +694,7 @@ pub(super) async fn prepare_message(
     let mut media_tags: Vec<Vec<String>> = Vec::new();
     let mut media_content = String::new();
     for file_path in &p.files {
-        let desc = client
-            .upload_file(file_path)
-            .await
-            .map_err(|e| CliError::Other(format!("upload failed for {file_path}: {e}")))?;
+        let desc = client.upload_file(file_path).await?;
         media_tags.push(crate::client::build_imeta_tag(&desc));
         media_content.push_str(&crate::attachments::attachment_markdown(&desc));
     }
@@ -712,7 +758,7 @@ pub(super) async fn prepare_message(
             } else {
                 Vec::new()
             };
-            buzz_sdk::build_message(
+            let builder = buzz_sdk::build_message(
                 channel_uuid,
                 &final_content,
                 thread_ref.as_ref(),
@@ -728,7 +774,11 @@ pub(super) async fn prepare_message(
                 client,
                 channel_uuid,
                 thread_ref.as_ref().map(|t| &t.root_event_id),
-            ))
+            ));
+            match sent_from_thread_tag {
+                Some(tag) => builder.tag(tag),
+                None => builder,
+            }
         }
         Some(k) => {
             return Err(CliError::Usage(format!(
@@ -745,7 +795,7 @@ pub(super) async fn prepare_message(
     } else {
         builder
     };
-    let event = client.sign_event(builder)?;
+    let event = client.sign_event(builder).await?;
     Ok(event)
 }
 
@@ -831,7 +881,7 @@ pub async fn cmd_send_diff_message(client: &BuzzClient, p: SendDiffParams) -> Re
         buzz_sdk::build_diff_message(channel_uuid, &diff, &diff_meta, thread_ref.as_ref())
             .map_err(|e| CliError::Other(format!("build_diff_message failed: {e}")))?;
 
-    let event = client.sign_event(builder)?;
+    let event = client.sign_event(builder).await?;
 
     let resp = client.submit_event(event).await?;
     println!("{}", normalize_write_response(&resp));
@@ -862,32 +912,7 @@ pub async fn cmd_delete_message(
     )
     .map_err(|e| CliError::Other(format!("build_delete_message failed: {e}")))?;
 
-    let event = client.sign_event(builder)?;
-
-    let resp = client.submit_event(event).await?;
-    println!("{}", normalize_write_response(&resp));
-    Ok(())
-}
-
-/// Edit a message you previously sent.
-pub async fn cmd_edit_message(
-    client: &BuzzClient,
-    event_id: &str,
-    content: &str,
-) -> Result<(), CliError> {
-    validate_hex64(event_id)?;
-    let content = read_or_stdin(content)?;
-    validate_nonempty_content(&content)?;
-    validate_content_size(&content)?;
-
-    // Resolve channel_id from the event's h-tag
-    let channel_uuid = resolve_channel_id(client, event_id).await?;
-    let target_eid = parse_event_id(event_id)?;
-
-    let builder = buzz_sdk::build_edit(channel_uuid, target_eid, &content)
-        .map_err(|e| CliError::Other(format!("build_edit failed: {e}")))?;
-
-    let event = client.sign_event(builder)?;
+    let event = client.sign_event(builder).await?;
 
     let resp = client.submit_event(event).await?;
     println!("{}", normalize_write_response(&resp));
@@ -918,7 +943,7 @@ pub async fn cmd_vote_on_post(
     let builder = buzz_sdk::build_vote(channel_uuid, target_eid, vote_dir)
         .map_err(|e| CliError::Other(format!("build_vote failed: {e}")))?;
 
-    let event = client.sign_event(builder)?;
+    let event = client.sign_event(builder).await?;
 
     let resp = client.submit_event(event).await?;
     println!("{}", normalize_write_response(&resp));
@@ -961,6 +986,7 @@ pub async fn dispatch(
             broadcast,
             files,
             mentions,
+            from_thread,
         } => {
             cmd_send_message(
                 client,
@@ -972,6 +998,7 @@ pub async fn dispatch(
                     broadcast,
                     files,
                     mentions,
+                    from_thread,
                 },
             )
             .await
@@ -1009,7 +1036,11 @@ pub async fn dispatch(
             )
             .await
         }
-        MessagesCmd::Edit { event, content } => cmd_edit_message(client, &event, &content).await,
+        MessagesCmd::Edit {
+            event,
+            content,
+            clear_attachments,
+        } => edit::edit_message(client, &event, &content, clear_attachments).await,
         MessagesCmd::Delete {
             event,
             action_id,
@@ -1022,6 +1053,25 @@ pub async fn dispatch(
                 action_id,
                 reason_code.as_deref(),
                 public_reason.as_deref(),
+            )
+            .await
+        }
+        MessagesCmd::Report {
+            channel,
+            event,
+            pubkey,
+            reason,
+            note,
+        } => {
+            super::message_report::cmd_report_message(
+                client,
+                super::message_report::ReportParams {
+                    channel: channel.as_deref(),
+                    event: event.as_deref(),
+                    pubkey: pubkey.as_deref(),
+                    reason: &reason,
+                    note: note.as_deref(),
+                },
             )
             .await
         }
@@ -1097,14 +1147,34 @@ pub async fn dispatch(
     }
 }
 
+/// A `--kinds` list: comma-separated event kinds, each 0–65535.
+fn parse_kinds(list: &str) -> Result<Vec<u16>, CliError> {
+    list.split(',')
+        .map(|s| {
+            s.trim()
+                .parse()
+                .map_err(|_| CliError::Usage(format!("--kinds: invalid kind {s:?}")))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn parse_kinds_rejects_any_invalid_kind() {
+        use super::{parse_kinds, CliError};
+        assert_eq!(parse_kinds("9, 40002").unwrap(), vec![9, 40002]);
+        for bad in ["bad", "65536", "9,typo", "", "-1"] {
+            assert!(matches!(parse_kinds(bad), Err(CliError::Usage(_))), "{bad}");
+        }
+    }
+
     use super::{
         channel_id_from_event, cmd_get_thread, cmd_send_message, event_mention_pubkeys,
         find_root_from_tags, match_profiles_by_name, merge_message_mentions, missing_members,
         normalize_explicit_mentions, parse_member_pubkeys, resolve_names_to_pubkeys,
-        resolve_thread_target, thread_ref_from_event, thread_ref_from_parent_tags, BuzzClient,
-        CliError, Uuid,
+        resolve_thread_target, sent_from_thread_tag_for_root, thread_ref_from_event,
+        thread_ref_from_parent_tags, BuzzClient, CliError, Uuid,
     };
     use buzz_sdk::mentions::{
         extract_at_mentions_with_known, extract_at_names, match_names_to_profiles, MentionProfile,
@@ -1124,8 +1194,11 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_channel_is_rejected_before_thread_fetch() {
-        let client =
-            BuzzClient::new("http://127.0.0.1:1".into(), Keys::generate(), None, None).unwrap();
+        let client = BuzzClient::new(
+            "http://127.0.0.1:1".into(),
+            crate::credentials::Credentials::from_keys(Keys::generate()),
+        )
+        .unwrap();
         let error = cmd_get_thread(
             &client,
             "not-a-uuid",
@@ -1164,6 +1237,32 @@ mod tests {
                 .to_hex(),
             ID_A
         );
+    }
+
+    #[test]
+    fn from_thread_accepts_only_top_level_kind_9_roots_in_the_channel() {
+        let channel = "123e4567-e89b-12d3-a456-426614174000";
+        let other = "123e4567-e89b-12d3-a456-426614174001";
+        let channel_uuid = Uuid::parse_str(channel).unwrap();
+        let root = |kind: u64, h: &str| json!({"kind": kind, "content": "hi", "tags": [["h", h]]});
+
+        let tag = sent_from_thread_tag_for_root(channel_uuid, ID_A, &root(9, channel)).unwrap();
+        assert_eq!(tag.as_slice()[1], ID_A);
+
+        for kind in [40002, 40008, 45001, 45003] {
+            let err = sent_from_thread_tag_for_root(channel_uuid, ID_A, &root(kind, channel))
+                .unwrap_err();
+            assert!(matches!(err, CliError::Usage(_)), "kind {kind}");
+            assert!(err.to_string().contains("kind 9"), "kind {kind}");
+        }
+        let no_kind = json!({"content": "hi", "tags": [["h", channel]]});
+        assert!(sent_from_thread_tag_for_root(channel_uuid, ID_A, &no_kind).is_err());
+        assert!(sent_from_thread_tag_for_root(channel_uuid, ID_A, &root(9, other)).is_err());
+        let reply = json!({"kind": 9, "tags": [["h", channel], ["e", ID_B, "", "reply"]]});
+        assert!(sent_from_thread_tag_for_root(channel_uuid, ID_A, &reply)
+            .unwrap_err()
+            .to_string()
+            .contains(ID_B));
     }
 
     #[test]
@@ -1706,6 +1805,7 @@ mod tests {
             broadcast: false,
             files: vec![],
             mentions: vec![],
+            from_thread: None,
         }
     }
 
@@ -1714,7 +1814,11 @@ mod tests {
         // Content contains `:wave:` which resolves in the palette.
         // The submitted event must carry an `emoji` tag for `wave`.
         let (url, query_count, captured_event) = fake_send_relay(send_palette_response()).await;
-        let client = BuzzClient::new(url, Keys::generate(), None, None).unwrap();
+        let client = BuzzClient::new(
+            url,
+            crate::credentials::Credentials::from_keys(Keys::generate()),
+        )
+        .unwrap();
 
         cmd_send_message(&client, send_params("hello :wave: everyone"))
             .await
@@ -1766,7 +1870,11 @@ mod tests {
         // Content has no `:` at all — the palette query must be skipped
         // entirely (zero RTTs), and the submitted event must have no emoji tags.
         let (url, query_count, captured_event) = fake_send_relay(send_palette_response()).await;
-        let client = BuzzClient::new(url, Keys::generate(), None, None).unwrap();
+        let client = BuzzClient::new(
+            url,
+            crate::credentials::Credentials::from_keys(Keys::generate()),
+        )
+        .unwrap();
 
         cmd_send_message(&client, send_params("plain message no colons"))
             .await
@@ -1845,7 +1953,11 @@ mod tests {
         let addr: StdSocketAddr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let url = format!("http://{addr}");
-        let client = BuzzClient::new(url, Keys::generate(), None, None).unwrap();
+        let client = BuzzClient::new(
+            url,
+            crate::credentials::Credentials::from_keys(Keys::generate()),
+        )
+        .unwrap();
 
         // Must not return Err — a palette failure is a soft warning.
         cmd_send_message(&client, send_params(":wave: message with emoji candidate"))
@@ -1875,6 +1987,153 @@ mod tests {
         assert!(
             emoji_tags.is_empty(),
             "palette-error fallback must produce no emoji tags, got: {emoji_tags:?}"
+        );
+    }
+
+    /// Fake relay that answers `/query` by `ids` filter from `stored` and
+    /// records every `/events` body.
+    async fn fake_thread_relay(
+        stored: Vec<serde_json::Value>,
+    ) -> (String, StdArc<std::sync::Mutex<Vec<String>>>) {
+        type S = (
+            Vec<serde_json::Value>,
+            StdArc<std::sync::Mutex<Vec<String>>>,
+        );
+        let published = StdArc::new(std::sync::Mutex::new(Vec::new()));
+        let app = AxumRouter::new()
+            .route(
+                "/query",
+                axum_post(
+                    |AxumState((stored, _)): AxumState<S>, body: AxumBytes| async move {
+                        let filter: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                        let filter = filter.get(0).unwrap_or(&filter);
+                        let found: Vec<_> = stored
+                            .iter()
+                            .filter(|e| {
+                                filter["ids"]
+                                    .as_array()
+                                    .is_some_and(|ids| ids.contains(&e["id"]))
+                            })
+                            .collect();
+                        (
+                            AxumStatusCode::OK,
+                            [("content-type", "application/json")],
+                            serde_json::to_string(&found).unwrap(),
+                        )
+                    },
+                ),
+            )
+            .route(
+                "/events",
+                axum_post(
+                    |AxumState((_, published)): AxumState<S>, body: AxumBytes| async move {
+                        published
+                            .lock()
+                            .unwrap()
+                            .push(String::from_utf8_lossy(&body).to_string());
+                        (
+                            AxumStatusCode::OK,
+                            [("content-type", "application/json")],
+                            r#"{"event_id":"fake0000","accepted":true}"#,
+                        )
+                    },
+                ),
+            )
+            .with_state((stored, published.clone()));
+        let listener = TokioTcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: StdSocketAddr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{addr}"), published)
+    }
+
+    fn stored_message(
+        id: &str,
+        channel: &str,
+        content: &str,
+        extra: &[serde_json::Value],
+    ) -> serde_json::Value {
+        let mut tags = vec![serde_json::json!(["h", channel])];
+        tags.extend(extra.iter().cloned());
+        serde_json::json!({ "id": id, "kind": 9, "content": content, "tags": tags })
+    }
+
+    #[tokio::test]
+    async fn send_from_thread_publishes_a_top_level_tagged_message() {
+        let root = "a".repeat(64);
+        let reply = "b".repeat(64);
+        let other_channel = "223e4567-e89b-12d3-a456-426614174000";
+        let (url, published) = fake_thread_relay(vec![
+            stored_message(
+                &root,
+                SEND_TEST_CHANNEL,
+                "**Plan**: see [doc](https://x.io) 😀",
+                &[],
+            ),
+            stored_message(
+                &reply,
+                SEND_TEST_CHANNEL,
+                "reply",
+                &[serde_json::json!(["e", root, "", "reply"])],
+            ),
+            stored_message(&"c".repeat(64), other_channel, "elsewhere", &[]),
+        ])
+        .await;
+        let client = BuzzClient::new(
+            url,
+            crate::credentials::Credentials::from_keys(Keys::generate()),
+        )
+        .unwrap();
+
+        let send = |from_thread: &str, kind: Option<u16>| {
+            let mut params = send_params("decision: ship it");
+            params.from_thread = Some(from_thread.to_string());
+            params.kind = kind;
+            cmd_send_message(&client, params)
+        };
+
+        for (target, kind) in [
+            (reply.as_str(), None),
+            ("c".repeat(64).as_str(), None),
+            ("d".repeat(64).as_str(), None),
+            ("not-hex", None),
+            (root.as_str(), Some(45001)),
+        ] {
+            let err = send(target, kind).await.unwrap_err();
+            let expected = match target {
+                t if t == "d".repeat(64) => matches!(err, CliError::NotFound(_)),
+                _ => matches!(err, CliError::Usage(_)),
+            };
+            assert!(expected, "{target} {kind:?}: {err}");
+            if target == reply {
+                assert!(err.to_string().contains(&root), "{err}");
+            }
+        }
+        assert!(
+            published.lock().unwrap().is_empty(),
+            "failed checks must not publish"
+        );
+
+        send(&root.to_uppercase(), None).await.unwrap();
+        let bodies = published.lock().unwrap();
+        assert_eq!(bodies.len(), 1, "one send is one publish");
+        let event: serde_json::Value = serde_json::from_str(&bodies[0]).unwrap();
+        assert_eq!(event["kind"], 9);
+        assert_eq!(event["content"], "decision: ship it");
+        let tags = event["tags"].as_array().unwrap();
+        assert!(tags.contains(&serde_json::json!(["h", SEND_TEST_CHANNEL])));
+        assert!(
+            tags.contains(&serde_json::json!([
+                "buzz:sent-from-thread",
+                root,
+                "Plan : see doc 😀"
+            ])),
+            "{tags:?}"
+        );
+        assert!(
+            !tags
+                .iter()
+                .any(|t| matches!(t[0].as_str(), Some("e" | "broadcast"))),
+            "must be top-level: {tags:?}"
         );
     }
 }

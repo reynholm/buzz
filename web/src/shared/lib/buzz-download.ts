@@ -1,12 +1,12 @@
-export const BUZZ_RELEASES_URL = "https://github.com/block/buzz/releases";
+export const BUZZ_RELEASES_URL = "https://github.com/reynholm/buzz/releases";
 /** Official iOS download destination. */
 export const BUZZ_IOS_APP_STORE_URL = "https://apps.apple.com/app/id6779728271";
 /** Official Android download destination. */
 export const BUZZ_ANDROID_PLAY_STORE_URL =
   "https://play.google.com/store/apps/details?id=xyz.block.buzz.mobile";
 const BUZZ_RELEASES_API_URL =
-  "https://api.github.com/repos/block/buzz/releases?per_page=10";
-const CACHE_KEY = "buzz.latestDownload.v1";
+  "https://api.github.com/repos/reynholm/buzz/releases?per_page=10";
+const CACHE_KEY = "buzz.latestDownload.reynholm-buzz.stable.v3";
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
 export type BuzzDownloadPlatform = {
