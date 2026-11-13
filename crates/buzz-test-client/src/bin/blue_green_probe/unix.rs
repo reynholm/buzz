@@ -71,7 +71,7 @@ async fn connect(config: &Config, endpoint: &str, keys: &Keys, subscribe: bool) 
         RelayMessage::Auth { challenge } => challenge,
         _ => bail!("missing AUTH challenge"),
     };
-    let auth = build_auth_event(&challenge, &config.canonical_url, keys, None)?;
+    let auth = build_auth_event(&challenge, &config.canonical_url, keys, None).await?;
     let auth_id = auth.id.to_hex();
     connection.send_raw(&json!(["AUTH", auth])).await?;
     match connection.next_event(Duration::from_secs(5)).await? {

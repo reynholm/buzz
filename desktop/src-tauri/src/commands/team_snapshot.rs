@@ -23,6 +23,9 @@ use crate::{
     util::now_iso,
 };
 
+mod profile;
+pub(crate) use profile::publish_imported_team_member_profile;
+
 /// Team snapshots have a combined 25 MiB JSON / 50 MiB PNG payload cap.
 /// Every member is validated before any persistent write.
 pub(crate) const MAX_TEAM_SNAPSHOT_JSON_BYTES: usize = 25 * 1024 * 1024;
@@ -507,7 +510,7 @@ pub async fn preview_team_snapshot_import(
 ///      surfacing rollback failures alongside the original error. This makes
 ///      the store phase all-or-none for ordinary application errors; a process
 ///      crash between atomic file commits is NOT covered.
-///   4. Profile sync — for each member, call `sync_managed_agent_profile`.
+///   4. Profile sync — for each member, call `publish_created_agent_profile`.
 ///      Best-effort; errors are collected per member.
 ///   5. Memory restore — for each member with non-empty snapshot memory,
 ///      publish each entry as a `kind:30174` engram event. Best-effort.
@@ -542,6 +545,12 @@ pub async fn confirm_team_snapshot_import(
 
     // ── Phase 2: mint keys + auth tags (sync, outside lock) ─────────────────
     // All mints must succeed before we enter the store. If any fails, zero writes.
+    crate::managed_agents::device_creation::assert_creation_scope(
+        &import_fence.scope,
+        &context.scope,
+    )?;
+    let (owner_keys, relay_url) =
+        crate::commands::agents::creation_authority(&state, &import_fence, "")?;
 
     let mut minted: Vec<MintedMember> = Vec::with_capacity(snapshot.members.len());
     for (member, definition) in snapshot.members.iter().zip(definitions) {
@@ -551,7 +560,6 @@ pub async fn confirm_team_snapshot_import(
         let minted_parallelism = definition.parallelism;
 
         let (agent_keys, private_key_nsec, pubkey, auth_tag) = {
-            let owner_keys = state.signing_keys()?;
             let agent_keys = nostr::Keys::generate();
             let pubkey = agent_keys.public_key().to_hex();
             let private_key_nsec = {
@@ -671,6 +679,7 @@ pub async fn confirm_team_snapshot_import(
             .map_err(|e| e.to_string())?;
 
         // Guard against duplicate pubkeys (astronomically unlikely).
+        crate::managed_agents::device_runtime::assert_runtime_fence(&state, &import_fence)?;
         crate::managed_agents::device_creation::assert_creation_scope(
             &crate::managed_agents::device_home_sync::capture_scope(&state)?,
             &context.scope,
@@ -798,12 +807,13 @@ pub async fn confirm_team_snapshot_import(
         // Phase 4: profile sync (best-effort).
         let profile_about =
             crate::managed_agents::effective_agent_description(m.definition.description.as_deref());
-        let profile_sync_error = crate::commands::agents::publish_agent_profile_with_about(
+        let profile_sync_error = publish_imported_team_member_profile(
             &app,
             &state,
             &m.pubkey,
             &import_fence,
-            &m.record.relay_url,
+            &relay_url,
+            &owner_keys,
             &m.agent_keys,
             &m.display_name,
             m.effective_avatar.as_deref(),
@@ -869,52 +879,9 @@ pub async fn confirm_team_snapshot_import(
     })
 }
 
-/// Inline retention for the managed-agent kind:30177 event — mirrors
-/// `commands::personas::snapshot::import::retain_agent_pending`.
+/// Retain through the common exact-instance authority adapter.
 fn retain_agent_pending(app: &AppHandle, state: &AppState, record: &ManagedAgentRecord) {
-    use crate::managed_agents::{
-        agent_events::{agent_event_content, build_agent_event},
-        persona_events::monotonic_created_at,
-        retention::{get_retained_event, open_retention_db, retain_event, RetainedEvent},
-    };
-    use buzz_core_pkg::kind::KIND_MANAGED_AGENT;
-    use nostr::JsonUtil;
-
-    let result = (|| -> Result<(), String> {
-        let scope = crate::managed_agents::retention::active_retention_scope(app, state)?;
-        let conn = open_retention_db(&scope.db_path)?;
-        let content = serde_json::to_string(&agent_event_content(record))
-            .map_err(|e| format!("failed to serialize agent content: {e}"))?;
-        let (owner_pubkey, event) = {
-            let keys = &scope.owner_keys;
-            let owner_pubkey = keys.public_key().to_hex();
-            let existing =
-                get_retained_event(&conn, KIND_MANAGED_AGENT, &owner_pubkey, &record.pubkey)?;
-            if existing.as_ref().is_some_and(|row| row.content == content) {
-                return Ok(());
-            }
-            let event = build_agent_event(record)?
-                .custom_created_at(monotonic_created_at(existing.map(|row| row.created_at)))
-                .sign_with_keys(keys)
-                .map_err(|e| format!("failed to sign agent event: {e}"))?;
-            (owner_pubkey, event)
-        };
-        retain_event(
-            &conn,
-            &RetainedEvent {
-                kind: KIND_MANAGED_AGENT,
-                pubkey: owner_pubkey,
-                d_tag: record.pubkey.clone(),
-                content: event.content.to_string(),
-                created_at: event.created_at.as_secs() as i64,
-                raw_event: event.as_json(),
-                pending_sync: true,
-            },
-        )
-    })();
-    if let Err(e) = result {
-        eprintln!("buzz-desktop: team-snapshot-import retain-agent: {e}");
-    }
+    crate::commands::agents::retain_managed_agent_pending(app, state, record);
 }
 
 /// POST a pre-built signed engram event to the relay, authenticating as the

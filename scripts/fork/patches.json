@@ -1,6 +1,6 @@
 {
   "base_tag": "desktop-v0.5.28",
-  "base_sha": "2d289f720de0012fa36b5f6faa0e3bdd845ccfcf",
+  "base_sha": "e2dc54e22fc113f298889d76c3acf674cb46db4b",
   "patches": [
     {
       "path": "docs/superpowers/plans/2026-10-03-buzz-fork-maintenance.md",
@@ -160,11 +160,11 @@
         },
         {
           "caller_path": "desktop/src-tauri/src/commands/agents.rs",
-          "callee_symbol": "publish_agent_profile_with_about",
-          "invocation": "profile::publish_agent_profile_with_about(\n        &app,\n        state,\n        &agent.pubkey,\n        &create_fence,",
-          "behavior_test": "create_import_profile_invocation_never_redirects_after_owner_relay_switch",
-          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib create_import_profile_invocation_never_redirects_after_owner_relay_switch",
-          "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
+          "callee_symbol": "publish_created_agent_profile",
+          "invocation": "profile::publish_created_agent_profile(\n        &app,\n        state,\n        &agent.pubkey,\n        &create_fence,\n        &creation_relay,\n        &owner_keys,",
+          "behavior_test": "relay::profile_avatar::tests::creation_transfers_only_chosen_bytes_from_owner_to_agent",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace",
+          "coverage": "Outer Wry call is a compiled source-wiring drift assertion. The actual generic production publication adapter and real HTTP ordering/authority refusals are tested; removing this outer Wry call alone is not claimed to fail the adapter test. Native application and two-device acceptance remain outstanding."
         },
         {
           "caller_path": "desktop/src-tauri/src/commands/agents.rs",
@@ -299,10 +299,10 @@
         {
           "caller_path": "desktop/src-tauri/src/commands/personas/snapshot/import.rs",
           "callee_symbol": "decode_snapshot_for_import_readonly",
-          "invocation": "decode_snapshot_for_import_readonly(\n            &input.file_bytes,\n            owner_keys.as_ref(),\n            &crate::managed_agents::managed_agents_store_path(&app)?,\n            &context.proof,\n            crate::managed_agents::storage::resolve_agent_key_readonly,",
+          "invocation": "decode_snapshot_for_import_readonly(\n            &input.file_bytes,\n            Some(&owner_keys),\n            &crate::managed_agents::managed_agents_store_path(&app)?,\n            &context.proof,\n            crate::managed_agents::storage::resolve_agent_key_readonly,",
           "behavior_test": "commands::personas::snapshot::tests::locked_import::confirm_readonly_shared_unbound_endpoint_unlocks_under_another_owner",
           "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::tests::locked_import::confirm_readonly_shared_unbound_endpoint_unlocks_under_another_owner -- --exact",
-          "coverage": "R1 command owning wiring/compile plus production readonly selection/hydration/decode seam; real locked-envelope decryption and injected readonly vault/temp files"
+          "coverage": "Outer Wry import call is compiled and fingerprinted. Production readonly selection/hydration/decode is exercised with real locked-envelope decryption and isolated vault/files; removing only the outer call is not claimed to fail the adapter test."
         },
         {
           "caller_path": "desktop/src-tauri/src/commands/personas/snapshot/import.rs",
@@ -385,11 +385,11 @@
         },
         {
           "caller_path": "desktop/src-tauri/src/commands/team_snapshot.rs",
-          "callee_symbol": "publish_agent_profile_with_about",
-          "invocation": "crate::commands::agents::publish_agent_profile_with_about(\n            &app,\n            &state,\n            &m.pubkey,\n            &import_fence,",
-          "behavior_test": "create_import_profile_invocation_never_redirects_after_owner_relay_switch",
-          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib create_import_profile_invocation_never_redirects_after_owner_relay_switch",
-          "coverage": "Task7 actual native generic adapter with isolated MockRuntime and injected effects; Wry command wiring compiled and fingerprinted; native app/two-device acceptance remains outstanding"
+          "callee_symbol": "publish_imported_team_member_profile",
+          "invocation": "publish_imported_team_member_profile(\n            &app,\n            &state,\n            &m.pubkey,\n            &import_fence,\n            &relay_url,\n            &owner_keys,",
+          "behavior_test": "relay::profile_avatar::tests::team_import_transfers_both_assets_and_reports_failure",
+          "verification_command": "cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace",
+          "coverage": "Outer Wry command call is compiled and fingerprinted; the actual production team-profile adapter is exercised with real HTTP and stale-scope refusal. Removing only this outer call is not claimed to fail the adapter test. Native application acceptance remains outstanding."
         },
         {
           "caller_path": "desktop/src-tauri/src/commands/team_snapshot.rs",
@@ -822,7 +822,9 @@
       "path": "desktop/src-tauri/Cargo.toml",
       "responsibility": "Safe hostname default; patched ZIP 9 extraction, maintained Opus backend, and immutable compatible MeshLLM and NetEq sources shared across consumers.",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "9e7c2fb2181f66bea1f325c633e5a4364164d6fd"
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "just desktop-tauri-test desktop-tauri-check"
@@ -4404,8 +4406,9 @@
       "responsibility": "Pin the Android lane to Temurin JDK 17 for Gradle 8.14.5 and explicitly select the same JAVA_HOME in Flutter before APK and JVM unit builds.",
       "is_new": false,
       "required_symbols": [
-        "- name: Set up Android JDK\n        if: matrix.lane == 'android'\n        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5\n        with:\n          distribution: temurin\n          java-version: '17'",
-        "- name: Select Android JDK for Flutter\n        if: matrix.lane == 'android'\n        run: flutter config --jdk-dir=\"$JAVA_HOME\""
+        "uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0",
+        "java-version: \"17\"",
+        "run: flutter config --jdk-dir=\"$JAVA_HOME\""
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -4515,10 +4518,14 @@
     },
     {
       "path": "Justfile",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Select the infra-free demo echo cancellation regression in the required nextest unit lane.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Select the infra-free demo echo cancellation regression in the required nextest unit lane. Select artifact sync recovery and operational subscriber regressions in the required nextest unit lanes.",
       "is_new": false,
       "required_symbols": [
-        "test(=mesh_boot::tests::demo_echo_keeps_inflight_read_across_ticks_and_still_drains)"
+        "test(/^mesh_boot::tests::/)",
+        "${BUZZ_STAGING_RELAY_URL:?Set BUZZ_STAGING_RELAY_URL to the staging relay}",
+        "scripts/test-manual-relay-image-workflow.py",
+        "test(/^handlers::artifact_sync::/)",
+        "test(/^subscriber::tests::/)"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -5627,12 +5634,18 @@
     },
     {
       "path": "crates/buzz-pubsub/src/lib.rs",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Publish a fixed artifact sync loss control without retaining event or tenant payloads.",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "pub async fn publish_sync_loss(",
+        ".arg(subscriber::SYNC_LOSS_CHANNEL)",
+        ".arg(\"resync\")"
+      ],
       "invocation_seams": [],
       "verification_commands": [
-        "just ci"
+        "just ci",
+        "cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture",
+        "cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture"
       ]
     },
     {
@@ -5824,7 +5837,15 @@
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
       "is_new": false,
       "required_symbols": [],
-      "invocation_seams": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-relay/src/connection.rs",
+          "callee_symbol": "track_accepted_child",
+          "invocation": "let span =\n                tracing::info_span!(\"ws.artifact_sync\", conn_id = %conn.conn_id, sub_id = %sub_id);\n            let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);",
+          "behavior_test": "deployment_message_tasks_are_owned_before_spawn_and_outlive_socket",
+          "verification_command": "cargo test -p buzz-relay"
+        }
+      ],
       "verification_commands": [
         "just ci"
       ]
@@ -5861,12 +5882,25 @@
     },
     {
       "path": "crates/buzz-relay/src/handlers/auth.rs",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Preserve root AUTH authority and synchronously retain accepted default-join descendants through socket cleanup and drain, including durable pending-roster retries.",
       "is_new": false,
-      "required_symbols": [],
-      "invocation_seams": [],
+      "required_symbols": [
+        "let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);",
+        "include!(\"auth_deploy_postgres_tests.rs\");"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-relay/src/handlers/auth.rs",
+          "callee_symbol": "run_accepted",
+          "invocation": "tokio::spawn(crate::deploy_drain::run_accepted(work, async move {",
+          "behavior_test": "root_auth_first_default_join_remains_owned_after_socket_closes; root_auth_pending_default_join_remains_owned_after_socket_closes",
+          "verification_command": "scripts/postgres-test-run.sh -p buzz-relay --lib"
+        }
+      ],
       "verification_commands": [
-        "just ci"
+        "just ci",
+        "cargo test --locked -p buzz-relay",
+        "scripts/postgres-test-run.sh -p buzz-relay --lib"
       ]
     },
     {
@@ -5904,7 +5938,22 @@
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
       "is_new": false,
       "required_symbols": [],
-      "invocation_seams": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-relay/src/handlers/ingest.rs",
+          "callee_symbol": "enforce_write_restriction_with_authority",
+          "invocation": "enforce_write_restriction_with_authority(\n        state,\n        tenant,\n        kind_u32,\n        auth.pubkey(),\n        fresh_managed_authority,\n    )\n    .await?;",
+          "behavior_test": "managed_retries_read_current_owner_ban",
+          "verification_command": "scripts/postgres-test-run.sh"
+        },
+        {
+          "caller_path": "crates/buzz-relay/src/handlers/ingest.rs",
+          "callee_symbol": "check_channel_membership_with_authority",
+          "invocation": "check_channel_membership_with_authority(\n                tenant.community(),\n                state,\n                ch_id,\n                &pubkey_bytes,\n                channel_row.as_ref(),\n                ChannelWrite::for_kind(kind_u32),\n                fresh_managed_authority,\n            )\n            .await;",
+          "behavior_test": "managed_retries_read_current_private_membership",
+          "verification_command": "scripts/postgres-test-run.sh"
+        }
+      ],
       "verification_commands": [
         "just ci"
       ]
@@ -5961,9 +6010,14 @@
     },
     {
       "path": "crates/buzz-relay/src/main.rs",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
+      "responsibility": "Preserve production deployment dependency ownership through final source integration; exact main wiring is a drift assertion, with package and real-main workflow evidence recorded separately.",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "runtime_dependencies.own(tokio::spawn(delivery), cancel);",
+        "runtime_dependencies.own_fence_probe(state.db.clone(), state.deploy_drain.clone());",
+        "multinode_fanout::spawn_with_cancel(",
+        "flags_for_shutdown.close().await;"
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "just ci"
@@ -7307,16 +7361,6 @@
       ]
     },
     {
-      "path": "mobile/ios/Runner/NativeMessageMenu.swift",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": false,
-      "required_symbols": [],
-      "invocation_seams": [],
-      "verification_commands": [
-        "just ci"
-      ]
-    },
-    {
       "path": "mobile/ios/Runner/NativeMessagePresentationCoordinator.swift",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
       "is_new": false,
@@ -7817,16 +7861,6 @@
       ]
     },
     {
-      "path": "mobile/lib/shared/success_haptic.dart",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
-      "is_new": false,
-      "required_symbols": [],
-      "invocation_seams": [],
-      "verification_commands": [
-        "just ci"
-      ]
-    },
-    {
       "path": "mobile/lib/shared/widgets/native_message_presentation.dart",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
       "is_new": false,
@@ -8151,10 +8185,13 @@
     },
     {
       "path": "scripts/run-tests.sh",
-      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Keep the cargo-test fallback selecting the same demo echo receive-retention regression as nextest.",
+      "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Keep the cargo-test fallback selecting the same demo echo receive-retention regression as nextest. Keep the Cargo fallback selecting artifact sync recovery and operational subscriber regressions.",
       "is_new": false,
       "required_symbols": [
-        "buzz-relay demo echo receive retention"
+        "buzz-relay demo echo receive retention",
+        "scripts/test-manual-relay-image-workflow.py",
+        "cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture",
+        "cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -8246,8 +8283,8 @@
       "is_new": false,
       "required_symbols": [
         "fast middle-page scroll settles with continuous mounted coverage",
-        "scrollTopBeforeWheel",
-        "page.mouse.wheel(0, -300)",
+        "scrollHeightBeforePrepend",
+        "page.mouse.wheel(0, -120)",
         "viewportCoverage"
       ],
       "invocation_seams": [],
@@ -8442,7 +8479,7 @@
     },
     {
       "path": "crates/buzz-acp/TESTING.md",
-      "responsibility": "Document original-session collection, bounded ordinary preemption and bundled agent/MCP/CLI delivery runtime fixtures. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Document opt-in Linux worker memory containment and its checks.",
+      "responsibility": "Document original-session collection, bounded ordinary preemption and bundled agent/MCP/CLI delivery runtime fixtures. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Document conservative inhibitor retention, its residency limitations, native internal-work coverage and live Qwen acceptance steps. Document opt-in Linux worker memory containment and its checks.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -8581,7 +8618,7 @@
     },
     {
       "path": "crates/buzz-acp/src/process_tree.rs",
-      "responsibility": "Bounded process snapshots and resident-helper classification; macOS/Linux executable confirmation releases completed Codex turns while preserving actual child work. Exact Codex default Bash snapshots remain transient bookkeeping; their ordinary descendants and launchers remain work. Scoped missing executable evidence remains uncertainty while definite descendants remain observable. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.",
+      "responsibility": "Bounded process snapshots and resident-helper classification; macOS/Linux executable confirmation releases completed Codex turns while preserving actual child work. Exact Codex default Bash snapshots remain transient bookkeeping; their ordinary descendants and launchers remain work. Scoped missing executable evidence remains uncertainty while definite descendants remain observable. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Sleep inhibitors conservatively retain provider background work: an in-process model request may have no other OS child after end_turn. Working ancestors and ordinary descendants remain protected across exec.",
       "is_new": true,
       "required_symbols": [
         "pub fn snapshot()",
@@ -8782,20 +8819,6 @@
           "callee_symbol": "validate_nonempty_content",
           "invocation": "validate_nonempty_content(&diff_content)?;",
           "behavior_test": "blank_message_commands_fail_before_any_relay_request",
-          "verification_command": "cargo test -p buzz-cli --test message_content"
-        },
-        {
-          "caller_path": "crates/buzz-cli/src/commands/messages.rs",
-          "callee_symbol": "validate_nonempty_content",
-          "invocation": "validate_nonempty_content(&content)?;",
-          "behavior_test": "blank_message_commands_fail_before_any_relay_request",
-          "verification_command": "cargo test -p buzz-cli --test message_content"
-        },
-        {
-          "caller_path": "crates/buzz-cli/src/commands/messages.rs",
-          "callee_symbol": "read_or_stdin",
-          "invocation": "let content = read_or_stdin(content)?;",
-          "behavior_test": "message_commands_preserve_stdin_bytes_in_signed_events",
           "verification_command": "cargo test -p buzz-cli --test message_content"
         }
       ],
@@ -9270,8 +9293,9 @@
       "responsibility": "Preserve one in-flight demo echo receive across drain ticks; retain bounded explicit shutdown and the existing validated frame/Goodbye handling.",
       "is_new": false,
       "required_symbols": [
-        "tokio::pin!(receive);",
-        "demo_echo_keeps_inflight_read_across_ticks_and_still_drains"
+        "tokio::pin!(recv);",
+        "demo_echo_keeps_inflight_read_across_ticks_and_still_drains",
+        "demo_echo_retains_pending_receive_across_housekeeping_ticks"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -9302,7 +9326,7 @@
     },
     {
       "path": "crates/buzz-acp/src/pool/resident_helper_tests.rs",
-      "responsibility": "Real local ACP/process regressions for sixth-thread admission, nested child exit and original-session collection on macOS/Linux; Linux executable unlink and symlink boundaries. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.",
+      "responsibility": "Real local ACP/process regressions for sixth-thread admission, nested child exit and original-session collection on macOS/Linux; Linux executable unlink and symlink boundaries. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Sleep inhibitors retain internal work, siblings and working ancestors through exec, then collect once in the original session. A native macOS ACP peer keeps an in-process task and sole caffeinate child alive past the production idle-sleep deadline predicate and releases the hold after collection.",
       "is_new": true,
       "required_symbols": [
         "six_finished_threads_reuse_five_slots_with_late_codex_hosts",
@@ -9310,7 +9334,9 @@
         "work_mentioning_codex_host_in_arguments_still_holds_slot",
         "child_of_codex_host_queues_original_collection_before_releasing_slot",
         "symlink_named_codex_host_does_not_hide_ordinary_work",
-        "unlinked_codex_host_does_not_retain_finished_turn"
+        "unlinked_codex_host_does_not_retain_finished_turn",
+        "sleep_inhibitor_retains_internal_work_and_collects_once",
+        "internal_work_with_only_caffeinate_survives_idle_deadline_and_collects"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -9360,8 +9386,8 @@
       "responsibility": "Bind duplicate voice-note playback assertions to stable emitted message IDs through live reordering; loop the short media fixture so natural completion cannot impersonate mutual pause.",
       "is_new": false,
       "required_symbols": [
-        "const messageIds = await page.evaluate(",
-        "const firstCard = page.locator(",
+        "const [firstId, secondId] = await page.evaluate(",
+        ".locator(`[data-message-id=\"${firstId}\"]`)",
         "(player as HTMLAudioElement).loop = true;"
       ],
       "invocation_seams": [],
@@ -10626,7 +10652,9 @@
       "path": "Cargo.toml",
       "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "rmcp = { version = \"3.9\","
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "just ci",
@@ -10637,7 +10665,9 @@
       "path": "crates/buzz-agent/Cargo.toml",
       "responsibility": "Preserve YAML consumer compatibility while removing the unmaintained dependency graph (issue19).",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "rmcp = { version = \"3.9\","
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "just ci",
@@ -11978,7 +12008,9 @@
       "path": "crates/buzz-mesh-smoke/Cargo.toml",
       "responsibility": "Use the same immutable patched MeshLLM source as the desktop consumer to avoid duplicate runtime types.",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "9e7c2fb2181f66bea1f325c633e5a4364164d6fd"
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "cargo test -p buzz-mesh-smoke"
@@ -12104,8 +12136,7 @@
       "responsibility": "Exercise the edited thread head only after making its hover-only Reply action actionable; retain gated backfill and edited-content regression assertions.",
       "is_new": false,
       "required_symbols": [
-        "await timelineRow.hover();",
-        "await replyButton.click();",
+        "await pressRowAction(page.getByTestId(`reply-message-${rootId}`));",
         "deferThreadReplies: true"
       ],
       "invocation_seams": [],
@@ -12718,7 +12749,7 @@
     },
     {
       "path": "crates/buzz-db/src/runtime/push_enqueue.rs",
-      "responsibility": "Use the existing durable match queue in the event transaction instead of the transient post-commit producer.",
+      "responsibility": "Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -12789,7 +12820,7 @@
     },
     {
       "path": "migrations/0056_personal_read_state.sql",
-      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -12800,7 +12831,7 @@
     },
     {
       "path": "migrations/0057_personal_read_started_at.sql",
-      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -12831,7 +12862,7 @@
     },
     {
       "path": "migrations/0058_personal_read_through_message.sql",
-      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -12852,7 +12883,7 @@
     },
     {
       "path": "migrations/0059_push_rollback_gate.sql",
-      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -12873,7 +12904,7 @@
     },
     {
       "path": "migrations/0060_push_single_application.sql",
-      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -12884,7 +12915,7 @@
     },
     {
       "path": "migrations/0061_channel_labels.sql",
-      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -12915,7 +12946,7 @@
     },
     {
       "path": "migrations/0062_system_channel_type.sql",
-      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -12926,7 +12957,7 @@
     },
     {
       "path": "migrations/0063_retire_push_match_trigger.sql",
-      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -12947,7 +12978,7 @@
     },
     {
       "path": "migrations/0064_profile_name_fields.sql",
-      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -12978,7 +13009,7 @@
     },
     {
       "path": "migrations/0065_retire_channel_ttl_trigger.sql",
-      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -12989,7 +13020,7 @@
     },
     {
       "path": "migrations/0066_community_nip_fi_issuers.sql",
-      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -13010,7 +13041,7 @@
     },
     {
       "path": "migrations/0067_channel_join_role.sql",
-      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -13041,7 +13072,7 @@
     },
     {
       "path": "migrations/0068_entity_deletion_requests.sql",
-      "responsibility": "Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -13272,7 +13303,8 @@
       "responsibility": "Wait for visible virtual targets before acknowledging navigation and preserve temporary centered targets through layout reflow. Cancel the deferred initial bottom pin when target navigation takes ownership.",
       "is_new": false,
       "required_symbols": [
-        "const needsRealization",
+        "pendingRealization: !visible",
+        "if (!visible) return false;",
         "else if (!virtualizerOwnsPrependAnchoring)"
       ],
       "invocation_seams": [],
@@ -13589,7 +13621,9 @@
       "path": "crates/buzz-relay/src/deploy_runtime.rs",
       "responsibility": "Retain dependency readers and audit until accepted work and workers finish",
       "is_new": true,
-      "required_symbols": [],
+      "required_symbols": [
+        "\"storage-usage-delivery\""
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "just test",
@@ -13612,7 +13646,22 @@
       "responsibility": "Connect deployment lifecycle ownership to the existing relay or workflow path",
       "is_new": false,
       "required_symbols": [],
-      "invocation_seams": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-relay/src/handlers/side_effects.rs",
+          "callee_symbol": "track_accepted_child",
+          "invocation": "|| state.track_accepted_child(crate::deploy_drain::WorkKind::Background),",
+          "behavior_test": "deployment_summary_spawn_retains_work_and_failed_lookup_is_unresolved",
+          "verification_command": "cargo test -p buzz-relay"
+        },
+        {
+          "caller_path": "crates/buzz-relay/src/handlers/side_effects.rs",
+          "callee_symbol": "track_accepted_child",
+          "invocation": "let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);",
+          "behavior_test": "channel_delete_notifies_every_member_after_cleanup",
+          "verification_command": "scripts/postgres-test-run.sh"
+        }
+      ],
       "verification_commands": [
         "just test",
         "just ci"
@@ -14747,6 +14796,1652 @@
       ]
     },
     {
+      "path": "crates/buzz-acp/src/process_tree/sleep_inhibitor_tests.rs",
+      "responsibility": "Conservative sleep inhibitor classification, Linux payload retention and native macOS process snapshot regressions.",
+      "is_new": true,
+      "required_symbols": [
+        "sleep_inhibitors_cannot_prove_provider_work_is_finished",
+        "linux_inhibitor_and_payload_retain_background_work",
+        "native_caffeinate_and_ordinary_sleep_both_block"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp -- --test-threads=1"
+      ]
+    },
+    {
+      "path": ".github/workflows/_ci-flake.yml",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "actionlint .github/workflows/_ci-flake.yml",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": ".github/workflows/loadgen-image.yml",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [
+        "vars.GHCR_LOADGEN_IMAGE",
+        "github.repository == 'block/buzz'"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "actionlint .github/workflows/loadgen-image.yml",
+        "python3 -m unittest discover -s scripts/fork/tests -v"
+      ]
+    },
+    {
+      "path": "RELEASING.md",
+      "responsibility": "Document the fork release authority, mandatory exact-source qualification, preserved writer rollout gates and disabled publication without configured policy.",
+      "is_new": false,
+      "required_symbols": [
+        "BUZZ_MOBILE_RELEASE_TAG_RULESET_ID",
+        "BUZZ_MOBILE_RELEASE_BRANCH_RULESET_ID"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate",
+        "bash scripts/test-mobile-release-contract.sh"
+      ]
+    },
+    {
+      "path": "VISION_MOBILE.md",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/community_auth/postgres_tests.rs",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/entity_deletion_postgres_tests.rs",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/relay_invite/upgrade_postgres_tests.rs",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/handlers/artifact_sync.rs",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint. Coalesce failed live fanout into one accepted recovery worker with a dirty bit, race-safe retirement and a persistent retry interval.",
+      "is_new": false,
+      "required_symbols": [
+        "publish_recovery: StdMutex<PublishRecovery>",
+        "const RECOVERY_INTERVAL: Duration = Duration::from_secs(5);"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-relay/src/handlers/artifact_sync.rs",
+          "callee_symbol": "track_accepted_child",
+          "invocation": "let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);",
+          "behavior_test": "failed_live_publish_retains_retry_work_after_its_parent_finishes",
+          "verification_command": "cargo test -p buzz-relay"
+        },
+        {
+          "caller_path": "crates/buzz-relay/src/handlers/artifact_sync.rs",
+          "callee_symbol": "publish_sync_loss",
+          "invocation": "let published = state.pubsub.publish_sync_loss().await.is_ok();",
+          "behavior_test": "loss_during_ack_and_after_retirement_keeps_one_owned_rate_limited_worker",
+          "verification_command": "cargo test -p buzz-relay --lib handlers::artifact_sync::publish_tests::loss_during_ack_and_after_retirement_keeps_one_owned_rate_limited_worker -- --exact",
+          "coverage": "Removing operational publication makes the controlled Redis acknowledgement journey time out; accepted ownership and retirement are checked by the same journey."
+        }
+      ],
+      "verification_commands": [
+        "cargo test -p buzz-relay",
+        "scripts/postgres-test-run.sh",
+        "cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/handlers/coalesced_refresh.rs",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [
+        "pub fn request_tracked",
+        "complete &= success",
+        "work.scope(run).await"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-relay",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/handlers/membership_notice_postgres_tests.rs",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-relay",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/storage_usage_delivery.rs",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-relay/src/storage_usage_delivery.rs",
+          "callee_symbol": "deployment_worker",
+          "invocation": "state.deployment_worker(\"storage-usage-delivery\")",
+          "behavior_test": "storage_delivery_registers_before_spawn_and_quiesces_without_a_tick",
+          "verification_command": "cargo test -p buzz-relay"
+        }
+      ],
+      "verification_commands": [
+        "cargo test -p buzz-relay",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/storage_usage_delivery/postgres_tests.rs",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-relay",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/storage_usage_delivery/tests.rs",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-relay",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/verified_profiles.rs",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-relay/src/verified_profiles.rs",
+          "callee_symbol": "track_accepted_child",
+          "invocation": "let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);",
+          "behavior_test": "admitted_profile_owns_work_before_spawn_and_after_socket_parent_finishes",
+          "verification_command": "cargo test -p buzz-relay"
+        }
+      ],
+      "verification_commands": [
+        "cargo test -p buzz-relay",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/tests/boot_lifecycle.rs",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-relay",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "crates/buzz-search/src/query.rs",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-search",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "docs/artifact-sync-deployment.md",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "docs/profile-search.md",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "migrations/0069_entity_deletion_approval.sql",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0070_entity_deletion_approval.sql",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": true,
+      "required_symbols": [
+        "current_setting('lock_timeout')",
+        "LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "migrations/0070_validate_entity_deletion_status.sql",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0071_channel_unlisted.sql",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0071_validate_entity_deletion_status.sql",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": true,
+      "required_symbols": [
+        "current_setting('lock_timeout')",
+        "LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "migrations/0072_channel_unlisted.sql",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": true,
+      "required_symbols": [
+        "current_setting('lock_timeout')",
+        "LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "migrations/0072_user_deletion_target.sql",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0073_user_deletion_target.sql",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": true,
+      "required_symbols": [
+        "current_setting('lock_timeout')",
+        "LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "migrations/0073_validate_user_deletion_target.sql",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0074_user_deletion_fences.sql",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0074_validate_user_deletion_target.sql",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": true,
+      "required_symbols": [
+        "current_setting('lock_timeout')",
+        "LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "migrations/0075_invite_revocation.sql",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0075_user_deletion_fences.sql",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": true,
+      "required_symbols": [
+        "current_setting('lock_timeout')",
+        "LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "migrations/0076_artifact_revision_lookup.sql",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0076_invite_revocation.sql",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": true,
+      "required_symbols": [
+        "current_setting('lock_timeout')",
+        "LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "migrations/0077_artifact_revision_lookup.sql",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": true,
+      "required_symbols": [
+        "current_setting('lock_timeout')",
+        "LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "migrations/0077_artifact_sync_timestamps.sql",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0078_artifact_sync_indexes.sql",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0078_artifact_sync_timestamps.sql",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": true,
+      "required_symbols": [
+        "current_setting('lock_timeout')",
+        "LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "migrations/0079_artifact_sync_indexes.sql",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": true,
+      "required_symbols": [
+        "current_setting('lock_timeout')",
+        "LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "migrations/0079_nip_fi_verified_profiles.sql",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0080_channel_auto_join.sql",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0080_nip_fi_verified_profiles.sql",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": true,
+      "required_symbols": [
+        "current_setting('lock_timeout')",
+        "LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "migrations/0081_channel_auto_join.sql",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": true,
+      "required_symbols": [
+        "current_setting('lock_timeout')",
+        "LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "migrations/0081_nip_fi_profile_head_names.sql",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0082_community_auth_upgrades.sql",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0082_nip_fi_profile_head_names.sql",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": true,
+      "required_symbols": [
+        "current_setting('lock_timeout')",
+        "LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "migrations/0083_community_auth_upgrades.sql",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": true,
+      "required_symbols": [
+        "current_setting('lock_timeout')",
+        "LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db",
+        "scripts/postgres-test-run.sh"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/agents/owned_agent_directory.dart",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just mobile-test"
+      ]
+    },
+    {
+      "path": "mobile/test/features/agents/agent_ordering_test.dart",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just mobile-test"
+      ]
+    },
+    {
+      "path": "mobile/test/features/agents/agents_harness.dart",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just mobile-test"
+      ]
+    },
+    {
+      "path": "mobile/test/features/agents/agents_sheet_test.dart",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just mobile-test"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/agents/owned_agent_directory_test.dart",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just mobile-test"
+      ]
+    },
+    {
+      "path": "perf/LOADGEN.md",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "web/src/features/invite/ui/InvitePage.tsx",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir web test:e2e",
+        "pnpm --dir web check"
+      ]
+    },
+    {
+      "path": "web/src/shared/lib/buzz-download.ts",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [
+        "https://github.com/reynholm/buzz/releases",
+        "release.draft || release.prerelease",
+        "buzz.latestDownload.reynholm-buzz.stable.v3",
+        "/_x64\\.dmg$/i"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir web test:e2e",
+        "pnpm --dir web check"
+      ]
+    },
+    {
+      "path": "web/tests/e2e/smoke.spec.ts",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm --dir web test:e2e",
+        "pnpm --dir web check"
+      ]
+    },
+    {
+      "path": "crates/buzz-agent/src/mcp.rs",
+      "responsibility": "Preserve fork behavior while integrating the upstream writer checkpoint.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": ".github/workflows/docker-manual.yml",
+      "responsibility": "Restrict manual relay image publication to the authorized fork, operator and GHCR namespace while preserving source ancestry and immutable manual tags.",
+      "is_new": false,
+      "required_symbols": [
+        "github.repository == 'reynholm/buzz'",
+        "github.triggering_actor == 'reynholm'",
+        "SOURCE_REPOSITORY: reynholm/buzz",
+        "IMAGE_NAME: ghcr.io/reynholm/buzz"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/test-manual-relay-image-workflow.py",
+        "actionlint .github/workflows/docker-manual.yml"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/runtime/admitted_tx/postgres_tests.rs",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/runtime/media_index_prebuild_postgres_tests.rs",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/runtime/probe_task.rs",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/runtime/probe_task/postgres_tests.rs",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/runtime/push_enqueue/postgres_tests.rs",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "crates/buzz-db/src/runtime/tests/listed_channel_name_postgres_tests.rs",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/media.rs",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/media_postgres_tests.rs",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/test_support.rs",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/handlers/multinode_fanout.rs",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": false,
+      "required_symbols": [
+        "pub fn spawn_with_cancel(",
+        "while let Some(result) = workers.join_next().await"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-relay/src/handlers/multinode_fanout.rs",
+          "callee_symbol": "run_worker",
+          "invocation": "workers.spawn(run_worker(Arc::clone(&state), queue));",
+          "behavior_test": "handlers::multinode_fanout::tests::completion_waits_for_worker_delivery",
+          "verification_command": "cargo test -p buzz-relay",
+          "coverage": "A real dispatcher worker is held at delivery; cancellation with the publisher still alive must stop admission and cannot report completion until the queued delivery finishes. The previous detached-worker implementation failed this witness."
+        }
+      ],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "desktop/README.md",
+      "responsibility": "Document the supported desktop client and fork download route.",
+      "is_new": false,
+      "required_symbols": [
+        "https://github.com/reynholm/buzz/releases"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test",
+        "just desktop-check"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/commands/team_snapshot/profile.rs",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/relay/profile_avatar/tests.rs",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "desktop/src-tauri/src/relay/profile_avatar/tests/persona_edit.rs",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "docs/channel-name-uniqueness-deployment.md",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "docs/private-media-index-deployment.md",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "migrations/0083_channels_listed_name_unique.sql",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0084_channels_listed_name_unique.sql",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "migrations/0084_default_channel_recovery.sql",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0085_community_auth_policy.sql",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0085_default_channel_recovery.sql",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "migrations/0086_community_auth_policy.sql",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "migrations/0086_private_media.sql",
+      "responsibility": "Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "migrations/0087_private_media.sql",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/channel_detail_page_test/solo_thread_tests.dart",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/channel_detail_page_test/swipe_reply_tests.dart",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/send_message_provider_test.dart",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "schema/tables/public/channels.sql",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "scripts/check-sqlx-pin.py",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "scripts/maintenance/plan_duplicate_listed_channel_renames.sql",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "scripts/maintenance/prebuild-media-edit-index.sql",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "scripts/test-sqlx-pin.py",
+      "responsibility": "Preserve fork contracts while integrating the frozen upstream snapshot.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "just test"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/commands/messages/edit.rs",
+      "responsibility": "Preserve exact stdin text and reject blank edits before relay I/O while retaining effective attachment replacement semantics.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-cli/src/commands/messages/edit.rs",
+          "callee_symbol": "validate_nonempty_content",
+          "invocation": "validate_nonempty_content(&content)?;",
+          "behavior_test": "blank_message_commands_fail_before_any_relay_request",
+          "verification_command": "cargo test -p buzz-cli"
+        },
+        {
+          "caller_path": "crates/buzz-cli/src/commands/messages/edit.rs",
+          "callee_symbol": "read_or_stdin",
+          "invocation": "let content = read_or_stdin(content)?;",
+          "behavior_test": "message_commands_preserve_stdin_bytes_in_signed_events",
+          "verification_command": "cargo test -p buzz-cli"
+        }
+      ],
+      "verification_commands": [
+        "cargo test -p buzz-cli"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_detail_page/message_bubble.dart",
+      "responsibility": "Keep Solo stream reply and media branching writable under the ordinary membership, archive and system-message guards; preserve canonical root, draft and native bridge behavior.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just mobile-check mobile-test"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channels_provider.dart",
+      "responsibility": "Keep Solo stream reply and media branching writable under the ordinary membership, archive and system-message guards; preserve canonical root, draft and native bridge behavior.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just mobile-check mobile-test"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/message_swipe_reply.dart",
+      "responsibility": "Keep Solo stream reply and media branching writable under the ordinary membership, archive and system-message guards; preserve canonical root, draft and native bridge behavior.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just mobile-check mobile-test"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/thread_detail_page.dart",
+      "responsibility": "Keep Solo stream reply and media branching writable under the ordinary membership, archive and system-message guards; preserve canonical root, draft and native bridge behavior.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just mobile-check mobile-test"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/thread_detail_page/thread_message.dart",
+      "responsibility": "Keep Solo stream reply and media branching writable under the ordinary membership, archive and system-message guards; preserve canonical root, draft and native bridge behavior.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just mobile-check mobile-test"
+      ]
+    },
+    {
+      "path": "scripts/test-manual-relay-image-workflow.py",
+      "responsibility": "Exercise the authorized manual-image scope, rejected destinations and real-Git source ancestry without network or publishing.",
+      "is_new": true,
+      "required_symbols": [
+        "def test_exact_authorized_scope_and_all_foreign_destinations(",
+        "def test_source_refs_and_reachability_with_real_git("
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/test-manual-relay-image-workflow.py"
+      ]
+    },
+    {
+      "path": "patches/virtua@0.49.3.patch",
+      "responsibility": "Retain virtualizer shift clamping and cancel stale imperative scrolling when the reader takes ownership.",
+      "is_new": false,
+      "required_symbols": [
+        "cancelScroll"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test"
+      ]
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "responsibility": "Pin the retained virtualizer patch including imperative scroll cancellation.",
+      "is_new": false,
+      "required_symbols": [
+        "virtua@0.49.3"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "pnpm install --frozen-lockfile",
+        "just desktop-test"
+      ]
+    },
+    {
+      "path": "desktop/src/features/messages/ui/virtuaShiftClampPatch.jsdom-test.mjs",
+      "responsibility": "Exercise the installed virtualizer and production bottom-settle hook across early and measured reader takeover and later target jumps.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just desktop-test"
+      ]
+    },
+    {
+      "path": "crates/buzz-test-client/src/loadgen/net.rs",
+      "responsibility": "Preserve explicit community socket routing through ambient proxy environments without suppressing operator proxy routing.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-test-client"
+      ]
+    },
+    {
+      "path": "desktop/src/app/RelayEntryGate.tsx",
+      "responsibility": "Keep the supported fork client download destination through the entry gate and browser-open fallback.",
+      "is_new": false,
+      "required_symbols": [
+        "https://github.com/reynholm/buzz/releases",
+        "openUrl(supportedClientDownloadUrl)"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && pnpm exec playwright test tests/e2e/relay-entry-guidance.spec.ts"
+      ]
+    },
+    {
+      "path": "desktop/tests/e2e/relay-entry-guidance.spec.ts",
+      "responsibility": "Exercise entry-gate download dispatch and manual fallback at the real opener boundary.",
+      "is_new": false,
+      "required_symbols": [
+        "https://github.com/reynholm/buzz/releases",
+        "plugin:opener|open_url"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd desktop && pnpm exec playwright test tests/e2e/relay-entry-guidance.spec.ts"
+      ]
+    },
+    {
+      "path": "scripts/mobile-release.sh",
+      "responsibility": "Publish only an immutable, qualified source candidate through the authorized fork operator and protected tag policy.",
+      "is_new": false,
+      "required_symbols": [
+        "require_canonical_repository || exit 1",
+        "require_mobile_release_operator || exit 1",
+        "require_mobile_release_branch_ruleset \"$MOBILE_RELEASE_SOURCE_BRANCH\" || exit 1",
+        "require_mobile_release_qualification \"$source_sha\" || exit 1",
+        "require_mobile_release_tag_ruleset || exit 1"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "bash scripts/test-mobile-release-contract.sh"
+      ]
+    },
+    {
+      "path": "scripts/mobile-release-source.sh",
+      "responsibility": "Require fork branch review policy and trusted successful check producers for the exact candidate source commit.",
+      "is_new": false,
+      "required_symbols": [
+        "require_mobile_release_branch_ruleset()",
+        "require_mobile_release_qualification()",
+        "require_mobile_release_commit_ancestor()"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "bash scripts/test-mobile-release-contract.sh"
+      ]
+    },
+    {
+      "path": "scripts/release-rulesets.sh",
+      "responsibility": "Bind release authorization to the fork and operator; fail closed until explicit fork tag and branch policies exist.",
+      "is_new": false,
+      "required_symbols": [
+        "MOBILE_RELEASE_REPOSITORY=reynholm/buzz",
+        "MOBILE_RELEASE_OPERATOR=reynholm",
+        "BUZZ_MOBILE_RELEASE_TAG_RULESET_ID",
+        "BUZZ_MOBILE_RELEASE_BRANCH_RULESET_ID",
+        "require_mobile_release_operator()"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "bash scripts/test-mobile-release-contract.sh"
+      ]
+    },
+    {
+      "path": "scripts/test-mobile-release-contract.sh",
+      "responsibility": "Exercise real Git immutable candidates and pre-tag refusals for unauthorized origins, operators, policies and source qualification.",
+      "is_new": false,
+      "required_symbols": [
+        "GH_CHECK_CONCLUSION",
+        "GH_CHECK_APP",
+        "GH_TAG_REF_FAIL"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "bash scripts/test-mobile-release-contract.sh"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/handlers/auth_deploy_postgres_tests.rs",
+      "responsibility": "Drive actual WebSocket AUTH and blocked membership writes to prove default auto-join remains drain-owned after socket cleanup, with and without durable pending roster work.",
+      "is_new": true,
+      "required_symbols": [
+        "root_auth_first_default_join_remains_owned_after_socket_closes",
+        "root_auth_pending_default_join_remains_owned_after_socket_closes"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "scripts/postgres-test-run.sh -p buzz-relay --lib"
+      ]
+    },
+    {
+      "path": "crates/buzz-pubsub/src/subscriber.rs",
+      "responsibility": "Subscribe to operational loss before readiness and advance the live loss epoch without forwarding a client Event.",
+      "is_new": false,
+      "required_symbols": [
+        "pub(crate) const SYNC_LOSS_CHANNEL: &str = \"buzz:control:artifact-sync-loss\";"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "crates/buzz-pubsub/src/subscriber.rs",
+          "callee_symbol": "subscribe",
+          "invocation": "sink.subscribe(SYNC_LOSS_CHANNEL).await?;",
+          "behavior_test": "control_subscription_covers_ready_readers_and_never_forwards_events",
+          "verification_command": "cargo test -p buzz-pubsub --lib subscriber::tests::control_subscription_covers_ready_readers_and_never_forwards_events -- --exact",
+          "coverage": "Removing the control subscription fails the observed subscription-before-readiness assertion."
+        },
+        {
+          "caller_path": "crates/buzz-pubsub/src/subscriber.rs",
+          "callee_symbol": "mark_loss",
+          "invocation": "if channel_name == SYNC_LOSS_CHANNEL {\n                    // Even an unfamiliar control payload means possible loss.\n                    mark_loss(link, true);",
+          "behavior_test": "control_subscription_covers_ready_readers_and_never_forwards_events",
+          "verification_command": "cargo test -p buzz-pubsub --lib subscriber::tests::control_subscription_covers_ready_readers_and_never_forwards_events -- --exact",
+          "coverage": "Removing this control-message epoch update fails the production subscriber journey waiting for loss."
+        }
+      ],
+      "verification_commands": [
+        "cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/handlers/artifact_sync_publish_tests.rs",
+      "responsibility": "Exercise real recovery publication against a controlled Redis transport: concurrent loss, retry spacing, retirement and drain acknowledgement.",
+      "is_new": true,
+      "required_symbols": [
+        "async fn loss_during_ack_and_after_retirement_keeps_one_owned_rate_limited_worker()"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture"
+      ]
+    },
+    {
+      "path": "docs/nips/NIP-AR.md",
+      "responsibility": "Specify bounded coalesced artifact loss recovery, accepted drain ownership and coordinated operational-topic rollout.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture",
+        "cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture"
+      ]
+    },
+    {
+      "path": "mobile/ios/RunnerTests/BrowserAuthBridgeTests.swift",
+      "responsibility": "Use fictional organization hosts in the native browser login allow/refuse table while preserving production URL policy and every assertion.",
+      "is_new": false,
+      "required_symbols": [
+        "func testAllowsOnlyBuilderlabLoginPages()",
+        "https://example-org.builderlab.xyz/api/goose/v1/auth/login?type=cli"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && xcodebuild test -workspace ios/Runner.xcworkspace -scheme Runner -destination \"${BUZZ_IOS_TEST_DESTINATION:?Set an available iOS Simulator destination}\" -only-testing:RunnerTests/BrowserAuthBridgeTests"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/hosted/builderlab_account.dart",
+      "responsibility": "Expose same-subject session revisions and reject retired queued operations before credentials or network side effects.",
+      "is_new": false,
+      "required_symbols": [
+        "ValueListenable<int> get sessionChanges",
+        "void Function()? checkCurrent"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "mobile/lib/shared/hosted/builderlab_account.dart",
+          "callee_symbol": "checkCurrent",
+          "invocation": "return _serial(() async {\n      checkCurrent?.call();\n      final credential = _credential;",
+          "behavior_test": "callback exchange waits for an in-flight startup restore",
+          "verification_command": "cd mobile && flutter test --no-pub test/shared/hosted/builderlab_account_test.dart --plain-name 'callback exchange waits'",
+          "coverage": "Removing the in-queue check permits the mutation after same-subject session replacement; the real account queue regression fails."
+        }
+      ],
+      "verification_commands": [
+        "cd mobile && flutter test --no-pub test/shared/hosted/builderlab_account_test.dart --plain-name 'callback exchange waits'"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/agents/remote_agents.dart",
+      "responsibility": "Pin agent creation to its original account, identity slot, community and generation; retain recovery in the original storage scope and fence late UI/network effects.",
+      "is_new": false,
+      "required_symbols": [
+        "void Function() _sessionCheck()",
+        "account.sessionChanges.addListener(_accountChanged);",
+        "_savePending(value, scope, check);"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "mobile/lib/shared/agents/remote_agents.dart",
+          "callee_symbol": "_accountChanged",
+          "invocation": "controller._accountChanged();",
+          "behavior_test": "creation journal retires on community away and back and remains resumable",
+          "verification_command": "cd mobile && flutter test --no-pub test/shared/agents/remote_agent_session_test.dart --plain-name 'community away and back'",
+          "coverage": "Removing the provider callback allows the old generation to survive away-and-back navigation; the real provider/controller regression fails."
+        },
+        {
+          "caller_path": "mobile/lib/shared/agents/remote_agents.dart",
+          "callee_symbol": "check",
+          "invocation": "check();\n    pending = value;",
+          "behavior_test": "creation journal retires on different account and remains resumable",
+          "verification_command": "cd mobile && flutter test --no-pub test/shared/agents/remote_agent_session_test.dart",
+          "coverage": "Removing the post-journal guard repopulates retired pending UI state; the real account/controller transition table fails."
+        },
+        {
+          "caller_path": "mobile/lib/shared/agents/remote_agents.dart",
+          "callee_symbol": "submitSignedEventOnce",
+          "invocation": "await submitSignedEventOnce(\n        wsUrl: config.wsUrl,\n        headers: headers,\n        checkCurrent: check,",
+          "behavior_test": "registrations use a WebSocket URL for https-saved communities",
+          "verification_command": "cd mobile && flutter test --no-pub test/shared/agents/remote_agents_test.dart --plain-name 'registrations use a WebSocket URL for https-saved communities'",
+          "coverage": "Removing the captured check callback allows a retired policy EVENT after delayed socket connection; the real loopback journey fails."
+        }
+      ],
+      "verification_commands": [
+        "cd mobile && flutter test --no-pub test/shared/agents/remote_agent_session_test.dart",
+        "cd mobile && flutter test --no-pub test/shared/agents/remote_agents_test.dart --plain-name 'registrations use a WebSocket URL for https-saved communities'"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/signed_event_relay.dart",
+      "responsibility": "Allow scoped callers to retire a one-shot signed publication immediately before EVENT send after socket authentication.",
+      "is_new": false,
+      "required_symbols": [
+        "void Function()? checkCurrent"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "mobile/lib/shared/relay/signed_event_relay.dart",
+          "callee_symbol": "checkCurrent",
+          "invocation": "onConnected: () {\n      checkCurrent?.call();\n      socket.send",
+          "behavior_test": "registrations use a WebSocket URL for https-saved communities",
+          "verification_command": "cd mobile && flutter test --no-pub test/shared/agents/remote_agents_test.dart --plain-name 'registrations use a WebSocket URL for https-saved communities'",
+          "coverage": "Removing the before-EVENT guard allows publication after account retirement during connection; the loopback regression fails."
+        }
+      ],
+      "verification_commands": [
+        "cd mobile && flutter test --no-pub test/shared/agents/remote_agents_test.dart --plain-name 'registrations use a WebSocket URL for https-saved communities'"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/me/me_chat_creation.dart",
+      "responsibility": "Preserve uncertain expired first-message identity when exact visible history cannot prove acceptance; never resurrect deleted text by signing a replacement.",
+      "is_new": false,
+      "required_symbols": [
+        "Confirm acceptance without replacing an expired identity",
+        "The first message\u2019s delivery is uncertain and it is too old to retry."
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test --no-pub test/shared/me/me_chat_creation_test.dart"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/agents/remote_agent_session_test.dart",
+      "responsibility": "Exercise real account/controller and provider lifetime fences across account changes, same-subject renewal and community away/back; retain original durable recovery.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test --no-pub test/shared/agents/remote_agent_session_test.dart"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/agents/remote_agents_test.dart",
+      "responsibility": "Exercise policy publication retirement during delayed socket connection and isolate the absent-community presence fixture.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test --no-pub test/shared/agents/remote_agents_test.dart --plain-name 'registrations use a WebSocket URL for https-saved communities'",
+        "cd mobile && flutter test --no-pub test/shared/agents/remote_agents_test.dart"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/hosted/builderlab_account_test.dart",
+      "responsibility": "Exercise the real serialized account queue with a session revision guard after same-subject credential renewal.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test --no-pub test/shared/hosted/builderlab_account_test.dart --plain-name 'callback exchange waits'"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/me/me_chat_creation_test.dart",
+      "responsibility": "Cover expired absent, visible and deleted first-message acceptance, original intent retention and explicit discard; retain unexpired same-ID retry checks.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test --no-pub test/shared/me/me_chat_creation_test.dart"
+      ]
+    },
+    {
+      "path": "mobile/test/helpers/hosted_communities_fixture.dart",
+      "responsibility": "Keep external account fixture signatures compatible with the optional queued operation guard.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test --no-pub test/shared/hosted"
+      ]
+    },
+    {
+      "path": "mobile/test/helpers/remote_agents_fixture.dart",
+      "responsibility": "Keep external account fixture signatures compatible with the optional queued operation guard.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test --no-pub test/shared/agents test/shared/hosted"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/hosted/device_identity_reconciliation_test.dart",
+      "responsibility": "Keep external account fixture signatures compatible with the optional queued operation guard.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test --no-pub test/shared/hosted/device_identity_reconciliation_test.dart"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/hosted/hosted_admission_test.dart",
+      "responsibility": "Keep external account fixture signatures compatible with the optional queued operation guard.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test --no-pub test/shared/hosted/hosted_admission_test.dart"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/hosted/hosted_backup_service_test.dart",
+      "responsibility": "Keep external account fixture signatures compatible with the optional queued operation guard.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test --no-pub test/shared/hosted/hosted_backup_service_test.dart"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/hosted/hosted_environment_flow_test.dart",
+      "responsibility": "Keep external account fixture signatures compatible with the optional queued operation guard.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test --no-pub test/shared/hosted/hosted_environment_flow_test.dart"
+      ]
+    },
+    {
+      "path": "crates/buzz-test-client/src/loadgen/desktop.rs",
+      "responsibility": "Wait for the asserted legacy unread repair before stopping the fixture; retain the production clients, timeout and all post-drive assertions.",
+      "is_new": false,
+      "required_symbols": [
+        "&& o.count(\"desktop_unread\") >= 4"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-test-client --lib loadgen::desktop::tests::legacy_ticks_reread_and_replace_batches_every_tick -- --exact"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/relay/media_disk_cache_test.dart",
+      "responsibility": "Observe durable bytes before cold cache reopen instead of assuming image decoding completes asynchronous disk writes; preserve production and assertions.",
+      "is_new": false,
+      "required_symbols": [
+        "if (!listEquals((await cache.read(url))?.bytes, _pngBytes))"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test --no-pub test/shared/relay/media_disk_cache_test.dart"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/community/community_provider_test.dart",
+      "responsibility": "Stage replacement-account cache directories behind the real cache-root boundary after startup cleanup, then verify queued sweeps preserve the latest account and remove obsolete caches.",
+      "is_new": false,
+      "required_symbols": [
+        "await sweepStarted.future;",
+        "sweepRoot.complete(mediaRoot);"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just mobile-check mobile-test"
+      ]
+    },
+    {
       "path": "crates/buzz-acp/src/acp/linux_resources.rs",
       "responsibility": "Parse BUZZ_ACP_RESOURCE_LIMITS, refuse unbounded or ancestor slices, launch each worker through the bundled supervisor in an owned cgroup v2 scope, and report verified OOM or lost isolation as terminal errors.",
       "is_new": true,
@@ -14855,5 +16550,5 @@
       ]
     }
   ],
-  "base_ref": "upstream-main"
+  "base_ref": "upstream/main integration snapshot e2dc54e22"
 }

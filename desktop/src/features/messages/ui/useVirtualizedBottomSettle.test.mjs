@@ -137,6 +137,7 @@ async function mountHarness(external = false) {
     itemsLength: { current: 5 },
     list: {
       current: {
+        cancelScroll() {},
         scrollToIndex(index, options) {
           writes.push({ index, options });
         },

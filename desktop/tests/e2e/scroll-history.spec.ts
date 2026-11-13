@@ -1343,15 +1343,32 @@ test("fast middle-page scroll settles with continuous mounted coverage", async (
     )
     .toBeGreaterThan(scrollHeightBeforePrepend + 2_000);
 
-  // Take reader ownership with real input before assigning fast-scroll ranges.
-  // Programmatic scroll events retain mount-time bottom intent, so a later
-  // virtual row measurement may legitimately pin them back to the floor.
-  const scrollTopBeforeWheel = (await getTimelineMetrics(page)).scrollTop;
+  // Opening the channel armed the bottom settle, and only reader input
+  // cancels it, not the scrollTop writes below. Without a real wheel first,
+  // Virtua's next re-measure pins the list back to the floor. Wait until the
+  // wheel has left the floor (the timeline's 32 px at-bottom band) and held
+  // still for two frames, so the writes below are the last scroll.
   await timeline.hover();
-  await page.mouse.wheel(0, -300);
+  await page.mouse.wheel(0, -120);
   await expect
-    .poll(() => getTimelineMetrics(page).then((metrics) => metrics.scrollTop))
-    .toBeLessThan(scrollTopBeforeWheel - 100);
+    .poll(() =>
+      timeline.evaluate(
+        (element) =>
+          new Promise<number>((resolve) => {
+            const scrollTop = element.scrollTop;
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() =>
+                resolve(
+                  element.scrollTop === scrollTop
+                    ? element.scrollHeight - element.clientHeight - scrollTop
+                    : 0,
+                ),
+              ),
+            );
+          }),
+      ),
+    )
+    .toBeGreaterThan(32);
 
   // Simulate a fast trackpad pass through several middle-page ranges, then
   // stop. The final evaluate emits the last scroll event; all coverage samples
@@ -1363,7 +1380,6 @@ test("fast middle-page scroll settles with continuous mounted coverage", async (
       element.dispatchEvent(new Event("scroll", { bubbles: true }));
     }
   });
-  await page.waitForTimeout(250);
 
   const viewportCoverage = () =>
     timeline.evaluate((element) => {
@@ -1386,6 +1402,11 @@ test("fast middle-page scroll settles with continuous mounted coverage", async (
       }
       return Math.max(largestGap, viewport.bottom - cursor);
     });
+
+  // Virtua remounts the new range a few frames after the last scroll; under
+  // load that can take longer than any fixed wait. Wait for coverage first,
+  // then sample it while idle: a stale range stays blank, so it still fails.
+  await expect.poll(viewportCoverage).toBeLessThan(100);
 
   // A day heading can produce a small legitimate gap between message rows;
   // the stale-range failure leaves a viewport-scale hole. Check repeatedly

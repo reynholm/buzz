@@ -22,6 +22,13 @@ fn remote_definition_rename_does_not_publish_copied_instance() {
     let base = crate::managed_agents::managed_agents_base_dir(app.handle()).unwrap();
     write(&base, &raw);
     let original = raw[1].clone();
+    let definition = raw[0].to_definition_view().unwrap();
+    let c = context(EvidenceReadiness::Ready);
+    assert!(avatar_targets_with(&definition, &raw, Some(&c), |_| {
+        panic!("foreign instance key resolved during avatar planning")
+    })
+    .unwrap()
+    .is_empty());
     let keys = state.signing_keys().unwrap();
     let path = scoped_retention_db_path(&base, "wss://test", &keys.public_key().to_hex());
     let conn = open_retention_db(&path).unwrap();
@@ -62,6 +69,7 @@ fn remote_definition_rename_does_not_publish_copied_instance() {
             instance_heads.set(instance_heads.get() + 1);
         },
         || {},
+        |_| Ok(()),
     )
     .unwrap();
     assert_eq!(d.display_name, "Edited");

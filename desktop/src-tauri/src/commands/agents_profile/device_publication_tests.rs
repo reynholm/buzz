@@ -19,6 +19,7 @@ async fn create_import_profile_invocation_never_redirects_after_owner_relay_swit
     let fence = capture_runtime_fence(&state).unwrap();
     *state.keys.lock().unwrap() = nostr::Keys::generate();
     *state.relay_url_override.lock().unwrap() = Some("wss://other".into());
+    assert!(creation_authority(&state, &fence, "").is_err());
     let destinations = RefCell::new(vec![]);
     let result = publish_profile_with(
         app.handle(),

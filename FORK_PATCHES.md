@@ -3,7 +3,7 @@
 Generated from `scripts/fork/patches.json`; regenerate with
 `python3 scripts/fork/sync.py render`.
 
-Base snapshot: `upstream-main` (`2d289f720de0012fa36b5f6faa0e3bdd845ccfcf`). Release floor: `desktop-v0.5.28`.
+Base snapshot: `upstream/main integration snapshot e2dc54e22` (`e2dc54e22fc113f298889d76c3acf674cb46db4b`). Release floor: `desktop-v0.5.28`.
 
 ## `docs/superpowers/plans/2026-10-03-buzz-fork-maintenance.md`
 
@@ -112,11 +112,13 @@ New module: `false`.
                 fence: Some(&create_fence),
             },
         )`; behavior test `managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib managed_agents::device_runtime_tests::create_postcommit_scope_is_pinned_before_preflight_and_after_await -- --exact`
-- Invocation: `desktop/src-tauri/src/commands/agents.rs` → `publish_agent_profile_with_about`; exact call `profile::publish_agent_profile_with_about(
+- Invocation: `desktop/src-tauri/src/commands/agents.rs` → `publish_created_agent_profile`; exact call `profile::publish_created_agent_profile(
         &app,
         state,
         &agent.pubkey,
-        &create_fence,`; behavior test `create_import_profile_invocation_never_redirects_after_owner_relay_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib create_import_profile_invocation_never_redirects_after_owner_relay_switch`
+        &create_fence,
+        &creation_relay,
+        &owner_keys,`; behavior test `relay::profile_avatar::tests::creation_transfers_only_chosen_bytes_from_owner_to_agent`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
 - Invocation: `desktop/src-tauri/src/commands/agents.rs` → `delete_managed_agent_phase_with`; exact call `delete_managed_agent_phase_with(
                 &app,
                 &state,
@@ -202,7 +204,7 @@ New module: `false`.
 - Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `import_upload_authority`; exact call `let authority = import_upload_authority(&state, &context.scope)?;`; behavior test `commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::import::import_avatar_tests::avatar_upload_uses_bound_relay_and_signer_after_backend_switch -- --exact`
 - Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `decode_snapshot_for_import_readonly`; exact call `decode_snapshot_for_import_readonly(
             &input.file_bytes,
-            owner_keys.as_ref(),
+            Some(&owner_keys),
             &crate::managed_agents::managed_agents_store_path(&app)?,
             &context.proof,
             crate::managed_agents::storage::resolve_agent_key_readonly,`; behavior test `commands::personas::snapshot::tests::locked_import::confirm_readonly_shared_unbound_endpoint_unlocks_under_another_owner`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::tests::locked_import::confirm_readonly_shared_unbound_endpoint_unlocks_under_another_owner -- --exact`
@@ -244,11 +246,13 @@ Mechanical struct-literal compatibility repair: new device fields default to Non
 New module: `false`.
 
 - Invocation: `desktop/src-tauri/src/commands/personas/snapshot/import.rs` → `definition_from_snapshot`; exact call `crate::commands::team_snapshot::definition_from_snapshot(`; behavior test `commands::personas::snapshot::tests::imported_snapshot_constructor_defaults_private_with_own_origin`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace commands::personas::snapshot::tests::imported_snapshot_constructor_defaults_private_with_own_origin -- --exact`
-- Invocation: `desktop/src-tauri/src/commands/team_snapshot.rs` → `publish_agent_profile_with_about`; exact call `crate::commands::agents::publish_agent_profile_with_about(
+- Invocation: `desktop/src-tauri/src/commands/team_snapshot.rs` → `publish_imported_team_member_profile`; exact call `publish_imported_team_member_profile(
             &app,
             &state,
             &m.pubkey,
-            &import_fence,`; behavior test `create_import_profile_invocation_never_redirects_after_owner_relay_switch`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib create_import_profile_invocation_never_redirects_after_owner_relay_switch`
+            &import_fence,
+            &relay_url,
+            &owner_keys,`; behavior test `relay::profile_avatar::tests::team_import_transfers_both_assets_and_reports_failure`; verify `cargo test --manifest-path desktop/src-tauri/Cargo.toml --workspace`
 - Invocation: `desktop/src-tauri/src/commands/team_snapshot.rs` → `publish_snapshot_memory_entry`; exact call `crate::commands::agents::snapshot_publication::publish_snapshot_memory_entry(
                     &app,
                     &state,
@@ -584,6 +588,7 @@ Safe hostname default; patched ZIP 9 extraction, maintained Opus backend, and im
 
 New module: `false`.
 
+- Required symbol: `9e7c2fb2181f66bea1f325c633e5a4364164d6fd`
 - Verify: `just desktop-tauri-test desktop-tauri-check`
 
 ## `desktop/src-tauri/Cargo.lock`
@@ -2614,15 +2619,9 @@ Pin the Android lane to Temurin JDK 17 for Gradle 8.14.5 and explicitly select t
 
 New module: `false`.
 
-- Required symbol: `- name: Set up Android JDK
-        if: matrix.lane == 'android'
-        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
-        with:
-          distribution: temurin
-          java-version: '17'`
-- Required symbol: `- name: Select Android JDK for Flutter
-        if: matrix.lane == 'android'
-        run: flutter config --jdk-dir="$JAVA_HOME"`
+- Required symbol: `uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0`
+- Required symbol: `java-version: "17"`
+- Required symbol: `run: flutter config --jdk-dir="$JAVA_HOME"`
 - Verify: `node --test scripts/ci-selection.test.mjs scripts/ci-required-gates.test.mjs scripts/ci-apt-retry.test.mjs`
 - Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
 
@@ -2724,11 +2723,15 @@ New module: `false`.
 
 ## `Justfile`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Select the infra-free demo echo cancellation regression in the required nextest unit lane.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Select the infra-free demo echo cancellation regression in the required nextest unit lane. Select artifact sync recovery and operational subscriber regressions in the required nextest unit lanes.
 
 New module: `false`.
 
-- Required symbol: `test(=mesh_boot::tests::demo_echo_keeps_inflight_read_across_ticks_and_still_drains)`
+- Required symbol: `test(/^mesh_boot::tests::/)`
+- Required symbol: `${BUZZ_STAGING_RELAY_URL:?Set BUZZ_STAGING_RELAY_URL to the staging relay}`
+- Required symbol: `scripts/test-manual-relay-image-workflow.py`
+- Required symbol: `test(/^handlers::artifact_sync::/)`
+- Required symbol: `test(/^subscriber::tests::/)`
 - Verify: `just ci`
 - Verify: `just test-unit`
 
@@ -3303,11 +3306,16 @@ New module: `false`.
 
 ## `crates/buzz-pubsub/src/lib.rs`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Publish a fixed artifact sync loss control without retaining event or tenant payloads.
 
 New module: `false`.
 
+- Required symbol: `pub async fn publish_sync_loss(`
+- Required symbol: `.arg(subscriber::SYNC_LOSS_CHANNEL)`
+- Required symbol: `.arg("resync")`
 - Verify: `just ci`
+- Verify: `cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture`
+- Verify: `cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture`
 
 ## `crates/buzz-pubsub/src/nip_fi_command_replay.rs`
 
@@ -3462,6 +3470,9 @@ Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
 New module: `false`.
 
+- Invocation: `crates/buzz-relay/src/connection.rs` → `track_accepted_child`; exact call `let span =
+                tracing::info_span!("ws.artifact_sync", conn_id = %conn.conn_id, sub_id = %sub_id);
+            let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);`; behavior test `deployment_message_tasks_are_owned_before_spawn_and_outlive_socket`; verify `cargo test -p buzz-relay`
 - Verify: `just ci`
 
 ## `crates/buzz-relay/src/handlers/admin_action_worker.rs`
@@ -3490,11 +3501,16 @@ New module: `false`.
 
 ## `crates/buzz-relay/src/handlers/auth.rs`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Preserve root AUTH authority and synchronously retain accepted default-join descendants through socket cleanup and drain, including durable pending-roster retries.
 
 New module: `false`.
 
+- Required symbol: `let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);`
+- Required symbol: `include!("auth_deploy_postgres_tests.rs");`
+- Invocation: `crates/buzz-relay/src/handlers/auth.rs` → `run_accepted`; exact call `tokio::spawn(crate::deploy_drain::run_accepted(work, async move {`; behavior test `root_auth_first_default_join_remains_owned_after_socket_closes; root_auth_pending_default_join_remains_owned_after_socket_closes`; verify `scripts/postgres-test-run.sh -p buzz-relay --lib`
 - Verify: `just ci`
+- Verify: `cargo test --locked -p buzz-relay`
+- Verify: `scripts/postgres-test-run.sh -p buzz-relay --lib`
 
 ## `crates/buzz-relay/src/handlers/community_provisioning.rs`
 
@@ -3526,6 +3542,24 @@ Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
 
 New module: `false`.
 
+- Invocation: `crates/buzz-relay/src/handlers/ingest.rs` → `enforce_write_restriction_with_authority`; exact call `enforce_write_restriction_with_authority(
+        state,
+        tenant,
+        kind_u32,
+        auth.pubkey(),
+        fresh_managed_authority,
+    )
+    .await?;`; behavior test `managed_retries_read_current_owner_ban`; verify `scripts/postgres-test-run.sh`
+- Invocation: `crates/buzz-relay/src/handlers/ingest.rs` → `check_channel_membership_with_authority`; exact call `check_channel_membership_with_authority(
+                tenant.community(),
+                state,
+                ch_id,
+                &pubkey_bytes,
+                channel_row.as_ref(),
+                ChannelWrite::for_kind(kind_u32),
+                fresh_managed_authority,
+            )
+            .await;`; behavior test `managed_retries_read_current_private_membership`; verify `scripts/postgres-test-run.sh`
 - Verify: `just ci`
 
 ## `crates/buzz-relay/src/handlers/moderation_commands.rs`
@@ -3570,10 +3604,14 @@ New module: `false`.
 
 ## `crates/buzz-relay/src/main.rs`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
+Preserve production deployment dependency ownership through final source integration; exact main wiring is a drift assertion, with package and real-main workflow evidence recorded separately.
 
 New module: `false`.
 
+- Required symbol: `runtime_dependencies.own(tokio::spawn(delivery), cancel);`
+- Required symbol: `runtime_dependencies.own_fence_probe(state.db.clone(), state.deploy_drain.clone());`
+- Required symbol: `multinode_fanout::spawn_with_cancel(`
+- Required symbol: `flags_for_shutdown.close().await;`
 - Verify: `just ci`
 
 ## `crates/buzz-relay/src/nip11.rs`
@@ -4632,14 +4670,6 @@ New module: `false`.
 
 - Verify: `just ci`
 
-## `mobile/ios/Runner/NativeMessageMenu.swift`
-
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
-
-New module: `false`.
-
-- Verify: `just ci`
-
 ## `mobile/ios/Runner/NativeMessagePresentationCoordinator.swift`
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
@@ -5040,14 +5070,6 @@ New module: `false`.
 
 - Verify: `just ci`
 
-## `mobile/lib/shared/success_haptic.dart`
-
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
-
-New module: `false`.
-
-- Verify: `just ci`
-
 ## `mobile/lib/shared/widgets/native_message_presentation.dart`
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
@@ -5308,11 +5330,14 @@ New module: `false`.
 
 ## `scripts/run-tests.sh`
 
-Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Keep the cargo-test fallback selecting the same demo echo receive-retention regression as nextest.
+Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches Keep the cargo-test fallback selecting the same demo echo receive-retention regression as nextest. Keep the Cargo fallback selecting artifact sync recovery and operational subscriber regressions.
 
 New module: `false`.
 
 - Required symbol: `buzz-relay demo echo receive retention`
+- Required symbol: `scripts/test-manual-relay-image-workflow.py`
+- Required symbol: `cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture`
+- Required symbol: `cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture`
 - Verify: `just ci`
 - Verify: `bash -n scripts/run-tests.sh`
 - Verify: `just test-unit`
@@ -5387,8 +5412,8 @@ Model real reader scroll intent before passive virtualized coverage regression
 New module: `false`.
 
 - Required symbol: `fast middle-page scroll settles with continuous mounted coverage`
-- Required symbol: `scrollTopBeforeWheel`
-- Required symbol: `page.mouse.wheel(0, -300)`
+- Required symbol: `scrollHeightBeforePrepend`
+- Required symbol: `page.mouse.wheel(0, -120)`
 - Required symbol: `viewportCoverage`
 - Verify: `pnpm -C desktop exec playwright test --project=smoke tests/e2e/scroll-history.spec.ts`
 - Verify: `python3 scripts/fork/sync.py validate`
@@ -5522,7 +5547,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/TESTING.md`
 
-Document original-session collection, bounded ordinary preemption and bundled agent/MCP/CLI delivery runtime fixtures. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Document opt-in Linux worker memory containment and its checks.
+Document original-session collection, bounded ordinary preemption and bundled agent/MCP/CLI delivery runtime fixtures. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Document conservative inhibitor retention, its residency limitations, native internal-work coverage and live Qwen acceptance steps. Document opt-in Linux worker memory containment and its checks.
 
 New module: `false`.
 
@@ -5606,7 +5631,7 @@ New module: `false`.
 
 ## `crates/buzz-acp/src/process_tree.rs`
 
-Bounded process snapshots and resident-helper classification; macOS/Linux executable confirmation releases completed Codex turns while preserving actual child work. Exact Codex default Bash snapshots remain transient bookkeeping; their ordinary descendants and launchers remain work. Scoped missing executable evidence remains uncertainty while definite descendants remain observable. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
+Bounded process snapshots and resident-helper classification; macOS/Linux executable confirmation releases completed Codex turns while preserving actual child work. Exact Codex default Bash snapshots remain transient bookkeeping; their ordinary descendants and launchers remain work. Scoped missing executable evidence remains uncertainty while definite descendants remain observable. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Sleep inhibitors conservatively retain provider background work: an in-process model request may have no other OS child after end_turn. Working ancestors and ordinary descendants remain protected across exec.
 
 New module: `true`.
 
@@ -5717,8 +5742,6 @@ New module: `false`.
 - Invocation: `crates/buzz-cli/src/commands/messages.rs` → `attachment_markdown`; exact call `media_content.push_str(&crate::attachments::attachment_markdown(&desc));`; behavior test `messages_emit_file_links_for_multiple_attachments_and_keep_media_markup`; verify `cargo test -p buzz-cli`
 - Invocation: `crates/buzz-cli/src/commands/messages.rs` → `validate_nonempty_content`; exact call `validate_nonempty_content(&p.content)?;`; behavior test `blank_message_commands_fail_before_any_relay_request`; verify `cargo test -p buzz-cli --test message_content`
 - Invocation: `crates/buzz-cli/src/commands/messages.rs` → `validate_nonempty_content`; exact call `validate_nonempty_content(&diff_content)?;`; behavior test `blank_message_commands_fail_before_any_relay_request`; verify `cargo test -p buzz-cli --test message_content`
-- Invocation: `crates/buzz-cli/src/commands/messages.rs` → `validate_nonempty_content`; exact call `validate_nonempty_content(&content)?;`; behavior test `blank_message_commands_fail_before_any_relay_request`; verify `cargo test -p buzz-cli --test message_content`
-- Invocation: `crates/buzz-cli/src/commands/messages.rs` → `read_or_stdin`; exact call `let content = read_or_stdin(content)?;`; behavior test `message_commands_preserve_stdin_bytes_in_signed_events`; verify `cargo test -p buzz-cli --test message_content`
 - Verify: `cargo test -p buzz-cli managed_ -- --test-threads=1`
 - Verify: `cargo test -p buzz-cli mention -- --test-threads=1`
 - Verify: `cargo test -p buzz-cli session_status -- --test-threads=1`
@@ -6061,8 +6084,9 @@ Preserve one in-flight demo echo receive across drain ticks; retain bounded expl
 
 New module: `false`.
 
-- Required symbol: `tokio::pin!(receive);`
+- Required symbol: `tokio::pin!(recv);`
 - Required symbol: `demo_echo_keeps_inflight_read_across_ticks_and_still_drains`
+- Required symbol: `demo_echo_retains_pending_receive_across_housekeeping_ticks`
 - Verify: `cargo test -p buzz-relay -- --test-threads=1`
 
 ## `crates/buzz-acp/src/process_tree/codex_helpers.rs`
@@ -6079,7 +6103,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/pool/resident_helper_tests.rs`
 
-Real local ACP/process regressions for sixth-thread admission, nested child exit and original-session collection on macOS/Linux; Linux executable unlink and symlink boundaries. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement.
+Real local ACP/process regressions for sixth-thread admission, nested child exit and original-session collection on macOS/Linux; Linux executable unlink and symlink boundaries. Kimi recovery: preserve original logical work and delivery identity across bounded retries, permission and checked child retirement. Sleep inhibitors retain internal work, siblings and working ancestors through exec, then collect once in the original session. A native macOS ACP peer keeps an in-process task and sole caffeinate child alive past the production idle-sleep deadline predicate and releases the hold after collection.
 
 New module: `true`.
 
@@ -6089,6 +6113,8 @@ New module: `true`.
 - Required symbol: `child_of_codex_host_queues_original_collection_before_releasing_slot`
 - Required symbol: `symlink_named_codex_host_does_not_hide_ordinary_work`
 - Required symbol: `unlinked_codex_host_does_not_retain_finished_turn`
+- Required symbol: `sleep_inhibitor_retains_internal_work_and_collects_once`
+- Required symbol: `internal_work_with_only_caffeinate_survives_idle_deadline_and_collects`
 - Verify: `env -u BUZZ_ACP_SESSION_POLICY -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP cargo test -p buzz-acp resident_helper_tests -- --test-threads=1`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 
@@ -6121,8 +6147,8 @@ Bind duplicate voice-note playback assertions to stable emitted message IDs thro
 
 New module: `false`.
 
-- Required symbol: `const messageIds = await page.evaluate(`
-- Required symbol: `const firstCard = page.locator(`
+- Required symbol: `const [firstId, secondId] = await page.evaluate(`
+- Required symbol: `.locator(`[data-message-id="${firstId}"]`)`
 - Required symbol: `(player as HTMLAudioElement).loop = true;`
 - Verify: `cd desktop && pnpm exec playwright test --project=smoke tests/e2e/voice-note.spec.ts --retries=0`
 
@@ -6897,6 +6923,7 @@ Preserve YAML consumer compatibility while removing the unmaintained dependency 
 
 New module: `false`.
 
+- Required symbol: `rmcp = { version = "3.9",`
 - Verify: `just ci`
 - Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
 
@@ -6906,6 +6933,7 @@ Preserve YAML consumer compatibility while removing the unmaintained dependency 
 
 New module: `false`.
 
+- Required symbol: `rmcp = { version = "3.9",`
 - Verify: `just ci`
 - Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
 
@@ -7818,6 +7846,7 @@ Use the same immutable patched MeshLLM source as the desktop consumer to avoid d
 
 New module: `false`.
 
+- Required symbol: `9e7c2fb2181f66bea1f325c633e5a4364164d6fd`
 - Verify: `cargo test -p buzz-mesh-smoke`
 
 ## `desktop/src-tauri/src/commands/agent_discovery/managed_node.rs`
@@ -7907,8 +7936,7 @@ Exercise the edited thread head only after making its hover-only Reply action ac
 
 New module: `false`.
 
-- Required symbol: `await timelineRow.hover();`
-- Required symbol: `await replyButton.click();`
+- Required symbol: `await pressRowAction(page.getByTestId(`reply-message-${rootId}`));`
 - Required symbol: `deferThreadReplies: true`
 - Verify: `pnpm --dir desktop exec playwright test --project=smoke tests/e2e/thread-head-stale-edit.spec.ts`
 
@@ -8300,7 +8328,7 @@ New module: `false`.
 
 ## `crates/buzz-db/src/runtime/push_enqueue.rs`
 
-Use the existing durable match queue in the event transaction instead of the transient post-commit producer.
+Replace the upstream migration ordinal with its additive fork-history ordinal; preserve the existing 69 migration checksums.
 
 New module: `false`.
 
@@ -8352,7 +8380,7 @@ New module: `false`.
 
 ## `migrations/0056_personal_read_state.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
 
 New module: `false`.
 
@@ -8362,7 +8390,7 @@ Registered upstream deletion: `true`.
 
 ## `migrations/0057_personal_read_started_at.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
 
 New module: `false`.
 
@@ -8388,7 +8416,7 @@ New module: `true`.
 
 ## `migrations/0058_personal_read_through_message.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
 
 New module: `false`.
 
@@ -8406,7 +8434,7 @@ New module: `true`.
 
 ## `migrations/0059_push_rollback_gate.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
 
 New module: `false`.
 
@@ -8424,7 +8452,7 @@ New module: `true`.
 
 ## `migrations/0060_push_single_application.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
 
 New module: `false`.
 
@@ -8434,7 +8462,7 @@ Registered upstream deletion: `true`.
 
 ## `migrations/0061_channel_labels.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
 
 New module: `false`.
 
@@ -8460,7 +8488,7 @@ New module: `true`.
 
 ## `migrations/0062_system_channel_type.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
 
 New module: `false`.
 
@@ -8470,7 +8498,7 @@ Registered upstream deletion: `true`.
 
 ## `migrations/0063_retire_push_match_trigger.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
 
 New module: `false`.
 
@@ -8488,7 +8516,7 @@ New module: `true`.
 
 ## `migrations/0064_profile_name_fields.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
 
 New module: `false`.
 
@@ -8514,7 +8542,7 @@ New module: `true`.
 
 ## `migrations/0065_retire_channel_ttl_trigger.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
 
 New module: `false`.
 
@@ -8524,7 +8552,7 @@ Registered upstream deletion: `true`.
 
 ## `migrations/0066_community_nip_fi_issuers.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
 
 New module: `false`.
 
@@ -8542,7 +8570,7 @@ New module: `true`.
 
 ## `migrations/0067_channel_join_role.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
 
 New module: `false`.
 
@@ -8568,7 +8596,7 @@ New module: `true`.
 
 ## `migrations/0068_entity_deletion_requests.sql`
 
-Preserve applied fork migration 0056 by renumbering only unapplied upstream migrations.
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
 
 New module: `false`.
 
@@ -8749,7 +8777,8 @@ Wait for visible virtual targets before acknowledging navigation and preserve te
 
 New module: `false`.
 
-- Required symbol: `const needsRealization`
+- Required symbol: `pendingRealization: !visible`
+- Required symbol: `if (!visible) return false;`
 - Required symbol: `else if (!virtualizerOwnsPrependAnchoring)`
 - Verify: `cd desktop && node --import ./test-loader.mjs --experimental-strip-types --test "src/features/messages/ui/useAnchoredScroll*.test.mjs"`
 - Verify: `CI=1 pnpm --dir desktop test:e2e:smoke thread-virtualization.spec.ts thread-focus-mode.spec.ts scroll-history.spec.ts thread-unread.spec.ts`
@@ -9004,6 +9033,7 @@ Retain dependency readers and audit until accepted work and workers finish
 
 New module: `true`.
 
+- Required symbol: `"storage-usage-delivery"`
 - Verify: `just test`
 - Verify: `just ci`
 
@@ -9022,6 +9052,8 @@ Connect deployment lifecycle ownership to the existing relay or workflow path
 
 New module: `false`.
 
+- Invocation: `crates/buzz-relay/src/handlers/side_effects.rs` → `track_accepted_child`; exact call `|| state.track_accepted_child(crate::deploy_drain::WorkKind::Background),`; behavior test `deployment_summary_spawn_retains_work_and_failed_lookup_is_unresolved`; verify `cargo test -p buzz-relay`
+- Invocation: `crates/buzz-relay/src/handlers/side_effects.rs` → `track_accepted_child`; exact call `let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);`; behavior test `channel_delete_notifies_every_member_after_cleanup`; verify `scripts/postgres-test-run.sh`
 - Verify: `just test`
 - Verify: `just ci`
 
@@ -9848,6 +9880,1278 @@ New module: `false`.
 
 - Required symbol: `prev.maxNestingDepth === next.maxNestingDepth`
 - Verify: `pnpm --dir desktop test`
+
+## `crates/buzz-acp/src/process_tree/sleep_inhibitor_tests.rs`
+
+Conservative sleep inhibitor classification, Linux payload retention and native macOS process snapshot regressions.
+
+New module: `true`.
+
+- Required symbol: `sleep_inhibitors_cannot_prove_provider_work_is_finished`
+- Required symbol: `linux_inhibitor_and_payload_retain_background_work`
+- Required symbol: `native_caffeinate_and_ordinary_sleep_both_block`
+- Verify: `cargo test -p buzz-acp -- --test-threads=1`
+
+## `.github/workflows/_ci-flake.yml`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `actionlint .github/workflows/_ci-flake.yml`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `.github/workflows/loadgen-image.yml`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Required symbol: `vars.GHCR_LOADGEN_IMAGE`
+- Required symbol: `github.repository == 'block/buzz'`
+- Verify: `actionlint .github/workflows/loadgen-image.yml`
+- Verify: `python3 -m unittest discover -s scripts/fork/tests -v`
+
+## `RELEASING.md`
+
+Document the fork release authority, mandatory exact-source qualification, preserved writer rollout gates and disabled publication without configured policy.
+
+New module: `false`.
+
+- Required symbol: `BUZZ_MOBILE_RELEASE_TAG_RULESET_ID`
+- Required symbol: `BUZZ_MOBILE_RELEASE_BRANCH_RULESET_ID`
+- Verify: `python3 scripts/fork/sync.py validate`
+- Verify: `bash scripts/test-mobile-release-contract.sh`
+
+## `VISION_MOBILE.md`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `crates/buzz-db/src/store/community_auth/postgres_tests.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-db/src/store/entity_deletion_postgres_tests.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-db/src/store/relay_invite/upgrade_postgres_tests.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-relay/src/handlers/artifact_sync.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint. Coalesce failed live fanout into one accepted recovery worker with a dirty bit, race-safe retirement and a persistent retry interval.
+
+New module: `false`.
+
+- Required symbol: `publish_recovery: StdMutex<PublishRecovery>`
+- Required symbol: `const RECOVERY_INTERVAL: Duration = Duration::from_secs(5);`
+- Invocation: `crates/buzz-relay/src/handlers/artifact_sync.rs` → `track_accepted_child`; exact call `let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);`; behavior test `failed_live_publish_retains_retry_work_after_its_parent_finishes`; verify `cargo test -p buzz-relay`
+- Invocation: `crates/buzz-relay/src/handlers/artifact_sync.rs` → `publish_sync_loss`; exact call `let published = state.pubsub.publish_sync_loss().await.is_ok();`; behavior test `loss_during_ack_and_after_retirement_keeps_one_owned_rate_limited_worker`; verify `cargo test -p buzz-relay --lib handlers::artifact_sync::publish_tests::loss_during_ack_and_after_retirement_keeps_one_owned_rate_limited_worker -- --exact`
+- Verify: `cargo test -p buzz-relay`
+- Verify: `scripts/postgres-test-run.sh`
+- Verify: `cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture`
+
+## `crates/buzz-relay/src/handlers/coalesced_refresh.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Required symbol: `pub fn request_tracked`
+- Required symbol: `complete &= success`
+- Required symbol: `work.scope(run).await`
+- Verify: `cargo test -p buzz-relay`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-relay/src/handlers/membership_notice_postgres_tests.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-relay`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-relay/src/storage_usage_delivery.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Invocation: `crates/buzz-relay/src/storage_usage_delivery.rs` → `deployment_worker`; exact call `state.deployment_worker("storage-usage-delivery")`; behavior test `storage_delivery_registers_before_spawn_and_quiesces_without_a_tick`; verify `cargo test -p buzz-relay`
+- Verify: `cargo test -p buzz-relay`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-relay/src/storage_usage_delivery/postgres_tests.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-relay`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-relay/src/storage_usage_delivery/tests.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-relay`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-relay/src/verified_profiles.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Invocation: `crates/buzz-relay/src/verified_profiles.rs` → `track_accepted_child`; exact call `let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);`; behavior test `admitted_profile_owns_work_before_spawn_and_after_socket_parent_finishes`; verify `cargo test -p buzz-relay`
+- Verify: `cargo test -p buzz-relay`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-relay/tests/boot_lifecycle.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-relay`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `crates/buzz-search/src/query.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-search`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `docs/artifact-sync-deployment.md`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `docs/profile-search.md`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `migrations/0069_entity_deletion_approval.sql`
+
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0070_entity_deletion_approval.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0070_validate_entity_deletion_status.sql`
+
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0071_channel_unlisted.sql`
+
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0071_validate_entity_deletion_status.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0072_channel_unlisted.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0072_user_deletion_target.sql`
+
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0073_user_deletion_target.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0073_validate_user_deletion_target.sql`
+
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0074_user_deletion_fences.sql`
+
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0074_validate_user_deletion_target.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0075_invite_revocation.sql`
+
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0075_user_deletion_fences.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0076_artifact_revision_lookup.sql`
+
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0076_invite_revocation.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0077_artifact_revision_lookup.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0077_artifact_sync_timestamps.sql`
+
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0078_artifact_sync_indexes.sql`
+
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0078_artifact_sync_timestamps.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0079_artifact_sync_indexes.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0079_nip_fi_verified_profiles.sql`
+
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0080_channel_auto_join.sql`
+
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0080_nip_fi_verified_profiles.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0081_channel_auto_join.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0081_nip_fi_profile_head_names.sql`
+
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0082_community_auth_upgrades.sql`
+
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0082_nip_fi_profile_head_names.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `migrations/0083_community_auth_upgrades.sql`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `true`.
+
+- Required symbol: `current_setting('lock_timeout')`
+- Required symbol: `LEAST(COALESCE(NULLIF(EXTRACT(EPOCH FROM`
+- Verify: `cargo test -p buzz-db`
+- Verify: `scripts/postgres-test-run.sh`
+
+## `mobile/lib/shared/agents/owned_agent_directory.dart`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `just mobile-test`
+
+## `mobile/test/features/agents/agent_ordering_test.dart`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `just mobile-test`
+
+## `mobile/test/features/agents/agents_harness.dart`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `just mobile-test`
+
+## `mobile/test/features/agents/agents_sheet_test.dart`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `just mobile-test`
+
+## `mobile/test/shared/agents/owned_agent_directory_test.dart`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `just mobile-test`
+
+## `perf/LOADGEN.md`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `web/src/features/invite/ui/InvitePage.tsx`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `pnpm --dir web test:e2e`
+- Verify: `pnpm --dir web check`
+
+## `web/src/shared/lib/buzz-download.ts`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Required symbol: `https://github.com/reynholm/buzz/releases`
+- Required symbol: `release.draft || release.prerelease`
+- Required symbol: `buzz.latestDownload.reynholm-buzz.stable.v3`
+- Required symbol: `/_x64\.dmg$/i`
+- Verify: `pnpm --dir web test:e2e`
+- Verify: `pnpm --dir web check`
+
+## `web/tests/e2e/smoke.spec.ts`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `pnpm --dir web test:e2e`
+- Verify: `pnpm --dir web check`
+
+## `crates/buzz-agent/src/mcp.rs`
+
+Preserve fork behavior while integrating the upstream writer checkpoint.
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `.github/workflows/docker-manual.yml`
+
+Restrict manual relay image publication to the authorized fork, operator and GHCR namespace while preserving source ancestry and immutable manual tags.
+
+New module: `false`.
+
+- Required symbol: `github.repository == 'reynholm/buzz'`
+- Required symbol: `github.triggering_actor == 'reynholm'`
+- Required symbol: `SOURCE_REPOSITORY: reynholm/buzz`
+- Required symbol: `IMAGE_NAME: ghcr.io/reynholm/buzz`
+- Verify: `python3 scripts/test-manual-relay-image-workflow.py`
+- Verify: `actionlint .github/workflows/docker-manual.yml`
+
+## `crates/buzz-db/src/runtime/admitted_tx/postgres_tests.rs`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `crates/buzz-db/src/runtime/media_index_prebuild_postgres_tests.rs`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `crates/buzz-db/src/runtime/probe_task.rs`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `true`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `crates/buzz-db/src/runtime/probe_task/postgres_tests.rs`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `true`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `crates/buzz-db/src/runtime/push_enqueue/postgres_tests.rs`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `crates/buzz-db/src/runtime/tests/listed_channel_name_postgres_tests.rs`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `crates/buzz-db/src/store/media.rs`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `crates/buzz-db/src/store/media_postgres_tests.rs`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `crates/buzz-db/src/test_support.rs`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `crates/buzz-relay/src/handlers/multinode_fanout.rs`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `false`.
+
+- Required symbol: `pub fn spawn_with_cancel(`
+- Required symbol: `while let Some(result) = workers.join_next().await`
+- Invocation: `crates/buzz-relay/src/handlers/multinode_fanout.rs` → `run_worker`; exact call `workers.spawn(run_worker(Arc::clone(&state), queue));`; behavior test `handlers::multinode_fanout::tests::completion_waits_for_worker_delivery`; verify `cargo test -p buzz-relay`
+- Verify: `just ci`
+- Verify: `just test`
+
+## `desktop/README.md`
+
+Document the supported desktop client and fork download route.
+
+New module: `false`.
+
+- Required symbol: `https://github.com/reynholm/buzz/releases`
+- Verify: `just ci`
+- Verify: `just test`
+- Verify: `just desktop-check`
+
+## `desktop/src-tauri/src/commands/team_snapshot/profile.rs`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `desktop/src-tauri/src/relay/profile_avatar/tests.rs`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `desktop/src-tauri/src/relay/profile_avatar/tests/persona_edit.rs`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `docs/channel-name-uniqueness-deployment.md`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `docs/private-media-index-deployment.md`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `migrations/0083_channels_listed_name_unique.sql`
+
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `migrations/0084_channels_listed_name_unique.sql`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `true`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `migrations/0084_default_channel_recovery.sql`
+
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `migrations/0085_community_auth_policy.sql`
+
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `migrations/0085_default_channel_recovery.sql`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `true`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `migrations/0086_community_auth_policy.sql`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `true`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `migrations/0086_private_media.sql`
+
+Map the upstream migration to its additive fork-history ordinal without changing existing migration checksums.
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `migrations/0087_private_media.sql`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `true`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `mobile/test/features/channels/channel_detail_page_test/solo_thread_tests.dart`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `true`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `mobile/test/features/channels/channel_detail_page_test/swipe_reply_tests.dart`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `mobile/test/features/channels/send_message_provider_test.dart`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `schema/tables/public/channels.sql`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `scripts/check-sqlx-pin.py`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `scripts/maintenance/plan_duplicate_listed_channel_renames.sql`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `scripts/maintenance/prebuild-media-edit-index.sql`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `scripts/test-sqlx-pin.py`
+
+Preserve fork contracts while integrating the frozen upstream snapshot.
+
+New module: `false`.
+
+- Verify: `just ci`
+- Verify: `just test`
+
+## `crates/buzz-cli/src/commands/messages/edit.rs`
+
+Preserve exact stdin text and reject blank edits before relay I/O while retaining effective attachment replacement semantics.
+
+New module: `false`.
+
+- Invocation: `crates/buzz-cli/src/commands/messages/edit.rs` → `validate_nonempty_content`; exact call `validate_nonempty_content(&content)?;`; behavior test `blank_message_commands_fail_before_any_relay_request`; verify `cargo test -p buzz-cli`
+- Invocation: `crates/buzz-cli/src/commands/messages/edit.rs` → `read_or_stdin`; exact call `let content = read_or_stdin(content)?;`; behavior test `message_commands_preserve_stdin_bytes_in_signed_events`; verify `cargo test -p buzz-cli`
+- Verify: `cargo test -p buzz-cli`
+
+## `mobile/lib/features/channels/channel_detail_page/message_bubble.dart`
+
+Keep Solo stream reply and media branching writable under the ordinary membership, archive and system-message guards; preserve canonical root, draft and native bridge behavior.
+
+New module: `false`.
+
+- Verify: `just mobile-check mobile-test`
+
+## `mobile/lib/features/channels/channels_provider.dart`
+
+Keep Solo stream reply and media branching writable under the ordinary membership, archive and system-message guards; preserve canonical root, draft and native bridge behavior.
+
+New module: `false`.
+
+- Verify: `just mobile-check mobile-test`
+
+## `mobile/lib/features/channels/message_swipe_reply.dart`
+
+Keep Solo stream reply and media branching writable under the ordinary membership, archive and system-message guards; preserve canonical root, draft and native bridge behavior.
+
+New module: `false`.
+
+- Verify: `just mobile-check mobile-test`
+
+## `mobile/lib/features/channels/thread_detail_page.dart`
+
+Keep Solo stream reply and media branching writable under the ordinary membership, archive and system-message guards; preserve canonical root, draft and native bridge behavior.
+
+New module: `false`.
+
+- Verify: `just mobile-check mobile-test`
+
+## `mobile/lib/features/channels/thread_detail_page/thread_message.dart`
+
+Keep Solo stream reply and media branching writable under the ordinary membership, archive and system-message guards; preserve canonical root, draft and native bridge behavior.
+
+New module: `false`.
+
+- Verify: `just mobile-check mobile-test`
+
+## `scripts/test-manual-relay-image-workflow.py`
+
+Exercise the authorized manual-image scope, rejected destinations and real-Git source ancestry without network or publishing.
+
+New module: `true`.
+
+- Required symbol: `def test_exact_authorized_scope_and_all_foreign_destinations(`
+- Required symbol: `def test_source_refs_and_reachability_with_real_git(`
+- Verify: `python3 scripts/test-manual-relay-image-workflow.py`
+
+## `patches/virtua@0.49.3.patch`
+
+Retain virtualizer shift clamping and cancel stale imperative scrolling when the reader takes ownership.
+
+New module: `false`.
+
+- Required symbol: `cancelScroll`
+- Verify: `just desktop-test`
+
+## `pnpm-lock.yaml`
+
+Pin the retained virtualizer patch including imperative scroll cancellation.
+
+New module: `false`.
+
+- Required symbol: `virtua@0.49.3`
+- Verify: `pnpm install --frozen-lockfile`
+- Verify: `just desktop-test`
+
+## `desktop/src/features/messages/ui/virtuaShiftClampPatch.jsdom-test.mjs`
+
+Exercise the installed virtualizer and production bottom-settle hook across early and measured reader takeover and later target jumps.
+
+New module: `false`.
+
+- Verify: `just desktop-test`
+
+## `crates/buzz-test-client/src/loadgen/net.rs`
+
+Preserve explicit community socket routing through ambient proxy environments without suppressing operator proxy routing.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-test-client`
+
+## `desktop/src/app/RelayEntryGate.tsx`
+
+Keep the supported fork client download destination through the entry gate and browser-open fallback.
+
+New module: `false`.
+
+- Required symbol: `https://github.com/reynholm/buzz/releases`
+- Required symbol: `openUrl(supportedClientDownloadUrl)`
+- Verify: `cd desktop && pnpm exec playwright test tests/e2e/relay-entry-guidance.spec.ts`
+
+## `desktop/tests/e2e/relay-entry-guidance.spec.ts`
+
+Exercise entry-gate download dispatch and manual fallback at the real opener boundary.
+
+New module: `false`.
+
+- Required symbol: `https://github.com/reynholm/buzz/releases`
+- Required symbol: `plugin:opener|open_url`
+- Verify: `cd desktop && pnpm exec playwright test tests/e2e/relay-entry-guidance.spec.ts`
+
+## `scripts/mobile-release.sh`
+
+Publish only an immutable, qualified source candidate through the authorized fork operator and protected tag policy.
+
+New module: `false`.
+
+- Required symbol: `require_canonical_repository || exit 1`
+- Required symbol: `require_mobile_release_operator || exit 1`
+- Required symbol: `require_mobile_release_branch_ruleset "$MOBILE_RELEASE_SOURCE_BRANCH" || exit 1`
+- Required symbol: `require_mobile_release_qualification "$source_sha" || exit 1`
+- Required symbol: `require_mobile_release_tag_ruleset || exit 1`
+- Verify: `bash scripts/test-mobile-release-contract.sh`
+
+## `scripts/mobile-release-source.sh`
+
+Require fork branch review policy and trusted successful check producers for the exact candidate source commit.
+
+New module: `false`.
+
+- Required symbol: `require_mobile_release_branch_ruleset()`
+- Required symbol: `require_mobile_release_qualification()`
+- Required symbol: `require_mobile_release_commit_ancestor()`
+- Verify: `bash scripts/test-mobile-release-contract.sh`
+
+## `scripts/release-rulesets.sh`
+
+Bind release authorization to the fork and operator; fail closed until explicit fork tag and branch policies exist.
+
+New module: `false`.
+
+- Required symbol: `MOBILE_RELEASE_REPOSITORY=reynholm/buzz`
+- Required symbol: `MOBILE_RELEASE_OPERATOR=reynholm`
+- Required symbol: `BUZZ_MOBILE_RELEASE_TAG_RULESET_ID`
+- Required symbol: `BUZZ_MOBILE_RELEASE_BRANCH_RULESET_ID`
+- Required symbol: `require_mobile_release_operator()`
+- Verify: `bash scripts/test-mobile-release-contract.sh`
+
+## `scripts/test-mobile-release-contract.sh`
+
+Exercise real Git immutable candidates and pre-tag refusals for unauthorized origins, operators, policies and source qualification.
+
+New module: `false`.
+
+- Required symbol: `GH_CHECK_CONCLUSION`
+- Required symbol: `GH_CHECK_APP`
+- Required symbol: `GH_TAG_REF_FAIL`
+- Verify: `bash scripts/test-mobile-release-contract.sh`
+
+## `crates/buzz-relay/src/handlers/auth_deploy_postgres_tests.rs`
+
+Drive actual WebSocket AUTH and blocked membership writes to prove default auto-join remains drain-owned after socket cleanup, with and without durable pending roster work.
+
+New module: `true`.
+
+- Required symbol: `root_auth_first_default_join_remains_owned_after_socket_closes`
+- Required symbol: `root_auth_pending_default_join_remains_owned_after_socket_closes`
+- Verify: `scripts/postgres-test-run.sh -p buzz-relay --lib`
+
+## `crates/buzz-pubsub/src/subscriber.rs`
+
+Subscribe to operational loss before readiness and advance the live loss epoch without forwarding a client Event.
+
+New module: `false`.
+
+- Required symbol: `pub(crate) const SYNC_LOSS_CHANNEL: &str = "buzz:control:artifact-sync-loss";`
+- Invocation: `crates/buzz-pubsub/src/subscriber.rs` → `subscribe`; exact call `sink.subscribe(SYNC_LOSS_CHANNEL).await?;`; behavior test `control_subscription_covers_ready_readers_and_never_forwards_events`; verify `cargo test -p buzz-pubsub --lib subscriber::tests::control_subscription_covers_ready_readers_and_never_forwards_events -- --exact`
+- Invocation: `crates/buzz-pubsub/src/subscriber.rs` → `mark_loss`; exact call `if channel_name == SYNC_LOSS_CHANNEL {
+                    // Even an unfamiliar control payload means possible loss.
+                    mark_loss(link, true);`; behavior test `control_subscription_covers_ready_readers_and_never_forwards_events`; verify `cargo test -p buzz-pubsub --lib subscriber::tests::control_subscription_covers_ready_readers_and_never_forwards_events -- --exact`
+- Verify: `cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture`
+
+## `crates/buzz-relay/src/handlers/artifact_sync_publish_tests.rs`
+
+Exercise real recovery publication against a controlled Redis transport: concurrent loss, retry spacing, retirement and drain acknowledgement.
+
+New module: `true`.
+
+- Required symbol: `async fn loss_during_ack_and_after_retirement_keeps_one_owned_rate_limited_worker()`
+- Verify: `cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture`
+
+## `docs/nips/NIP-AR.md`
+
+Specify bounded coalesced artifact loss recovery, accepted drain ownership and coordinated operational-topic rollout.
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-relay --lib handlers::artifact_sync:: -- --nocapture`
+- Verify: `cargo test -p buzz-pubsub --lib subscriber::tests:: -- --nocapture`
+
+## `mobile/ios/RunnerTests/BrowserAuthBridgeTests.swift`
+
+Use fictional organization hosts in the native browser login allow/refuse table while preserving production URL policy and every assertion.
+
+New module: `false`.
+
+- Required symbol: `func testAllowsOnlyBuilderlabLoginPages()`
+- Required symbol: `https://example-org.builderlab.xyz/api/goose/v1/auth/login?type=cli`
+- Verify: `cd mobile && xcodebuild test -workspace ios/Runner.xcworkspace -scheme Runner -destination "${BUZZ_IOS_TEST_DESTINATION:?Set an available iOS Simulator destination}" -only-testing:RunnerTests/BrowserAuthBridgeTests`
+
+## `mobile/lib/shared/hosted/builderlab_account.dart`
+
+Expose same-subject session revisions and reject retired queued operations before credentials or network side effects.
+
+New module: `false`.
+
+- Required symbol: `ValueListenable<int> get sessionChanges`
+- Required symbol: `void Function()? checkCurrent`
+- Invocation: `mobile/lib/shared/hosted/builderlab_account.dart` → `checkCurrent`; exact call `return _serial(() async {
+      checkCurrent?.call();
+      final credential = _credential;`; behavior test `callback exchange waits for an in-flight startup restore`; verify `cd mobile && flutter test --no-pub test/shared/hosted/builderlab_account_test.dart --plain-name 'callback exchange waits'`
+- Verify: `cd mobile && flutter test --no-pub test/shared/hosted/builderlab_account_test.dart --plain-name 'callback exchange waits'`
+
+## `mobile/lib/shared/agents/remote_agents.dart`
+
+Pin agent creation to its original account, identity slot, community and generation; retain recovery in the original storage scope and fence late UI/network effects.
+
+New module: `false`.
+
+- Required symbol: `void Function() _sessionCheck()`
+- Required symbol: `account.sessionChanges.addListener(_accountChanged);`
+- Required symbol: `_savePending(value, scope, check);`
+- Invocation: `mobile/lib/shared/agents/remote_agents.dart` → `_accountChanged`; exact call `controller._accountChanged();`; behavior test `creation journal retires on community away and back and remains resumable`; verify `cd mobile && flutter test --no-pub test/shared/agents/remote_agent_session_test.dart --plain-name 'community away and back'`
+- Invocation: `mobile/lib/shared/agents/remote_agents.dart` → `check`; exact call `check();
+    pending = value;`; behavior test `creation journal retires on different account and remains resumable`; verify `cd mobile && flutter test --no-pub test/shared/agents/remote_agent_session_test.dart`
+- Invocation: `mobile/lib/shared/agents/remote_agents.dart` → `submitSignedEventOnce`; exact call `await submitSignedEventOnce(
+        wsUrl: config.wsUrl,
+        headers: headers,
+        checkCurrent: check,`; behavior test `registrations use a WebSocket URL for https-saved communities`; verify `cd mobile && flutter test --no-pub test/shared/agents/remote_agents_test.dart --plain-name 'registrations use a WebSocket URL for https-saved communities'`
+- Verify: `cd mobile && flutter test --no-pub test/shared/agents/remote_agent_session_test.dart`
+- Verify: `cd mobile && flutter test --no-pub test/shared/agents/remote_agents_test.dart --plain-name 'registrations use a WebSocket URL for https-saved communities'`
+
+## `mobile/lib/shared/relay/signed_event_relay.dart`
+
+Allow scoped callers to retire a one-shot signed publication immediately before EVENT send after socket authentication.
+
+New module: `false`.
+
+- Required symbol: `void Function()? checkCurrent`
+- Invocation: `mobile/lib/shared/relay/signed_event_relay.dart` → `checkCurrent`; exact call `onConnected: () {
+      checkCurrent?.call();
+      socket.send`; behavior test `registrations use a WebSocket URL for https-saved communities`; verify `cd mobile && flutter test --no-pub test/shared/agents/remote_agents_test.dart --plain-name 'registrations use a WebSocket URL for https-saved communities'`
+- Verify: `cd mobile && flutter test --no-pub test/shared/agents/remote_agents_test.dart --plain-name 'registrations use a WebSocket URL for https-saved communities'`
+
+## `mobile/lib/shared/me/me_chat_creation.dart`
+
+Preserve uncertain expired first-message identity when exact visible history cannot prove acceptance; never resurrect deleted text by signing a replacement.
+
+New module: `false`.
+
+- Required symbol: `Confirm acceptance without replacing an expired identity`
+- Required symbol: `The first message’s delivery is uncertain and it is too old to retry.`
+- Verify: `cd mobile && flutter test --no-pub test/shared/me/me_chat_creation_test.dart`
+
+## `mobile/test/shared/agents/remote_agent_session_test.dart`
+
+Exercise real account/controller and provider lifetime fences across account changes, same-subject renewal and community away/back; retain original durable recovery.
+
+New module: `true`.
+
+- Verify: `cd mobile && flutter test --no-pub test/shared/agents/remote_agent_session_test.dart`
+
+## `mobile/test/shared/agents/remote_agents_test.dart`
+
+Exercise policy publication retirement during delayed socket connection and isolate the absent-community presence fixture.
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test --no-pub test/shared/agents/remote_agents_test.dart --plain-name 'registrations use a WebSocket URL for https-saved communities'`
+- Verify: `cd mobile && flutter test --no-pub test/shared/agents/remote_agents_test.dart`
+
+## `mobile/test/shared/hosted/builderlab_account_test.dart`
+
+Exercise the real serialized account queue with a session revision guard after same-subject credential renewal.
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test --no-pub test/shared/hosted/builderlab_account_test.dart --plain-name 'callback exchange waits'`
+
+## `mobile/test/shared/me/me_chat_creation_test.dart`
+
+Cover expired absent, visible and deleted first-message acceptance, original intent retention and explicit discard; retain unexpired same-ID retry checks.
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test --no-pub test/shared/me/me_chat_creation_test.dart`
+
+## `mobile/test/helpers/hosted_communities_fixture.dart`
+
+Keep external account fixture signatures compatible with the optional queued operation guard.
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test --no-pub test/shared/hosted`
+
+## `mobile/test/helpers/remote_agents_fixture.dart`
+
+Keep external account fixture signatures compatible with the optional queued operation guard.
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test --no-pub test/shared/agents test/shared/hosted`
+
+## `mobile/test/shared/hosted/device_identity_reconciliation_test.dart`
+
+Keep external account fixture signatures compatible with the optional queued operation guard.
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test --no-pub test/shared/hosted/device_identity_reconciliation_test.dart`
+
+## `mobile/test/shared/hosted/hosted_admission_test.dart`
+
+Keep external account fixture signatures compatible with the optional queued operation guard.
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test --no-pub test/shared/hosted/hosted_admission_test.dart`
+
+## `mobile/test/shared/hosted/hosted_backup_service_test.dart`
+
+Keep external account fixture signatures compatible with the optional queued operation guard.
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test --no-pub test/shared/hosted/hosted_backup_service_test.dart`
+
+## `mobile/test/shared/hosted/hosted_environment_flow_test.dart`
+
+Keep external account fixture signatures compatible with the optional queued operation guard.
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test --no-pub test/shared/hosted/hosted_environment_flow_test.dart`
+
+## `crates/buzz-test-client/src/loadgen/desktop.rs`
+
+Wait for the asserted legacy unread repair before stopping the fixture; retain the production clients, timeout and all post-drive assertions.
+
+New module: `false`.
+
+- Required symbol: `&& o.count("desktop_unread") >= 4`
+- Verify: `cargo test -p buzz-test-client --lib loadgen::desktop::tests::legacy_ticks_reread_and_replace_batches_every_tick -- --exact`
+
+## `mobile/test/shared/relay/media_disk_cache_test.dart`
+
+Observe durable bytes before cold cache reopen instead of assuming image decoding completes asynchronous disk writes; preserve production and assertions.
+
+New module: `false`.
+
+- Required symbol: `if (!listEquals((await cache.read(url))?.bytes, _pngBytes))`
+- Verify: `cd mobile && flutter test --no-pub test/shared/relay/media_disk_cache_test.dart`
+
+## `mobile/test/shared/community/community_provider_test.dart`
+
+Stage replacement-account cache directories behind the real cache-root boundary after startup cleanup, then verify queued sweeps preserve the latest account and remove obsolete caches.
+
+New module: `false`.
+
+- Required symbol: `await sweepStarted.future;`
+- Required symbol: `sweepRoot.complete(mediaRoot);`
+- Verify: `just mobile-check mobile-test`
 
 ## `crates/buzz-acp/src/acp/linux_resources.rs`
 

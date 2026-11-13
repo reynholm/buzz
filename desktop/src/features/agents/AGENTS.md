@@ -456,6 +456,20 @@ keeps the source URL, not the target projection. Transfer or kind:0 rejection
 leaves the previous profile intact so normal reconciliation can retry. The
 Agent-managed profiles opt-out still disables automatic reconciliation.
 
+Creation explicitly transfers a chosen target-local avatar: the captured creating
+owner downloads only that image, then the new agent signs an upload of the
+verified bytes before its profile is published. The relay never lends an
+owner's upload proof to the agent. Automatic reconciliation has no owner signer.
+The captured community stays pinned through download, upload and profile publication, even if the active
+workspace changes while the request is awaiting I/O.
+
+Changed persona avatars transfer before local saves; a failed transfer returns
+an error and leaves the old local avatar intact. A concurrent settings/workspace
+change fences the save and requires retry. Team and individual snapshot imports
+transfer target-local poster and animation bytes before profile publication and
+report errors in the import result. All explicit flows capture owner/community
+before awaits. Unchanged-avatar reconciliation never borrows owner authority.
+
 The configured community origin set is refreshed through narrow workspace IPC
 before startup restore and when inactive communities change, without resetting
 active community state. After source removal, the shared writer may reuse an
@@ -528,3 +542,8 @@ the technical restart confirmation. Completion removes only its own scope.
 `desktop/tests/e2e/session-controls.spec.ts` cover grammar, permissions, races,
 command presentation, keyboard menus and draft preservation. Keep the existing
 `session-status.spec.ts` quiet-paragraph assertions intact.
+Changed-avatar edits refuse the entire save before any transfer when a linked
+instance has no usable signing key. The error names affected instances; restore
+their keys, or remove/unlink those instances, then retry. The previous persona
+and instance avatars remain unchanged, so the same requested avatar is retryable.
+Keys may be permanently lost; waiting alone does not repair a lost key.

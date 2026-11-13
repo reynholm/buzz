@@ -1,6 +1,7 @@
 //! Production CLI regressions against a signature-checking local mock relay.
 use super::*;
 use axum::{extract::State, response::IntoResponse, routing::post, Json, Router};
+use nostr::Keys;
 use nostr::{Event, EventBuilder, Kind, Tag};
 use std::sync::{Arc, Mutex};
 
@@ -68,6 +69,13 @@ async fn query(
         return Json(serde_json::json!([r.parent]));
     }
     let events = r.events.lock().unwrap();
+    if filter["effective_edit"] == 1 {
+        let original = events
+            .iter()
+            .find(|event| filter["ids"][0] == event.id.to_hex())
+            .expect("effective edit target");
+        return Json(serde_json::json!({"effective_edit": 1, "original": original, "edit": null}));
+    }
     Json(serde_json::json!(events
         .iter()
         .filter(|e| filter["ids"]
@@ -206,9 +214,12 @@ pub(super) async fn deliver_with_status(
     let Cmd::Messages(command) = cli.command else {
         panic!("expected messages command");
     };
-    let client = BuzzClient::new(url.into(), r.keys.clone(), None, None)
-        .unwrap()
-        .with_session_status_dir(status_dir.map(std::path::Path::to_owned));
+    let client = BuzzClient::new(
+        url.into(),
+        crate::credentials::Credentials::from_keys(r.keys.clone()),
+    )
+    .unwrap()
+    .with_session_status_dir(status_dir.map(std::path::Path::to_owned));
     match commands::messages::dispatch(command, &client, &OutputFormat::Json).await {
         Ok(()) => 0,
         Err(e) => {
@@ -258,7 +269,11 @@ async fn managed_top_level_route_is_immutable_and_does_not_invent_a_thread() {
         };
         command
     };
-    let client = BuzzClient::new(url, r.keys.clone(), None, None).unwrap();
+    let client = BuzzClient::new(
+        url,
+        crate::credentials::Credentials::from_keys(r.keys.clone()),
+    )
+    .unwrap();
     commands::messages::dispatch(make("first"), &client, &OutputFormat::Json)
         .await
         .unwrap();
@@ -332,7 +347,11 @@ async fn managed_revoked_access_refuses_pending_and_confirmed_replay() {
 async fn managed_mentions_progress_and_explicit_edit_remain_independent() {
     let (r, url, dir) = fixture().await;
     let key = Uuid::new_v4().to_string();
-    let client = BuzzClient::new(url.clone(), r.keys.clone(), None, None).unwrap();
+    let client = BuzzClient::new(
+        url.clone(),
+        crate::credentials::Credentials::from_keys(r.keys.clone()),
+    )
+    .unwrap();
     commands::messages::cmd_send_message(
         &client,
         commands::messages::SendMessageParams {
@@ -343,6 +362,7 @@ async fn managed_mentions_progress_and_explicit_edit_remain_independent() {
             broadcast: false,
             files: vec![],
             mentions: vec![],
+            from_thread: None,
         },
     )
     .await
@@ -356,9 +376,17 @@ async fn managed_mentions_progress_and_explicit_edit_remain_independent() {
         .tags
         .iter()
         .any(|tag| tag.as_slice() == ["p", &r.keys.public_key().to_hex()]));
-    commands::messages::cmd_edit_message(&client, &event.id.to_hex(), "correction")
-        .await
-        .unwrap();
+    commands::messages::dispatch(
+        MessagesCmd::Edit {
+            event: event.id.to_hex(),
+            content: "correction".into(),
+            clear_attachments: false,
+        },
+        &client,
+        &OutputFormat::Json,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         deliver(&r, &url, dir.path(), &key, "another final").await,
         0
@@ -673,7 +701,11 @@ async fn managed_key_namespace_separates_signers_and_relays() {
 #[tokio::test]
 async fn managed_explicit_callback_mention_preserves_unresolved_presentation_name() {
     let (r, url, dir) = fixture().await;
-    let client = BuzzClient::new(url, r.keys.clone(), None, None).unwrap();
+    let client = BuzzClient::new(
+        url,
+        crate::credentials::Credentials::from_keys(r.keys.clone()),
+    )
+    .unwrap();
     let cli = parse_args([
         "buzz",
         "messages",
@@ -804,4 +836,132 @@ async fn managed_expired_journal_never_treats_legacy_wrapper_ack_as_delivery() {
         .unwrap()
         .iter()
         .all(|e| u32::from(e.kind.as_u16()) == buzz_core::kind::KIND_MANAGED_DELIVERY_RECOVERY));
+}
+
+#[tokio::test]
+async fn managed_recovery_uses_nonlocal_signer_and_preserves_original_delegation() {
+    async fn send(
+        client: &BuzzClient,
+        relay: &Relay,
+        directory: &std::path::Path,
+        key: &str,
+        content: &str,
+    ) -> Result<(), CliError> {
+        let cli = parse_args([
+            "buzz",
+            "messages",
+            "deliver",
+            "--delivery-key",
+            key,
+            "--journal-dir",
+            directory.to_str().unwrap(),
+            "--channel",
+            &relay.channel,
+            "--reply-to",
+            &relay.parent.id.to_hex(),
+            "--content",
+            content,
+        ])
+        .map_err(|error| CliError::Usage(error.to_string()))?;
+        let Cmd::Messages(command) = cli.command else {
+            panic!("expected messages command");
+        };
+        commands::messages::dispatch(command, client, &OutputFormat::Json).await
+    }
+
+    let (relay, url, directory) = fixture().await;
+    let key = Uuid::new_v4().to_string();
+    let delegated = |owner: &Keys| {
+        let json = buzz_sdk::nip_oa::compute_auth_tag(owner, &relay.keys.public_key(), "").unwrap();
+        let tag = buzz_sdk::nip_oa::parse_auth_tag(&json).unwrap();
+        // This credential has only a signer and public key, exactly as a
+        // desktop-backed credential does; there are no local keys to export.
+        let credentials = crate::credentials::Credentials::from_signer(
+            Arc::new(relay.keys.clone()),
+            relay.keys.public_key(),
+        )
+        .with_auth_tag(tag.clone(), json);
+        (BuzzClient::new(url.clone(), credentials).unwrap(), tag)
+    };
+    let (original_client, original_auth) = delegated(&Keys::generate());
+    send(
+        &original_client,
+        &relay,
+        directory.path(),
+        &key,
+        "original report",
+    )
+    .await
+    .unwrap();
+    let path = directory.path().join("journal.json");
+    let mut journal: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let record = journal["entries"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+        .next()
+        .unwrap();
+    let event: Event = serde_json::from_value(record["event"].clone()).unwrap();
+    let original = EventBuilder::new(event.kind, &event.content)
+        .tags(event.tags.clone())
+        .allow_self_tagging()
+        .custom_created_at(nostr::Timestamp::from(
+            nostr::Timestamp::now().as_secs() - 3600,
+        ))
+        .sign_with_keys(&relay.keys)
+        .unwrap();
+    record["event"] = serde_json::to_value(&original).unwrap();
+    record["confirmed_at"] = serde_json::Value::Null;
+    std::fs::write(&path, journal.to_string()).unwrap();
+    relay.events.lock().unwrap().clear();
+
+    // Fresh authority signs the envelope; the candidate must retain the
+    // journal's original attestation, content and route byte for byte.
+    let (recovery_client, current_auth) = delegated(&Keys::generate());
+    let result = send(
+        &recovery_client,
+        &relay,
+        directory.path(),
+        &key,
+        "replacement text",
+    )
+    .await;
+    assert!(
+        matches!(result, Err(CliError::ManagedDeliveryPending(_))),
+        "{result:?}"
+    );
+    let events = relay.events.lock().unwrap();
+    assert_eq!(events.len(), 1, "recovery must submit exactly once");
+    let envelope = &events[0];
+    assert_eq!(
+        envelope.kind.as_u16(),
+        buzz_core::kind::KIND_MANAGED_DELIVERY_RECOVERY as u16
+    );
+    let auths: Vec<_> = envelope
+        .tags
+        .iter()
+        .filter(|tag| tag.as_slice()[0] == "auth")
+        .collect();
+    assert_eq!(auths, vec![&current_auth]);
+    let request: buzz_core::managed_delivery::RecoveryRequest =
+        serde_json::from_str(&envelope.content).unwrap();
+    assert_eq!(request.original, original);
+    let candidate = request.candidate.restore(&request.original).unwrap();
+    candidate.verify().unwrap();
+    assert_eq!(candidate.tags, original.tags);
+    assert_eq!(candidate.content, "original report");
+    assert!(candidate.tags.iter().any(|tag| tag == &original_auth));
+    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let record = saved["entries"]
+        .as_object()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap();
+    assert!(
+        record["confirmed_at"].is_null(),
+        "legacy envelope acknowledgment cannot confirm delivery"
+    );
+    assert_eq!(record["event"], serde_json::to_value(original).unwrap());
 }

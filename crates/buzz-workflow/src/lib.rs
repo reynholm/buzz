@@ -104,7 +104,16 @@ pub struct WorkflowEngine {
     /// `buzz-relay`).
     pub(crate) workflow_cache:
         moka::sync::Cache<(CommunityId, Uuid), Arc<Vec<buzz_db::workflow::WorkflowRecord>>>,
+    /// Workflows whose ban denial was logged at WARN within the last
+    /// [`BAN_DENIAL_WARN_INTERVAL`], keyed `(community_id, workflow_id)`. A
+    /// banned owner's workflow is denied on every matching event and every
+    /// cron tick; this keeps that expected denial from flooding the log.
+    pub(crate) ban_denial_warned: moka::sync::Cache<(CommunityId, Uuid), ()>,
 }
+
+/// How often a banned owner's workflow denial is logged at WARN. Denials in
+/// between log at DEBUG. Other authority failures always log at WARN.
+const BAN_DENIAL_WARN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(600);
 
 impl WorkflowEngine {
     /// Create a new `WorkflowEngine`.
@@ -122,6 +131,7 @@ impl WorkflowEngine {
                 .max_capacity(10_000)
                 .time_to_live(std::time::Duration::from_secs(10))
                 .build(),
+            ban_denial_warned: ban_denial_warn_cache(BAN_DENIAL_WARN_INTERVAL),
         }
     }
 
@@ -145,10 +155,15 @@ impl WorkflowEngine {
     ///   in a role that can write (a guest cannot);
     /// - if the definition contains an exfiltration-capable action
     ///   (`call_webhook`), the owner must currently hold the `owner` or
-    ///   `admin` role.
+    ///   `admin` role;
+    /// - the owner, or the human owner of an agent owner, must not be banned
+    ///   from the community. Bans leave channel membership in place, so the
+    ///   role check alone would keep a banned owner's workflows running.
     ///
     /// Any lookup error denies (fail-closed): a removed owner must never keep
     /// exfiltration authority because a membership read happened to fail.
+    /// This is a point-in-time check: it does not cancel runs that already
+    /// exist, and a ban that commits after it can race with run creation.
     pub async fn check_owner_authority(
         &self,
         community_id: CommunityId,
@@ -165,12 +180,49 @@ impl WorkflowEngine {
                     "owner authority lookup failed (fail-closed): {e}"
                 ))
             })?;
-        if owner_authority_allows(role.as_deref(), def.requires_elevated_authority()) {
-            Ok(())
-        } else {
-            Err(WorkflowError::Unauthorized(
+        if !owner_authority_allows(role.as_deref(), def.requires_elevated_authority()) {
+            return Err(WorkflowError::Unauthorized(
                 "workflow owner lacks current channel authority".into(),
-            ))
+            ));
+        }
+        let restrictions = self
+            .db
+            .moderation_restriction_state(community_id, owner_pubkey)
+            .await
+            .map_err(|e| {
+                WorkflowError::Unauthorized(format!(
+                    "owner restriction lookup failed (fail-closed): {e}"
+                ))
+            })?;
+        if restrictions.banned {
+            return Err(WorkflowError::OwnerBanned);
+        }
+        Ok(())
+    }
+
+    /// Log a [`check_owner_authority`](Self::check_owner_authority) denial
+    /// that skipped a run. A ban denial logs at WARN at most once per
+    /// workflow per [`BAN_DENIAL_WARN_INTERVAL`], and at DEBUG otherwise;
+    /// every other denial, including a failed lookup, logs at WARN.
+    fn log_owner_denial(
+        &self,
+        community_id: CommunityId,
+        workflow_id: Uuid,
+        trigger: &'static str,
+        err: &WorkflowError,
+    ) {
+        if should_warn_owner_denial(&self.ban_denial_warned, community_id, workflow_id, err) {
+            tracing::warn!(
+                workflow_id = %workflow_id,
+                trigger,
+                "Skipping workflow — owner authority check failed: {err}"
+            );
+        } else {
+            tracing::debug!(
+                workflow_id = %workflow_id,
+                trigger,
+                "Skipping workflow — owner authority check failed: {err}"
+            );
         }
     }
 
@@ -313,7 +365,7 @@ impl WorkflowEngine {
                 }
             }
             Err((e, progress)) => {
-                tracing::error!(run_id = %run_id, "Workflow run failed: {e}");
+                tracing::error!(run_id = %run_id, error = %e.log_text(), "Workflow run failed");
                 let mut full_trace = prefix;
                 full_trace.extend(progress.trace);
                 let trace_json = serde_json::Value::Array(full_trace);
@@ -433,10 +485,7 @@ impl WorkflowEngine {
                 .check_owner_authority(community_id, channel_id, &workflow.owner_pubkey, &def)
                 .await
             {
-                tracing::warn!(
-                    workflow_id = %workflow.id,
-                    "Skipping workflow — owner authority check failed: {e}"
-                );
+                self.log_owner_denial(community_id, workflow.id, "event", &e);
                 continue;
             }
 
@@ -544,11 +593,13 @@ impl WorkflowEngine {
         }
     }
 
-    /// Evaluate one scheduler tick using the same admission and durable claim
-    /// path as the background loop. Existing admitted runs may outlive the tick.
+    /// Evaluate a scheduled tick through the admitted workflow lifecycle.
     pub async fn run_scheduled_tick(self: &Arc<Self>) {
-        let now = Utc::now();
+        self.cron_tick(Utc::now()).await;
+    }
 
+    /// Evaluate schedules at an explicit time without changing admission ownership.
+    pub(crate) async fn cron_tick(self: &Arc<Self>, now: DateTime<Utc>) {
         let workflows = match self.db.list_all_enabled_workflows().await {
             Ok(wf) => wf,
             Err(e) => {
@@ -662,10 +713,7 @@ impl WorkflowEngine {
                 .check_owner_authority(community_id, channel_id, &workflow.owner_pubkey, &def)
                 .await
             {
-                tracing::warn!(
-                    workflow_id = %workflow.id,
-                    "Cron tick: skipping workflow — owner authority check failed: {e}"
-                );
+                self.log_owner_denial(community_id, workflow.id, trigger_type, &e);
                 continue;
             }
 
@@ -814,6 +862,36 @@ impl WorkflowEngine {
             workflows.iter().map(|w| (w.community_id, w.id)).collect();
         self.last_fired.retain(|key, _| active_ids.contains(key));
     }
+}
+
+/// The cache behind [`WorkflowEngine::ban_denial_warned`]: an entry expires
+/// `warn_interval` after the WARN that inserted it, so the next ban denial
+/// for that workflow warns again.
+fn ban_denial_warn_cache(
+    warn_interval: std::time::Duration,
+) -> moka::sync::Cache<(CommunityId, Uuid), ()> {
+    moka::sync::Cache::builder()
+        .max_capacity(10_000)
+        .time_to_live(warn_interval)
+        .build()
+}
+
+/// Whether an owner-authority denial for this workflow logs at WARN. A ban
+/// denial warns only when no warning for the same workflow is still inside
+/// `warned`'s TTL; every other denial always warns.
+fn should_warn_owner_denial(
+    warned: &moka::sync::Cache<(CommunityId, Uuid), ()>,
+    community_id: CommunityId,
+    workflow_id: Uuid,
+    err: &WorkflowError,
+) -> bool {
+    if !matches!(err, WorkflowError::OwnerBanned) {
+        return true;
+    }
+    warned
+        .entry((community_id, workflow_id))
+        .or_insert(())
+        .is_fresh()
 }
 
 /// Find the cron schedule instant that fired within the `window_secs`-wide
@@ -987,7 +1065,8 @@ async fn should_fire_workflow(
             Err(e) => {
                 tracing::warn!(
                     workflow_id = %workflow_id,
-                    "Trigger filter error: {e} — skipping workflow"
+                    error_kind = e.code(),
+                    "Trigger filter error — skipping workflow"
                 );
                 return false;
             }
@@ -1970,16 +2049,19 @@ steps:
 
     // -- SEC-006: event-path regression (requires Postgres) ----------------
 
-    async fn setup_db() -> buzz_db::Db {
-        let database_url = std::env::var("BUZZ_TEST_DATABASE_URL")
+    fn test_database_url() -> String {
+        std::env::var("BUZZ_TEST_DATABASE_URL")
             .or_else(|_| std::env::var("DATABASE_URL"))
             // Local-only test default; this is not a production credential.
             .unwrap_or_else(|_| {
                 let local_test_database = "postgres://buzz:buzz_dev@localhost:5432/buzz"; // sadscan:disable np.postgres.1
                 local_test_database.to_owned()
-            });
+            })
+    }
+
+    async fn setup_db() -> buzz_db::Db {
         buzz_db::Db::new(&buzz_db::DbConfig {
-            database_url,
+            database_url: test_database_url(),
             ..Default::default()
         })
         .await
@@ -2103,6 +2185,72 @@ steps:
         );
     }
 
+    /// A ban leaves the owner's channel membership in place, so the event
+    /// path must still stop creating runs while the owner is banned, and
+    /// resume once the ban is lifted. Cron and webhook runs pass through the
+    /// same `check_owner_authority` gate.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn on_event_denies_run_while_owner_banned() {
+        let db = setup_db().await;
+        let creator = nostr::Keys::generate().public_key().to_bytes().to_vec();
+        let member = nostr::Keys::generate().public_key().to_bytes().to_vec();
+        let (community, channel_id) = setup_channel(&db, &creator, &member).await;
+
+        let def_json = serde_json::json!({
+            "name": "ban-event",
+            "trigger": {"on": "message_posted"},
+            "steps": [{"id": "s1", "action": "send_message", "text": "hi"}],
+            "enabled": true,
+        })
+        .to_string();
+        let workflow_id = db
+            .create_workflow(
+                community,
+                Some(channel_id),
+                &member,
+                "ban-event",
+                &def_json,
+                &[0u8; 32],
+            )
+            .await
+            .expect("create workflow");
+        let engine = Arc::new(WorkflowEngine::new(db.clone(), WorkflowConfig::default()));
+        let run_count = || async {
+            db.list_workflow_runs(community, workflow_id, 10)
+                .await
+                .expect("list runs")
+                .len()
+        };
+
+        db.ban_community_member(community, &member, &creator, None, None)
+            .await
+            .expect("ban owner");
+        engine
+            .on_event(community, &message_event(channel_id))
+            .await
+            .expect("on_event while banned");
+        assert_eq!(
+            run_count().await,
+            0,
+            "a banned owner's workflow must not fire"
+        );
+
+        assert!(db
+            .unban_community_member(community, &member, &creator)
+            .await
+            .expect("unban owner"));
+        engine
+            .on_event(community, &message_event(channel_id))
+            .await
+            .expect("on_event after unban");
+        assert_eq!(
+            run_count().await,
+            1,
+            "an unbanned owner's workflow fires again"
+        );
+    }
+
     /// Exfiltration-capable definitions (call_webhook) require the owner to
     /// currently hold an elevated role — a plain member's workflow must not
     /// fire even though the owner is still an active channel member.
@@ -2168,6 +2316,375 @@ steps:
             owner_runs.len(),
             1,
             "channel owner's call_webhook workflow fires"
+        );
+    }
+
+    #[test]
+    fn ban_denial_warns_once_per_interval_while_other_denials_always_warn() {
+        let interval = std::time::Duration::from_millis(500);
+        let warned = ban_denial_warn_cache(interval);
+        let community = CommunityId::from_uuid(Uuid::new_v4());
+        let (wf_a, wf_b) = (Uuid::new_v4(), Uuid::new_v4());
+        let banned = WorkflowError::OwnerBanned;
+        let lookup_failed = WorkflowError::Unauthorized(
+            "owner restriction lookup failed (fail-closed): boom".into(),
+        );
+
+        assert!(should_warn_owner_denial(&warned, community, wf_a, &banned));
+        assert!(
+            !should_warn_owner_denial(&warned, community, wf_a, &banned),
+            "a repeated ban denial inside the interval logs below WARN"
+        );
+        assert!(
+            should_warn_owner_denial(&warned, community, wf_b, &banned),
+            "each workflow gets its own first warning"
+        );
+        assert!(
+            should_warn_owner_denial(&warned, community, wf_a, &lookup_failed),
+            "a failed lookup always warns"
+        );
+        assert!(
+            should_warn_owner_denial(&warned, community, wf_a, &lookup_failed),
+            "a failed lookup is never rate-limited"
+        );
+
+        std::thread::sleep(interval * 2);
+        assert!(
+            should_warn_owner_denial(&warned, community, wf_a, &banned),
+            "a ban denial warns again once the interval has passed"
+        );
+        assert!(
+            !should_warn_owner_denial(&warned, community, wf_a, &banned),
+            "and is suppressed again for the next interval"
+        );
+    }
+
+    fn schedule_def(name: &str) -> String {
+        serde_json::json!({
+            "name": name,
+            "trigger": {"on": "schedule", "cron": "* * * * *"},
+            "steps": [{"id": "s1", "action": "send_message", "text": "tick"}],
+            "enabled": true,
+        })
+        .to_string()
+    }
+
+    /// A cron tick must skip a banned owner's workflow and an agent-owned
+    /// workflow whose human owner is banned, without consuming either
+    /// workflow's scheduled-fire claim: once unbanned, a tick for the same
+    /// instant fires them. An unbanned workflow on the same tick still fires.
+    ///
+    /// `cron_tick` scans every enabled workflow in the database. The
+    /// PostgreSQL lane gives each test process its own database
+    /// (`scripts/postgres-test-wrapper.sh`), and the assertions read only
+    /// this test's workflows, so another test's schedules cannot affect it.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn cron_tick_skips_banned_owners_without_consuming_the_claim() {
+        let db = setup_db().await;
+        let creator = nostr::Keys::generate().public_key().to_bytes().to_vec();
+        let member = nostr::Keys::generate().public_key().to_bytes().to_vec();
+        let (community, channel_id) = setup_channel(&db, &creator, &member).await;
+
+        let human = nostr::Keys::generate().public_key().to_bytes().to_vec();
+        let agent = nostr::Keys::generate().public_key().to_bytes().to_vec();
+        db.ensure_user(community, &human).await.expect("human user");
+        db.ensure_user(community, &agent).await.expect("agent user");
+        assert!(db
+            .set_agent_owner(community, &agent, &human)
+            .await
+            .expect("set agent owner"));
+        db.add_member(
+            community,
+            channel_id,
+            &agent,
+            buzz_db::channel::MemberRole::Member,
+            Some(&creator),
+        )
+        .await
+        .expect("add agent member");
+
+        let mut workflows = Vec::new();
+        for (owner, name, secret) in [
+            (&member, "cron-banned-owner", [0u8; 32]),
+            (&agent, "cron-banned-agent-owner", [1u8; 32]),
+            (&creator, "cron-control", [2u8; 32]),
+        ] {
+            let id = db
+                .create_workflow(
+                    community,
+                    Some(channel_id),
+                    owner,
+                    name,
+                    &schedule_def(name),
+                    &secret,
+                )
+                .await
+                .expect("create workflow");
+            workflows.push(id);
+        }
+        let [banned_wf, agent_wf, control_wf] =
+            <[Uuid; 3]>::try_from(workflows).expect("three workflows created");
+        let engine = Arc::new(WorkflowEngine::new(db.clone(), WorkflowConfig::default()));
+        let run_count = |workflow_id| {
+            let db = db.clone();
+            async move {
+                db.list_workflow_runs(community, workflow_id, 10)
+                    .await
+                    .expect("list runs")
+                    .len()
+            }
+        };
+
+        db.ban_community_member(community, &member, &creator, None, None)
+            .await
+            .expect("ban owner");
+        db.ban_community_member(community, &human, &creator, None, None)
+            .await
+            .expect("ban agent's human owner");
+        let now = Utc::now();
+        engine.cron_tick(now).await;
+        assert_eq!(run_count(banned_wf).await, 0, "banned owner must not fire");
+        assert_eq!(
+            run_count(agent_wf).await,
+            0,
+            "an agent whose human owner is banned must not fire"
+        );
+        assert_eq!(
+            run_count(control_wf).await,
+            1,
+            "an unbanned workflow on the same tick still fires"
+        );
+
+        for pubkey in [&member, &human] {
+            assert!(db
+                .unban_community_member(community, pubkey, &creator)
+                .await
+                .expect("unban"));
+        }
+        engine.cron_tick(now).await;
+        assert_eq!(
+            run_count(banned_wf).await,
+            1,
+            "the denied tick must not have consumed the owner's claim"
+        );
+        assert_eq!(
+            run_count(agent_wf).await,
+            1,
+            "the denied tick must not have consumed the agent's claim"
+        );
+        assert_eq!(
+            run_count(control_wf).await,
+            1,
+            "the control's claim for this instant is already taken"
+        );
+    }
+
+    /// The event path fails closed when the owner's restriction state cannot
+    /// be read, and the same event fires once the read succeeds.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn on_event_denies_run_when_restriction_lookup_fails() {
+        use sqlx::postgres::PgConnectOptions;
+
+        let db = setup_db().await;
+        let creator = nostr::Keys::generate().public_key().to_bytes().to_vec();
+        let member = nostr::Keys::generate().public_key().to_bytes().to_vec();
+        let (community, channel_id) = setup_channel(&db, &creator, &member).await;
+        let def_json = serde_json::json!({
+            "name": "lookup-fails",
+            "trigger": {"on": "message_posted"},
+            "steps": [{"id": "s1", "action": "send_message", "text": "hi"}],
+            "enabled": true,
+        })
+        .to_string();
+        let workflow_id = db
+            .create_workflow(
+                community,
+                Some(channel_id),
+                &member,
+                "lookup-fails",
+                &def_json,
+                &[0u8; 32],
+            )
+            .await
+            .expect("create workflow");
+
+        // Shadow `community_bans` with a view that errors on read; every
+        // other table still resolves to `public`.
+        let schema = format!("ban_lookup_fails_{}", Uuid::new_v4().simple());
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "CREATE SCHEMA {schema}; \
+             CREATE VIEW {schema}.community_bans AS \
+             SELECT * FROM public.community_bans WHERE 1 / (SELECT count(*) * 0 FROM public.communities) = 1;"
+        )))
+        .execute(db.pool())
+        .await
+        .expect("create failing restriction schema");
+        let options = test_database_url()
+            .parse::<PgConnectOptions>()
+            .expect("database url")
+            .options([("search_path", format!("{schema}, public"))]);
+        let failing_pool = sqlx::PgPool::connect_with(options)
+            .await
+            .expect("failing restriction pool");
+        let failing_engine = Arc::new(WorkflowEngine::new(
+            buzz_db::Db::from_pool(failing_pool.clone()),
+            WorkflowConfig::default(),
+        ));
+        let run_count = || async {
+            db.list_workflow_runs(community, workflow_id, 10)
+                .await
+                .expect("list runs")
+                .len()
+        };
+
+        failing_engine
+            .on_event(community, &message_event(channel_id))
+            .await
+            .expect("on_event with failing lookup");
+        assert_eq!(
+            run_count().await,
+            0,
+            "a failed restriction lookup must not create a run"
+        );
+
+        let engine = Arc::new(WorkflowEngine::new(db.clone(), WorkflowConfig::default()));
+        engine
+            .on_event(community, &message_event(channel_id))
+            .await
+            .expect("on_event with healthy lookup");
+        assert_eq!(run_count().await, 1, "a readable, unbanned owner fires");
+
+        failing_pool.close().await;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+            .execute(db.pool())
+            .await
+            .expect("drop failing restriction schema");
+    }
+
+    /// Condition errors quote the message they evaluated. The trigger-filter
+    /// WARN, the step-condition WARN and the run-failure ERROR log a fixed
+    /// code; the run keeps the full diagnostic for its owner.
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore = "requires Postgres"]
+    async fn condition_errors_log_a_fixed_code_without_message_text() {
+        #[derive(Clone, Default)]
+        struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Captured {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let db = setup_db().await;
+        let creator = nostr::Keys::generate().public_key().to_bytes().to_vec();
+        let member = nostr::Keys::generate().public_key().to_bytes().to_vec();
+        let (community, channel_id) = setup_channel(&db, &creator, &member).await;
+        let mut workflow_ids = Vec::new();
+        for (name, trigger, steps) in [
+            (
+                "filter-error",
+                serde_json::json!({"on": "message_posted", "filter": "trigger_text > 5"}),
+                serde_json::json!([{"id": "s1", "action": "send_message", "text": "hi"}]),
+            ),
+            (
+                "step-error",
+                serde_json::json!({"on": "message_posted"}),
+                serde_json::json!([{
+                    "id": "guarded", "if": "trigger_text > 5",
+                    "action": "send_message", "text": "hi",
+                }]),
+            ),
+        ] {
+            let def = serde_json::json!({
+                "name": name, "trigger": trigger, "steps": steps, "enabled": true,
+            })
+            .to_string();
+            let hash = [workflow_ids.len() as u8; 32];
+            let id = db
+                .create_workflow(community, Some(channel_id), &member, name, &def, &hash)
+                .await
+                .expect("create workflow");
+            workflow_ids.push(id);
+        }
+        let (filter_wf, step_wf) = (workflow_ids[0], workflow_ids[1]);
+
+        let marker = format!("wf-marker-{}", Uuid::new_v4().simple());
+        let event = nostr::EventBuilder::new(nostr::Kind::Custom(9), &marker)
+            .sign_with_keys(&nostr::Keys::generate())
+            .expect("sign");
+        let event = buzz_core::StoredEvent::new(event, Some(channel_id));
+
+        let out = Captured::default();
+        let writer = out.clone();
+        let _guard = tracing::subscriber::set_default(
+            tracing_subscriber::fmt()
+                .json()
+                .flatten_event(true)
+                .with_max_level(tracing::Level::DEBUG)
+                .with_writer(move || writer.clone())
+                .finish(),
+        );
+        let engine = Arc::new(WorkflowEngine::new(db.clone(), WorkflowConfig::default()));
+        engine.on_event(community, &event).await.expect("on_event");
+        let run = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let runs = db
+                    .list_workflow_runs(community, step_wf, 10)
+                    .await
+                    .expect("list runs");
+                if let Some(run) = runs.into_iter().find(|r| r.status == RunStatus::Failed) {
+                    break run;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the step-condition run must fail");
+        let filter_runs = db
+            .list_workflow_runs(community, filter_wf, 10)
+            .await
+            .expect("list filter runs");
+        assert!(
+            filter_runs.is_empty(),
+            "a failed filter must skip the workflow"
+        );
+
+        let raw = String::from_utf8(out.0.lock().unwrap().clone()).unwrap();
+        let lines: Vec<serde_json::Value> = raw
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let line = |message: &str| {
+            lines
+                .iter()
+                .find(|l| l["message"] == message)
+                .unwrap_or_else(|| panic!("no {message:?} line in {raw}"))
+        };
+        assert_eq!(
+            line("Trigger filter error — skipping workflow")["error_kind"],
+            "condition_evaluation_failed"
+        );
+        assert_eq!(
+            line("Condition error")["error_kind"],
+            "condition_evaluation_failed"
+        );
+        assert_eq!(
+            line("Workflow run failed")["error"],
+            "condition_evaluation_failed"
+        );
+        assert!(!raw.contains(&marker), "marker leaked: {raw}");
+        assert!(
+            run.error_message
+                .as_deref()
+                .is_some_and(|m| m.contains(&marker)),
+            "the stored run error keeps the diagnostic: {:?}",
+            run.error_message
         );
     }
 }

@@ -17,7 +17,7 @@ When writing a spec or implementing significant changes or tests, check them for
 
 Mobile and desktop follow shared rules for behavior such as channel ordering, unread state, and autocomplete. Presentation and interaction should suit each platform.
 
-The desktop implementation is a reference we can use to inform defining those rules, but it contains bugs and unintended behavior and is not itself the specification. Written intent takes priority over implementation precedent. A clearer vision or spec developed for mobile can establish the intended shared behavior for desktop too.
+The desktop implementation can inform shared rules, but has bugs and unintended behavior and is not the specification. Written intent takes priority over implementation precedent. A clearer vision or spec developed for mobile can establish the intended shared behavior for desktop too.
 
 ## Architecture
 

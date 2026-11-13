@@ -7,6 +7,7 @@ import type {
 } from "@/shared/api/relayClientShared";
 import { clearClosedRetry } from "@/shared/api/relayClosedRecovery";
 import type { RelayLiveReqDrain } from "@/shared/api/relayLiveReqDrain";
+import { releaseLiveEoseWaiter } from "@/shared/api/relayReconnectReplay";
 
 type LiveSubscriptionSession = {
   epoch: number;
@@ -47,6 +48,7 @@ export async function subscribeLiveSession(
     signal?.removeEventListener("abort", abort);
     sessionSignal.removeEventListener("abort", abort);
     window.clearTimeout(fallbackTimeout);
+    releaseLiveEoseWaiter(subscription);
     onHealth?.("removed");
     settleReady();
   };

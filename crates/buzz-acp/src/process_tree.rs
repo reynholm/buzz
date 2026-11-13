@@ -5,7 +5,9 @@
 //! worker alive. Long-lived helpers such as MCP servers must not, or a
 //! lazy pool would never sleep. Agent CLIs often start MCP servers through
 //! launcher chains (`npm exec`, `sh -c`, a node launcher script); a chain
-//! whose every leaf is a helper is a helper too.
+//! whose every leaf is an MCP helper is a helper too. Sleep inhibitors remain
+//! work: a provider may hold one for an in-process background model request
+//! after its foreground ACP turn has ended.
 
 use std::collections::{HashMap, HashSet};
 
@@ -17,7 +19,7 @@ pub struct ChildProcess {
     pub command: String,
 }
 
-/// Whether the launched executable or interpreter script identifies an MCP helper.
+/// Whether the command identifies an MCP helper.
 ///
 /// Arguments of ordinary work must not turn it into a resident just because a
 /// task mentions MCP, or a working directory happens to contain those letters.
@@ -225,8 +227,9 @@ impl ProcessTree {
             .collect()
     }
 
-    /// Helpers confirmed by executable identity, the MCP classifier, or a
-    /// launcher whose children are all helpers. A childless non-helper is work.
+    /// Helpers confirmed by executable identity, the command classifier, or a
+    /// launcher whose children are all MCP helpers. An inhibitor alone cannot
+    /// prove that its provider has finished its internal background work.
     pub fn is_resident_helper(&self, child: &ChildProcess) -> bool {
         self.is_snapshot_helper(child.pid) || self.is_helper_within(child, MAX_LAUNCHER_DEPTH)
     }
@@ -519,6 +522,9 @@ mod classification_regression_tests {
 
 #[cfg(all(test, unix))]
 mod snapshot_tests;
+
+#[cfg(all(test, unix))]
+mod sleep_inhibitor_tests;
 
 #[cfg(all(test, unix))]
 mod launcher_chain_tests {

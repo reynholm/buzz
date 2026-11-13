@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use crate::deploy_drain::{DrainController, DrainError, ParentContext, WorkGuard, WorkKind};
 
+#[allow(clippy::result_large_err)] // Axum responses carry callback admission refusals.
 pub(crate) async fn admit_callback_request(
     state: &crate::state::AppState,
     request: Request<Body>,
@@ -194,7 +195,7 @@ mod tests {
                 .unwrap()
         }
 
-        let mut state = crate::state::tests::test_state_with_database_url(
+        let mut state = crate::state::tests::test_state_with_unreachable_database_url(
             "postgres://synthetic:synthetic@127.0.0.1:1/unused",
         )
         .await;
