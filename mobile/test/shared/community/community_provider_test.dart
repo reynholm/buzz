@@ -559,10 +559,21 @@ void main() {
       final orphanMedia = await seedMedia(
         MediaDiskCache.communityDirectory(mediaRoot, 'restored'),
       );
+      Completer<Directory?>? sweepRoot;
+      final sweepStarted = Completer<void>();
+      addTearDown(() {
+        if (sweepRoot != null && !sweepRoot.isCompleted) {
+          sweepRoot.complete(mediaRoot);
+        }
+      });
       container = createContainer(
         overrides: [
           savedPrefsProvider.overrideWithValue(prefs),
-          mediaCacheRootProvider.overrideWith((ref) async => mediaRoot),
+          mediaCacheRootProvider.overrideWith((ref) async {
+            if (sweepRoot == null) return mediaRoot;
+            sweepStarted.complete();
+            return sweepRoot.future;
+          }),
         ],
       );
       await container.read(communityListProvider.future);
@@ -577,6 +588,14 @@ void main() {
       expect(cache.read(oldKeys.public, community.relayUrl), isNotNull);
       expect(await cache.write(oldToken, snapshot), isTrue);
       expect(await oldMedia.exists(), isTrue);
+
+      // Hold the first replacement's sweep until both accounts are staged.
+      // Reaching this boundary also waits for the startup sweep to finish,
+      // so it cannot race creation of the not-yet-selected account's cache.
+      sweepRoot = Completer<Directory?>();
+      container.invalidate(mediaCacheRootProvider);
+      await notifier.addCommunity(community.copyWith(nsec: midKeys.nsec));
+      await sweepStarted.future;
       final midMedia = await seedMedia(
         MediaDiskCache.directoryFor(mediaRoot, community.id, midKeys.public),
       );
@@ -585,8 +604,8 @@ void main() {
       );
       // Two quick replacements: the first one's sweep must not delete the
       // newest account's cache.
-      await notifier.addCommunity(community.copyWith(nsec: midKeys.nsec));
       await notifier.addCommunity(community.copyWith(nsec: newKeys.nsec));
+      sweepRoot.complete(mediaRoot);
       expect(await eventuallyExists(midMedia), isFalse);
       expect(cache.read(oldKeys.public, community.relayUrl), isNull);
       expect(await cache.write(oldToken, snapshot), isFalse);

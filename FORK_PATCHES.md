@@ -11112,3 +11112,13 @@ New module: `false`.
 
 - Required symbol: `if (!listEquals((await cache.read(url))?.bytes, _pngBytes))`
 - Verify: `cd mobile && flutter test --no-pub test/shared/relay/media_disk_cache_test.dart`
+
+## `mobile/test/shared/community/community_provider_test.dart`
+
+Stage replacement-account cache directories behind the real cache-root boundary after startup cleanup, then verify queued sweeps preserve the latest account and remove obsolete caches.
+
+New module: `false`.
+
+- Required symbol: `await sweepStarted.future;`
+- Required symbol: `sweepRoot.complete(mediaRoot);`
+- Verify: `just mobile-check mobile-test`
