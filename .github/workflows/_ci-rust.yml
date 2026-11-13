@@ -48,7 +48,9 @@ jobs:
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The complete workspace gate also reruns ACP with its default features.
+    # Allow cold-build margin while preserving the individual test deadlines.
+    timeout-minutes: 45
     if: inputs.lane == 'required' && (github.event_name == 'push' || inputs.rust)
     permissions:
       contents: read
@@ -213,12 +215,15 @@ jobs:
 
   acp-retirement-macos:
     name: ACP checked retirement (macOS)
-    runs-on: macos-latest
+    # Keep native arm64 checks on a stable image instead of the latest-image pool.
+    runs-on: macos-15
     timeout-minutes: 30
     if: inputs.lane == 'required' && (github.event_name == 'push' || inputs.rust)
     permissions:
       contents: read
     steps:
+      - name: Require native Apple Silicon host
+        run: test "$(uname -m)" = arm64
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32

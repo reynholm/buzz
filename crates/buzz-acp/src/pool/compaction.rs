@@ -316,7 +316,7 @@ pub(crate) async fn run_compaction_task(
             Ok(StopReason::Cancelled) => Err(ControlFailure::Cancelled),
             Ok(_) => terminal,
             Err(error) => {
-                transport_failed = matches!(error, AcpError::AgentExited | AcpError::Io(_) | AcpError::Protocol(_) | AcpError::WriteTimeout(_) | AcpError::Timeout(_) | AcpError::IdleTimeout(_) | AcpError::HardTimeout { .. });
+                transport_failed = error.is_resource_failure() || matches!(error, AcpError::AgentExited | AcpError::Io(_) | AcpError::Protocol(_) | AcpError::WriteTimeout(_) | AcpError::Timeout(_) | AcpError::IdleTimeout(_) | AcpError::HardTimeout { .. });
                 Err(match error {
                     AcpError::Timeout(_) | AcpError::IdleTimeout(_) | AcpError::HardTimeout { .. } => ControlFailure::Timeout,
                     _ if terminal.is_ok() => ControlFailure::Unconfirmed,
