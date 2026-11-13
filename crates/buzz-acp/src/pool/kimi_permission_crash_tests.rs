@@ -27,6 +27,13 @@ for line in sys.stdin:
         while True:
             if (directory / 'crash').exists() and not (directory / 'crashed').exists():
                 (directory / 'crashed').write_text('before decision')
+                if (directory / 'receipt-path').exists():
+                    state = pathlib.Path((directory / 'receipt-path').read_text())
+                    temporary = state.with_suffix('.next')
+                    temporary.write_text(json.dumps({'state': (directory / 'crash').read_text()}))
+                    temporary.replace(state)
+                    if (directory / 'decision-deadline').exists():
+                        time.sleep(.5)
                 sys.exit(17)
             if select.select([sys.stdin], [], [], .01)[0]:
                 response = json.loads(sys.stdin.readline())
@@ -90,6 +97,22 @@ fn token(event: &ObserverEvent) -> Uuid {
 
 #[tokio::test]
 async fn kimi_manual_permission_child_exit_recovers_same_work_and_rejects_retired_vote() {
+    manual_permission_exit(None, false, true).await;
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn resource_failure_during_manual_permission_never_replays_work() {
+    for failure in ["oom", "guard_failed"] {
+        for deadline in [false, true] {
+            for clean in [false, true] {
+                manual_permission_exit(Some(failure), deadline, clean).await;
+            }
+        }
+    }
+}
+
+async fn manual_permission_exit(failure: Option<&str>, deadline: bool, clean: bool) {
     let fixture = Fixture::new();
     let scope = scope();
     let (mut ctx, server) = relay_context(scope.channel_id(), vec![]).await;
@@ -101,11 +124,32 @@ async fn kimi_manual_permission_child_exit_recovers_same_work_and_rejects_retire
         .unwrap();
     acp.set_observer(Some(observer.clone()), 0);
     acp.initialize().await.unwrap();
+    #[cfg(target_os = "linux")]
+    let group = failure.map(|_| {
+        let group = acp.inject_unverified_resource_scope();
+        std::fs::write(group.join("memory.events"), "oom_kill 0\n").unwrap();
+        if clean {
+            std::fs::remove_dir(group.join("cgroup.kill")).unwrap();
+            std::fs::write(group.join("cgroup.kill"), "").unwrap();
+            std::fs::write(group.join("cgroup.events"), "populated 0\n").unwrap();
+        }
+        std::fs::write(
+            fixture.dir.path().join("receipt-path"),
+            group.parent().unwrap().join("state.json").to_str().unwrap(),
+        )
+        .unwrap();
+        group
+    });
     let process = acp.process_instance;
     let mut pool = AgentPool::from_slots(vec![Some(worker(&fixture, acp))]);
     let mut queue = EventQueue::new(DedupMode::Queue).with_kimi_recovery(
         RecoveryPolicy {
             delays: vec![Duration::from_nanos(1)],
+            approval_decision_timeout: if deadline {
+                Duration::from_millis(200)
+            } else {
+                Duration::from_secs(120)
+            },
             ..Default::default()
         },
         fixture.dir.path().to_str().unwrap(),
@@ -138,27 +182,56 @@ async fn kimi_manual_permission_child_exit_recovers_same_work_and_rejects_retire
         .clone()
         .unwrap();
     let route = task.recoverable_batch.as_ref().unwrap().reply_tags();
-    std::fs::write(fixture.dir.path().join("crash"), "exit before vote").unwrap();
+    let delivery_key = original.delivery_key;
+    let journal = original.journal_dir.clone();
+    if deadline {
+        std::fs::write(fixture.dir.path().join("decision-deadline"), "wait").unwrap();
+    }
+    std::fs::write(
+        fixture.dir.path().join("crash"),
+        failure.unwrap_or("exit before vote"),
+    )
+    .unwrap();
     let result = timeout(Duration::from_secs(2), pool.result_rx.recv())
         .await
         .expect("child exit must interrupt the 120-second permission decision wait")
         .unwrap();
     assert!(
-        matches!(result.outcome, PromptOutcome::AgentExited),
-        "manual wait must preserve child-exit classification"
+        matches!(
+            (&result.outcome, failure),
+            (PromptOutcome::AgentExited, None)
+                | (
+                    PromptOutcome::Error(AcpError::ResourceLimit { .. }),
+                    Some("oom")
+                )
+                | (
+                    PromptOutcome::Error(AcpError::ResourceGuard(_)),
+                    Some("guard_failed")
+                )
+        ),
+        "manual wait lost exit cause: failure={failure:?}, deadline={deadline}"
+    );
+    let returned_work = result.batch.as_ref().unwrap().work.as_ref().unwrap();
+    assert_eq!(returned_work.delivery_key, delivery_key);
+    assert_eq!(returned_work.journal_dir, journal);
+    assert_eq!(
+        returned_work.reply_tags().root_event_id,
+        route.root_event_id
     );
     assert!(!original.uncertain_effects(), "no action was approved");
-    assert!(
-        !pool.permission_decision(
-            &scope,
-            &route,
-            PermissionDecision {
-                token: token(&pending),
-                allow: true
-            }
-        ),
-        "a dead process cannot receive a late vote"
-    );
+    if !deadline {
+        assert!(
+            !pool.permission_decision(
+                &scope,
+                &route,
+                PermissionDecision {
+                    token: token(&pending),
+                    allow: true
+                }
+            ),
+            "a dead process cannot receive a late vote"
+        );
+    }
     assert!(!observer
         .snapshot()
         .iter()
@@ -190,7 +263,7 @@ async fn kimi_manual_permission_child_exit_recovers_same_work_and_rejects_retire
         &mut tokio::time::Instant::now(),
     );
     assert!(original.awaiting_retirement());
-    assert!(!original.needs_human());
+    assert_eq!(original.needs_human(), failure.is_some());
     assert_eq!(
         dispatch(&mut pool, &mut queue),
         0,
@@ -200,6 +273,72 @@ async fn kimi_manual_permission_child_exit_recovers_same_work_and_rejects_retire
         .await
         .unwrap()
         .unwrap();
+    if failure.is_some() {
+        assert_eq!(queue.queued_event_count(&scope), 0);
+        assert!(!queue.has_undispatched_work());
+        assert!(original.needs_human());
+        assert_eq!(original.original_events[0].event.id.to_hex(), event_id);
+        assert_eq!(original.reply_tags().root_event_id, route.root_event_id);
+        let requests = std::fs::read_to_string(fixture.dir.path().join("requests.jsonl")).unwrap();
+        assert_eq!(
+            requests
+                .lines()
+                .filter(|line| line.contains("session/prompt"))
+                .count(),
+            1
+        );
+        if !clean {
+            let retirement = returned.retirement.as_mut().unwrap();
+            assert_eq!(retirement.report, TerminationReport::Unverified);
+            assert!(returned.result.is_err(), "unverified worker was replaced");
+            let mut retained = retirement.retained.take().unwrap();
+            assert_eq!(
+                retained.acp.logical_work().unwrap().delivery_key,
+                delivery_key
+            );
+            assert_eq!(retained.acp.logical_work().unwrap().journal_dir, journal);
+            #[cfg(target_os = "linux")]
+            {
+                let group = group.as_ref().unwrap();
+                std::fs::remove_dir(group.join("cgroup.kill")).unwrap();
+                std::fs::write(group.join("cgroup.kill"), "").unwrap();
+                std::fs::write(group.join("cgroup.events"), "populated 0\n").unwrap();
+            }
+            assert_eq!(retained.acp.terminate().await, TerminationReport::Clean);
+        } else {
+            assert_eq!(
+                returned.retirement.as_ref().unwrap().report,
+                TerminationReport::Clean
+            );
+            assert!(!crate::worker_retirement::finish(
+                &mut pool,
+                &ctx.session_controls,
+                &mut HashMap::new(),
+                &mut returned
+            ));
+            let (acp, protocol, name) = returned.result.unwrap();
+            assert_ne!(acp.process_instance, process);
+            assert_eq!(original.delivery_key, delivery_key);
+            assert_eq!(original.journal_dir, journal);
+            let mut replacement = worker(&fixture, acp);
+            replacement.protocol_version = protocol;
+            replacement.agent_name = name;
+            pool.return_agent(replacement);
+            assert_eq!(pool.live_count(), 1);
+        }
+        assert_eq!(
+            dispatch(&mut pool, &mut queue),
+            0,
+            "terminal work replayed after retirement"
+        );
+        tasks.shutdown().await;
+        pool.join_set.shutdown().await;
+        for agent in pool.agents.iter_mut().flatten() {
+            agent.acp.shutdown().await;
+        }
+        server.abort();
+        return;
+    }
     assert_eq!(
         returned.retirement.as_ref().unwrap().report,
         TerminationReport::Clean

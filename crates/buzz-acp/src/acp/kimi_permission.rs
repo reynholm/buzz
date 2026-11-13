@@ -110,7 +110,8 @@ impl AcpClient {
         let written = tokio::time::timeout_at(deadline, self.write_ndjson(response))
             .await
             .map_err(|_| AcpError::WriteTimeout(effective))
-            .and_then(|result| result);
+            .and_then(|result| result)
+            .map_err(|error| self.prioritize_resource_failure(error));
         if written.is_ok() {
             self.permission_event(record, "response_written");
         } else {
@@ -283,10 +284,16 @@ impl AcpClient {
                         "decision_unavailable"
                     },
                 );
-                let _ = self
+                match self
                     .write_kimi_permission(&record, &permission_response_cancelled(id))
-                    .await;
-                return Err(error);
+                    .await
+                {
+                    Err(cleanup_error) if cleanup_error.is_resource_failure() => {
+                        return Err(cleanup_error)
+                    }
+                    _ => {}
+                }
+                return Err(self.prioritize_resource_failure(error));
             }
         };
         let selected = if allow {
@@ -317,10 +324,14 @@ impl AcpClient {
             permission_response_cancelled(id)
         };
         if self.kimi_work_cancelled() {
-            let _ = self
+            match self
                 .write_kimi_permission(&record, &permission_response_cancelled(id))
-                .await;
-            return Err(AcpError::PermissionRequired);
+                .await
+            {
+                Err(error) if error.is_resource_failure() => return Err(error),
+                _ => {}
+            }
+            return Err(self.prioritize_resource_failure(AcpError::PermissionRequired));
         }
         if selected.is_some_and(|option| option["kind"] == "allow_once") {
             let read_only = matches!(

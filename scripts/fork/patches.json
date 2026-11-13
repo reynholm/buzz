@@ -4591,7 +4591,8 @@
         "pub(crate) fn requires_checked_retirement(&self) -> bool",
         "pub(crate) fn is_resource_failure(&self) -> bool",
         "cmd.env_remove(\"BUZZ_ACP_RESOURCE_LIMITS\");",
-        "None => return Err(self.worker_exit_error()),"
+        "None => return Err(self.worker_exit_error()),",
+        "fn prioritize_resource_failure(&self, error: AcpError) -> AcpError"
       ],
       "invocation_seams": [
         {
@@ -4702,7 +4703,8 @@
         "just ci",
         "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4",
         "cargo test --locked -p buzz-acp --lib linux_resources -- --test-threads=1",
-        "cargo test --locked -p buzz-acp --lib resource_limit_dead_letters -- --test-threads=1"
+        "cargo test --locked -p buzz-acp --lib resource_limit_dead_letters -- --test-threads=1",
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
       ]
     },
     {
@@ -14222,7 +14224,8 @@
       "required_symbols": [],
       "invocation_seams": [],
       "verification_commands": [
-        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4"
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4",
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
       ]
     },
     {
@@ -14243,7 +14246,8 @@
         }
       ],
       "verification_commands": [
-        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4"
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4",
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
       ]
     },
     {
@@ -14480,14 +14484,16 @@
     },
     {
       "path": "crates/buzz-acp/src/pool/kimi_permission_crash_tests.rs",
-      "responsibility": "Recover the same logical work after child death during manual permission; require checked retirement and reject retired decision tokens",
+      "responsibility": "Recover the same logical work after child death during manual permission; require checked retirement and reject retired decision tokens Verify that resource failures during approval become terminal without replay, preserving work identity and checked retirement.",
       "is_new": true,
       "required_symbols": [
-        "async fn kimi_manual_permission_child_exit_recovers_same_work_and_rejects_retired_vote()"
+        "async fn kimi_manual_permission_child_exit_recovers_same_work_and_rejects_retired_vote()",
+        "async fn resource_failure_during_manual_permission_never_replays_work()"
       ],
       "invocation_seams": [],
       "verification_commands": [
-        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1"
+        "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1",
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
       ]
     },
     {
@@ -16508,20 +16514,22 @@
     },
     {
       "path": "crates/buzz-acp/src/acp/linux_resources_tests.rs",
-      "responsibility": "Exercise policy validation and opt-in native user-systemd checks: worker and aggregate OOM, sibling survival, blocked writes, detached descendants, harness exit, ancestor-slice refusal and the supervisor exit race.",
+      "responsibility": "Exercise policy validation and opt-in native user-systemd checks: worker and aggregate OOM, sibling survival, blocked writes, detached descendants, harness exit, ancestor-slice refusal and the supervisor exit race. Regress resource precedence at expired and pending-read hard deadlines with a paused clock.",
       "is_new": true,
       "required_symbols": [
         "fn linux_resources_policy_rejects_invalid_or_unbounded_limits()",
         "fn linux_resources_real_boundary()",
         "async fn linux_resources_parent_exit_retires_scope()",
         "fn resource_review_supervisor_exit_race()",
-        "fn resource_review_rejects_ancestor_before_payload()"
+        "fn resource_review_rejects_ancestor_before_payload()",
+        "async fn resource_failure_takes_precedence_at_both_prompt_deadline_boundaries()"
       ],
       "invocation_seams": [],
       "verification_commands": [
         "cargo test --locked -p buzz-acp --lib linux_resources -- --test-threads=1",
         "cargo test --locked -p buzz-acp --lib linux_resources_ -- --ignored --test-threads=1",
-        "cargo test --locked -p buzz-acp --lib resource_review_ -- --include-ignored --test-threads=1"
+        "cargo test --locked -p buzz-acp --lib resource_review_ -- --include-ignored --test-threads=1",
+        "cargo test --locked -p buzz-acp -- --test-threads=1"
       ]
     },
     {

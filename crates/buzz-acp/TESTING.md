@@ -507,6 +507,13 @@ cargo test --locked -p buzz-acp --lib resource_failure_during -- --test-threads=
 python3 crates/buzz-acp/tests/linux_resource_supervisor_test.py
 ```
 
+The ordinary Linux package suite also injects OOM and isolation-failure receipts
+while a real ACP peer waits for manual permission. The production dispatch/result
+journey checks explicit human retry, unchanged work key/route/journal, and clean
+or unverified checked retirement. A paused-clock read-loop regression covers
+resource failure at both pre-select and pending-read hard deadlines. These
+receipt-injection checks do not reproduce a kernel OOM.
+
 The opt-in checks use synthetic adapters, uniquely named transient slices, finite
 worker and aggregate budgets, and temporary private receipts. They cover a native
 child allocator, aggregate exhaustion, a blocked stdin write racing OOM, refusal

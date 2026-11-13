@@ -139,7 +139,10 @@ continuation/retry. This does not disable the turn/work watchdogs.
 The decision wait observes child exit directly and retires its vote mailbox.
 Death before a vote propagates the execution failure to checked retirement and
 the existing bounded recovery; it does not wait for the permission timeout or
-grant the action. A replacement request receives a new token.
+grant the action. A replacement request receives a new token. A verified OOM or
+loss of resource isolation takes terminal precedence over child exit, decision
+or turn deadlines, and permission-response cleanup errors. The original work
+requires explicit human retry after checked retirement; it is not replayed.
 
 ## Reports and visible states
 

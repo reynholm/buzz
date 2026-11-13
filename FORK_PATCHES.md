@@ -2787,6 +2787,7 @@ New module: `false`.
 - Required symbol: `pub(crate) fn is_resource_failure(&self) -> bool`
 - Required symbol: `cmd.env_remove("BUZZ_ACP_RESOURCE_LIMITS");`
 - Required symbol: `None => return Err(self.worker_exit_error()),`
+- Required symbol: `fn prioritize_resource_failure(&self, error: AcpError) -> AcpError`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `record_usage_update`; exact call `crate::session_status::record_usage_update(&self.session_status, msg);`; behavior test `claude_usage_updates_route_by_their_own_session_id`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `apply_status_dir_env`; exact call `crate::session_status::apply_status_dir_env(&mut cmd, extra_env);`; behavior test `status_dir_env_is_owned_by_the_harness`; verify `cargo test -p buzz-acp -- --test-threads=1`
 - Invocation: `crates/buzz-acp/src/acp.rs` → `update`; exact call `self.compactions.update(session, update)`; behavior test `compaction_standard_dispatch_terminal_only_duplicate_and_next_request`; verify `cargo test --locked -p buzz-acp --lib compaction_standard_dispatch_terminal_only_duplicate_and_next_request -- --test-threads=1`
@@ -2806,6 +2807,7 @@ New module: `false`.
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
 - Verify: `cargo test --locked -p buzz-acp --lib linux_resources -- --test-threads=1`
 - Verify: `cargo test --locked -p buzz-acp --lib resource_limit_dead_letters -- --test-threads=1`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/acp/launch.rs`
 
@@ -9463,6 +9465,7 @@ Bind actual Kimi permission requests to active prompt, generation and offered op
 New module: `true`.
 
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/acp/kimi_permission/controls.rs`
 
@@ -9474,6 +9477,7 @@ New module: `true`.
 - Required symbol: `exited = self.child.wait() => {`
 - Invocation: `crates/buzz-acp/src/acp/kimi_permission/controls.rs` → `can_publish_intact`; exact call `!observer.can_publish_intact(`; behavior test `kimi_manual_permission_requires_unabridged_published_owner_view`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=4`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/acp/kimi_permission_tests.rs`
 
@@ -9656,12 +9660,14 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/pool/kimi_permission_crash_tests.rs`
 
-Recover the same logical work after child death during manual permission; require checked retirement and reject retired decision tokens
+Recover the same logical work after child death during manual permission; require checked retirement and reject retired decision tokens Verify that resource failures during approval become terminal without replay, preserving work identity and checked retirement.
 
 New module: `true`.
 
 - Required symbol: `async fn kimi_manual_permission_child_exit_recovers_same_work_and_rejects_retired_vote()`
+- Required symbol: `async fn resource_failure_during_manual_permission_never_replays_work()`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
 
 ## `desktop/src/features/agents/activeAgentTurnsStore.ts`
 
@@ -11188,7 +11194,7 @@ New module: `true`.
 
 ## `crates/buzz-acp/src/acp/linux_resources_tests.rs`
 
-Exercise policy validation and opt-in native user-systemd checks: worker and aggregate OOM, sibling survival, blocked writes, detached descendants, harness exit, ancestor-slice refusal and the supervisor exit race.
+Exercise policy validation and opt-in native user-systemd checks: worker and aggregate OOM, sibling survival, blocked writes, detached descendants, harness exit, ancestor-slice refusal and the supervisor exit race. Regress resource precedence at expired and pending-read hard deadlines with a paused clock.
 
 New module: `true`.
 
@@ -11197,9 +11203,11 @@ New module: `true`.
 - Required symbol: `async fn linux_resources_parent_exit_retires_scope()`
 - Required symbol: `fn resource_review_supervisor_exit_race()`
 - Required symbol: `fn resource_review_rejects_ancestor_before_payload()`
+- Required symbol: `async fn resource_failure_takes_precedence_at_both_prompt_deadline_boundaries()`
 - Verify: `cargo test --locked -p buzz-acp --lib linux_resources -- --test-threads=1`
 - Verify: `cargo test --locked -p buzz-acp --lib linux_resources_ -- --ignored --test-threads=1`
 - Verify: `cargo test --locked -p buzz-acp --lib resource_review_ -- --include-ignored --test-threads=1`
+- Verify: `cargo test --locked -p buzz-acp -- --test-threads=1`
 
 ## `crates/buzz-acp/src/pool/compaction_resource_tests.rs`
 
