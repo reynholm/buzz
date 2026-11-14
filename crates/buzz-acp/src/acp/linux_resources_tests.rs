@@ -430,3 +430,62 @@ fn resource_review_rejects_ancestor_before_payload() {
     );
     assert!(!fixture.directory.path().join("started").exists());
 }
+
+#[tokio::test]
+async fn resource_failure_takes_precedence_at_both_prompt_deadline_boundaries() {
+    for failure in ["oom", "guard_failed"] {
+        for expired in [false, true] {
+            let mut acp = AcpClient::spawn(
+                "python3",
+                &[
+                    "-u".into(),
+                    "-c".into(),
+                    "import sys; sys.stdin.read()".into(),
+                ],
+                &[],
+                false,
+            )
+            .await
+            .unwrap();
+            let group = acp.inject_unverified_resource_scope();
+            fs::write(group.join("memory.events"), "oom_kill 0\n").unwrap();
+            let receipt = group.parent().unwrap().join("state.json");
+            tokio::time::pause();
+            let now = tokio::time::Instant::now();
+            let deadline = if expired {
+                now - Duration::from_millis(1)
+            } else {
+                now + Duration::from_millis(20)
+            };
+            let result = {
+                let read = acp.read_until_response_with_idle_timeout(
+                    "resource-session",
+                    1,
+                    Duration::from_secs(1),
+                    deadline,
+                    Duration::from_secs(1),
+                );
+                tokio::pin!(read);
+                if !expired {
+                    assert!(futures_util::poll!(&mut read).is_pending());
+                }
+                fs::write(&receipt, json!({"state": failure}).to_string()).unwrap();
+                if !expired {
+                    tokio::time::advance(Duration::from_millis(20)).await;
+                }
+                read.await
+            };
+            assert!(
+                matches!((&result, failure),
+                    (Err(super::AcpError::ResourceLimit { .. }), "oom")
+                    | (Err(super::AcpError::ResourceGuard(_)), "guard_failed")),
+                "hard deadline lost resource cause: expired={expired}, failure={failure}, result={result:?}"
+            );
+            tokio::time::resume();
+            fs::remove_dir(group.join("cgroup.kill")).unwrap();
+            fs::write(group.join("cgroup.kill"), "").unwrap();
+            fs::write(group.join("cgroup.events"), "populated 0\n").unwrap();
+            acp.shutdown().await;
+        }
+    }
+}

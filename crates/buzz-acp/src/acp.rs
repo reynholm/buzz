@@ -1917,7 +1917,8 @@ impl AcpClient {
         Ok(())
     }
 
-    fn worker_exit_error(&self) -> AcpError {
+    /// A verified resource failure takes precedence over retryable transport/deadline errors.
+    fn prioritize_resource_failure(&self, error: AcpError) -> AcpError {
         #[cfg(target_os = "linux")]
         if let Some(error) = self
             .resource_scope
@@ -1926,7 +1927,11 @@ impl AcpClient {
         {
             return error;
         }
-        AcpError::AgentExited
+        error
+    }
+
+    fn worker_exit_error(&self) -> AcpError {
+        self.prioritize_resource_failure(AcpError::AgentExited)
     }
 
     async fn next_frame(&mut self) -> Option<Result<String, LinesCodecError>> {
@@ -2156,14 +2161,18 @@ impl AcpClient {
                     let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
                 }
                 if permission_fires_first {
-                    return Err(AcpError::PermissionProgressTimeout);
+                    return Err(
+                        self.prioritize_resource_failure(AcpError::PermissionProgressTimeout)
+                    );
                 } else if idle_fires_first {
                     tracing::warn!("idle timeout ({idle_timeout:?}) — no agent activity");
-                    return Err(AcpError::IdleTimeout(idle_timeout));
+                    return Err(
+                        self.prioritize_resource_failure(AcpError::IdleTimeout(idle_timeout))
+                    );
                 } else {
                     let silence = Instant::now().saturating_duration_since(last_activity_at);
                     tracing::warn!("hard turn timeout exceeded (silence {silence:?})");
-                    return Err(AcpError::HardTimeout { silence });
+                    return Err(self.prioritize_resource_failure(AcpError::HardTimeout { silence }));
                 }
             }
 
@@ -2275,14 +2284,14 @@ impl AcpClient {
                         let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
                     }
                     if permission_fires_first {
-                        return Err(AcpError::PermissionProgressTimeout);
+                        return Err(self.prioritize_resource_failure(AcpError::PermissionProgressTimeout));
                     } else if idle_fires_first {
                         tracing::warn!("idle timeout ({idle_timeout:?}) — no agent activity");
-                        return Err(AcpError::IdleTimeout(idle_timeout));
+                        return Err(self.prioritize_resource_failure(AcpError::IdleTimeout(idle_timeout)));
                     } else {
                         let silence = Instant::now().saturating_duration_since(last_activity_at);
                         tracing::warn!("hard turn timeout exceeded (silence {silence:?})");
-                        return Err(AcpError::HardTimeout { silence });
+                        return Err(self.prioritize_resource_failure(AcpError::HardTimeout { silence }));
                     }
                 }
             };

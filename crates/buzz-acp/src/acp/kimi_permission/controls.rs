@@ -99,7 +99,7 @@ impl AcpClient {
         msg: &serde_json::Value,
     ) -> Result<bool, AcpError> {
         if self.kimi_work_cancelled() {
-            return Err(AcpError::PermissionRequired);
+            return Err(self.prioritize_resource_failure(AcpError::PermissionRequired));
         }
         match self.kimi_permissions.policy {
             PermissionMode::BypassPermissions => return Ok(true),
@@ -127,7 +127,7 @@ impl AcpClient {
         }
         let Some(mut decisions) = self.kimi_permissions.decisions.take() else {
             self.permission_event(record, "decision_path_unavailable");
-            return Err(AcpError::PermissionRequired);
+            return Err(self.prioritize_resource_failure(AcpError::PermissionRequired));
         };
         let now = Instant::now();
         let mut deadline = (now + self.kimi_permissions.decision_timeout)
@@ -156,7 +156,7 @@ impl AcpClient {
             if !matches!(published,Ok(Ok(ref response)) if response.get("accepted").and_then(serde_json::Value::as_bool)!=Some(false))
             {
                 self.permission_event(record, "decision_notice_failed");
-                return Err(AcpError::PermissionRequired);
+                return Err(self.prioritize_resource_failure(AcpError::PermissionRequired));
             }
         }
         self.permission_event(record, "waiting_approval");
@@ -171,12 +171,12 @@ impl AcpClient {
                 biased;
                 exited = self.child.wait() => {
                     // A dead execution cannot consume this request's vote. Preserve
-                    // its transport failure so the queue uses checked retirement
-                    // before retrying work whose action was never approved.
+                    // resource cause, or ordinary transport failure, so queue
+                    // policy can distinguish terminal failure from checked retry.
                     decisions.close();
                     break Err(match exited {
-                        Ok(_) => AcpError::AgentExited,
-                        Err(error) => AcpError::Io(error),
+                        Ok(_) => self.worker_exit_error(),
+                        Err(error) => self.prioritize_resource_failure(AcpError::Io(error)),
                     });
                 }
                 _ = tokio::time::sleep_until(deadline) => {
@@ -193,8 +193,8 @@ impl AcpClient {
         };
         self.kimi_permissions.decisions = Some(decisions);
         if self.kimi_work_cancelled() {
-            return Err(AcpError::PermissionRequired);
+            return Err(self.prioritize_resource_failure(AcpError::PermissionRequired));
         }
-        decision
+        decision.map_err(|error| self.prioritize_resource_failure(error))
     }
 }
