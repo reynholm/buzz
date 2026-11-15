@@ -593,7 +593,7 @@ New module: `false`.
 
 ## `desktop/src-tauri/Cargo.lock`
 
-Lock patched native dependencies, including emSign TLS verification and trust stores, the immutable MeshLLM and NetEq compatibility pins, maintained Opus bindings and updated Tauri utilities; retain target-specific Windows updater constraints explicitly; include ctutils >= 0.4.4 for RUSTSEC-2026-0385.
+Lock patched native dependencies, including emSign TLS verification and trust stores, the immutable MeshLLM and NetEq compatibility pins, maintained Opus bindings and updated Tauri utilities; retain target-specific Windows updater constraints explicitly; include ctutils >= 0.4.4 for RUSTSEC-2026-0385. Lock hickory-net and hickory-resolver 0.26.2 for patched DNS validation and bounded lookup behavior.
 
 New module: `false`.
 
@@ -2714,7 +2714,7 @@ New module: `false`.
 
 ## `Cargo.lock`
 
-Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils >= 0.4.4 for RUSTSEC-2026-0385. Upgrade the gateway P-256 graph to crypto-bigint 0.7.6 for RUSTSEC-2026-0387. Lock patched pulldown-cmark >= 0.13.5 for RUSTSEC-2026-0414. Lock patched pulldown-cmark >= 0.13.6 for RUSTSEC-2026-0433.
+Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils >= 0.4.4 for RUSTSEC-2026-0385. Upgrade the gateway P-256 graph to crypto-bigint 0.7.6 for RUSTSEC-2026-0387. Lock patched pulldown-cmark >= 0.13.5 for RUSTSEC-2026-0414. Lock patched pulldown-cmark >= 0.13.6 for RUSTSEC-2026-0433. Lock hickory-net and hickory-resolver 0.26.2 for patched DNS validation and bounded lookup behavior.
 
 New module: `false`.
 

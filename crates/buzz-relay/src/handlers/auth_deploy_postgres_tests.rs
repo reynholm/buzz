@@ -1,6 +1,9 @@
 // These witnesses drive real WebSocket AUTH dispatch and hold the production
 // membership write behind a PostgreSQL row lock after its session permit.
 
+use super::auth::tests::postgres_tests::{default_channels, seeded_community};
+use nostr::{EventBuilder, Keys, RelayUrl};
+
 #[tokio::test]
 #[ignore = "requires Postgres and Redis — runs in postgres-ci nextest lane"]
 async fn root_auth_first_default_join_remains_owned_after_socket_closes() {

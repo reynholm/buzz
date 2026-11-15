@@ -6,6 +6,8 @@ pub mod artifact_sync;
 #[cfg(test)]
 mod artifact_sync_postgres_tests;
 pub mod auth;
+#[cfg(test)]
+mod auth_deploy_postgres_tests;
 /// Pure NIP-29 channel membership-authority decisions (kinds 9000/9001/9022).
 pub mod channel_authz;
 /// Subscription close (CLOSE) handler.

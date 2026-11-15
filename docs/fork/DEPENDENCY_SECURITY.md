@@ -104,6 +104,27 @@ Both workspaces select `hickory-proto` 0.26.2 to fix
 [RUSTSEC-2026-0491](https://rustsec.org/advisories/RUSTSEC-2026-0491.html).
 These fixes bound DNS allocations and reject malformed DNS text and wire inputs.
 
+Both workspaces also select `hickory-net` and `hickory-resolver` 0.26.2 for
+DNSSEC validation and bounded DNS lookup fixes:
+[RUSTSEC-2026-0506](https://rustsec.org/advisories/RUSTSEC-2026-0506.html),
+[RUSTSEC-2026-0507](https://rustsec.org/advisories/RUSTSEC-2026-0507.html),
+[RUSTSEC-2026-0508](https://rustsec.org/advisories/RUSTSEC-2026-0508.html),
+[RUSTSEC-2026-0509](https://rustsec.org/advisories/RUSTSEC-2026-0509.html),
+[RUSTSEC-2026-0513](https://rustsec.org/advisories/RUSTSEC-2026-0513.html),
+[RUSTSEC-2026-0514](https://rustsec.org/advisories/RUSTSEC-2026-0514.html),
+[RUSTSEC-2026-0515](https://rustsec.org/advisories/RUSTSEC-2026-0515.html),
+[RUSTSEC-2026-0516](https://rustsec.org/advisories/RUSTSEC-2026-0516.html),
+[RUSTSEC-2026-0517](https://rustsec.org/advisories/RUSTSEC-2026-0517.html),
+[RUSTSEC-2026-0518](https://rustsec.org/advisories/RUSTSEC-2026-0518.html),
+[RUSTSEC-2026-0519](https://rustsec.org/advisories/RUSTSEC-2026-0519.html),
+[RUSTSEC-2026-0520](https://rustsec.org/advisories/RUSTSEC-2026-0520.html),
+[RUSTSEC-2026-0539](https://rustsec.org/advisories/RUSTSEC-2026-0539.html),
+[RUSTSEC-2026-0540](https://rustsec.org/advisories/RUSTSEC-2026-0540.html) and
+[RUSTSEC-2026-0541](https://rustsec.org/advisories/RUSTSEC-2026-0541.html).
+The root/server and macOS Mesh graphs use these packages; the Linux desktop
+shipping graph excludes Mesh. No advisory exception is added. Other dependency
+versions and immutable source pins remain unchanged.
+
 The Mesh compatibility pin also moves its two SQLite consumers to `rusqlite`
 0.41.1 with `libsqlite3-sys` 0.39.1, bundling SQLite 3.54.1 and addressing
 [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459.html).
