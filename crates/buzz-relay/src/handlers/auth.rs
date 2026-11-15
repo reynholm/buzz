@@ -1068,7 +1068,7 @@ pub async fn handle_auth(event: nostr::Event, conn: Arc<ConnectionState>, state:
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::{
         ban_denial, classify_allowlist, classify_relay_membership, extract_auth_tag_json,
         handle_auth, nip42_denial_class, BanOutcome, PolicyCheck,
@@ -2081,10 +2081,8 @@ mod tests {
         assert!(records.is_empty(), "{records:?}");
     }
 
-    mod postgres_tests {
+    pub(in crate::handlers) mod postgres_tests {
         use super::*;
-
-        include!("auth_deploy_postgres_tests.rs");
 
         // Shadow records the deny-set check where enforce runs it, and admits
         // with OK(true) either way, as Off does. Mutation: deleting root's
@@ -2507,7 +2505,7 @@ mod tests {
         }
 
         /// A community whose row exists, so bans and users can reference it.
-        async fn seeded_community(
+        pub(in crate::handlers) async fn seeded_community(
             state: &crate::state::AppState,
         ) -> buzz_core::tenant::CommunityId {
             let id = uuid::Uuid::new_v4();
@@ -2973,7 +2971,7 @@ mod tests {
         }
 
         /// Flags `names` as default channels in `community`, oldest first.
-        async fn default_channels(
+        pub(in crate::handlers) async fn default_channels(
             state: &crate::state::AppState,
             community: buzz_core::tenant::CommunityId,
             owner: &Keys,
