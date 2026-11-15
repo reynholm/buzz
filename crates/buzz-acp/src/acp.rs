@@ -214,7 +214,7 @@ mod kimi_manual_permission_tests;
 
 fn build_initialize_params() -> serde_json::Value {
     serde_json::json!({
-        "protocolVersion": 2,
+        "protocolVersion": 1,
         "clientCapabilities": build_client_capabilities(),
         "clientInfo": {
             "name": "buzz-acp",
@@ -1060,8 +1060,7 @@ impl AcpClient {
     /// arm can choose [`ACP_STEER_METHOD`] for adapters that implement it.
     /// Parsed here rather than at each call site so no caller can forget it.
     pub async fn initialize(&mut self) -> Result<serde_json::Value, AcpError> {
-        // Requesting version 2 is an intentional temporary pin — we are squatting
-        // on ACP v2 ahead of the upstream ACP RFD. Revisit when that RFD merges.
+        // V2 uses different initialize fields; number this V1 request accordingly.
         let params = build_initialize_params();
         let result = self.send_request("initialize", params).await?;
         self.kimi |= result
@@ -3503,33 +3502,18 @@ mod tests {
     }
 
     #[test]
-    fn initialize_request_format() {
-        let msg = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 0u64,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": 2,
-                "clientCapabilities": build_client_capabilities(),
-                "clientInfo": {
-                    "name": "buzz-acp",
-                    "version": "0.1.0"
-                }
-            }
-        });
-        assert_eq!(msg["params"]["protocolVersion"].as_u64(), Some(2));
+    fn initialize_request_uses_the_schema_version_it_serializes() {
+        let params = build_initialize_params();
+        assert_eq!(params["protocolVersion"].as_u64(), Some(1));
+        assert_eq!(params["clientInfo"]["name"].as_str(), Some("buzz-acp"));
+        assert!(params["clientCapabilities"].is_object());
         assert_eq!(
-            msg["params"]["clientInfo"]["name"].as_str(),
-            Some("buzz-acp")
-        );
-        assert!(msg["params"]["clientCapabilities"].is_object());
-        assert_eq!(
-            msg["params"]["clientCapabilities"]["auth"]["terminal"].as_bool(),
+            params["clientCapabilities"]["auth"]["terminal"].as_bool(),
             Some(true),
             "terminal auth capability must be advertised so adapters can expose terminal login methods"
         );
         assert_eq!(
-            msg["params"]["clientCapabilities"]["_meta"]["goose"]["customNotifications"].as_bool(),
+            params["clientCapabilities"]["_meta"]["goose"]["customNotifications"].as_bool(),
             Some(true),
             "goose customNotifications capability must be advertised"
         );
