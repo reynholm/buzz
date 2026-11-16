@@ -172,6 +172,7 @@ impl ProcessTree {
         self.registered_services.contains(&pid)
     }
 
+    #[cfg(unix)]
     pub(crate) fn note_service_registration_failure(&mut self) {
         self.service_registration_failed = true;
     }
