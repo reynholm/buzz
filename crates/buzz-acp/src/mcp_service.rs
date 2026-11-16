@@ -24,6 +24,11 @@ struct Registration {
     instances: HashMap<u32, ProcessInstance>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct RegistrationFailure {
+    generation: Uuid,
+}
+
 impl ServiceRegistry {
     pub fn for_current_executable() -> Result<Self> {
         #[cfg(test)]
@@ -72,14 +77,34 @@ impl ServiceRegistry {
     /// Run on the snapshot collector, never in the main relay loop.
     pub fn apply(&self, tree: &mut ProcessTree) {
         use std::io::Read;
-        let Ok(entries) = std::fs::read_dir(self.directory.path()) else {
-            return;
+        match std::fs::read(self.directory.path().join("registration.failed")) {
+            Ok(bytes) => {
+                tree.note_service_registration_failure();
+                if !serde_json::from_slice::<RegistrationFailure>(&bytes)
+                    .is_ok_and(|record| record.generation == self.generation)
+                {
+                    return;
+                }
+            }
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                tree.note_service_registration_failure();
+                return;
+            }
+            Err(_) => {}
+        }
+        let entries = match std::fs::read_dir(self.directory.path()) {
+            Ok(entries) => entries,
+            Err(_) => {
+                tree.note_service_registration_failure();
+                return;
+            }
         };
         for entry in entries.take(MAX_REGISTRATIONS).flatten() {
-            if entry.path().extension().and_then(|value| value.to_str()) != Some("json") {
+            let path = entry.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("json") {
                 continue;
             }
-            let Ok(file) = std::fs::File::open(entry.path()) else {
+            let Ok(file) = std::fs::File::open(&path) else {
                 continue;
             };
             let mut bytes = Vec::new();
@@ -120,6 +145,14 @@ fn register(
     let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
     serde_json::to_writer(temporary.as_file_mut(), &record)?;
     temporary.persist(directory.join(format!("{id}.json")))?;
+    Ok(())
+}
+
+fn register_failure(directory: &Path, generation: Uuid) -> Result<()> {
+    let record = RegistrationFailure { generation };
+    let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
+    serde_json::to_writer(temporary.as_file_mut(), &record)?;
+    temporary.persist(directory.join("registration.failed"))?;
     Ok(())
 }
 
@@ -193,9 +226,21 @@ pub(crate) async fn run(args: Vec<String>) -> Result<()> {
                 if initialized_response {
                     let directory = directory.clone();
                     let registered = tokio::task::spawn_blocking(move || {
-                        let tree = crate::process_tree::snapshot()
-                            .context("MCP identity snapshot unavailable")?;
-                        register(&directory, generation, id, std::process::id(), &tree)
+                        let result = match crate::process_tree::snapshot() {
+                            Some(tree) => {
+                                register(&directory, generation, id, std::process::id(), &tree)
+                            }
+                            None => Err(anyhow::anyhow!("MCP identity snapshot unavailable")),
+                        };
+                        if let Err(error) = result {
+                            register_failure(&directory, generation).with_context(|| {
+                                format!(
+                                    "MCP registration failed: {error}; failure marker unavailable"
+                                )
+                            })?;
+                            return Err(error);
+                        }
+                        Ok(())
                     })
                     .await?;
                     if let Err(error) = registered {

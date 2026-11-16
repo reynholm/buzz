@@ -33,6 +33,20 @@ fn registration_matches_worker_and_process_instance_without_hiding_work() {
 }
 
 #[test]
+fn registration_failure_is_scoped_to_its_worker_generation() {
+    let registry = ServiceRegistry::new(std::path::PathBuf::from("/bin/wrapper")).unwrap();
+    register_failure(registry.directory.path(), registry.generation).unwrap();
+    let mut tree = crate::process_tree::ProcessTree::default();
+    registry.apply(&mut tree);
+    assert!(tree.service_registration_failed());
+
+    let other = ServiceRegistry::new(std::path::PathBuf::from("/bin/wrapper")).unwrap();
+    let mut tree = crate::process_tree::ProcessTree::default();
+    other.apply(&mut tree);
+    assert!(!tree.service_registration_failed());
+}
+
+#[test]
 fn stdio_wrapping_keeps_arguments_and_environment_literal() {
     let registry = ServiceRegistry::new(std::path::PathBuf::from("/bin/wrapper")).unwrap();
     let original = crate::acp::McpServer {
