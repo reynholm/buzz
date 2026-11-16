@@ -952,6 +952,15 @@ impl AcpClient {
             let children = tree.children(parent);
             blocking.extend(tree.blocking_pids(parent, &self.resident_pids));
             for child in children {
+                if !tree.service_registration_failed()
+                    && !tree.is_registered_service(child.pid)
+                    && child.command.split_whitespace().nth(1) == Some("__mcp-service")
+                {
+                    // Service startup completes registration only after MCP initialize.
+                    uncertain = true;
+                    blocking.remove(&child.pid);
+                    continue;
+                }
                 if tree.is_uncertain_snapshot(child.pid) {
                     uncertain = true;
                     pending.push(child.pid);

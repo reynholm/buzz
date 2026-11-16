@@ -62,6 +62,67 @@ async fn completed_empty_turn_prepares_observation_before_listener_return() {
 }
 
 #[tokio::test]
+async fn unregistered_mcp_service_does_not_become_background_work() {
+    let original = scope();
+    let mut pool = AgentPool::from_slots(vec![Some(worker(0).await)]);
+    bind(&mut pool, &original, 0);
+    let mut agent = pool.try_claim(Some(&original)).unwrap();
+    let session = agent.state.sessions[&original].clone();
+    agent.remember_background_context(&PromptSource::Channel(original.clone()), None, &session);
+    let pid = agent.acp.process_id().unwrap();
+    let starting = crate::process_tree::parse_instance_snapshot(&format!(
+        "{pid} 1 S Mon Oct 26 10:00:00 2026 adapter\n424242 {pid} S Mon Oct 26 10:00:01 2026 buzz-acp __mcp-service /tmp/registry node ./src/index.mjs\n424243 424242 S Mon Oct 26 10:00:01 2026 node ./src/index.mjs\n"
+    ))
+    .unwrap();
+
+    assert_eq!(agent.acp.background_child_pids_in(&starting), None);
+    assert!(agent.acp.observed_background_instances.is_empty());
+    pool.return_agent(agent);
+
+    let requests = pool.background_poll_requests();
+    let empty = crate::process_tree::ProcessTree::default();
+    let mut queue = EventQueue::new(DedupMode::Queue);
+    pool.apply_background_snapshot(&requests, Some(&empty), &mut queue);
+    assert!(!queue.has_pending_continuation(&original));
+    assert!(!pool.has_runtime_hold());
+}
+
+#[tokio::test]
+async fn failed_registration_keeps_unregistered_service_work_conservative() {
+    let original = scope();
+    let mut pool = AgentPool::from_slots(vec![Some(worker(0).await)]);
+    bind(&mut pool, &original, 0);
+    let mut agent = pool.try_claim(Some(&original)).unwrap();
+    let session = agent.state.sessions[&original].clone();
+    agent.remember_background_context(&PromptSource::Channel(original.clone()), None, &session);
+    let pid = agent.acp.process_id().unwrap();
+    let mut starting = crate::process_tree::parse_instance_snapshot(&format!(
+        "{pid} 1 S Mon Oct 26 10:00:00 2026 adapter\n424242 {pid} S Mon Oct 26 10:00:01 2026 buzz-acp __mcp-service /tmp/registry node ./src/index.mjs\n424243 424242 S Mon Oct 26 10:00:01 2026 python3 work.py\n"
+    ))
+    .unwrap();
+    starting.note_service_registration_failure();
+
+    let children = agent.acp.background_child_pids_in(&starting).unwrap();
+    assert_eq!(children, HashSet::from([424242]));
+    agent.background_context.as_mut().unwrap().blocking_pids = children.clone();
+    agent.acp.return_children = Some(Some(children));
+    pool.return_agent(agent);
+
+    let requests = pool.background_poll_requests();
+    let empty = crate::process_tree::ProcessTree::default();
+    let mut queue = EventQueue::new(DedupMode::Queue);
+    pool.apply_background_snapshot(&requests, Some(&empty), &mut queue);
+    pool.apply_background_snapshot(&requests, Some(&empty), &mut queue);
+    let collection = queue.flush_next().unwrap();
+    assert_eq!(collection.scope, original);
+    assert_eq!(
+        collection.continuation.as_ref().unwrap().session_id,
+        session
+    );
+    assert!(queue.flush_next().is_none());
+}
+
+#[tokio::test]
 async fn newly_registered_service_does_not_invent_collection_or_hide_reused_work_pid() {
     for reused in [false, true] {
         let original = scope();

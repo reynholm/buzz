@@ -101,6 +101,7 @@ pub struct ProcessTree {
     uncertain_snapshots: HashSet<u32>,
     instances: HashMap<u32, ProcessInstance>,
     registered_services: HashSet<u32>,
+    service_registration_failed: bool,
 }
 
 /// PID birth and current command, both required for a service registration.
@@ -169,6 +170,15 @@ impl ProcessTree {
 
     pub(crate) fn is_registered_service(&self, pid: u32) -> bool {
         self.registered_services.contains(&pid)
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn note_service_registration_failure(&mut self) {
+        self.service_registration_failed = true;
+    }
+
+    pub(crate) fn service_registration_failed(&self) -> bool {
+        self.service_registration_failed
     }
 
     pub(crate) fn process_instance(&self, pid: u32) -> Option<&ProcessInstance> {
