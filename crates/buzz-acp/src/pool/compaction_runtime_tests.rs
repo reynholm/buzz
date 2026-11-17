@@ -324,7 +324,7 @@ async fn compact_duplicate_busy_deadline_restart_removal_and_shutdown_are_termin
                 other,
                 pool.compaction_target(&scope(), &ctx.session_controls, true)
             ),
-            Err(ControlFailure::Busy)
+            Err(ControlFailure::CompactionPending)
         );
         match ending {
             "deadline" => {

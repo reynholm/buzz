@@ -106,6 +106,8 @@ pub enum ControlFailure {
     ScopeUnavailable,
     /// Queue, receipt capacity or target is occupied.
     Busy,
+    /// Another compaction is already pending or running for this scope.
+    CompactionPending,
     /// Target generation changed.
     StaleTarget,
     /// Accepted request expired before execution.
@@ -136,6 +138,7 @@ impl ControlFailure {
             "unsupported" => Self::Unsupported,
             "scope_unavailable" => Self::ScopeUnavailable,
             "busy" => Self::Busy,
+            "compaction_pending" => Self::CompactionPending,
             "stale_target" => Self::StaleTarget,
             "stale_request" => Self::StaleRequest,
             "store_unavailable" => Self::StoreUnavailable,
@@ -157,6 +160,7 @@ impl ControlFailure {
             Self::Unsupported => "unsupported",
             Self::ScopeUnavailable => "scope_unavailable",
             Self::Busy => "busy",
+            Self::CompactionPending => "compaction_pending",
             Self::StaleTarget => "stale_target",
             Self::StaleRequest => "stale_request",
             Self::StoreUnavailable => "store_unavailable",

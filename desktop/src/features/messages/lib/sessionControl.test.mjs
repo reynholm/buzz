@@ -123,6 +123,17 @@ test("results require exact target raw signer, exact e reference and bounded tag
   );
   assert.equal(
     control([
+      request({ content: "!compact" }),
+      reaction("error", "compaction_pending"),
+    ]).targets[0].detail,
+    "Previous compaction is still running · Wait for it to finish",
+  );
+  assert.equal(
+    control([request(), reaction("error", "busy")]).targets[0].detail,
+    "Session control is busy",
+  );
+  assert.equal(
+    control([
       request(),
       reaction(),
       reaction("error", "busy", { id: "1".repeat(64) }),

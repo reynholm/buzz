@@ -151,6 +151,23 @@ coverage distinguishes that boundary from the existing 128-tool metadata limit.
 No vulnerability exception is added. Rebuilt native graphs and the complete
 agent suite must be verified alongside the advisory checks above.
 
+## Temporal-library maintenance exceptions
+
+[RUSTSEC-2026-0543](https://rustsec.org/advisories/RUSTSEC-2026-0543.html) and
+[RUSTSEC-2026-0542](https://rustsec.org/advisories/RUSTSEC-2026-0542.html) are
+INFO-only maintenance notices for chrono and humantime, not reported
+vulnerabilities. Chrono remains part of the maintained SQLx, cron, rmcp and
+Mesh dependency APIs, so replacing Buzz's direct uses cannot remove it from
+the complete graph. Humantime is selected only through Xet in the Mesh
+dependency graphs, including the macOS desktop build with `mesh-llm` enabled.
+The current Xet parent has no compatible release without that dependency.
+
+The two exceptions are scoped to those exact maintenance advisory IDs. They
+do not waive vulnerability advisories or change the policy for other
+unmaintained dependencies. Revisit them when the maintained parents offer a
+coordinated migration away from chrono and humantime; remove each exception
+once its crate leaves the graph.
+
 ## Temporary transitive maintenance exceptions
 
 The following three advisories identify standalone crates whose APIs have moved

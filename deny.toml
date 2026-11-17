@@ -29,6 +29,12 @@ ignore = [
     # Compile-time GTK3/WebKit binding macros still use proc-macro-error 1.
     # Its replacement is a different crate; remove after those parents migrate.
     { id = "RUSTSEC-2024-0370", reason = "transitive compile-time GTK3 macros in WebKitGTK bindings; no compatible parent release using proc-macro-error2" },
+    # INFO-only maintenance notice. Maintained SQLx, cron, rmcp and Mesh still
+    # expose chrono types; no compatible maintained replacement graph exists.
+    { id = "RUSTSEC-2026-0543", reason = "INFO-only maintenance notice; required by maintained database, scheduling, MCP and Mesh APIs" },
+    # humantime is present only through Xet in the Mesh dependency graphs,
+    # including the macOS desktop build with mesh-llm enabled.
+    { id = "RUSTSEC-2026-0542", reason = "INFO-only transitive maintenance notice via Xet in Mesh; no compatible parent release without humantime" },
 ]
 
 [licenses]
