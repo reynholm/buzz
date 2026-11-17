@@ -12334,6 +12334,7 @@ mod tests {
             });
             let update = tokio::spawn({
                 let pool = pool.clone();
+                let sender = member_key.public_key().to_bytes();
                 async move {
                     buzz_db::channel::update_channel(
                         &pool,
@@ -12343,6 +12344,7 @@ mod tests {
                             join_role: Some("guest".into()),
                             ..Default::default()
                         },
+                        &sender,
                     )
                     .await
                 }
