@@ -620,6 +620,46 @@ for (const [label, body] of [
   });
 }
 
+test("duplicate compact explains that the previous compaction is still running", async ({
+  page,
+}) => {
+  await setup(page);
+  const command = await page.evaluate(
+    ({ pubkey, channelName, agent }) =>
+      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+        channelName,
+        pubkey,
+        content: "!compact",
+        extraTags: [["p", agent]],
+      }),
+    { pubkey: VIEWER, channelName: CHANNEL, agent: AGENT },
+  );
+  if (!command?.id) throw new Error("Compact command not emitted");
+  await page.evaluate(
+    ({ commandId, pubkey, channelName }) =>
+      window.__BUZZ_E2E_EMIT_MOCK_MESSAGE__?.({
+        channelName,
+        pubkey,
+        kind: 7,
+        content: "❌",
+        extraTags: [
+          ["e", commandId],
+          [
+            "buzz-session-result",
+            "1",
+            commandId,
+            "error",
+            "compaction_pending",
+          ],
+        ],
+      }),
+    { commandId: command.id, pubkey: AGENT, channelName: CHANNEL },
+  );
+  await expect(row(page, command.id)).toContainText(
+    "Previous compaction is still running · Wait for it to finish",
+  );
+});
+
 test("two agent menus retain the selected signer and sibling scope", async ({
   page,
 }) => {

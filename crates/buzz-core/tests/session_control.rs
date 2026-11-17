@@ -227,6 +227,7 @@ fn freshness_boundaries_and_failure_vocabulary_are_closed() {
         "compact_failed",
         "cancelled",
         "timeout",
+        "compaction_pending",
         "unconfirmed",
         "superseded",
         "internal",

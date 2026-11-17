@@ -99,7 +99,7 @@ impl SessionControlRuntime {
                 return Ok(());
             }
             drop(state);
-            return self.refuse_compaction(&job, ControlFailure::Busy);
+            return self.refuse_compaction(&job, ControlFailure::CompactionPending);
         }
         let scopes: std::collections::HashSet<_> = state
             .scopes

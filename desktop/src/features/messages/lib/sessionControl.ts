@@ -49,6 +49,8 @@ const FAILURE_COPY: Readonly<Record<string, string>> = {
   unsupported: "Compaction is unavailable",
   scope_unavailable: "Session scope unavailable",
   busy: "Session control is busy",
+  compaction_pending:
+    "Previous compaction is still running · Wait for it to finish",
   stale_target: "Session changed",
   stale_request: "Request expired",
   store_unavailable: "Session could not be saved",
