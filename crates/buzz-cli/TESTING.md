@@ -134,13 +134,21 @@ FORUM_ID=$(buzz channels create --name "test-forum" --type forum --visibility op
 
 # channels list
 buzz channels list | jq .
-# Expected: [{"channel_id":"...","name":"...","description":"...","created_at":N}]
+# Check channel_type, visibility, labels, archived, description and timestamps.
 buzz channels list --visibility open | jq .
 buzz channels list --member | jq .
+buzz channels list --exclude-archived | jq .   # list includes archived channels by default
+# Visibility is "public" or "private" from the relay's tags, or null when absent.
+# List/get keep created_at as the metadata timestamp, also exposed as updated_at.
+# channel_created_at is the channel's creation timestamp, or null when unavailable.
 
 # channels get
 buzz channels get --channel "$CHANNEL_ID" | jq .
-# Expected: {"channel_id":"...","name":"...","description":"...","created_at":N,"pubkey":"..."} or null
+# Expected: the same channel fields with pubkey, or null for a missing channel.
+
+# channels search
+buzz channels search --query "test-forum" --exact | jq .
+# Search hides archived channels by default and also returns description as about.
 
 # channels update
 buzz channels update --channel "$CHANNEL_ID" --name "test-cli-updated" \
