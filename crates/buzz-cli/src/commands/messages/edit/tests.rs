@@ -307,3 +307,63 @@ async fn other_channel_kinds_keep_plain_edits_on_older_relays() {
         }
     }
 }
+
+#[tokio::test]
+async fn command_attaches_emoji_tags_for_known_shortcodes() {
+    let wave = vec![
+        "emoji".to_string(),
+        "wave".to_string(),
+        "https://cdn.example.com/wave.png".to_string(),
+    ];
+    for kind in [9, 7] {
+        let keys = Keys::generate();
+        let channel = Uuid::new_v4();
+        let original = EventBuilder::new(Kind::Custom(kind), "original")
+            .tag(Tag::parse(["h", &channel.to_string()]).unwrap())
+            .sign_with_keys(&keys)
+            .unwrap();
+        let palette = EventBuilder::new(Kind::Custom(buzz_sdk::kind::KIND_EMOJI_SET as u16), "")
+            .tags([
+                Tag::parse(["d", buzz_sdk::CUSTOM_EMOJI_SET_D_TAG]).unwrap(),
+                Tag::parse(wave.clone()).unwrap(),
+            ])
+            .sign_with_keys(&keys)
+            .unwrap();
+        let mut events = vec![original.clone(), palette];
+        let head = Timestamp::now().as_secs() + 5;
+        if kind == 9 {
+            events.push(edit(
+                &keys,
+                &original,
+                head,
+                &[vec!["e".into(), original.id.to_hex()], imeta("kept")],
+            ));
+        }
+        let (url, state) = relay(events, false).await;
+        let client = client(url, keys);
+        edit_message(
+            &client,
+            &original.id.to_hex(),
+            ":wave: :unknown: done",
+            false,
+        )
+        .await
+        .unwrap();
+        let submitted = state.submitted.lock().unwrap();
+        let emoji: Vec<_> = submitted[0]
+            .tags
+            .iter()
+            .filter(|t| t.as_slice()[0] == "emoji")
+            .map(|t| t.as_slice().to_vec())
+            .collect();
+        assert_eq!(emoji, vec![wave.clone()], "kind {kind}");
+        assert_eq!(submitted[0].content, ":wave: :unknown: done");
+        if kind == 9 {
+            assert!(submitted[0].created_at.as_secs() > head);
+            assert!(submitted[0]
+                .tags
+                .iter()
+                .any(|tag| tag.as_slice() == imeta("kept")));
+        }
+    }
+}
