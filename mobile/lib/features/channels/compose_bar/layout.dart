@@ -12,6 +12,7 @@ class _ComposeBarLayout extends HookWidget {
   final EditableTextContextMenuBuilder contextMenuBuilder;
   final ValueChanged<KeyboardInsertedContent> onContentInserted;
   final VoidCallback onSend;
+  final KeyEventResult Function(FocusNode, KeyEvent) onKeyEvent;
   final String resolvedHint;
   final _AttachmentSurface attachmentSurface;
   final ValueChanged<BuildContext> onAttachmentTap;
@@ -43,6 +44,7 @@ class _ComposeBarLayout extends HookWidget {
     required this.contextMenuBuilder,
     required this.onContentInserted,
     required this.onSend,
+    required this.onKeyEvent,
     required this.resolvedHint,
     required this.attachmentSurface,
     required this.onAttachmentTap,
@@ -330,12 +332,22 @@ class _ComposeBarLayout extends HookWidget {
   }
 
   Widget _buildTextField(BuildContext context) {
+    return Focus(
+      canRequestFocus: false,
+      skipTraversal: true,
+      onKeyEvent: onKeyEvent,
+      child: _buildEditableField(context),
+    );
+  }
+
+  Widget _buildEditableField(BuildContext context) {
     return TextField(
       controller: controller,
       focusNode: focusNode,
       readOnly: readOnly,
       inputFormatters: [_ComposerChipEditingFormatter(controller)],
       keyboardType: TextInputType.multiline,
+      textCapitalization: TextCapitalization.sentences,
       textInputAction: TextInputAction.newline,
       contextMenuBuilder: contextMenuBuilder,
       // Flutter's Cupertino magnifier rebuilds its overlay on every

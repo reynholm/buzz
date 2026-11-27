@@ -792,7 +792,7 @@ pub enum MessagesCmd {
     },
     /// Full-text search across messages
     #[command(
-        after_help = "Examples:\n  buzz messages search --query checkout\n  buzz messages search --author npub1... --since 1783497600\n  buzz messages search --author Aaron --query checkout --limit 20"
+        after_help = "Examples:\n  buzz messages search --query checkout\n  buzz messages search --author npub1... --since 1783497600\n  buzz messages search --author Aaron --query checkout --limit 20\n  buzz messages search --author npub1... --before 1783584000 --before-id <last result id> --limit 100"
     )]
     Search {
         /// Search query string (optional when --author is given)
@@ -804,6 +804,14 @@ pub enum MessagesCmd {
         /// Unix timestamp — return messages after this time
         #[arg(long)]
         since: Option<i64>,
+        /// Unix timestamp cursor — return messages created at or before this time.
+        /// To page back, pass the last result's `created_at` here and its `id` as --before-id.
+        #[arg(long)]
+        before: Option<i64>,
+        /// Event ID cursor — with --before, resume after this event, so events from the
+        /// same second are neither repeated nor skipped. Not allowed with --query.
+        #[arg(long, requires = "before")]
+        before_id: Option<String>,
         /// Maximum number of results to return
         #[arg(long)]
         limit: Option<u32>,
@@ -1008,16 +1016,26 @@ pub enum ChannelsCmd {
         #[arg(long)]
         channel: String,
     },
-    /// Add a member to a channel
+    /// Add members to a channel
+    ///
+    /// People are sent in events of up to 100 each, in order. People who are
+    /// already members are not skipped: `--role` also changes their role.
+    /// Unless exactly one `--pubkey` is given, it prints a report; `unknown`
+    /// lists people whose outcome is uncertain (no per-person result, or a
+    /// lost receipt), so check them before retrying.
     #[command(name = "add-member")]
     AddMember {
         /// Channel UUID
         #[arg(long)]
         channel: String,
-        /// Member pubkey (64-char hex)
+        /// Member pubkey (64-char hex); repeat to add several people
+        #[arg(long, required_unless_present = "pubkeys_file")]
+        pubkey: Vec<String>,
+        /// File with one member pubkey per line (`-` reads stdin)
         #[arg(long)]
-        pubkey: String,
-        /// Member role (owner, admin, member, guest, bot)
+        pubkeys_file: Option<String>,
+        /// Role for everyone added (owner, admin, member, guest, bot); also
+        /// changes the role of people who are already members
         #[arg(long)]
         role: Option<String>,
     },
@@ -1060,6 +1078,13 @@ pub enum CanvasCmd {
         /// Canvas content (markdown; use '-' to read from stdin)
         #[arg(long)]
         content: String,
+        /// Replace only if this revision (64-char hex event ID) is still the
+        /// head, or `none` to create only when no canvas exists. Take it from
+        /// `canvas history --limit 1` and read that revision with
+        /// `canvas get --revision`. A moved head exits 5 (conflict). Without
+        /// it, set replaces whatever is current.
+        #[arg(long)]
+        expected: Option<String>,
     },
     /// List canvas revision history for a channel, newest first
     History {
@@ -1362,17 +1387,24 @@ pub enum DmsCmd {
 
 #[derive(Subcommand)]
 pub enum UsersCmd {
-    /// Look up user profiles by pubkey or name
+    /// Look up user profiles by pubkey or name. Where the community
+    /// advertises verified profiles, a person's relay-verified username, full
+    /// name and issuer appear in a `verified` object
     Get {
         /// User pubkey(s) to look up (64-char hex). Omit for your own profile
         #[arg(long = "pubkey")]
         pubkeys: Vec<String>,
-        /// Search by display name (case-insensitive substring match)
+        /// Search by display name (case-insensitive substring match). Where
+        /// verified profiles are advertised: profile or verified name, by word prefix
         #[arg(long = "name")]
         name: Option<String>,
         /// Scope an exact-name agent lookup to its owner (`me`, hex, or npub)
         #[arg(long = "owner", requires = "name")]
         owner: Option<String>,
+        /// Keep archived identities in `--name` results (marked `"archived": true`).
+        /// `--pubkey` lookups always return and mark them
+        #[arg(long = "include-archived", requires = "name")]
+        include_archived: bool,
     },
     /// Update the current identity's profile
     #[command(name = "set-profile")]
@@ -2849,6 +2881,26 @@ mod tests {
             event.as_str(),
         ])
         .is_ok());
+    }
+
+    #[test]
+    fn messages_search_parses_cursor_and_requires_before_for_before_id() {
+        let search = |extra: &[&str]| {
+            let mut argv = vec!["buzz", "messages", "search", "--author", "x"];
+            argv.extend_from_slice(extra);
+            Cli::try_parse_from(argv)
+        };
+        let id = "a".repeat(64);
+        match search(&["--before", "200", "--before-id", &id]).map(|c| c.command) {
+            Ok(Cmd::Messages(MessagesCmd::Search {
+                before, before_id, ..
+            })) => {
+                assert_eq!(before, Some(200));
+                assert_eq!(before_id.as_deref(), Some(id.as_str()));
+            }
+            _ => panic!("messages search should parse --before and --before-id"),
+        }
+        assert!(search(&["--before-id", &id]).is_err());
     }
 
     #[test]

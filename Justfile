@@ -676,9 +676,10 @@ test-unit:
         # relay events and agent prompts. They are infra-free; ignored lifecycle
         # tests remain excluded and run in their dedicated integration lanes.
         cargo nextest run -p buzz-acp --lib
-        # Load generator scenario, identity, shard and stats unit tests; all
-        # infra-free. Keep scripts/run-tests.sh in step.
-        cargo nextest run -p buzz-test-client --lib -E 'test(/^loadgen::/)'
+        # Load generator and acceptance probe unit tests; all infra-free (the
+        # probe's run against a scripted in-process relay). Keep
+        # scripts/run-tests.sh in step.
+        cargo nextest run -p buzz-test-client --lib -E 'test(/^(loadgen|acceptance)::/)'
     else
         ./scripts/run-tests.sh unit
     fi
@@ -1074,8 +1075,7 @@ mobile-check:
 # Run mobile tests
 mobile-test:
     /bin/bash ./scripts/test-mobile-gateway-recipes.sh
-    unset GIT_DIR GIT_WORK_TREE; cd {{mobile_dir}} && flutter test --dart-define=BUZZ_PUSH_GATEWAY_URL=https://push.example
-    unset GIT_DIR GIT_WORK_TREE; cd {{mobile_dir}} && flutter test test/shared/push/push_unconfigured_build_test.dart
+    unset GIT_DIR GIT_WORK_TREE; cd {{mobile_dir}} && flutter test
     unset GIT_DIR GIT_WORK_TREE; cd {{mobile_dir}}/packages/buzz_secp256k1 && dart pub get && dart test
 
 # Regenerate the emoji dataset asset from desktop's emoji-mart install.
