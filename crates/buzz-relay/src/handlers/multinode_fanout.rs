@@ -11,15 +11,16 @@
 //! deliveries at once, and closing their recipients then would send the whole
 //! fleet back to that database at the same moment (Review-Proven Rule 9).
 //!
-//! An event is dropped on this node when its worker's queue is full, or when
-//! the dispatcher lags the broadcast and skips it. Both are counted, and the
-//! syncs the dropped events would have reached get `CLOSED "resync: ..."`
+//! Drops occur when a worker queue fills, a delivery exceeds
+//! [`MAX_DELIVERY_ATTEMPT`], or the dispatcher lags the broadcast. Each is
+//! counted, and the syncs those events would have reached get `CLOSED "resync: ..."`
 //! (NIP-AR Sync rule 5). A plain subscription is not told. Its client may
 //! replay the event when it next reconnects, but only if later deliveries did
 //! not move its resume cursor past the event by more than the client's replay
 //! slack.
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
+use std::time::Duration;
 
 use buzz_core::event::StoredEvent;
 use buzz_core::CommunityId;
@@ -35,6 +36,8 @@ use crate::state::AppState;
 pub const WORKERS: usize = 16;
 /// Events each worker may hold before the dispatcher drops new ones.
 pub const WORKER_QUEUE: usize = 1024;
+/// Deadline for an active delivery attempt. Time in the queue is excluded.
+pub const MAX_DELIVERY_ATTEMPT: Duration = Duration::from_secs(30);
 /// The resync reason for a sync whose live entry was dropped here.
 const LAG_RESYNC: &str = "resync: live delivery lagged";
 
@@ -87,8 +90,28 @@ async fn run_worker(state: Arc<AppState>, mut queue: mpsc::Receiver<Queued>) {
     while let Some((community_id, stored)) = queue.recv().await {
         #[cfg(test)]
         crate::nip_fi_test_hooks::before_multinode_delivery(community_id).await;
-        deliver_pubsub_event(&state, community_id, &stored).await;
+        let delivery = deliver_pubsub_event(&state, community_id, &stored);
+        if tokio::time::timeout(MAX_DELIVERY_ATTEMPT, delivery)
+            .await
+            .is_err()
+        {
+            drop_event(&state, community_id, &stored, "stale");
+        }
     }
+}
+
+/// Count a dropped event and resync its matching artifact subscriptions.
+/// An interrupted delivery may have reached some matches already, so resync
+/// all of them to cover any gap.
+fn drop_event(
+    state: &AppState,
+    community_id: CommunityId,
+    stored: &StoredEvent,
+    reason: &'static str,
+) {
+    metrics::counter!("buzz_multinode_fanout_dropped_total", "reason" => reason).increment(1);
+    let matches = state.sub_registry.fan_out_scoped(community_id, stored);
+    state.artifact_syncs.resync_matches(&matches, LAG_RESYNC);
 }
 
 /// Routes broadcast events to worker queues.
@@ -135,10 +158,7 @@ impl Dispatcher {
             | TrySendError::Closed((community_id, stored)),
         ) = queue.try_send(queued)
         {
-            metrics::counter!("buzz_multinode_fanout_dropped_total", "reason" => "queue_full")
-                .increment(1);
-            let matches = state.sub_registry.fan_out_scoped(community_id, &stored);
-            state.artifact_syncs.resync_matches(&matches, LAG_RESYNC);
+            drop_event(state, community_id, &stored, "queue_full");
         }
     }
 
@@ -169,8 +189,6 @@ mod tests {
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
-    use std::time::Duration;
-
     use super::*;
     use crate::subscription::ConnId;
 
@@ -184,6 +202,7 @@ mod tests {
     /// its cancellation token.
     fn subscriber(
         state: &AppState,
+        community_id: CommunityId,
         kind: u16,
     ) -> (ConnId, mpsc::Receiver<Message>, CancellationToken) {
         let conn_id = Uuid::new_v4();
@@ -196,13 +215,14 @@ mod tests {
             mpsc::channel(1).0,
             None,
             cancel.clone(),
-            community(),
+            community_id,
             Arc::new(AtomicU8::new(0)),
             Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             3,
             crate::state::CommunityConnectionControl::new(CancellationToken::new()),
         );
-        state.sub_registry.register(
+        state.sub_registry.register_scoped(
+            community_id,
             conn_id,
             "sub".to_string(),
             vec![Filter::new().kind(Kind::Custom(kind))],
@@ -225,7 +245,7 @@ mod tests {
     #[tokio::test]
     async fn delivers_one_topic_in_order_through_workers() {
         let state = crate::state::tests::test_state().await;
-        let (_conn, mut frames, cancel) = subscriber(&state, STORED);
+        let (_conn, mut frames, cancel) = subscriber(&state, community(), STORED);
         let (tx, rx) = broadcast::channel(64);
         let handle = spawn(Arc::clone(&state), rx);
 
@@ -256,13 +276,18 @@ mod tests {
     #[tokio::test]
     async fn completion_waits_for_worker_delivery() {
         let state = crate::state::tests::test_state().await;
-        let (_conn, mut frames, _) = subscriber(&state, STORED);
+        let community_id = CommunityId::from_uuid(Uuid::new_v4());
+        let (_conn, mut frames, _) = subscriber(&state, community_id, STORED);
         let (arrived, release) =
-            crate::nip_fi_test_hooks::multinode_delivery_hook::arm(community());
+            crate::nip_fi_test_hooks::multinode_delivery_hook::arm(community_id);
         let (tx, rx) = broadcast::channel(64);
         let cancel = CancellationToken::new();
         let mut handle = spawn_with_cancel(state, rx, cancel.clone());
-        tx.send(event(STORED, 0)).expect("broadcast");
+        tx.send(ChannelEvent {
+            community_id,
+            ..event(STORED, 0)
+        })
+        .expect("broadcast");
         tokio::time::timeout(Duration::from_secs(5), arrived)
             .await
             .expect("worker reached delivery")
@@ -286,7 +311,7 @@ mod tests {
     /// A connection with an idle sync on `kind`: the sync is what a dropped
     /// event must resync.
     fn sync(state: &AppState, kind: u16) -> (ConnId, CancellationToken) {
-        let (conn_id, _frames, cancel) = subscriber(state, kind);
+        let (conn_id, _frames, cancel) = subscriber(state, community(), kind);
         state.artifact_syncs.insert_idle(conn_id, "sub");
         (conn_id, cancel)
     }
@@ -314,7 +339,7 @@ mod tests {
     #[tokio::test]
     async fn full_worker_queue_resyncs_the_dropped_events_syncs_and_closes_nothing() {
         let state = crate::state::tests::test_state().await;
-        let (_plain, _frames, plain_cancel) = subscriber(&state, STORED);
+        let (_plain, _frames, plain_cancel) = subscriber(&state, community(), STORED);
         let (synced, sync_cancel) = sync(&state, STORED);
         let (unmatched, _) = sync(&state, 7);
         // Hold the only queue's receiver without draining it.
@@ -349,7 +374,7 @@ mod tests {
     #[tokio::test]
     async fn dispatcher_lag_resyncs_every_sync_and_closes_nothing() {
         let state = crate::state::tests::test_state().await;
-        let (_plain, _frames, plain_cancel) = subscriber(&state, STORED);
+        let (_plain, _frames, plain_cancel) = subscriber(&state, community(), STORED);
         let (first, first_cancel) = sync(&state, STORED);
         let (second, second_cancel) = sync(&state, 7);
         let (dispatcher, _queues) = Dispatcher::new(1, 1);
@@ -378,7 +403,7 @@ mod tests {
         state
             .channel_visibility_cache
             .insert((community(), channel_id), "private".to_string());
-        let (conn, mut frames, cancel) = subscriber(&state, STORED);
+        let (conn, mut frames, cancel) = subscriber(&state, community(), STORED);
         state
             .conn_manager
             .set_authenticated_pubkey(conn, vec![7; 32]);
@@ -407,5 +432,94 @@ mod tests {
         };
         let v: serde_json::Value = serde_json::from_str(&text).expect("frame JSON");
         assert_eq!(v[2]["id"], id);
+    }
+
+    /// A delivery that hangs (here on a database that accepts the connection
+    /// but never answers) is cut off at the bound: it is counted, the sync it
+    /// matched resyncs, no connection closes, and the next event queued on
+    /// the same worker is delivered.
+    #[tokio::test(start_paused = true)]
+    async fn hung_delivery_is_dropped_at_the_bound_and_the_worker_moves_on() {
+        let silent_db = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let url = format!(
+            "postgres://buzz@{}/buzz",
+            silent_db.local_addr().expect("addr")
+        );
+        let state = crate::state::tests::test_state_with_database_url_and_pool_options(
+            &url,
+            sqlx::postgres::PgPoolOptions::new().acquire_timeout(Duration::from_secs(3600)),
+        )
+        .await;
+        let community_id = CommunityId::from_uuid(Uuid::new_v4());
+        let channel_id = Uuid::new_v4();
+        let (conn, mut frames, cancel) = subscriber(&state, community_id, STORED);
+        state.sub_registry.register_scoped(
+            community_id,
+            conn,
+            "channel".to_string(),
+            vec![Filter::new().kind(Kind::Custom(STORED))],
+            Some(channel_id),
+        );
+        state.artifact_syncs.insert_idle(conn, "channel");
+        let hangs = ChannelEvent {
+            community_id,
+            topic: EventTopic::Channel(channel_id),
+            ..event(STORED, 0)
+        };
+        let next = ChannelEvent {
+            community_id,
+            ..event(STORED, 1)
+        };
+        let next_id = next.event.id.to_hex();
+
+        let (dispatcher, mut queues) = Dispatcher::new(1, 8);
+        dispatcher.dispatch(&state, hangs);
+        dispatcher.dispatch(&state, next);
+        drop(dispatcher);
+
+        // The worker drains both events, then ends because the queue closed.
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let started = tokio::time::Instant::now();
+        let delivery_limit = Duration::from_secs(30);
+        let worker = WithRecorder {
+            recorder: &recorder,
+            future: Box::pin(run_worker(Arc::clone(&state), queues.pop().expect("queue"))),
+        };
+        tokio::time::timeout(delivery_limit + Duration::from_secs(1), worker)
+            .await
+            .expect("worker must finish after bounding the stalled delivery");
+        assert_eq!(started.elapsed(), delivery_limit, "cut off at the bound");
+        let Ok(Message::Text(text)) = frames.try_recv() else {
+            panic!("expected the next event");
+        };
+        let v: serde_json::Value = serde_json::from_str(&text).expect("frame JSON");
+        assert_eq!(v[2]["id"], next_id, "the hung event was not delivered");
+        assert!(frames.try_recv().is_err());
+        assert_eq!(dropped(&snapshotter, "stale"), 1);
+        assert_eq!(
+            state.artifact_syncs.pending_resync(conn, "channel"),
+            Some(LAG_RESYNC)
+        );
+        assert!(!cancel.is_cancelled());
+    }
+
+    /// Polls `future` with `recorder` as the local metrics recorder, so a
+    /// task's metrics are visible to the test that awaits it.
+    struct WithRecorder<'a, F> {
+        recorder: &'a metrics_util::debugging::DebuggingRecorder,
+        future: std::pin::Pin<Box<F>>,
+    }
+
+    impl<F: std::future::Future> std::future::Future for WithRecorder<'_, F> {
+        type Output = F::Output;
+
+        fn poll(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<F::Output> {
+            let this = &mut *self;
+            metrics::with_local_recorder(this.recorder, || this.future.as_mut().poll(cx))
+        }
     }
 }
