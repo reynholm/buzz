@@ -2,7 +2,7 @@
 name = "buzz-backend-kubernetes"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
+rust-version = "1.89"
 license.workspace = true
 description = "Kubernetes backend provider for Buzz remote agents (docs/remote-agents.md)"
 
