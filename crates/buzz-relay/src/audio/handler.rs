@@ -1138,6 +1138,7 @@ async fn run_active_audio_connection(
         Ok(_) => {
             crate::handlers::auth::final_admission_denial(
                 &state,
+                &control,
                 tenant.community(),
                 pubkey,
                 auth_tag_json.as_deref(),

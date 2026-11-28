@@ -86,7 +86,7 @@ enum Command {
         role: Option<String>,
 
         /// Retry disconnect publication for this committed roster snapshot.
-        /// Exit 7 if that roster has been replaced by a later change.
+        /// Exit 7 if those roster records do not identify a removal of this member.
         #[arg(long, conflicts_with = "role")]
         retry_disconnect: Option<nostr::EventId>,
     },
@@ -563,26 +563,46 @@ async fn cmd_remove_member(
 
     let tenant = resolve_admin_tenant(&db).await?;
     if let Some(roster_id) = retry_disconnect {
-        let current = db
-            .with_current_relay_roster(
+        if db
+            .relay_roster_removal(
                 tenant.community(),
                 &relay_keypair.public_key(),
                 &roster_id,
-                || (),
+                &pubkey_hex,
             )
             .await?
-            .is_some();
-        if !current
-            || db
-                .is_relay_member_writer(tenant.community(), &pubkey_hex)
-                .await?
+            .is_none()
         {
-            eprintln!("error: removal roster is no longer current for {pubkey_hex}");
+            eprintln!("error: roster {roster_id} does not identify a removal of {pubkey_hex}");
             return Ok(7);
         }
-        let published =
-            publish_member_disconnects(&db, &pubsub, &tenant, &pubkey_hex, roster_id, true).await;
-        return Ok(removed_exit_code(published));
+        let command = buzz_pubsub::conn_control::ConnControl::DisconnectRemovedMember {
+            pubkey: hex::decode(&pubkey_hex)?,
+            roster_id,
+        };
+        return Ok(report_member_disconnect(
+            matches!(pubsub.publish_conn_control(&tenant, &command).await, Ok(n) if n > 0),
+            &pubkey_hex,
+            roster_id,
+        ));
+    }
+    // A restored or older deployment may have member rows but no roster.
+    // Capture the baseline before removing a row so the retry can recover the
+    // original change even after the removal roster has been superseded.
+    if db
+        .with_relay_roster_version(tenant.community(), &relay_keypair.public_key(), |version| {
+            version
+        })
+        .await?
+        .is_none()
+        && db
+            .is_relay_member_writer(tenant.community(), &pubkey_hex)
+            .await?
+    {
+        let baseline = db
+            .rewrite_nip43_membership_list(tenant.community(), &relay_keypair)
+            .await?;
+        fan_out_membership_list(&pubsub, &tenant, baseline.snapshot).await;
     }
     use buzz_db::relay_members::RemoveResult;
     let result = if let Some(ref role) = role_filter {
@@ -604,9 +624,8 @@ async fn cmd_remove_member(
             println!("removal roster: {roster_id}");
             fan_out_membership_list(&pubsub, &tenant, snapshot).await;
             let published =
-                publish_member_disconnects(&db, &pubsub, &tenant, &pubkey_hex, roster_id, false)
-                    .await;
-            Ok(removed_exit_code(published))
+                publish_member_disconnects(&db, &pubsub, &tenant, &pubkey_hex, roster_id).await;
+            Ok(report_member_disconnect(published, &pubkey_hex, roster_id))
         }
         Ok((RemoveResult::NotFound, _)) => {
             eprintln!("error: member not found: {pubkey_hex}");
@@ -641,6 +660,18 @@ fn removed_exit_code(disconnect_published: bool) -> i32 {
     }
 }
 
+fn report_member_disconnect(published: bool, pubkey_hex: &str, roster_id: nostr::EventId) -> i32 {
+    if published {
+        println!("disconnect published");
+    } else {
+        eprintln!("warning: disconnect publication reached no confirmed subscriber");
+        eprintln!(
+            "retry: buzz-admin remove-member --pubkey {pubkey_hex} --retry-disconnect {roster_id}"
+        );
+    }
+    removed_exit_code(published)
+}
+
 /// Publish, to every relay server, a disconnect for `pubkey_hex` and every
 /// agent recorded as its own. Retries are fenced to the committed roster. Returns
 /// whether each disconnect reached at least one subscribed relay server; that
@@ -651,47 +682,26 @@ async fn publish_member_disconnects(
     tenant: &TenantContext,
     pubkey_hex: &str,
     roster_id: nostr::EventId,
-    retry_only: bool,
 ) -> bool {
     let Ok(pubkey) = hex::decode(pubkey_hex) else {
         return false;
-    };
-    let retry = || {
-        eprintln!(
-            "retry: buzz-admin remove-member --pubkey {pubkey_hex} --retry-disconnect {roster_id}"
-        )
     };
     let agents = match db.list_agents_for_owner(tenant.community(), &pubkey).await {
         Ok(agents) => agents,
         Err(e) => {
             eprintln!("warning: owned-agent lookup failed: {e}; disconnect not published");
-            retry();
             return false;
         }
     };
     let mut published = true;
     for key in std::iter::once(pubkey).chain(agents) {
-        use buzz_pubsub::conn_control::ConnControl;
-        let command = if retry_only {
-            ConnControl::DisconnectRemovedMember {
-                pubkey: key,
-                roster_id,
-            }
-        } else {
-            ConnControl::DisconnectPubkey {
-                pubkey: key,
-                event_id: roster_id.to_hex(),
-                reason: "blocked: access revoked".to_owned(),
-                unowned_only: false,
-            }
+        let command = buzz_pubsub::conn_control::ConnControl::DisconnectPubkey {
+            pubkey: key,
+            event_id: roster_id.to_hex(),
+            reason: "blocked: access revoked".to_owned(),
+            unowned_only: false,
         };
         published &= matches!(pubsub.publish_conn_control(tenant, &command).await, Ok(n) if n > 0);
-    }
-    if published {
-        println!("disconnect published");
-    } else {
-        eprintln!("warning: disconnect publication reached no confirmed subscriber");
-        retry();
     }
     published
 }

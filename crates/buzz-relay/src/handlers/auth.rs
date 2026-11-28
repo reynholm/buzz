@@ -314,6 +314,7 @@ pub(crate) fn ban_admission_denial(ban: BanOutcome) -> Option<AdmissionDenial> {
 /// socket whose cancellation token fired. Both reads fail closed.
 pub(crate) async fn final_admission_denial(
     state: &AppState,
+    control: &crate::state::CommunityConnectionControl,
     community: buzz_core::CommunityId,
     pubkey: nostr::PublicKey,
     auth_tag_json: Option<&str>,
@@ -333,16 +334,30 @@ pub(crate) async fn final_admission_denial(
     if let Some(denial) = ban_verdict_denial(ban) {
         return Some(denial);
     }
-    match crate::api::relay_members::check_relay_membership_authoritative(
-        state,
-        community,
-        pubkey.as_bytes(),
-        auth_tag_json,
-        signed_auth_created_at,
-        token_owner,
-    )
-    .await
+    // Publish the socket's roster version before the final membership read.
+    // A removal will either see the socket under its earlier version or be
+    // visible to the final membership check below.
+    let membership = match state
+        .db
+        .with_relay_roster_version(community, &state.relay_keypair.public_key(), |version| {
+            control.bind_roster_version(version)
+        })
+        .await
     {
+        Ok(()) => {
+            crate::api::relay_members::check_relay_membership_authoritative(
+                state,
+                community,
+                pubkey.as_bytes(),
+                auth_tag_json,
+                signed_auth_created_at,
+                token_owner,
+            )
+            .await
+        }
+        Err(error) => Err(error.to_string()),
+    };
+    match membership {
         Ok(crate::api::relay_members::MembershipDecision::Denied) => Some(AdmissionDenial {
             metric: "not_relay_member",
             reason: "restricted: not a relay member",
@@ -924,6 +939,7 @@ pub async fn handle_auth(event: nostr::Event, conn: Arc<ConnectionState>, state:
                 };
             let denial = match final_admission_denial(
                 &state,
+                &conn.community_control,
                 conn.tenant.community(),
                 pubkey,
                 auth_tag_json.as_deref(),
@@ -3144,6 +3160,223 @@ pub(super) mod tests {
                 "the stored-link agent closes"
             );
             assert!(!conns[2].cancel.is_cancelled(), "the bystander stays");
+        }
+
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn removal_retry_closes_old_sessions_after_roster_republication() {
+            check_removal_retry_sessions(true).await;
+        }
+
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn removal_retry_preserves_agent_admitted_after_first_owner_link() {
+            check_removal_retry_sessions(false).await;
+        }
+
+        async fn check_removal_retry_sessions(republish: bool) {
+            use buzz_pubsub::conn_control::{ConnControl, ScopedConnControl};
+            use futures_util::{SinkExt as _, StreamExt as _};
+            use std::sync::Arc;
+            use std::time::Duration;
+            use tokio_tungstenite::tungstenite::{client::IntoClientRequest as _, Message};
+
+            let mut state = auth_test_state_real_db_expect().await;
+            Arc::make_mut(&mut Arc::make_mut(&mut state).config).require_relay_membership = true;
+            let community = seeded_community(&state).await;
+            let host = format!("admission-{}.example", community.as_uuid().simple());
+            let tenant = buzz_core::tenant::TenantContext::resolved(community, host.clone());
+            let relay_url =
+                crate::api::bridge::nip42_expected_relay_url(&state.config.relay_url, &tenant);
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind relay");
+            let addr = listener.local_addr().expect("relay address");
+            let router = crate::router::build_router(Arc::clone(&state));
+            let server = tokio::spawn(async move {
+                axum::serve(
+                    listener,
+                    router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                )
+                .await
+                .expect("serve relay");
+            });
+            let (member, early_agent, late_agent) =
+                (Keys::generate(), Keys::generate(), Keys::generate());
+            for key in [&member, &early_agent, &late_agent] {
+                state
+                    .db
+                    .add_relay_member(
+                        community,
+                        &key.public_key().to_hex(),
+                        "member",
+                        None,
+                        &state.relay_keypair,
+                    )
+                    .await
+                    .expect("add member");
+            }
+            let auth_tag = |agent: &Keys| {
+                let tag = buzz_sdk::nip_oa::compute_auth_tag(&member, &agent.public_key(), "")
+                    .expect("sign NIP-OA credential");
+                serde_json::from_str(&tag).expect("tag JSON")
+            };
+            let connect = |keys: Keys, tag: Option<Vec<String>>| {
+                let host = host.clone();
+                let relay_url = relay_url.clone();
+                async move {
+                    let mut request = format!("ws://{addr}/")
+                        .into_client_request()
+                        .expect("WebSocket request");
+                    request
+                        .headers_mut()
+                        .insert("host", host.parse().expect("host header"));
+                    let (mut socket, _) = tokio_tungstenite::connect_async(request)
+                        .await
+                        .expect("open socket");
+                    let challenge = tokio::time::timeout(Duration::from_secs(8), async {
+                        loop {
+                            let Message::Text(text) = socket
+                                .next()
+                                .await
+                                .expect("AUTH message")
+                                .expect("read AUTH")
+                            else {
+                                continue;
+                            };
+                            let frame: serde_json::Value =
+                                serde_json::from_str(&text).expect("decode AUTH");
+                            if frame[0] == "AUTH" {
+                                break frame[1].as_str().expect("challenge").to_owned();
+                            }
+                        }
+                    })
+                    .await
+                    .expect("relay asks for AUTH");
+                    let mut builder = EventBuilder::new(Kind::Authentication, "")
+                        .tag(Tag::parse(["relay", &relay_url]).expect("relay tag"))
+                        .tag(Tag::parse(["challenge", &challenge]).expect("challenge tag"));
+                    if let Some(tag) = tag {
+                        builder = builder.tag(Tag::parse(tag).expect("auth tag"));
+                    }
+                    let event = builder.sign_with_keys(&keys).expect("sign AUTH");
+                    socket
+                        .send(Message::Text(
+                            serde_json::json!(["AUTH", event]).to_string().into(),
+                        ))
+                        .await
+                        .expect("send AUTH");
+                    tokio::time::timeout(Duration::from_secs(8), async {
+                        loop {
+                            let Message::Text(text) = socket
+                                .next()
+                                .await
+                                .expect("AUTH result")
+                                .expect("read AUTH result")
+                            else {
+                                continue;
+                            };
+                            let frame: serde_json::Value =
+                                serde_json::from_str(&text).expect("decode AUTH result");
+                            if frame[0] == "OK" {
+                                assert_eq!(frame[2], true, "socket is admitted: {frame}");
+                                break;
+                            }
+                        }
+                    })
+                    .await
+                    .expect("relay accepts AUTH");
+                    socket
+                }
+            };
+            let mut old_member = connect(member.clone(), None).await;
+            let mut old_agent = connect(early_agent.clone(), Some(auth_tag(&early_agent))).await;
+
+            let removal = state
+                .db
+                .remove_relay_member(
+                    community,
+                    &member.public_key().to_hex(),
+                    &state.relay_keypair,
+                )
+                .await
+                .expect("remove member without publishing");
+            let roster_id = removal.snapshot.expect("removal roster").event.id;
+            let mut surviving =
+                vec![connect(late_agent.clone(), Some(auth_tag(&late_agent))).await];
+
+            if republish {
+                let current = state
+                    .db
+                    .rewrite_nip43_membership_list(community, &state.relay_keypair)
+                    .await
+                    .expect("republish unchanged roster");
+                assert_ne!(
+                    current.snapshot.expect("republished roster").event.id,
+                    roster_id
+                );
+                state
+                    .db
+                    .add_relay_member(
+                        community,
+                        &member.public_key().to_hex(),
+                        "member",
+                        None,
+                        &state.relay_keypair,
+                    )
+                    .await
+                    .expect("re-admit member");
+                surviving.push(connect(member.clone(), None).await);
+            }
+
+            let (tx, rx) = tokio::sync::broadcast::channel(4);
+            tx.send(ScopedConnControl {
+                community_id: community,
+                command: ConnControl::DisconnectRemovedMember {
+                    pubkey: member.public_key().to_bytes().to_vec(),
+                    roster_id,
+                },
+            })
+            .expect("send removal retry");
+            drop(tx);
+            state.run_conn_control_consumer(rx).await;
+            for old in [&mut old_member, &mut old_agent] {
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    while let Some(Ok(frame)) = old.next().await {
+                        if frame.is_close() {
+                            break;
+                        }
+                    }
+                })
+                .await
+                .expect("the session from before removal closes");
+            }
+            for mut socket in surviving {
+                let ping = b"after-retry".to_vec();
+                socket
+                    .send(Message::Ping(ping.clone().into()))
+                    .await
+                    .expect("ping newly admitted socket");
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    loop {
+                        match socket
+                            .next()
+                            .await
+                            .expect("socket stays open")
+                            .expect("read socket")
+                        {
+                            Message::Pong(payload) if payload == ping.as_slice() => break,
+                            Message::Close(frame) => {
+                                panic!("newly admitted socket closed: {frame:?}")
+                            }
+                            _ => {}
+                        }
+                    }
+                })
+                .await
+                .expect("the newly admitted socket answers the ping");
+            }
+            server.abort();
         }
 
         /// Flags `names` as default channels in `community`, oldest first.

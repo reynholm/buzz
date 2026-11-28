@@ -121,10 +121,9 @@ pub enum ConnControl {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         archived_at: Option<DateTime<Utc>>,
     },
-    /// Revoke a member's live access under the roster committed by its removal.
-    /// A relay applies this only while that roster is still current.
+    /// Revoke sessions admitted before the committed membership removal.
     DisconnectRemovedMember {
-        /// Raw bytes of the public key whose sockets must close.
+        /// Raw bytes of the removal's target, including any dependent sessions.
         pubkey: Vec<u8>,
         /// Event ID of the committed replacement membership list.
         roster_id: nostr::EventId,
