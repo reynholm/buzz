@@ -134,13 +134,21 @@ FORUM_ID=$(buzz channels create --name "test-forum" --type forum --visibility op
 
 # channels list
 buzz channels list | jq .
-# Expected: [{"channel_id":"...","name":"...","description":"...","created_at":N}]
+# Check channel_type, visibility, labels, archived, description and timestamps.
 buzz channels list --visibility open | jq .
 buzz channels list --member | jq .
+buzz channels list --exclude-archived | jq .   # list includes archived channels by default
+# Visibility is "public" or "private" from the relay's tags, or null when absent.
+# List/get keep created_at as the metadata timestamp, also exposed as updated_at.
+# channel_created_at is the channel's creation timestamp, or null when unavailable.
 
 # channels get
 buzz channels get --channel "$CHANNEL_ID" | jq .
-# Expected: {"channel_id":"...","name":"...","description":"...","created_at":N,"pubkey":"..."} or null
+# Expected: the same channel fields with pubkey, or null for a missing channel.
+
+# channels search
+buzz channels search --query "test-forum" --exact | jq .
+# Search hides archived channels by default and also returns description as about.
 
 # channels update
 buzz channels update --channel "$CHANNEL_ID" --name "test-cli-updated" \
@@ -679,6 +687,8 @@ buzz channels delete --channel "$FORUM_ID" | jq .
 | 60 | `notes ls` | ☐ | Own, --author all, --tag, --limit |
 | 61 | `notes rm` | ☐ | Delete→get 404, double-delete idempotent, missing slug → NotFound |
 | 62 | `users set-status` | ☐ | Text+emoji, text only, emoji-only (`--text ""`), `--clear`, `--clear` + `--text` → exit 1 |
+| 63 | `raw query` | ☐ | Single filter, filter array, stdin (`-`), non-object filter → exit 1 |
+| 64 | `raw publish` | ☐ | `--kind/--tag/--content`, `--event-json`, `auth` tag refused → exit 1 |
 
 ## Managed final-report delivery
 

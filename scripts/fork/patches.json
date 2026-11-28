@@ -15941,6 +15941,66 @@
       ]
     },
     {
+      "path": "crates/buzz-cli/src/commands/emoji.rs",
+      "responsibility": "Port upstream CLI behavior while keeping the fork's desktop pairing, attached-media handling and compatible output",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-cli -p buzz-sdk"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/commands/messages/edit/tests.rs",
+      "responsibility": "Port upstream CLI behavior while keeping the fork's desktop pairing, attached-media handling and compatible output",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-cli -p buzz-sdk"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/commands/raw.rs",
+      "responsibility": "Port upstream CLI behavior while keeping the fork's desktop pairing, attached-media handling and compatible output",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-cli -p buzz-sdk"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/tests/channel_list_pagination.rs",
+      "responsibility": "Exercise filtered CLI membership paging, distinct channels and same-second cursors through the standalone binary",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-cli --test channel_list_pagination"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/tests/raw_publish_exit.rs",
+      "responsibility": "Port upstream CLI behavior while keeping the fork's desktop pairing, attached-media handling and compatible output",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-cli -p buzz-sdk"
+      ]
+    },
+    {
+      "path": "docs/local-credential-provider.md",
+      "responsibility": "Port upstream CLI behavior while keeping the fork's desktop pairing, attached-media handling and compatible output",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-cli -p buzz-sdk"
+      ]
+    },
+    {
       "path": "mobile/lib/features/channels/channel_detail_page/message_bubble.dart",
       "responsibility": "Keep Solo stream reply and media branching writable under the ordinary membership, archive and system-message guards; preserve canonical root, draft and native bridge behavior.",
       "is_new": false,
