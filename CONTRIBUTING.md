@@ -80,7 +80,7 @@ We review as capacity allows — focused PRs that follow this guide move fastest
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| Rust | 1.88+ | Install via [rustup](https://rustup.rs/) |
+| Rust | [Pinned toolchain](rust-toolchain.toml) | Install via [rustup](https://rustup.rs/) |
 | Node.js | 24+ | Required for desktop app commands and `just ci` |
 | pnpm | 10+ | Required for desktop app commands and `just ci` |
 | Flutter | 3.47.9+ | Required for mobile app — install via [flutter.dev](https://docs.flutter.dev/get-started/install) |
