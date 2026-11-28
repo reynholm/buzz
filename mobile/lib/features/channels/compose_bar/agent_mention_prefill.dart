@@ -61,17 +61,22 @@ void _useAgentMentionPrefill({
   final archived = pubkeys.isEmpty
       ? const <String>{}
       : ref.watch(hiddenArchivedIdentitiesProvider);
-  final activePubkeys = pubkeys.where((key) => !archived.contains(key));
+  final activePubkeys = {
+    for (final key in pubkeys)
+      if (!archived.contains(key)) key,
+  };
   // Only current, non-archived agent members carry forward.
   final members = activePubkeys.isEmpty
       ? null
       : ref.watch(channelMembersProvider(channelId)).asData?.value;
-  // During a roster refresh, take back a prefill that still binds a newly
-  // archived agent. The remaining agents can be prefilled once the list loads.
+  // While the roster reloads, every retained binding must still belong to
+  // an active recipient of the latest message.
   final keepPrefill =
       activePubkeys.isNotEmpty &&
       members == null &&
-      !mentionMap.value.values.any((agent) => archived.contains(agent.pubkey));
+      mentionMap.value.values.every(
+        (agent) => activePubkeys.contains(agent.pubkey),
+      );
   final memberCandidates = members == null
       ? const <MentionCandidate>[]
       : buildMentionCandidates(

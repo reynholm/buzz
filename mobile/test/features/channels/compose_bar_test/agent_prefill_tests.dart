@@ -239,6 +239,75 @@ void agentPrefillTests() {
     expect(sent, [second]);
   });
 
+  testWidgets('typing during roster reload cannot settle a stale prefill', (
+    tester,
+  ) async {
+    final viewer = 'f' * 64;
+    final first = 'a' * 64;
+    final second = 'b' * 64;
+    final roster = [
+      for (final key in [first, second])
+        ChannelMember(
+          pubkey: key,
+          displayName: 'Scout',
+          role: 'bot',
+          joinedAt: DateTime(2025),
+        ),
+    ];
+    final refresh = Completer<List<ChannelMember>>();
+    var revision = 0;
+    final memberVersion = Provider((_) => revision);
+    final upload = _testUploadService(nostr.Keys.generate().nsec);
+    List<String>? sent;
+    Widget build(String agent) => _buildComposeBar(
+      uploadService: upload,
+      currentPubkey: viewer,
+      channels: [_makeCurrentChannel()],
+      loadMembers: () => revision == 0 ? Future.value(roster) : refresh.future,
+      memberVersion: memberVersion,
+      prefillScopeMessages: [
+        TimelineMessage(
+          id: agent,
+          pubkey: viewer,
+          createdAt: 10,
+          content: '',
+          tags: [
+            const ['h', 'channel-1'],
+            ['p', agent],
+          ],
+        ),
+      ],
+      onSend: (_, mentions, {mediaTags = const []}) async => sent = mentions,
+    );
+
+    await tester.pumpWidget(build(first));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('@Scout'));
+    await tester.pumpAndSettle();
+    final editor = find.byType(TextField);
+    final controller = tester.widget<TextField>(editor).controller!;
+    expect(controller.text, '@Scout ');
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(ComposeBar)),
+    );
+    revision++;
+    container.invalidate(memberVersion);
+    await tester.pumpAndSettle();
+    expect(container.read(channelMembersProvider('channel-1')).asData, isNull);
+    expect(controller.text, '@Scout ');
+    await tester.pumpWidget(build(second));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(editor, '${controller.text}hi');
+    await tester.pumpAndSettle();
+    refresh.complete(roster);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(BuzzIcons.arrowUp));
+    await tester.pumpAndSettle();
+    expect(sent, isEmpty);
+  });
+
   testWidgets(
     'untouched prefill follows archive changes during a roster reload',
     (tester) async {
