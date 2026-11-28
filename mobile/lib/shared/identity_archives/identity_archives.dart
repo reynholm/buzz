@@ -17,10 +17,11 @@ final relayInformationClientProvider = Provider<http.Client>((ref) {
   return client;
 });
 
-/// The last verified archive list per community and authority, so a refresh
-/// asks the relay only for a newer list instead of downloading it again.
+/// The last verified archive list for the current community, account and
+/// signing authority.
 class _ArchiveCache {
-  final entries = <(String, String), ({int createdAt, Set<String> archived})>{};
+  (String, String, String)? scope;
+  ({int createdAt, String id, Set<String> archived})? known;
 }
 
 final _archiveCacheProvider = Provider<_ArchiveCache>((_) => _ArchiveCache());
@@ -34,6 +35,11 @@ final identityArchivesProvider = FutureProvider<Set<String>>((ref) async {
   // Completed on every exit, so a dropped, refused or timed-out response
   // stops downloading on a shared session instead of staying in flight.
   final abort = Completer<void>();
+  void abortRequest() {
+    if (!abort.isCompleted) abort.complete();
+  }
+
+  ref.onDispose(abortRequest);
   try {
     final uri = Uri.parse(sync.community);
     final response = await client
@@ -62,6 +68,7 @@ final identityArchivesProvider = FutureProvider<Set<String>>((ref) async {
     } finally {
       await chunks.cancel();
     }
+    if (abort.isCompleted) return {};
     sync.check();
     final info = jsonDecode(utf8.decode(bytes));
     // NIP-11 self is the signing authority; pubkey is only a contact key.
@@ -70,13 +77,15 @@ final identityArchivesProvider = FutureProvider<Set<String>>((ref) async {
         !RegExp(r'^[0-9a-f]{64}$').hasMatch(authority)) {
       return {};
     }
-    final cache = ref.read(_archiveCacheProvider).entries;
-    final key = (sync.community, authority);
-    final known = cache[key];
-    // Ask only for a list newer than the known one. This assumes each list is
-    // stamped strictly later than the previous one, which the relay does
-    // except when two lists are published in the same second; then the
-    // second can be missed until a later list arrives or the app restarts.
+    final cache = ref.read(_archiveCacheProvider);
+    final scope = (sync.community, sync.pubkey, authority);
+    if (cache.scope != scope) {
+      cache.scope = scope;
+      cache.known = null;
+    }
+    final known = cache.known;
+    // NIP-IA relays stamp each new archive list strictly after the previous
+    // one, including concurrent updates in the same second.
     final events = await sync.session.fetchHistory(
       NostrFilter(
         kinds: const [13535],
@@ -86,25 +95,34 @@ final identityArchivesProvider = FutureProvider<Set<String>>((ref) async {
       ),
       timeout: const Duration(seconds: 3),
     );
+    if (abort.isCompleted) return {};
     sync.check();
-    // Hand back the known instance when it does not name the viewer, so an
-    // unchanged list does not rebuild every watcher.
-    Set<String> visible(Set<String> archived) => archived.contains(sync.pubkey)
-        ? ({...archived}..remove(sync.pubkey))
-        : archived;
-    if (known != null && events.isEmpty) return visible(known.archived);
+    if (known != null && events.isEmpty) return known.archived;
     final archived = await _parseArchives(events, authority);
-    if (events.length != 1 || archived == null) {
-      cache.remove(key);
+    if (abort.isCompleted) return {};
+    sync.check();
+    if (archived == null) {
+      // Stop hiding identities when the response is invalid, but retain the
+      // verified timestamp so a later response cannot roll it back.
+      if (known != null) {
+        cache.known = (createdAt: known.createdAt, id: known.id, archived: {});
+      }
       return {};
     }
-    final shared = Set<String>.unmodifiable(archived);
-    cache[key] = (createdAt: events.single.createdAt, archived: shared);
-    return visible(shared);
+    final event = events.single;
+    if (known != null &&
+        (event.createdAt < known.createdAt ||
+            (event.createdAt == known.createdAt &&
+                event.id.compareTo(known.id) > 0))) {
+      return known.archived;
+    }
+    final visible = Set<String>.unmodifiable(archived..remove(sync.pubkey));
+    cache.known = (createdAt: event.createdAt, id: event.id, archived: visible);
+    return visible;
   } catch (_) {
     return {};
   } finally {
-    if (!abort.isCompleted) abort.complete();
+    abortRequest();
   }
 });
 

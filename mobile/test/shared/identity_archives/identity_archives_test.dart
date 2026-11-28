@@ -150,8 +150,18 @@ void main() {
       expect(await settled(), {archivedInA});
       expect(hiddenChanges, changes);
 
-      // Switch community and account: A's list no longer applies, so nobody
-      // is hidden until B's list arrives.
+      // Changing accounts on the same community reads a fresh snapshot, even
+      // when the relay and its signing authority have not changed.
+      relay.event = snapshot([viewer.public, other.public], createdAt: 1);
+      container
+          .read(relayConfigProvider.notifier)
+          .update(baseUrl: 'https://a.test', nsec: other.nsec);
+      expect(container.read(hiddenArchivedIdentitiesProvider), isEmpty);
+      expect(await settled(), {viewer.public});
+      expect(relay.since, isNull);
+
+      // Switch community: A's list no longer applies, so nobody is hidden
+      // until B's list arrives.
       relay.event = snapshot([archivedInB]);
       container
           .read(relayConfigProvider.notifier)
@@ -207,6 +217,14 @@ void main() {
     relay.event = snapshot('b' * 64, 1700000100);
     container.invalidate(identityArchivesProvider);
     expect(await container.read(identityArchivesProvider.future), {'b' * 64});
+    container.invalidate(identityArchivesProvider);
+    expect(await container.read(identityArchivesProvider.future), {'b' * 64});
+    expect(relay.since, 1700000101);
+
+    // Even a relay that returns a valid but out-of-range result cannot roll
+    // back the latest verified archive state.
+    relay.honorSince = false;
+    relay.event = snapshot('a' * 64, 1700000000);
     container.invalidate(identityArchivesProvider);
     expect(await container.read(identityArchivesProvider.future), {'b' * 64});
     expect(relay.since, 1700000101);
@@ -303,6 +321,7 @@ class _ArchiveRelay extends RelaySessionNotifier {
   NostrEvent? event;
   String? author;
   int? since;
+  bool honorSince = true;
   @override
   Future<List<NostrEvent>> fetchHistory(
     NostrFilter filter, {
@@ -312,7 +331,10 @@ class _ArchiveRelay extends RelaySessionNotifier {
     author = filter.authors!.single;
     since = filter.since;
     final event = this.event;
-    if (event == null || event.createdAt < (filter.since ?? 0)) return [];
+    if (event == null ||
+        (honorSince && event.createdAt < (filter.since ?? 0))) {
+      return [];
+    }
     return [event];
   }
 }
