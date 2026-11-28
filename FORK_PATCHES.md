@@ -11598,6 +11598,30 @@ New module: `true`.
 
 - Verify: `just ci`
 
+## `docs/adr/0004-push-gateway-hides-device-platform.md`
+
+Document the Android push design without publishing the working implementation plan
+
+New module: `true`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `docs/adr/0005-android-push-enrollment-attestation.md`
+
+Document the Android push design without publishing the working implementation plan
+
+New module: `true`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
+## `docs/adr/0006-android-notifications-run-app-dart-code.md`
+
+Document the Android push design without publishing the working implementation plan
+
+New module: `true`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
+
 ## `docs/mention-editor.md`
 
 Track partial upstream replay from group A step 50 (3c0adc188).

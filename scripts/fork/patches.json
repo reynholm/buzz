@@ -17021,6 +17021,36 @@
       ]
     },
     {
+      "path": "docs/adr/0004-push-gateway-hides-device-platform.md",
+      "responsibility": "Document the Android push design without publishing the working implementation plan",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "docs/adr/0005-android-push-enrollment-attestation.md",
+      "responsibility": "Document the Android push design without publishing the working implementation plan",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
+      "path": "docs/adr/0006-android-notifications-run-app-dart-code.md",
+      "responsibility": "Document the Android push design without publishing the working implementation plan",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "python3 scripts/fork/sync.py validate"
+      ]
+    },
+    {
       "path": "docs/mention-editor.md",
       "responsibility": "Track partial upstream replay from group A step 50 (3c0adc188).",
       "is_new": false,
