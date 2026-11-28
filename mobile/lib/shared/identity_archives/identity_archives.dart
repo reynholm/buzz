@@ -84,13 +84,13 @@ final identityArchivesProvider = FutureProvider<Set<String>>((ref) async {
       cache.known = null;
     }
     final known = cache.known;
-    // NIP-IA relays stamp each new archive list strictly after the previous
-    // one, including concurrent updates in the same second.
+    // Use an inclusive boundary for older relays that can replace an archive
+    // list in the same second under the NIP-01 tie-break rule.
     final events = await sync.session.fetchHistory(
       NostrFilter(
         kinds: const [13535],
         authors: [authority],
-        since: known == null ? null : known.createdAt + 1,
+        since: known?.createdAt,
         limit: 1,
       ),
       timeout: const Duration(seconds: 3),
@@ -101,19 +101,14 @@ final identityArchivesProvider = FutureProvider<Set<String>>((ref) async {
     final archived = await _parseArchives(events, authority);
     if (abort.isCompleted) return {};
     sync.check();
-    if (archived == null) {
-      // Stop hiding identities when the response is invalid, but retain the
-      // verified timestamp so a later response cannot roll it back.
-      if (known != null) {
-        cache.known = (createdAt: known.createdAt, id: known.id, archived: {});
-      }
-      return {};
-    }
+    // A failed read may leave the view empty. Keep the verified snapshot so a
+    // successful refresh can restore it even without a new event.
+    if (archived == null) return {};
     final event = events.single;
     if (known != null &&
         (event.createdAt < known.createdAt ||
             (event.createdAt == known.createdAt &&
-                event.id.compareTo(known.id) > 0))) {
+                event.id.compareTo(known.id) >= 0))) {
       return known.archived;
     }
     final visible = Set<String>.unmodifiable(archived..remove(sync.pubkey));

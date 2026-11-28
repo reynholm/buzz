@@ -43,18 +43,27 @@ void main() {
       });
       final container = ProviderContainer(
         overrides: [
-          meSyncProvider.overrideWithValue(
-            MeSync(
-              relay,
+          relayConfigProvider.overrideWith(
+            () => _Config(
               RelayConfig(baseUrl: 'https://relay.test', nsec: owner.nsec),
             ),
+          ),
+          meSyncProvider.overrideWith(
+            (ref) => MeSync(relay, ref.watch(relayConfigProvider)),
           ),
           relayInformationClientProvider.overrideWithValue(client),
         ],
       );
       addTearDown(container.dispose);
       addTearDown(client.close);
-      expect(await container.read(identityArchivesProvider.future), {target});
+      container.listen(hiddenArchivedIdentitiesProvider, (_, _) {});
+      Future<Set<String>> hidden() async {
+        await container.read(identityArchivesProvider.future);
+        await pumpEventQueue();
+        return container.read(hiddenArchivedIdentitiesProvider);
+      }
+
+      expect(await hidden(), {target});
       expect(relay.author, authority.public);
       for (final invalid in <NostrEvent Function()>[
         () => snapshot(impostor),
@@ -63,17 +72,18 @@ void main() {
           snapshot(authority).toJson()..['sig'] = '0' * 128,
         ),
       ]) {
-        // Each case starts from a warm cache, so it must also drop the known
-        // list: once the relay has nothing newer, nobody stays hidden.
-        relay.event = snapshot(authority);
+        final verified = snapshot(authority);
+        relay.event = verified;
         container.invalidate(identityArchivesProvider);
-        expect(await container.read(identityArchivesProvider.future), {target});
+        final previouslyHidden = await hidden();
+        expect(previouslyHidden, {target});
         relay.event = invalid();
         container.invalidate(identityArchivesProvider);
-        expect(await container.read(identityArchivesProvider.future), isEmpty);
+        expect(await hidden(), isEmpty);
         relay.event = null;
         container.invalidate(identityArchivesProvider);
-        expect(await container.read(identityArchivesProvider.future), isEmpty);
+        expect(await hidden(), same(previouslyHidden));
+        expect(relay.since, verified.createdAt);
       }
       relay.event = snapshot(authority);
       container.invalidate(identityArchivesProvider);
@@ -173,7 +183,7 @@ void main() {
     },
   );
 
-  test('a refresh downloads the list again only when it changed', () async {
+  test('a refresh accepts a legacy same-second replacement once', () async {
     final owner = nostr.Keys.generate();
     final authority = nostr.Keys.generate();
     NostrEvent snapshot(String target, int createdAt) => NostrEvent.fromJson(
@@ -188,46 +198,85 @@ void main() {
         ],
       ).toMap(),
     );
-    final relay = _ArchiveRelay(snapshot('a' * 64, 1700000000));
+    const timestamp = 1700000000;
+    final sameSecond = [
+      snapshot('a' * 64, timestamp),
+      snapshot('b' * 64, timestamp),
+    ]..sort((left, right) => left.id.compareTo(right.id));
+    final initial = sameSecond.last;
+    final replacement = sameSecond.first;
+    final relay = _ArchiveRelay(initial);
     final client = MockClient(
       (_) async => http.Response(jsonEncode({'self': authority.public}), 200),
     );
+    final config = RelayConfig(baseUrl: 'https://relay.test', nsec: owner.nsec);
     final container = ProviderContainer(
       overrides: [
-        meSyncProvider.overrideWithValue(
-          MeSync(
-            relay,
-            RelayConfig(baseUrl: 'https://relay.test', nsec: owner.nsec),
-          ),
-        ),
+        relayConfigProvider.overrideWith(() => _Config(config)),
+        meSyncProvider.overrideWithValue(MeSync(relay, config)),
         relayInformationClientProvider.overrideWithValue(client),
       ],
     );
     addTearDown(container.dispose);
     addTearDown(client.close);
-    expect(await container.read(identityArchivesProvider.future), {'a' * 64});
+    container.listen(hiddenArchivedIdentitiesProvider, (_, _) {});
+    final initialSet = await container.read(identityArchivesProvider.future);
+    expect(initialSet, {initial.tags.last[1]});
     expect(relay.since, isNull);
 
-    // Unchanged: the relay has nothing newer, and the known list stands.
+    // The legacy relay can serve the exact same snapshot on a refresh.
     container.invalidate(identityArchivesProvider);
-    expect(await container.read(identityArchivesProvider.future), {'a' * 64});
-    expect(relay.since, 1700000001);
+    expect(
+      await container.read(identityArchivesProvider.future),
+      same(initialSet),
+    );
+
+    // A smaller NIP-01 ID wins even when the timestamp does not advance.
+    relay.event = replacement;
+    container.invalidate(identityArchivesProvider);
+    final replacementSet = await container.read(
+      identityArchivesProvider.future,
+    );
+    expect(replacementSet, {replacement.tags.last[1]});
+    expect(relay.since, timestamp);
+    await pumpEventQueue();
+    expect(
+      container.read(hiddenArchivedIdentitiesProvider),
+      same(replacementSet),
+    );
+
+    // Neither a repeat of the winner nor a stale tie can change the cache.
+    for (final response in [replacement, initial]) {
+      relay.event = response;
+      container.invalidate(identityArchivesProvider);
+      expect(
+        await container.read(identityArchivesProvider.future),
+        same(replacementSet),
+      );
+    }
 
     // Replaced: the newer list wins and becomes the new baseline.
-    relay.event = snapshot('b' * 64, 1700000100);
+    relay.event = snapshot('c' * 64, 1700000100);
     container.invalidate(identityArchivesProvider);
-    expect(await container.read(identityArchivesProvider.future), {'b' * 64});
+    final latestSet = await container.read(identityArchivesProvider.future);
+    expect(latestSet, {'c' * 64});
     container.invalidate(identityArchivesProvider);
-    expect(await container.read(identityArchivesProvider.future), {'b' * 64});
-    expect(relay.since, 1700000101);
+    expect(
+      await container.read(identityArchivesProvider.future),
+      same(latestSet),
+    );
+    expect(relay.since, 1700000100);
 
     // Even a relay that returns a valid but out-of-range result cannot roll
     // back the latest verified archive state.
     relay.honorSince = false;
-    relay.event = snapshot('a' * 64, 1700000000);
+    relay.event = initial;
     container.invalidate(identityArchivesProvider);
-    expect(await container.read(identityArchivesProvider.future), {'b' * 64});
-    expect(relay.since, 1700000101);
+    expect(
+      await container.read(identityArchivesProvider.future),
+      same(latestSet),
+    );
+    expect(relay.since, 1700000100);
   });
 
   test('slow metadata has a total deadline and cancels its stream', () async {
