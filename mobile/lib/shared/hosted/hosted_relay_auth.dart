@@ -509,10 +509,23 @@ class HostedRelayHttpClient extends http.BaseClient {
   final http.Client _inner;
   final bool Function()? canSend;
 
+  /// Whether a request to [url] is scoped to the hosted relay's credentials.
+  bool protectsRequestTo(Uri url) =>
+      url.origin == Uri.parse(config.baseUrl).origin && auth.protects(config);
+
   @override
-  Future<http.StreamedResponse> send(http.BaseRequest request) async {
-    final origin = Uri.parse(config.baseUrl);
-    final scoped = request.url.origin == origin.origin && auth.protects(config);
+  Future<http.StreamedResponse> send(http.BaseRequest request) async =>
+      _send(request, scoped: protectsRequestTo(request.url));
+
+  /// Sends a manually followed redirect from an unscoped initial request.
+  /// A later URL must not cause hosted credentials to be minted or attached.
+  Future<http.StreamedResponse> sendRedirect(http.BaseRequest request) =>
+      _send(request, scoped: false);
+
+  Future<http.StreamedResponse> _send(
+    http.BaseRequest request, {
+    required bool scoped,
+  }) async {
     if (scoped) {
       request.followRedirects = false;
       request.headers.addAll(await auth.headers(config));

@@ -427,13 +427,20 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
     }
 
     final uri = Uri.parse(url);
+    final relayRequest = auth.isRelayMediaOrigin(uri);
+    final transport = client;
+    final hosted = transport is HostedRelayHttpClient ? transport : null;
     final BoundedResponse response;
     try {
       response = await boundedGet(
-        client,
+        transport,
         uri,
         maxBytes: maxResponseBytes,
-        headers: auth.headersFor(url),
+        headers: relayRequest ? auth.headersFor(url) : const {},
+        followRedirects: !(hosted?.protectsRequestTo(uri) ?? false),
+        sendRedirect: diskCache == null
+            ? null
+            : hosted?.sendRedirect ?? transport.send,
         stallTimeout: stallTimeout,
         maxFetchDuration: maxFetchDuration,
         cancel: abort,
@@ -466,23 +473,26 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
       _cooldownUntil[_cooldownKey] = debugNow().add(_defaultCooldown);
       throw NetworkImageLoadException(statusCode: 200, uri: uri);
     }
-    final relayRequest = auth.isRelayMediaUrl(url);
     final responseUrl = response.url;
+    final redirected =
+        response.followedRedirect ||
+        (responseUrl != null &&
+            responseUrl.removeFragment() != uri.removeFragment());
     // Offline relay copies have their own local-cache contract. Only a
-    // relay media request served by relay media qualifies for that policy.
-    final relayResponse =
-        responseUrl != null && auth.isRelayMediaUrl(responseUrl.toString());
+    // direct response from the configured relay origin qualifies.
+    final directRelay = !redirected && relayRequest && responseUrl != null;
     final cacheControl = response.headers['cache-control'] ?? '';
     final noStore = _cacheDirectives
         .allMatches(cacheControl)
         .any((directive) => directive[0]!.trim().toLowerCase() == 'no-store');
     return (
       bytes: bytes,
-      cacheable: (relayRequest && relayResponse) || !noStore,
-      // A redirect can change in place regardless of the URL's path.
+      // Keep redirects out of the source URL's disk entry. A cacheable final
+      // response cannot grant permission to replay an earlier redirect.
+      cacheable: !redirected && (directRelay || !noStore),
       immutable:
           relayRequest &&
-          (responseUrl == null || responseUrl == uri) &&
+          !redirected &&
           !uri.hasQuery &&
           _relayContentPath.hasMatch(uri.path),
     );

@@ -3,16 +3,20 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:buzz/shared/hosted/builderlab_account.dart';
+import 'package:buzz/shared/hosted/hosted_relay_auth.dart';
 import 'package:buzz/shared/http/app_http_client.dart';
 import 'package:buzz/shared/relay/media_auth.dart';
 import 'package:buzz/shared/relay/media_disk_cache.dart';
 import 'package:buzz/shared/relay/media_image.dart';
+import 'package:buzz/shared/relay/relay_provider.dart';
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/painting.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart' as http_testing;
+import 'package:nostr/nostr.dart' as nostr;
 import 'package:path/path.dart' as p;
 
 // Minimal valid 1x1 transparent PNG.
@@ -283,6 +287,18 @@ void main() {
   for (final (description, url, responseUrl, shouldSave) in [
     ('external', _externalUrls.first, _externalUrls.first, false),
     ('relay', _largeUrl, _largeUrl, true),
+    (
+      'other service on the relay host',
+      'http://relay.example.com/media/$_hash.png',
+      'http://relay.example.com/media/$_hash.png',
+      false,
+    ),
+    (
+      'other port on the relay host',
+      'https://relay.example.com:80/media/$_hash.png',
+      'https://relay.example.com:80/media/$_hash.png',
+      false,
+    ),
     ('relay redirect to external', _largeUrl, _externalUrls.first, false),
     ('external redirect to relay', _externalUrls.first, _largeUrl, false),
     ('relay with unknown response URL', _largeUrl, null, false),
@@ -293,13 +309,15 @@ void main() {
       () async {
         // Large enough to exercise the size range newly eligible for disk.
         final bytes = Uint8List(12 * 1024 * 1024)..setAll(0, _pngBytes);
+        final transport = responseUrl == null
+            ? http_testing.MockClient(
+                (_) async =>
+                    http.Response.bytes(bytes, 200, headers: _noStoreHeaders),
+              )
+            : _ImageResponseClient(bytes, Uri.parse(responseUrl));
         final client = SharedSessionClient(
-          responseUrl == null
-              ? http_testing.MockClient(
-                  (_) async =>
-                      http.Response.bytes(bytes, 200, headers: _noStoreHeaders),
-                )
-              : _ImageResponseClient(bytes, Uri.parse(responseUrl)),
+          transport,
+          cleartext: () => transport,
         );
         addTearDown(client.close);
         final directory = MediaDiskCache.directoryFor(root, 'community-1', 's');
@@ -324,6 +342,179 @@ void main() {
           if (shouldSave) expect(hit?.isStale, isFalse);
         } finally {
           await reopened.dispose();
+        }
+      },
+    );
+  }
+
+  for (final returnsToStart in [false, true]) {
+    test('does not save a cacheable image behind a no-store redirect '
+        '(returns to start: $returnsToStart)', () async {
+      final start = Uri.parse(_externalUrls[0]);
+      final target = Uri.parse(_externalUrls[1]);
+      final requests = <Uri>[];
+      final client = http_testing.MockClient((request) async {
+        requests.add(request.url);
+        if (!request.followRedirects && requests.length == 1) {
+          return http.Response(
+            '',
+            302,
+            headers: {..._noStoreHeaders, 'location': target.toString()},
+          );
+        }
+        if (!request.followRedirects &&
+            returnsToStart &&
+            requests.length == 2) {
+          return http.Response(
+            '',
+            302,
+            headers: {'location': start.toString()},
+          );
+        }
+        return http.Response.bytes(
+          _pngBytes,
+          200,
+          headers: {'cache-control': 'public, max-age=86400'},
+        );
+      });
+      addTearDown(client.close);
+      final directory = MediaDiskCache.directoryFor(root, 'community-1', 's');
+      final cache = MediaDiskCache.open(directory);
+      try {
+        final bytes = await MediaImageProvider(
+          url: start.toString(),
+          auth: auth,
+          client: client,
+          diskCache: cache,
+        ).loadEncodedBytes(cancel: Completer<void>().future);
+        expect(bytes, _pngBytes);
+        await cache.contains(start.toString());
+      } finally {
+        await cache.dispose();
+      }
+      final reopened = MediaDiskCache.open(directory);
+      try {
+        expect(await reopened.contains(start.toString()), isFalse);
+        expect(requests, [start, target, if (returnsToStart) start]);
+      } finally {
+        await reopened.dispose();
+      }
+    });
+  }
+
+  for (final redirectsFromRelay in [false, true]) {
+    test(
+      redirectsFromRelay
+          ? 'a signed image redirect drops authorization on an HTTPS downgrade'
+          : 'a same-host HTTP image request does not attach relay authorization',
+      () async {
+        final relay = Uri.parse(_relayUrl);
+        final otherService = relay.replace(scheme: 'http');
+        final requests = <http.Request>[];
+        final client = http_testing.MockClient((request) async {
+          requests.add(request);
+          if (request.url == relay) {
+            return http.Response(
+              '',
+              302,
+              headers: {'location': otherService.toString()},
+            );
+          }
+          return http.Response.bytes(_pngBytes, 200);
+        });
+        addTearDown(client.close);
+        final cache = MediaDiskCache.open(root);
+        try {
+          final mediaAuth = MediaGetAuthService(
+            baseUrl: 'wss://relay.example.com',
+            nsec: nostr.Keys.generate().nsec,
+          );
+          expect(
+            await MediaImageProvider(
+              url: (redirectsFromRelay ? relay : otherService).toString(),
+              auth: mediaAuth,
+              client: client,
+              diskCache: cache,
+            ).loadEncodedBytes(cancel: Completer<void>().future),
+            _pngBytes,
+          );
+          expect(requests.map((request) => request.url), [
+            if (redirectsFromRelay) relay,
+            otherService,
+          ]);
+          if (redirectsFromRelay) {
+            expect(
+              requests.first.headers['authorization'],
+              startsWith('Nostr '),
+            );
+          }
+          expect(requests.last.headers, isNot(contains('authorization')));
+        } finally {
+          await cache.dispose();
+        }
+      },
+    );
+  }
+
+  for (final startsAtRelay in [true, false]) {
+    test(
+      startsAtRelay
+          ? 'an authenticated hosted image request keeps the redirect veto'
+          : 'an external image redirect does not attach hosted credentials',
+      () async {
+        final start = Uri.parse(startsAtRelay ? _relayUrl : _externalUrls[0]);
+        final target = Uri.parse(startsAtRelay ? _externalUrls[0] : _relayUrl);
+        final requests = <http.Request>[];
+        final transport = http_testing.MockClient((request) async {
+          requests.add(request);
+          if (request.url == start) {
+            return http.Response(
+              '',
+              302,
+              headers: {'location': target.toString()},
+            );
+          }
+          return http.Response.bytes(_pngBytes, 200);
+        });
+        final account = BuilderlabAccountClient(
+          httpClient: http_testing.MockClient(
+            (_) async => fail('Unexpected account request'),
+          ),
+        );
+        addTearDown(account.dispose);
+        final hostedAuth = _HostedRedirectAuth(account);
+        addTearDown(hostedAuth.dispose);
+        final client = HostedRelayHttpClient(
+          hostedAuth,
+          const RelayConfig(baseUrl: _relayBase),
+          inner: transport,
+        );
+        addTearDown(client.close);
+        final cache = MediaDiskCache.open(root);
+        try {
+          final load = MediaImageProvider(
+            url: start.toString(),
+            auth: auth,
+            client: client,
+            diskCache: cache,
+          ).loadEncodedBytes(cancel: Completer<void>().future);
+          if (startsAtRelay) {
+            await expectLater(load, throwsA(isA<NetworkImageLoadException>()));
+            expect(requests.map((request) => request.url), [start]);
+            expect(
+              requests.single.headers['nostr-federated-identity'],
+              'Bearer test',
+            );
+          } else {
+            expect(await load, _pngBytes);
+            expect(requests.map((request) => request.url), [start, target]);
+            expect(
+              requests.last.headers,
+              isNot(contains('nostr-federated-identity')),
+            );
+          }
+        } finally {
+          await cache.dispose();
         }
       },
     );
@@ -819,6 +1010,18 @@ void main() {
       }
     },
   );
+}
+
+class _HostedRedirectAuth extends HostedRelayAuth {
+  _HostedRedirectAuth(super.account)
+    : super(organization: account, organizationRelay: (_) => true);
+
+  @override
+  Future<Map<String, String>> headers(
+    RelayConfig config, {
+    bool background = false,
+    bool fresh = false,
+  }) async => {'Nostr-Federated-Identity': 'Bearer test'};
 }
 
 /// Models the response after the platform transport has followed redirects.

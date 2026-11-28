@@ -33,6 +33,9 @@ class MediaGetAuthService {
   final String? _nsec;
   final String? _pubkey;
   final DateTime Function() _now;
+  late final Uri? _httpRelay = Uri.tryParse(
+    RelayConfig(baseUrl: _baseUrl).baseUrl,
+  );
 
   Map<String, String>? _cachedHeaders;
   DateTime? _refreshAt;
@@ -52,6 +55,18 @@ class MediaGetAuthService {
     final relayUri = Uri.tryParse(_baseUrl);
     if (uri == null || relayUri == null) return false;
     return _isRelayMediaUrl(uri, relayUri);
+  }
+
+  /// Whether [uri] identifies media served by the configured HTTP origin.
+  bool isRelayMediaOrigin(Uri uri) {
+    final relay = _httpRelay;
+    return relay != null &&
+        (relay.scheme == 'http' || relay.scheme == 'https') &&
+        relay.host.isNotEmpty &&
+        (uri.scheme == 'http' || uri.scheme == 'https') &&
+        uri.host.isNotEmpty &&
+        uri.path.startsWith('/media/') &&
+        uri.origin == relay.origin;
   }
 
   Map<String, String> headersFor(String url) {

@@ -12182,9 +12182,11 @@ Track partial upstream replay from group A steps 10 (1adde0e6b), 50 (3c0adc188).
 
 New module: `true`.
 
+- Required symbol: `activePubkeys.contains(agent.pubkey)`
 - Invocation: `mobile/lib/features/channels/compose_bar/agent_mention_prefill.dart` → `hiddenArchivedIdentitiesProvider`; exact call `ref.watch(hiddenArchivedIdentitiesProvider)`; behavior test `untouched prefill follows archive changes during a roster reload`; verify `cd mobile && flutter test test/features/channels/compose_bar_test.dart --plain-name 'untouched prefill follows'`
 - Verify: `just ci`
 - Verify: `cd mobile && flutter test test/features/channels/compose_bar_test.dart --plain-name 'untouched prefill follows'`
+- Verify: `cd mobile && flutter test test/features/channels/compose_bar_test.dart --plain-name 'typing during roster reload'`
 
 ## `mobile/lib/features/channels/compose_bar/attachments.dart`
 
@@ -12890,6 +12892,7 @@ Track partial upstream replay from group A step 60 (a2d4ba026).
 
 New module: `false`.
 
+- Required symbol: `Future<http.StreamedResponse> sendRedirect(http.BaseRequest request)`
 - Verify: `just ci`
 
 ## `mobile/lib/shared/hosted/organization_sign_in.dart`
@@ -13034,13 +13037,17 @@ New module: `false`.
 
 ## `mobile/lib/shared/relay/media_image.dart`
 
-Track partial upstream replay from group A steps 48 (0bbcf3e7c), 60 (a2d4ba026), 130 (ff652ed06). Respect external image no-store during initial load and purge stale copies on refresh while preserving offline relay media.
+Track partial upstream replay from group A steps 48 (0bbcf3e7c), 60 (a2d4ba026), 130 (ff652ed06). Respect external image no-store during initial load and purge stale copies on refresh while preserving offline relay media. Limit the relay media exception to the configured HTTP origin and keep redirected bytes out of the source URL cache.
 
 New module: `false`.
 
+- Required symbol: `cacheable: !redirected && (directRelay || !noStore)`
 - Invocation: `mobile/lib/shared/relay/media_image.dart` → `remove`; exact call `await cache.remove(url);`; behavior test `a no-store refresh removes the saved external image`; verify `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart --plain-name no-store`
+- Invocation: `mobile/lib/shared/relay/media_image.dart` → `isRelayMediaOrigin`; exact call `auth.isRelayMediaOrigin(uri)`; behavior test `no-store disk policy on first load for other service on the relay host images`; verify `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart`
+- Invocation: `mobile/lib/shared/relay/media_image.dart` → `sendRedirect`; exact call `hosted?.sendRedirect ?? transport.send`; behavior test `an external image redirect does not attach hosted credentials`; verify `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart`
 - Verify: `just ci`
 - Verify: `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart --plain-name no-store`
+- Verify: `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart`
 
 ## `mobile/lib/shared/relay/media_upload.dart`
 
@@ -13152,6 +13159,7 @@ Carry the effective response URL to the external image cache policy.
 
 New module: `false`.
 
+- Required symbol: `followedRedirect: redirects != 0`
 - Verify: `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart`
 
 ## `mobile/lib/shared/verified_profiles/verified_profile_directory.dart`
@@ -14347,3 +14355,12 @@ Track partial upstream replay from group A steps 11 (95dd9d67d), 39 (defc2d5ea),
 New module: `true`.
 
 - Verify: `just ci`
+
+## `mobile/lib/shared/relay/media_auth.dart`
+
+Classify relay image authorization and the offline media exception by the configured HTTP origin.
+
+New module: `false`.
+
+- Required symbol: `bool isRelayMediaOrigin(Uri uri)`
+- Verify: `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart`

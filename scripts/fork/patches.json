@@ -17745,7 +17745,9 @@
       "path": "mobile/lib/features/channels/compose_bar/agent_mention_prefill.dart",
       "responsibility": "Track partial upstream replay from group A steps 10 (1adde0e6b), 50 (3c0adc188). Refresh untouched automatic mentions by identity and retire known archived bindings even during roster reload.",
       "is_new": true,
-      "required_symbols": [],
+      "required_symbols": [
+        "activePubkeys.contains(agent.pubkey)"
+      ],
       "invocation_seams": [
         {
           "caller_path": "mobile/lib/features/channels/compose_bar/agent_mention_prefill.dart",
@@ -17757,7 +17759,8 @@
       ],
       "verification_commands": [
         "just ci",
-        "cd mobile && flutter test test/features/channels/compose_bar_test.dart --plain-name 'untouched prefill follows'"
+        "cd mobile && flutter test test/features/channels/compose_bar_test.dart --plain-name 'untouched prefill follows'",
+        "cd mobile && flutter test test/features/channels/compose_bar_test.dart --plain-name 'typing during roster reload'"
       ]
     },
     {
@@ -18637,7 +18640,9 @@
       "path": "mobile/lib/shared/hosted/hosted_relay_auth.dart",
       "responsibility": "Track partial upstream replay from group A step 60 (a2d4ba026).",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "Future<http.StreamedResponse> sendRedirect(http.BaseRequest request)"
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "just ci"
@@ -18825,9 +18830,11 @@
     },
     {
       "path": "mobile/lib/shared/relay/media_image.dart",
-      "responsibility": "Track partial upstream replay from group A steps 48 (0bbcf3e7c), 60 (a2d4ba026), 130 (ff652ed06). Respect external image no-store during initial load and purge stale copies on refresh while preserving offline relay media.",
+      "responsibility": "Track partial upstream replay from group A steps 48 (0bbcf3e7c), 60 (a2d4ba026), 130 (ff652ed06). Respect external image no-store during initial load and purge stale copies on refresh while preserving offline relay media. Limit the relay media exception to the configured HTTP origin and keep redirected bytes out of the source URL cache.",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "cacheable: !redirected && (directRelay || !noStore)"
+      ],
       "invocation_seams": [
         {
           "caller_path": "mobile/lib/shared/relay/media_image.dart",
@@ -18835,11 +18842,26 @@
           "invocation": "await cache.remove(url);",
           "behavior_test": "a no-store refresh removes the saved external image",
           "verification_command": "cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart --plain-name no-store"
+        },
+        {
+          "caller_path": "mobile/lib/shared/relay/media_image.dart",
+          "callee_symbol": "isRelayMediaOrigin",
+          "invocation": "auth.isRelayMediaOrigin(uri)",
+          "behavior_test": "no-store disk policy on first load for other service on the relay host images",
+          "verification_command": "cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart"
+        },
+        {
+          "caller_path": "mobile/lib/shared/relay/media_image.dart",
+          "callee_symbol": "sendRedirect",
+          "invocation": "hosted?.sendRedirect ?? transport.send",
+          "behavior_test": "an external image redirect does not attach hosted credentials",
+          "verification_command": "cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart"
         }
       ],
       "verification_commands": [
         "just ci",
-        "cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart --plain-name no-store"
+        "cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart --plain-name no-store",
+        "cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart"
       ]
     },
     {
@@ -18976,7 +18998,9 @@
       "path": "mobile/lib/shared/utils/bounded_fetch.dart",
       "responsibility": "Carry the effective response URL to the external image cache policy.",
       "is_new": false,
-      "required_symbols": [],
+      "required_symbols": [
+        "followedRedirect: redirects != 0"
+      ],
       "invocation_seams": [],
       "verification_commands": [
         "cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart"
@@ -20471,6 +20495,18 @@
       "invocation_seams": [],
       "verification_commands": [
         "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/media_auth.dart",
+      "responsibility": "Classify relay image authorization and the offline media exception by the configured HTTP origin.",
+      "is_new": false,
+      "required_symbols": [
+        "bool isRelayMediaOrigin(Uri uri)"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart"
       ]
     }
   ],
