@@ -14439,3 +14439,11 @@ New module: `false`.
 
 - Required symbol: `bool isRelayMediaOrigin(Uri uri)`
 - Verify: `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart`
+
+## `docs/nips/NIP-FI.md`
+
+Document community roster removal for agents with a recorded owner
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`
