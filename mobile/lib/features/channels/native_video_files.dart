@@ -16,7 +16,7 @@ class NativeVideoFiles {
     required this.client,
     required this.index,
     this.temporaryDirectory = getTemporaryDirectory,
-    this.maxBytes = 100 * 1024 * 1024,
+    this.maxBytes = 500 * 1024 * 1024, // Default relay video upload limit.
     this.stallTimeout = defaultStallTimeout,
     this.maxDuration = defaultMaxFetchDuration,
   });

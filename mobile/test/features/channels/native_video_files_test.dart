@@ -1,13 +1,44 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:buzz/features/channels/native_video_files.dart';
 import 'package:buzz/shared/relay/media_auth.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:nostr/nostr.dart' as nostr;
 
 void main() {
+  test('the native viewer can download a 120 MiB incoming video', () async {
+    final root = await Directory.systemTemp.createTemp('gallery-video-test-');
+    const mebibyte = 1024 * 1024;
+    const sizeMiB = 120;
+    final chunk = Uint8List(mebibyte);
+    final client = MockClient.streaming((_, _) async {
+      return http.StreamedResponse(
+        Stream.fromIterable(List.filled(sizeMiB, chunk)),
+        200,
+        contentLength: sizeMiB * mebibyte,
+      );
+    });
+    final files = NativeVideoFiles(
+      auth: MediaGetAuthService(baseUrl: 'https://example.org', nsec: null),
+      client: client,
+      index: 0,
+      temporaryDirectory: () async => root,
+    );
+    addTearDown(() async {
+      await files.dispose();
+      client.close();
+      await root.delete(recursive: true);
+    });
+
+    final path = await files.load(0, 'https://example.org/media/clip.mp4');
+    expect(path, isNotNull);
+    expect(await File(path!).length(), sizeMiB * mebibyte);
+  });
+
   test(
     'video downloads authenticate, retry, cancel and release selected files',
     () async {

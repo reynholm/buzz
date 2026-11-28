@@ -221,7 +221,10 @@ void soloThreadTests() {
       testWidgets(
         'Solo stream $kind media Reply opens writable branch: inThread=$inThread',
         (tester) async {
-          final native = kind == 'native-stack';
+          final isVideo = kind == 'video';
+          final native =
+              NativePhotoZoomPreview.enabled &&
+              (isVideo || kind == 'native-stack');
           if (native) debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
           addTearDown(() => debugDefaultTargetPlatformOverride = null);
           tester.view.physicalSize = const Size(430, 900);
@@ -244,7 +247,7 @@ void soloThreadTests() {
               id: threadIdA,
               pubkey: 'agent',
               createdAt: 1001,
-              content: kind == 'video'
+              content: isVideo
                   ? '![Video]($video)'
                   : '![First]($first)${stack ? '\n![Second]($second)' : ''}',
               extraTags: [
@@ -252,7 +255,7 @@ void soloThreadTests() {
                   ['e', threadIdRoot, '', 'root'],
                   ['e', threadIdRoot, '', 'reply'],
                 ],
-                if (kind == 'video')
+                if (isVideo)
                   const ['imeta', 'url $video', 'm video/mp4']
                 else ...[
                   const ['imeta', 'url $first', 'm image/png'],
@@ -263,7 +266,7 @@ void soloThreadTests() {
           ];
           final messages = formatTimeline(events);
           final sender = _RecordingOrdinarySender();
-          Map<dynamic, dynamic>? presented;
+          late Completer<Map<dynamic, dynamic>> presentation;
           final messenger = tester.binding.defaultBinaryMessenger;
           if (native) {
             const upload = MethodChannel('buzz/media_upload');
@@ -302,7 +305,7 @@ void soloThreadTests() {
             ) async {
               if (call.method == 'isSupported') return true;
               if (call.method == 'present') {
-                presented = call.arguments as Map;
+                presentation.complete(call.arguments as Map);
                 return 'reply';
               }
               return null;
@@ -323,7 +326,7 @@ void soloThreadTests() {
               signingPubkey: 'self',
               sender: sender,
               mediaClient: http_testing.MockClient(
-                (_) async => kind == 'video'
+                (_) async => isVideo
                     ? http.Response('Video unavailable', 404)
                     : http.Response.bytes(_transparentPng, 200),
               ),
@@ -343,7 +346,7 @@ void soloThreadTests() {
                   : ChannelDetailPage(channel: channel),
             ),
           );
-          final target = kind == 'video'
+          final target = isVideo
               ? find.byKey(const ValueKey('message-media-video-preview:$video'))
               : stack
               ? find.byKey(const ValueKey('message-media-stack'))
@@ -351,33 +354,34 @@ void soloThreadTests() {
                   const ValueKey('message-media-image-preview:$first'),
                 );
           expect(target, findsOneWidget);
-          if (kind != 'video') {
+          if (!isVideo) {
             // Real image codecs must finish outside the fake widget clock.
             await _waitForSoloImages(tester, target, minimum: stack ? 2 : 1);
           }
           await tester.pumpAndSettle();
-          await tester.tap(target);
-          if (kind == 'video') {
-            // Reply remains available while video playback is loading.
-            await tester.pump();
-            await tester.pump(const Duration(milliseconds: 400));
-          } else {
-            await tester.pumpAndSettle();
-          }
           if (native) {
-            // Image decoding and the platform reply finish outside fake time.
-            for (var i = 0; i < 500 && presented == null; i++) {
-              await tester.runAsync(
-                () => Future<void>.delayed(const Duration(milliseconds: 10)),
-              );
+            // Native presentation needs image encoding outside the fake clock.
+            final presented = await tester.runAsync(() async {
+              presentation = Completer();
+              await tester.tap(target);
               await tester.pump();
-            }
+              return presentation.future.timeout(const Duration(seconds: 5));
+            });
             expect(presented?['canReply'], isTrue);
+            expect(presented?['videoIndices'], isVideo ? [0] : isEmpty);
             await tester.pumpAndSettle();
           } else {
+            await tester.tap(target);
+            if (isVideo) {
+              // Reply remains available while video playback is loading.
+              await tester.pump();
+              await tester.pump(const Duration(milliseconds: 400));
+            } else {
+              await tester.pumpAndSettle();
+            }
             final reply = find.byKey(
               ValueKey(
-                'message-media-${kind == 'video' ? 'video' : 'image'}-viewer-reply-thread',
+                'message-media-${isVideo ? 'video' : 'image'}-viewer-reply-thread',
               ),
             );
             expect(reply.hitTestable(), findsOneWidget);
