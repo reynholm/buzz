@@ -40,6 +40,31 @@ class _ThreadMessage extends HookConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Replying to the head uses this thread's composer. Other messages can
+    // still start a branch, including media messages in a Solo thread.
+    final onReply = isThreadHead ? restoreComposerFocus : null;
+    final replyMessages =
+        !isMember || isArchived || (isThreadHead && onReply == null)
+        ? null
+        : allMessages;
+    final VoidCallback? onMediaReply = replyMessages == null
+        ? null
+        : onReply ??
+              () {
+                if (!context.mounted) return;
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => ThreadDetailPage(
+                      threadHead: message,
+                      allMessages: replyMessages,
+                      channelId: channelId,
+                      currentPubkey: currentPubkey,
+                      isMember: isMember,
+                      isArchived: isArchived,
+                    ),
+                  ),
+                );
+              };
     final messageSnapshotKey = useMemoized(GlobalKey.new, const []);
     final swipeContentKey = useMemoized(GlobalKey.new, const []);
     final mediaOffset = useMessageMediaOffset(message.content, message.tags);
@@ -102,7 +127,8 @@ class _ThreadMessage extends HookConsumerWidget {
         message: message,
         channelId: channelId,
         canManageMessage: canManageMessage,
-        allMessages: allMessages,
+        allMessages: replyMessages,
+        onReply: onReply,
         currentPubkey: currentPubkey,
         isMember: isMember,
         isArchived: isArchived,
@@ -335,26 +361,7 @@ class _ThreadMessage extends HookConsumerWidget {
                                       scaleEmojiOnly: true,
                                       mediaCarouselTrailingOverflow:
                                           Grid.gutter,
-                                      onMediaReply: allMessages == null
-                                          ? null
-                                          : () {
-                                              if (!context.mounted) return;
-                                              Navigator.of(context).push(
-                                                MaterialPageRoute<void>(
-                                                  builder: (_) =>
-                                                      ThreadDetailPage(
-                                                        threadHead: message,
-                                                        allMessages:
-                                                            allMessages!,
-                                                        channelId: channelId,
-                                                        currentPubkey:
-                                                            currentPubkey,
-                                                        isMember: isMember,
-                                                        isArchived: isArchived,
-                                                      ),
-                                                ),
-                                              );
-                                            },
+                                      onMediaReply: onMediaReply,
                                       nativePhotoActions: nativeImageActions(
                                         context: context,
                                         ref: ref,
@@ -452,7 +459,8 @@ class _ThreadMessage extends HookConsumerWidget {
     return MessageSwipeReply(
       contentKey: swipeContentKey,
       message: message,
-      allMessages: allMessages,
+      allMessages: replyMessages,
+      onReply: onReply,
       channelId: channelId,
       currentPubkey: currentPubkey,
       isMember: isMember,
