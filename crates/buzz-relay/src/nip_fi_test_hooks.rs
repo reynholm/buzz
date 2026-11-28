@@ -331,6 +331,7 @@ make_hook!(
 // `handlers/auth.rs::admitted_owner`, after the stored-owner read returns and
 // before the caller records it. A test links the owner here to race admission.
 make_hook!(stored_owner_read_hook, after_stored_owner_read);
+make_hook!(roster_admission_hook, before_roster_admission);
 
 // ── Publication-attempt counter ────────────────────────────────────────────
 // `before_event_publish`: fires immediately before `state.pubsub.publish_event`

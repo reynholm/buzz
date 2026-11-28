@@ -586,24 +586,6 @@ async fn cmd_remove_member(
             roster_id,
         ));
     }
-    // A restored or older deployment may have member rows but no roster.
-    // Capture the baseline before removing a row so the retry can recover the
-    // original change even after the removal roster has been superseded.
-    if db
-        .with_relay_roster_version(tenant.community(), &relay_keypair.public_key(), |version| {
-            version
-        })
-        .await?
-        .is_none()
-        && db
-            .is_relay_member_writer(tenant.community(), &pubkey_hex)
-            .await?
-    {
-        let baseline = db
-            .rewrite_nip43_membership_list(tenant.community(), &relay_keypair)
-            .await?;
-        fan_out_membership_list(&pubsub, &tenant, baseline.snapshot).await;
-    }
     use buzz_db::relay_members::RemoveResult;
     let result = if let Some(ref role) = role_filter {
         db.remove_relay_member_if_role(tenant.community(), &pubkey_hex, role, &relay_keypair)

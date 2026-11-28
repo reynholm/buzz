@@ -282,6 +282,7 @@ async fn delete_member_with_acceptances(
     tx: &mut crate::AdmittedTx,
     pubkey: &str,
     expected_role: Option<&str>,
+    relay_keypair: &nostr::Keys,
 ) -> Result<bool> {
     let community = tx.community();
     // A first owner link that commits before the removal must be visible to
@@ -312,6 +313,9 @@ async fn delete_member_with_acceptances(
     .bind(pubkey)
     .fetch_all(tx.conn())
     .await?;
+    // The original removal can be replayed by comparing consecutive snapshots.
+    // Repair a missing or stale predecessor while the actual rows still exist.
+    prepare_removal_roster(tx, relay_keypair).await?;
     let mut removed = agents;
     removed.push(pubkey.to_owned());
     sqlx::query("DELETE FROM join_policy_acceptances WHERE community_id = $1 AND pubkey = ANY($2)")
@@ -343,7 +347,7 @@ pub async fn remove_relay_member(
         observability::WriterOperation::Authorization,
     )
     .await?;
-    if delete_member_with_acceptances(&mut tx, pubkey, None).await? {
+    if delete_member_with_acceptances(&mut tx, pubkey, None, relay_keypair).await? {
         return commit_membership_write(tx, RemoveResult::Removed, true, relay_keypair).await;
     }
 
@@ -388,7 +392,7 @@ pub async fn remove_relay_member_if_role(
         observability::WriterOperation::Authorization,
     )
     .await?;
-    if delete_member_with_acceptances(&mut tx, pubkey, Some(expected_role)).await? {
+    if delete_member_with_acceptances(&mut tx, pubkey, Some(expected_role), relay_keypair).await? {
         return commit_membership_write(tx, RemoveResult::Removed, true, relay_keypair).await;
     }
 
@@ -1082,6 +1086,49 @@ impl<T> MembershipWrite<T> {
     }
 }
 
+async fn lock_membership_snapshot(
+    tx: &mut crate::AdmittedTx,
+    relay_key: &nostr::PublicKey,
+) -> Result<()> {
+    let kind = buzz_core::kind::KIND_NIP43_MEMBERSHIP_LIST as i32;
+    let lock_key =
+        replaceable::event_replacement_lock_key(tx.community(), kind, relay_key.as_bytes(), None);
+    observability::observe_event_lock(
+        observability::LockType::Membership,
+        kind,
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(lock_key)
+            .execute(tx.conn()),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn prepare_removal_roster(
+    tx: &mut crate::AdmittedTx,
+    relay_keypair: &nostr::Keys,
+) -> Result<()> {
+    let relay_key = relay_keypair.public_key();
+    lock_membership_snapshot(tx, &relay_key).await?;
+    let matches: bool = sqlx::query_scalar(
+        "SELECT ARRAY(SELECT pubkey FROM relay_members WHERE community_id = $1 ORDER BY pubkey) = \
+         ARRAY(SELECT tag->>1 FROM (\
+             SELECT tags FROM events WHERE community_id = $1 AND kind = $2 AND pubkey = $3 \
+             AND channel_id IS NULL ORDER BY created_at DESC, id ASC LIMIT 1\
+         ) roster CROSS JOIN LATERAL jsonb_array_elements(roster.tags) AS tag \
+         WHERE tag->>0 = 'member' ORDER BY 1)",
+    )
+    .bind(tx.community().as_uuid())
+    .bind(buzz_core::kind::KIND_NIP43_MEMBERSHIP_LIST as i32)
+    .bind(relay_key.as_bytes().as_slice())
+    .fetch_one(tx.conn())
+    .await?;
+    if !matches {
+        write_nip43_membership_snapshot(tx, relay_keypair).await?;
+    }
+    Ok(())
+}
+
 /// Write the relay-signed NIP-43 membership list (kind:13534) for the
 /// transaction's community, replacing the live one.
 ///
@@ -1105,21 +1152,9 @@ pub(crate) async fn write_nip43_membership_snapshot(
 
     let community_id = tx.community();
     let kind_i32 = buzz_core::kind::KIND_NIP43_MEMBERSHIP_LIST as i32;
-    let pubkey_bytes = relay_keypair.public_key().to_bytes();
-    let lock_key = replaceable::event_replacement_lock_key(
-        community_id,
-        kind_i32,
-        pubkey_bytes.as_slice(),
-        None,
-    );
-    observability::observe_event_lock(
-        observability::LockType::Membership,
-        kind_i32,
-        sqlx::query("SELECT pg_advisory_xact_lock($1)")
-            .bind(lock_key)
-            .execute(tx.conn()),
-    )
-    .await?;
+    let relay_key = relay_keypair.public_key();
+    let pubkey_bytes = relay_key.to_bytes();
+    lock_membership_snapshot(tx, &relay_key).await?;
 
     let rows = sqlx::query(
         "SELECT pubkey, role FROM relay_members \
@@ -1434,14 +1469,17 @@ impl Db {
         add_relay_member(&self.pool, community, pubkey, role, added_by, relay_keypair).await
     }
 
-    /// Registers the roster version a socket sees before its final admission
-    /// check. A new roster cannot commit between the read and registration.
-    pub async fn with_relay_roster_version<T>(
+    /// Applies an admitted socket's roster version while holding the snapshot
+    /// lock. Membership and version are read from the same writer snapshot.
+    /// A missing principal means the relay does not require membership.
+    pub async fn with_relay_roster_admission<T>(
         &self,
         community: CommunityId,
         relay_pubkey: &nostr::PublicKey,
+        principal: Option<&nostr::PublicKey>,
+        verified_owner: Option<&nostr::PublicKey>,
         apply: impl FnOnce(Option<i64>) -> T,
-    ) -> Result<T> {
+    ) -> Result<Option<T>> {
         let connection = observability::acquire_writer(
             &self.pool,
             observability::WriterOperation::Authorization,
@@ -1459,17 +1497,21 @@ impl Db {
             .bind(lock_key)
             .execute(&mut *tx)
             .await?;
-        let current: Option<DateTime<Utc>> = sqlx::query_scalar(
-            "SELECT created_at FROM events WHERE community_id = $1 \
-             AND kind = $2 AND pubkey = $3 AND channel_id IS NULL AND deleted_at IS NULL \
-             ORDER BY created_at DESC LIMIT 1",
+        let (admitted, current): (bool, Option<DateTime<Utc>>) = sqlx::query_as(
+            "SELECT ($4::text IS NULL OR EXISTS (SELECT 1 FROM relay_members \
+              WHERE community_id = $1 AND pubkey IN ($4, $5))), \
+             (SELECT created_at FROM events WHERE community_id = $1 \
+              AND kind = $2 AND pubkey = $3 AND channel_id IS NULL AND deleted_at IS NULL \
+              ORDER BY created_at DESC LIMIT 1)",
         )
         .bind(community.as_uuid())
         .bind(kind)
         .bind(relay_pubkey.as_bytes().as_slice())
-        .fetch_optional(&mut *tx)
+        .bind(principal.map(nostr::PublicKey::to_hex))
+        .bind(verified_owner.map(nostr::PublicKey::to_hex))
+        .fetch_one(&mut *tx)
         .await?;
-        let result = apply(current.map(|time| time.timestamp()));
+        let result = admitted.then(|| apply(current.map(|time| time.timestamp())));
         tx.commit().await?;
         Ok(result)
     }
@@ -1494,7 +1536,7 @@ impl Db {
              CROSS JOIN LATERAL (\
                  SELECT tags FROM events WHERE community_id = $1 AND kind = $2 \
                  AND pubkey = $3 AND channel_id IS NULL AND created_at < removal.created_at \
-                 ORDER BY created_at DESC LIMIT 1\
+                 ORDER BY created_at DESC, id ASC LIMIT 1\
              ) previous \
              WHERE removal.community_id = $1 AND removal.kind = $2 AND removal.pubkey = $3 \
              AND removal.id = $4 AND removal.channel_id IS NULL",
@@ -2391,9 +2433,12 @@ mod postgres_tests {
             .expect("look up old removal")
             .expect("original roster survives rejoin");
         let current = db
-            .with_relay_roster_version(community, &keys.public_key(), |version| version)
+            .with_relay_roster_admission(community, &keys.public_key(), None, None, |version| {
+                version
+            })
             .await
             .expect("current roster")
+            .flatten()
             .expect("new roster exists");
         assert!(current > original.version);
         assert_eq!(original.pubkeys, vec![hex::decode(&member).unwrap()]);
@@ -2402,6 +2447,73 @@ mod postgres_tests {
             Some("member")
         );
         assert_eq!(acceptances(db.pool(), community, &member).await, 1);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn removal_retry_preserves_exact_targets_after_restoring_stale_roster() {
+        let pool = setup_pool().await;
+        let (community, _) = owned_community(&pool).await;
+        let (phantom, member, agent, retained) =
+            (test_pubkey(), test_pubkey(), test_pubkey(), test_pubkey());
+        let keys = nostr::Keys::generate();
+        let db = crate::Db::from_pool(pool);
+        for key in [&phantom, &retained] {
+            assert!(
+                db.add_relay_member(community, key, "member", None, &keys)
+                    .await
+                    .expect("write the original roster")
+                    .outcome
+            );
+        }
+        sqlx::query("DELETE FROM relay_members WHERE community_id = $1 AND pubkey = $2")
+            .bind(community.as_uuid())
+            .bind(&phantom)
+            .execute(db.pool())
+            .await
+            .expect("restore membership table");
+        for key in [&member, &agent] {
+            sqlx::query(
+                "INSERT INTO relay_members (community_id, pubkey, role) VALUES ($1, $2, 'member')",
+            )
+            .bind(community.as_uuid())
+            .bind(key)
+            .execute(db.pool())
+            .await
+            .expect("restore member without rewriting roster");
+            db.ensure_user(community, &hex::decode(key).unwrap())
+                .await
+                .expect("restore user");
+        }
+        assert!(db
+            .set_agent_owner(
+                community,
+                &hex::decode(&agent).unwrap(),
+                &hex::decode(&member).unwrap()
+            )
+            .await
+            .expect("link restored agent"));
+
+        let removal = db
+            .remove_relay_member(community, &member, &keys)
+            .await
+            .expect("remove restored participant");
+        assert_eq!(removal.outcome, RemoveResult::Removed);
+        let id = removal.snapshot.expect("removal roster").event.id;
+        let receipt = db
+            .relay_roster_removal(community, &keys.public_key(), &id, &member)
+            .await
+            .expect("lookup removal")
+            .expect("original removal has a usable retry ID");
+        let mut actual = receipt.pubkeys;
+        actual.sort();
+        let mut expected = vec![hex::decode(&member).unwrap(), hex::decode(&agent).unwrap()];
+        expected.sort();
+        assert_eq!(actual, expected);
+        assert_eq!(
+            role_of(db.pool(), community, &retained).await.as_deref(),
+            Some("member")
+        );
     }
 
     async fn owned_community(pool: &PgPool) -> (CommunityId, String) {
@@ -3344,9 +3456,11 @@ mod postgres_tests {
             .fetch_one(removal.conn())
             .await
             .expect("removal pid");
-        assert!(delete_member_with_acceptances(&mut removal, &member, None)
-            .await
-            .expect("delete member"));
+        assert!(
+            delete_member_with_acceptances(&mut removal, &member, None, &keys)
+                .await
+                .expect("delete member")
+        );
 
         // The transfer locks the community row, then waits on the member row.
         let transfer = spawn_transfer(&pool, community, &member, &owner, &keys);
@@ -3422,9 +3536,11 @@ mod postgres_tests {
         )
         .await
         .expect("begin removal");
-        assert!(delete_member_with_acceptances(&mut removal, &member, None)
-            .await
-            .expect("stage member removal"));
+        assert!(
+            delete_member_with_acceptances(&mut removal, &member, None, &keys)
+                .await
+                .expect("stage member removal")
+        );
         let claim = spawn_blocked(&pool, |claim_pool| {
             let member = member.clone();
             let keys = keys.clone();
@@ -3486,9 +3602,11 @@ mod postgres_tests {
         )
         .await
         .expect("begin removal");
-        assert!(delete_member_with_acceptances(&mut removal, &member, None)
-            .await
-            .expect("delete member"));
+        assert!(
+            delete_member_with_acceptances(&mut removal, &member, None, &keys)
+                .await
+                .expect("delete member")
+        );
         let claim = spawn_blocked(&pool, |claim_pool| {
             let member = member.clone();
             let second = second.clone();

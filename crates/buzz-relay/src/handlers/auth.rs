@@ -334,38 +334,41 @@ pub(crate) async fn final_admission_denial(
     if let Some(denial) = ban_verdict_denial(ban) {
         return Some(denial);
     }
-    // Publish the socket's roster version before the final membership read.
-    // A removal will either see the socket under its earlier version or be
-    // visible to the final membership check below.
-    let membership = match state
-        .db
-        .with_relay_roster_version(community, &state.relay_keypair.public_key(), |version| {
-            control.bind_roster_version(version)
+    let principal = state.config.require_relay_membership.then_some(&pubkey);
+    let owner = principal.and_then(|principal| {
+        token_owner.or_else(|| {
+            if state.config.allow_nip_oa_auth {
+                crate::api::relay_members::extract_nip_oa_owner(
+                    principal.as_bytes(),
+                    auth_tag_json,
+                    signed_auth_created_at,
+                )
+            } else {
+                None
+            }
         })
-        .await
-    {
-        Ok(()) => {
-            crate::api::relay_members::check_relay_membership_authoritative(
-                state,
-                community,
-                pubkey.as_bytes(),
-                auth_tag_json,
-                signed_auth_created_at,
-                token_owner,
-            )
-            .await
-        }
-        Err(error) => Err(error.to_string()),
-    };
+    });
+    #[cfg(test)]
+    crate::nip_fi_test_hooks::before_roster_admission(community).await;
+    let membership = state
+        .db
+        .with_relay_roster_admission(
+            community,
+            &state.relay_keypair.public_key(),
+            principal,
+            owner.as_ref(),
+            |version| control.bind_roster_version(version),
+        )
+        .await;
     match membership {
-        Ok(crate::api::relay_members::MembershipDecision::Denied) => Some(AdmissionDenial {
+        Ok(None) => Some(AdmissionDenial {
             metric: "not_relay_member",
             reason: "restricted: not a relay member",
             outcome: AuthOutcome::NotRelayMember,
             class: buzz_auth::DenialClass::AuthorizationDenied,
             owner_reason: None,
         }),
-        Ok(_) => None,
+        Ok(Some(())) => None,
         Err(e) => {
             warn!(pubkey = %pubkey.to_hex(), error = %e, "relay membership recheck failed, denying (fail-closed)");
             Some(AdmissionDenial {
@@ -3172,6 +3175,78 @@ pub(super) mod tests {
         #[ignore = "requires Postgres"]
         async fn removal_retry_preserves_agent_admitted_after_first_owner_link() {
             check_removal_retry_sessions(false).await;
+        }
+
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn removal_retry_preserves_auth_that_observes_rejoined_membership() {
+            use buzz_pubsub::conn_control::{ConnControl, ScopedConnControl};
+            use std::sync::Arc;
+            use std::time::Duration;
+
+            let mut state = auth_test_state_real_db_expect().await;
+            Arc::make_mut(&mut Arc::make_mut(&mut state).config).require_relay_membership = true;
+            let community = seeded_community(&state).await;
+            let member = Keys::generate();
+            let pubkey = member.public_key().to_hex();
+            assert!(
+                state
+                    .db
+                    .add_relay_member(community, &pubkey, "member", None, &state.relay_keypair)
+                    .await
+                    .expect("add member")
+                    .outcome
+            );
+            let challenge = "removal-rejoin-during-auth";
+            let (conn, _ctrl) = registered_pending_conn(&state, community, challenge);
+            let (arrived, release) =
+                crate::nip_fi_test_hooks::roster_admission_hook::arm(community);
+            let auth = tokio::spawn(handle_auth(
+                signed_auth(&member, challenge, None),
+                Arc::clone(&conn),
+                Arc::clone(&state),
+            ));
+            tokio::time::timeout(Duration::from_secs(5), arrived)
+                .await
+                .expect("AUTH reaches final membership check")
+                .expect("hook arrives");
+
+            let removed = state
+                .db
+                .remove_relay_member(community, &pubkey, &state.relay_keypair)
+                .await
+                .expect("remove member while AUTH is pending");
+            let roster_id = removed.snapshot.expect("signed removal roster").event.id;
+            assert!(
+                state
+                    .db
+                    .add_relay_member(community, &pubkey, "member", None, &state.relay_keypair)
+                    .await
+                    .expect("member rejoins before final membership read")
+                    .outcome
+            );
+            release.notify_one();
+            auth.await.expect("join AUTH");
+            assert!(matches!(
+                conn.auth_state_snapshot(),
+                AuthState::Authenticated(_)
+            ));
+
+            let (tx, rx) = tokio::sync::broadcast::channel(4);
+            tx.send(ScopedConnControl {
+                community_id: community,
+                command: ConnControl::DisconnectRemovedMember {
+                    pubkey: member.public_key().to_bytes().to_vec(),
+                    roster_id,
+                },
+            })
+            .expect("send retry");
+            drop(tx);
+            state.run_conn_control_consumer(rx).await;
+            assert!(
+                !conn.cancel.is_cancelled(),
+                "AUTH admitted the rejoined member under the new roster"
+            );
         }
 
         async fn check_removal_retry_sessions(republish: bool) {
