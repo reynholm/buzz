@@ -23,6 +23,9 @@ class MessageSwipeReply extends HookConsumerWidget {
   final String? currentPubkey;
   final bool isMember;
   final bool isArchived;
+
+  /// Replies without opening [message]'s thread, for a page that already is it.
+  final VoidCallback? onReply;
   final Widget child;
 
   /// The visible content, excluding author metadata and reply/reaction footers.
@@ -36,6 +39,7 @@ class MessageSwipeReply extends HookConsumerWidget {
     required this.currentPubkey,
     required this.isMember,
     required this.isArchived,
+    this.onReply,
     required this.child,
     required this.contentKey,
   });
@@ -149,6 +153,10 @@ class MessageSwipeReply extends HookConsumerWidget {
                     final reply = !cancelled.value && offset.value >= 72;
                     reset();
                     if (!reply) return;
+                    if (onReply != null) {
+                      onReply!();
+                      return;
+                    }
                     Navigator.of(context).push(
                       MaterialPageRoute<void>(
                         builder: (_) => ThreadDetailPage(

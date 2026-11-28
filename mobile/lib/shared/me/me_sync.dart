@@ -310,7 +310,11 @@ class MeSync {
   );
 
   void check() {
-    if (disposed) throw StateError('Your community changed. Open Solo again.');
+    if (disposed) {
+      throw ActiveCommunityChangedError(
+        'Your community changed. Open Solo again.',
+      );
+    }
     if (!connected || config.nsec == null) {
       throw StateError('Connect to your community to load Solo.');
     }

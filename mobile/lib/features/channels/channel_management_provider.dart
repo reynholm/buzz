@@ -24,9 +24,6 @@ export 'channel_metadata_updates.dart';
 part 'channel_huddle_actions.dart';
 part 'channel_management_actions.dart';
 
-String _relayErrorMessage(Object error) =>
-    error.toString().replaceFirst('Exception: ', '');
-
 /// Raised when one or more kind:9000 adds were rejected, keyed by pubkey.
 ///
 /// Callers surface [message] to the user — a relay rejection here (e.g. a plain

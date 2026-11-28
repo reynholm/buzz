@@ -218,7 +218,7 @@ class ChannelActions {
           ],
         );
       } catch (error) {
-        failures[pubkey] = _relayErrorMessage(error);
+        failures[pubkey] = relayErrorText(error);
       }
     }
     _ensureCommunityValid();
@@ -231,7 +231,7 @@ class ChannelActions {
 
   void _ensureCommunityValid() {
     if (_isCommunityValid?.call() == false) {
-      throw StateError(
+      throw ActiveCommunityChangedError(
         'Channel action cancelled because the active community changed',
       );
     }

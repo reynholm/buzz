@@ -7462,6 +7462,126 @@
       ]
     },
     {
+      "path": "mobile/ios/BuzzPushKit/Sources/BuzzPushKit/BuzzPushPresentationCache.swift",
+      "responsibility": "Preserve Solo thread routes and signed mention recipients across upstream mobile integration",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test"
+      ]
+    },
+    {
+      "path": "mobile/ios/BuzzPushKit/Tests/BuzzPushKitTests/BuzzPushPresentationCacheTests.swift",
+      "responsibility": "Preserve Solo thread routes and signed mention recipients across upstream mobile integration",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/me/me_assistant_picker.dart",
+      "responsibility": "Preserve Solo thread routes and signed mention recipients across upstream mobile integration",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/message_content/code_block.dart",
+      "responsibility": "Preserve Solo thread routes and signed mention recipients across upstream mobile integration",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/message_content/message_preview.dart",
+      "responsibility": "Preserve Solo thread routes and signed mention recipients across upstream mobile integration",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/message_mention_pill.dart",
+      "responsibility": "Preserve Solo thread routes and signed mention recipients across upstream mobile integration",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/send_message_provider.dart",
+      "responsibility": "Preserve Solo thread routes and signed mention recipients across upstream mobile integration",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/thread_detail_page/message_list.dart",
+      "responsibility": "Preserve Solo thread routes and signed mention recipients across upstream mobile integration",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/forum/forum_provider.dart",
+      "responsibility": "Preserve Solo thread routes and signed mention recipients across upstream mobile integration",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/relay_session_types.dart",
+      "responsibility": "Preserve Solo thread routes and signed mention recipients across upstream mobile integration",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/relay_socket.dart",
+      "responsibility": "Preserve Solo thread routes and signed mention recipients across upstream mobile integration",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/mention_chip_presentation_test.dart",
+      "responsibility": "Preserve Solo thread routes and signed mention recipients across upstream mobile integration",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test"
+      ]
+    },
+    {
       "path": "mobile/lib/features/channels/channel_detail_page/app_bar.dart",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
       "is_new": false,
@@ -20517,6 +20637,56 @@
       "invocation_seams": [],
       "verification_commands": [
         "cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/compose_bar/send_button.dart",
+      "responsibility": "Preserve named failures when sending messages",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/relay.dart",
+      "responsibility": "Expose shared relay error formatting to Mobile callers",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/relay_closed_policy.dart",
+      "responsibility": "Keep the closed relay refusal formatter distinct",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/relay_error_text.dart",
+      "responsibility": "Format send, upload, and invite failures consistently",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/relay/relay_error_text_test.dart",
+      "responsibility": "Exercise the shared Mobile relay error formatter",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test"
       ]
     }
   ],

@@ -79,7 +79,7 @@ void main() {
   });
 
   test(
-    'Solo metadata survives details merges and classifies only own private streams',
+    'Solo metadata survives details merges regardless of stream visibility',
     () {
       for (final type in ['stream', 'forum', 'dm']) {
         for (final private in [true, false]) {
@@ -112,13 +112,10 @@ void main() {
           ).mergeDetails(details).copyWith(isMember: true);
           expect(channel.labels, ['buzz.solo']);
           expect(channel.createdBy, 'owner');
-          expect(channel.isSolo, type == 'stream' && private);
-          expect(channel.isSoloChat(const []), type == 'stream' && private);
+          expect(channel.isSolo, type == 'stream');
+          expect(channel.isSoloChat(const []), type == 'stream');
           expect(channel.isSoloChat(const ['chat']), isTrue);
-          expect(
-            channel.isPersonalChat('owner', const []),
-            type == 'stream' && private,
-          );
+          expect(channel.isPersonalChat('owner', const []), type == 'stream');
           expect(channel.isPersonalChat('other', const []), isFalse);
           expect(ChannelDetails.fromChannel(channel).labels, ['buzz.solo']);
         }
@@ -491,6 +488,51 @@ void main() {
       expect(session.publishedEvents, isEmpty);
     },
   );
+
+  test('add-members failures keep each error name but drop a bare '
+      'Exception prefix', () async {
+    final keys = nostr.Keys.generate();
+    final timedOut = 'a' * 64;
+    final rejected = 'b' * 64;
+    final lost = 'c' * 64;
+    final session = _RecordingPublishRelaySession()
+      ..publishErrors.addAll({
+        timedOut: RelayAckTimeoutError('Event e not acknowledged'),
+        rejected: const RelayEventRejectedException(
+          'restricted: Exception: sponsor approval required',
+        ),
+        lost: RelayAckLostError(Exception('App moved to background')),
+      });
+    final actionsProvider = Provider<ChannelActions>((ref) {
+      return ChannelActions(
+        ref: ref,
+        session: session,
+        signedEventRelay: SignedEventRelay(session: session, nsec: keys.nsec),
+        currentPubkey: keys.public,
+      );
+    });
+    final container = ProviderContainer(retry: (_, _) => null);
+    addTearDown(container.dispose);
+
+    await expectLater(
+      container
+          .read(actionsProvider)
+          .addMembers(
+            channelId: _channelId,
+            pubkeys: [timedOut, rejected, lost],
+            role: 'member',
+          ),
+      throwsA(
+        isA<AddMembersException>().having((e) => e.failures, 'failures', {
+          timedOut: 'TimeoutException: Event e not acknowledged',
+          rejected: 'restricted: Exception: sponsor approval required',
+          lost:
+              'Connection lost before the relay acknowledged the event: '
+              'App moved to background',
+        }),
+      ),
+    );
+  });
 
   test('reactions tag the reacted-to message author', () async {
     final keys = nostr.Keys.generate();
@@ -948,6 +990,9 @@ const _memberPubkey =
 class _RecordingPublishRelaySession extends RelaySessionNotifier {
   final publishedEvents = <NostrEvent>[];
   final queryFilters = <NostrFilter>[];
+
+  /// Errors to throw instead of publishing, keyed by the event's `p` tag.
+  final publishErrors = <String, Object>{};
   int historyQueryCount = 0;
 
   @override
@@ -958,6 +1003,12 @@ class _RecordingPublishRelaySession extends RelaySessionNotifier {
     NostrEvent event, {
     Duration timeout = const Duration(seconds: 8),
   }) async {
+    final target = event.tags
+        .where((tag) => tag.length > 1 && tag[0] == 'p')
+        .map((tag) => tag[1])
+        .firstOrNull;
+    final error = publishErrors[target];
+    if (error != null) throw error;
     publishedEvents.add(event);
     return event;
   }

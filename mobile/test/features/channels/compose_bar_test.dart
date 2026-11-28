@@ -1387,6 +1387,133 @@ void main() {
       );
     });
 
+    const unsentEvent = NostrEvent(
+      id: 'event-1',
+      pubkey: 'pubkey-1',
+      createdAt: 0,
+      kind: 9,
+      tags: [],
+      content: 'hello',
+      sig: 'sig-1',
+    );
+
+    // Each failure runs against the real relay session. `socket` records
+    // published EVENTs and never acknowledges them unless the case says so.
+    for (final (name, fail, message, publishes)
+        in <
+          (
+            String,
+            Future<void> Function(RelaySessionNotifier session),
+            String,
+            bool,
+          )
+        >[
+          (
+            'a disconnected relay',
+            (session) {
+              session.debugPauseNow();
+              return session.publish(unsentEvent);
+            },
+            'Not sent. No connection.',
+            false,
+          ),
+          (
+            'a timeout before anything was published',
+            // A pre-send roster lookup that times out, like the Solo chat
+            // recipients refresh, before the message EVENT is signed.
+            (session) => session
+                .fetchHistory(
+                  const NostrFilter(kinds: [39002]),
+                  timeout: const Duration(milliseconds: 1),
+                )
+                .then((_) => session.publish(unsentEvent)),
+            "Not sent. The relay didn't respond.",
+            false,
+          ),
+          (
+            'an unacknowledged publish',
+            (session) => session.publish(
+              unsentEvent,
+              timeout: const Duration(milliseconds: 1),
+            ),
+            "Not confirmed. The relay didn't respond.",
+            true,
+          ),
+          (
+            'a connection lost before acknowledgement',
+            (session) {
+              final delivery = session.publish(unsentEvent);
+              session.debugPauseNow();
+              return delivery;
+            },
+            'Not confirmed. Connection lost.',
+            true,
+          ),
+          (
+            'a relay rejection',
+            (_) => Future.error(Exception('restricted: not a member')),
+            'Not sent: restricted: not a member',
+            false,
+          ),
+          (
+            'any other named error',
+            (_) => Future.error(const FormatException('bad relay frame')),
+            'Not sent: FormatException: bad relay frame',
+            false,
+          ),
+          (
+            'any other state error',
+            (_) => Future.error(StateError('Relay session is disposed')),
+            'Not sent: Relay session is disposed',
+            false,
+          ),
+        ]) {
+      testWidgets('reports $name as itself, not a community switch', (
+        tester,
+      ) async {
+        final publishedEvents = <Map<String, dynamic>>[];
+        late final RelaySessionNotifier session;
+        await tester.pumpWidget(
+          _buildComposeBar(
+            uploadService: _testUploadService(nostr.Keys.generate().nsec),
+            onSend:
+                (
+                  content,
+                  mentionPubkeys, {
+                  mediaTags = const <List<String>>[],
+                }) => fail(session),
+          ),
+        );
+        session = ProviderScope.containerOf(
+          tester.element(find.byType(ComposeBar)),
+        ).read(relaySessionProvider.notifier);
+        session.debugAttachSocketForTest(
+          _RecordingRelaySocket(
+            publishedEvents,
+            session.debugHandleSocketMessageForTest,
+            beforeAcknowledged: (_) => Completer<void>().future,
+          ),
+        );
+
+        await _expandComposer(tester);
+        await tester.enterText(find.byType(TextField), 'hello');
+        await tester.pumpAndSettle();
+        await tester.tap(find.byIcon(BuzzIcons.arrowUp));
+        await tester.pump(const Duration(milliseconds: 10));
+        await tester.pumpAndSettle();
+
+        expect(find.widgetWithText(SnackBar, message), findsOneWidget);
+        expect(
+          publishedEvents.where((event) => event['id'] == unsentEvent.id),
+          hasLength(publishes ? 1 : 0),
+        );
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          'hello',
+        );
+      });
+    }
+
     testWidgets('smoothly resizes the text field when a new line is added', (
       tester,
     ) async {
@@ -5514,6 +5641,50 @@ void main() {
       expect(find.textContaining('upload failed'), findsOneWidget);
       expect(find.text('Keep this draft'), findsOneWidget);
       expect(find.byTooltip('Remove attachment'), findsOneWidget);
+    });
+
+    testWidgets('shows a failed upload connection error with its name', (
+      tester,
+    ) async {
+      final uploadService = MediaUploadService(
+        baseUrl: 'https://relay.example',
+        nsec: nostr.Keys.generate().nsec,
+        httpClient: http_testing.MockClient(
+          (request) async => throw http.ClientException('Connection reset'),
+        ),
+        pickGalleryVideo: () async => null,
+        pickGalleryImage: () async =>
+            XFile.fromData(_pngBytes, name: 'tiny.png'),
+      );
+
+      await tester.pumpWidget(
+        _buildComposeBar(
+          uploadService: uploadService,
+          onSend:
+              (
+                content,
+                mentionPubkeys, {
+                mediaTags = const <List<String>>[],
+              }) async {},
+        ),
+      );
+
+      await _openSystemPhotoPicker(tester);
+      await tester.pumpAndSettle();
+      await _expandComposer(tester);
+      await tester.enterText(find.byType(TextField), 'Keep this draft');
+      await tester.tap(find.byIcon(BuzzIcons.arrowUp));
+      await _pumpUntilUpload(
+        tester,
+        () => find.textContaining('Connection reset').evaluate().isNotEmpty,
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('ClientException: Connection reset'),
+        findsOneWidget,
+      );
+      expect(find.text('Keep this draft'), findsOneWidget);
     });
 
     for (final statusCode in [

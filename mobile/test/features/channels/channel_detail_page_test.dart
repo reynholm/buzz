@@ -157,6 +157,19 @@ final _testChannel = Channel(
   isMember: true,
 );
 
+final _testOpenSoloChannel = Channel(
+  id: _channelId,
+  name: 'Shared Solo',
+  channelType: 'stream',
+  visibility: 'open',
+  labels: const ['buzz.solo'],
+  description: '',
+  createdBy: 'self',
+  createdAt: DateTime(2026),
+  memberCount: 2,
+  isMember: true,
+);
+
 NostrEvent _textMsg({
   required String id,
   required String pubkey,
@@ -13985,28 +13998,76 @@ void main() {
     },
   );
 
-  testWidgets('identified Solo sends through the Solo sender', (tester) async {
-    final ordinary = _RecordingOrdinarySender(),
-        solo = _RecordingOrdinarySender();
-    await tester.pumpWidget(
-      _buildTestable(
-        messages: [],
-        personalChat: true,
-        sender: ordinary,
-        soloSender: solo,
-        members: [
-          ChannelMember(pubkey: 'agent', role: 'bot', joinedAt: DateTime(2026)),
-        ],
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.widget<ComposeBar>(find.byType(ComposeBar)).onSend(
-      'Solo message',
-      ['agent'],
-    );
-    expect(solo.sent, ['Solo message']);
-    expect(ordinary.sent, isEmpty);
-  });
+  testWidgets(
+    'identified Solo sends explicit people and agents from the composer',
+    (tester) async {
+      final ordinary = _RecordingOrdinarySender(),
+          solo = _RecordingOrdinarySender();
+      await tester.pumpWidget(
+        _buildTestable(
+          messages: [],
+          personalChat: true,
+          sender: ordinary,
+          soloSender: solo,
+          users: const {
+            'person': UserProfile(pubkey: 'person', displayName: 'Alice'),
+            'agent': UserProfile(pubkey: 'agent', displayName: 'Helper'),
+          },
+          members: [
+            ChannelMember(
+              pubkey: 'agent',
+              role: 'bot',
+              joinedAt: DateTime(2026),
+            ),
+            ChannelMember(
+              pubkey: 'person',
+              role: 'member',
+              joinedAt: DateTime(2026),
+            ),
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Message #general'));
+      await tester.pumpAndSettle();
+      final editor = find.descendant(
+        of: find.byType(ComposeBar),
+        matching: find.byType(TextField),
+      );
+      for (final draft in [
+        '@Alice Hello',
+        '@Alice @Helper Together',
+        '@Helper Work',
+      ]) {
+        await tester.enterText(editor, draft);
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.descendant(
+            of: find.byType(ComposeBar),
+            matching: find.byIcon(BuzzIcons.arrowUp),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.widget<TextField>(editor).controller!.text, isEmpty);
+        expect(find.text('Not sent. Community changed.'), findsNothing);
+      }
+      expect(solo.sent, [
+        '@Alice Hello',
+        '@Alice @Helper Together',
+        '@Helper Work',
+      ]);
+      expect(solo.mentions, [
+        ['person'],
+        ['person', 'agent'],
+        ['agent'],
+      ]);
+      expect(ordinary.sent, isEmpty);
+    },
+    variant: TargetPlatformVariant({
+      TargetPlatform.iOS,
+      TargetPlatform.android,
+    }),
+  );
 
   testWidgets('unknown Solo placement remains readable but cannot send', (
     tester,
@@ -14091,6 +14152,55 @@ void main() {
       expect(notifier.loadedEventIds, contains(threadIdReplyZero));
     },
   );
+
+  testWidgets('open owner Solo routes a linked reply to its thread', (
+    tester,
+  ) async {
+    final sender = _RecordingOrdinarySender();
+    final channel = _testOpenSoloChannel;
+    final linkedReply = _textMsg(
+      id: threadIdReplyZero,
+      pubkey: 'alice',
+      content: 'Linked answer',
+      extraTags: const [
+        ['e', threadIdRoot, '', 'reply'],
+      ],
+    );
+    await tester.pumpWidget(
+      _buildTestable(
+        channel: channel,
+        personalChat: true,
+        signingPubkey: 'self',
+        sender: sender,
+        messages: [
+          _textMsg(id: threadIdRoot, pubkey: 'self', content: 'Question'),
+          linkedReply,
+        ],
+        threadReplies: {
+          threadIdRoot: [linkedReply],
+        },
+        home: ChannelDetailPage(
+          channel: channel,
+          initialMessageId: linkedReply.id,
+          initialThreadRootId: threadIdRoot,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final thread = find.byType(ThreadDetailPage);
+    expect(thread, findsOneWidget);
+    expect(
+      tester.widget<ThreadDetailPage>(thread).initialMessageId,
+      linkedReply.id,
+    );
+    expect(findRichText('Linked answer'), findsOneWidget);
+    await tester
+        .widget<ComposeBar>(find.byType(ComposeBar))
+        .onSend('Follow-up', []);
+    expect(sender.parents, [threadIdRoot]);
+    expect(sender.roots, [threadIdRoot]);
+  });
 
   group('Typing indicator', () {
     testWidgets('Me reply consumes typing and grows its pending bubble', (
@@ -16868,73 +16978,87 @@ void main() {
       expect(find.byType(ThreadDetailPage), findsNothing);
     });
 
-    testWidgets('Activity reopens a thread draft after Back', (tester) async {
-      tester.view.devicePixelRatio = 1;
-      tester.view.physicalSize = const Size(1100, 800);
-      addTearDown(tester.view.reset);
-      final root = _textMsg(
-        id: threadIdRoot,
-        pubkey: 'alice',
-        content: 'Draft thread root',
+    for (final openSolo in [false, true]) {
+      testWidgets(
+        'Activity reopens a thread draft after Back (open Solo: $openSolo)',
+        (tester) async {
+          tester.view.devicePixelRatio = 1;
+          tester.view.physicalSize = const Size(1100, 800);
+          addTearDown(tester.view.reset);
+          final root = _textMsg(
+            id: threadIdRoot,
+            pubkey: 'alice',
+            content: 'Draft thread root',
+          );
+          await tester.pumpWidget(
+            _buildTestable(
+              messages: [root],
+              personalChat: openSolo,
+              signingPubkey: 'self',
+              channel: openSolo ? _testOpenSoloChannel : null,
+              relaySessionNotifier: _ReconnectingRelaySession(
+                initialStatus: SessionStatus.disconnected,
+              ),
+              threadReplies: const {threadIdRoot: []},
+              users: const {
+                'alice': UserProfile(pubkey: 'alice', displayName: 'Alice'),
+              },
+              home: const AdaptiveConversationDestination(
+                child: ActivityPage(),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final drafts = ProviderScope.containerOf(
+            tester.element(find.byType(ActivityPage)),
+          ).read(composeDraftsProvider.notifier);
+          drafts.save(
+            key: '$_channelId:$threadIdRoot',
+            channelId: _channelId,
+            threadHeadId: threadIdRoot,
+            text: 'Retained thread draft',
+          );
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const ValueKey('activity-type-menu')));
+          await tester.pumpAndSettle();
+          await tester.tap(
+            find.ancestor(
+              of: find.descendant(
+                of: find.byKey(const ValueKey('activity-type-popover')),
+                matching: find.text('Drafts'),
+              ),
+              matching: find.byWidgetPredicate(
+                (widget) => widget is CheckedPopupMenuItem,
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final draftRow = find.byKey(
+            ValueKey('draft-row-$_channelId:$threadIdRoot'),
+          );
+          for (var attempt = 0; attempt < 2; attempt++) {
+            await tester.tap(draftRow);
+            await tester.pumpAndSettle();
+            expect(
+              find.byType(ThreadDetailPage),
+              findsOneWidget,
+              reason:
+                  'Opening draft attempt $attempt must reach the thread composer',
+            );
+            expect(find.text('Retained thread draft'), findsNWidgets(2));
+            expect(
+              tester.widget<ComposeBar>(find.byType(ComposeBar)).threadHeadId,
+              threadIdRoot,
+            );
+            Navigator.of(tester.element(find.byType(ThreadDetailPage))).pop();
+            await tester.pumpAndSettle();
+            expect(find.byType(ThreadDetailPage), findsNothing);
+            expect(draftRow, findsOneWidget);
+          }
+          expect(tester.takeException(), isNull);
+        },
       );
-      await tester.pumpWidget(
-        _buildTestable(
-          messages: [root],
-          relaySessionNotifier: _ReconnectingRelaySession(
-            initialStatus: SessionStatus.disconnected,
-          ),
-          threadReplies: const {threadIdRoot: []},
-          users: const {
-            'alice': UserProfile(pubkey: 'alice', displayName: 'Alice'),
-          },
-          home: const AdaptiveConversationDestination(child: ActivityPage()),
-        ),
-      );
-      await tester.pumpAndSettle();
-      final drafts = ProviderScope.containerOf(
-        tester.element(find.byType(ActivityPage)),
-      ).read(composeDraftsProvider.notifier);
-      drafts.save(
-        key: '$_channelId:$threadIdRoot',
-        channelId: _channelId,
-        threadHeadId: threadIdRoot,
-        text: 'Retained thread draft',
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('activity-type-menu')));
-      await tester.pumpAndSettle();
-      await tester.tap(
-        find.ancestor(
-          of: find.descendant(
-            of: find.byKey(const ValueKey('activity-type-popover')),
-            matching: find.text('Drafts'),
-          ),
-          matching: find.byWidgetPredicate(
-            (widget) => widget is CheckedPopupMenuItem,
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      final draftRow = find.byKey(
-        ValueKey('draft-row-$_channelId:$threadIdRoot'),
-      );
-      for (var attempt = 0; attempt < 2; attempt++) {
-        await tester.tap(draftRow);
-        await tester.pumpAndSettle();
-        expect(
-          find.byType(ThreadDetailPage),
-          findsOneWidget,
-          reason:
-              'Opening draft attempt $attempt must reach the thread composer',
-        );
-        expect(find.text('Retained thread draft'), findsNWidgets(2));
-        Navigator.of(tester.element(find.byType(ThreadDetailPage))).pop();
-        await tester.pumpAndSettle();
-        expect(find.byType(ThreadDetailPage), findsNothing);
-        expect(draftRow, findsOneWidget);
-      }
-      expect(tester.takeException(), isNull);
-    });
+    }
 
     testWidgets('replaces a temporary channel route for an initial thread', (
       tester,

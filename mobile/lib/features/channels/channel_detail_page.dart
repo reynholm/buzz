@@ -293,6 +293,12 @@ class _ResolvedChannelDetailPage extends HookConsumerWidget {
     final baseChannel = listedChannel ?? channel;
     final resolvedChannel =
         detailsAsync.whenData(baseChannel.mergeDetails).value ?? baseChannel;
+    // Before open streams were classified as Solo, links and drafts opened
+    // their explicit thread. Keep that destination in the Solo view as well.
+    final opensInitialThread =
+        placementKnown &&
+        (!personalChat ||
+            (resolvedChannel.isSolo && !resolvedChannel.isPrivate));
     final participantCount = resolvedChannel.participantPubkeys
         .map((pubkey) => pubkey.trim().toLowerCase())
         .where((pubkey) => pubkey.isNotEmpty)
@@ -859,13 +865,13 @@ class _ResolvedChannelDetailPage extends HookConsumerWidget {
                               dateScrollActivity: dateScrollActivity,
                               entries: timelineEntries,
                               allMessages: timelineMessages,
-                              initialMessageId: personalChat
+                              initialMessageId:
+                                  personalChat && !opensInitialThread
                                   ? initialMessageId ?? initialThreadRootId
                                   : initialMessageId,
-                              initialThreadRootId:
-                                  personalChat || !placementKnown
-                                  ? null
-                                  : initialThreadRootId,
+                              initialThreadRootId: opensInitialThread
+                                  ? initialThreadRootId
+                                  : null,
                               initialThreadRouteBehavior:
                                   initialThreadRouteBehavior,
                               initialOrdinaryUnreadMessageIds:

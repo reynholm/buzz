@@ -4751,6 +4751,102 @@ New module: `false`.
 
 - Verify: `just ci`
 
+## `mobile/ios/BuzzPushKit/Sources/BuzzPushKit/BuzzPushPresentationCache.swift`
+
+Preserve Solo thread routes and signed mention recipients across upstream mobile integration
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test`
+
+## `mobile/ios/BuzzPushKit/Tests/BuzzPushKitTests/BuzzPushPresentationCacheTests.swift`
+
+Preserve Solo thread routes and signed mention recipients across upstream mobile integration
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test`
+
+## `mobile/lib/features/channels/me/me_assistant_picker.dart`
+
+Preserve Solo thread routes and signed mention recipients across upstream mobile integration
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test`
+
+## `mobile/lib/features/channels/message_content/code_block.dart`
+
+Preserve Solo thread routes and signed mention recipients across upstream mobile integration
+
+New module: `true`.
+
+- Verify: `cd mobile && flutter test`
+
+## `mobile/lib/features/channels/message_content/message_preview.dart`
+
+Preserve Solo thread routes and signed mention recipients across upstream mobile integration
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test`
+
+## `mobile/lib/features/channels/message_mention_pill.dart`
+
+Preserve Solo thread routes and signed mention recipients across upstream mobile integration
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test`
+
+## `mobile/lib/features/channels/send_message_provider.dart`
+
+Preserve Solo thread routes and signed mention recipients across upstream mobile integration
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test`
+
+## `mobile/lib/features/channels/thread_detail_page/message_list.dart`
+
+Preserve Solo thread routes and signed mention recipients across upstream mobile integration
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test`
+
+## `mobile/lib/features/forum/forum_provider.dart`
+
+Preserve Solo thread routes and signed mention recipients across upstream mobile integration
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test`
+
+## `mobile/lib/shared/relay/relay_session_types.dart`
+
+Preserve Solo thread routes and signed mention recipients across upstream mobile integration
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test`
+
+## `mobile/lib/shared/relay/relay_socket.dart`
+
+Preserve Solo thread routes and signed mention recipients across upstream mobile integration
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test`
+
+## `mobile/test/features/channels/mention_chip_presentation_test.dart`
+
+Preserve Solo thread routes and signed mention recipients across upstream mobile integration
+
+New module: `true`.
+
+- Verify: `cd mobile && flutter test`
+
 ## `mobile/lib/features/channels/channel_detail_page/app_bar.dart`
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
@@ -14367,3 +14463,43 @@ New module: `false`.
 
 - Required symbol: `bool isRelayMediaOrigin(Uri uri)`
 - Verify: `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart`
+
+## `mobile/lib/features/channels/compose_bar/send_button.dart`
+
+Preserve named failures when sending messages
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test`
+
+## `mobile/lib/shared/relay/relay.dart`
+
+Expose shared relay error formatting to Mobile callers
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test`
+
+## `mobile/lib/shared/relay/relay_closed_policy.dart`
+
+Keep the closed relay refusal formatter distinct
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test`
+
+## `mobile/lib/shared/relay/relay_error_text.dart`
+
+Format send, upload, and invite failures consistently
+
+New module: `true`.
+
+- Verify: `cd mobile && flutter test`
+
+## `mobile/test/shared/relay/relay_error_text_test.dart`
+
+Exercise the shared Mobile relay error formatter
+
+New module: `true`.
+
+- Verify: `cd mobile && flutter test`
