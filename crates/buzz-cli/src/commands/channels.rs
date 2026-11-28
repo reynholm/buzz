@@ -15,7 +15,9 @@ use crate::commands::agents::fetch_archived_snapshot;
 use crate::commands::channel_templates::{self, ChannelTemplateRecord, TemplateAgentRoster};
 use crate::commands::users::presence_subject;
 use crate::error::CliError;
-use crate::validate::{parse_uuid, read_or_stdin, validate_hex64, validate_uuid};
+use crate::validate::{
+    parse_uuid, read_file_or_stdin, read_or_stdin, validate_hex64, validate_uuid,
+};
 
 fn extract_channel_metadata(e: &serde_json::Value) -> serde_json::Value {
     serde_json::json!({
@@ -458,13 +460,34 @@ pub async fn cmd_restore_canvas(
         buzz_sdk::build_set_canvas_after_head(channel_uuid, &content, head_id, head_created_at)
             .map_err(|e| CliError::Other(format!("build_set_canvas failed: {e}")))?;
     let event = client.sign_event(builder).await?;
+    submit_checked_canvas_write(client, channel_id, event, "restore", out).await
+}
+
+/// Submit a signed canvas write that carries an `expected-revision`
+/// precondition, then confirm it holds the visible head. Shared by `restore`
+/// and `set --expected`; `action` names the command in messages.
+///
+/// If the relay returns a conflict the write may still have persisted (a lost
+/// response and a retried submit), so it is reconciled against the stream
+/// before the conflict is reported. After an accepted submit, a single re-read
+/// classifies whether the write is still the head or an ancestor of it; if a
+/// concurrent write has become current this returns [`CliError::Conflict`]
+/// (exit 5) naming the persisted revision. A failed verification read reports
+/// the accepted write as success with a stderr warning.
+async fn submit_checked_canvas_write(
+    client: &BuzzClient,
+    channel_id: &str,
+    event: nostr::Event,
+    action: &str,
+    out: &mut dyn std::io::Write,
+) -> Result<(), CliError> {
     let our_id = event.id.to_hex();
     let submit_result = client.submit_event(event).await;
 
     // If the relay returned a conflict-shaped error the submit may still have
     // persisted: a prior attempt stored A(expected=H), the response was lost,
     // and the retry of identical A bytes sees RevisionMismatch — a persisted
-    // restore presented as a rejected write. Two concurrent-write shapes arise:
+    // write presented as a rejected write. Two concurrent-write shapes arise:
     //
     // - A tagged write B(expected=A) becomes head: `canvas_write_survived`
     //   returns true; A committed and is an accepted ancestor → success.
@@ -478,19 +501,20 @@ pub async fn cmd_restore_canvas(
     // then feed the four-way classification:
     //   - survived (ancestor of head)         → accepted JSON, exit 0
     //   - persisted but head unrelated to A   → supersession naming A
-    //   - genuinely absent                    → original 409 rejection
+    //   - genuinely absent                    → Conflict (exit 5), relay reason kept
     //   - either reconciliation read fails    → DeliveryUnknown naming A
     let resp = match submit_result {
         Ok(resp) => resp,
-        Err(e @ CliError::Relay { status: 409, .. }) if matches!(&e, CliError::Relay { body, .. } if body.contains("canvas changed")) =>
-        {
+        // Every relay canvas CAS rejection: the head moved, the expected head
+        // was deleted, or the write would not supersede it.
+        Err(e) if crate::client::is_canvas_conflict(&e) => {
             // Both reads use strong consistency so read-replica lag cannot
             // report a just-stored event as absent.
             let stream = match fetch_canvas_ancestry(client, channel_id).await {
                 Ok(s) => s,
                 Err(_) => {
                     return Err(CliError::DeliveryUnknown(format!(
-                        "canvas restore {our_id}: submit returned a conflict and the post-submit ancestry read failed; outcome unknown — check `buzz canvas history` before retrying"
+                        "canvas {action} {our_id}: submit returned a conflict and the post-submit ancestry read failed; outcome unknown — check `buzz canvas history` before retrying"
                     )));
                 }
             };
@@ -498,7 +522,7 @@ pub async fn cmd_restore_canvas(
                 // A is an ancestor of the live head: it committed and a later
                 // write built on it. This is the same committed state the
                 // normal accepted-submit path treats as success — return
-                // accepted JSON so the caller is not prompted to re-restore.
+                // accepted JSON so the caller is not prompted to write again.
                 // The relay's 409 response body is not an accepted response;
                 // synthesize one from the event ID we know committed.
                 let accepted_json = serde_json::json!({
@@ -520,17 +544,26 @@ pub async fn cmd_restore_canvas(
                     // head: an unconditional write superseded it. Surface as a
                     // post-write supersession so the caller knows A is durable.
                     return Err(CliError::Conflict(format!(
-                        "canvas restore {our_id} was superseded by a concurrent write; it is preserved in history — re-run restore against the current head if you still want it"
+                        "canvas {action} {our_id} was superseded by a concurrent write; it is preserved in history — re-run {action} against the current head if you still want it"
                     )));
                 }
                 Ok(false) => {
-                    // A is genuinely absent: return the original relay error unchanged.
-                    return Err(e);
+                    // A is genuinely absent: another write won the head first.
+                    // That is a write conflict (exit 5), the same as a head
+                    // that moved before submit, so scripts can tell a lost
+                    // race from a relay failure. Keep the relay's reason.
+                    let reason = match &e {
+                        CliError::Relay { body, .. } => body.clone(),
+                        other => other.to_string(),
+                    };
+                    return Err(CliError::Conflict(format!(
+                        "canvas {action} was not applied: another write changed the canvas first ({reason}) — read the current head with `buzz canvas history --limit 1` and retry against it"
+                    )));
                 }
                 Err(_) => {
                     // Cannot confirm or deny whether A was stored.
                     return Err(CliError::DeliveryUnknown(format!(
-                        "canvas restore {our_id}: submit returned a conflict and the post-submit existence check failed; outcome unknown — check `buzz canvas history` before retrying"
+                        "canvas {action} {our_id}: submit returned a conflict and the post-submit existence check failed; outcome unknown — check `buzz canvas history` before retrying"
                     )));
                 }
             }
@@ -542,22 +575,22 @@ pub async fn cmd_restore_canvas(
     // stream and classify via the SDK's shared predicate: our event is the
     // head, or reachable through the head's `expected-revision` ancestry chain
     // (a later write legitimately built on ours, possibly transitively) → the
-    // restore is live; anything else (including no head) → a concurrent write
-    // won the visible head. The restored revision is preserved in history, so
-    // surface a conflict naming it rather than reporting a hollow success. This
-    // only catches a competitor visible by now; the residual race past this
-    // read needs relay linearization (phase 2).
+    // write is live; anything else (including no head) → a concurrent write
+    // won the visible head. The write is preserved in history, so surface a
+    // conflict naming it rather than reporting a hollow success. This only
+    // catches a competitor visible by now; the residual race past this read
+    // needs relay linearization (phase 2).
     //
-    // The submit above was accepted, so the restore is durable. Only this
+    // The submit above was accepted, so the write is durable. Only this
     // verification read can still fail; when it does we must not present an
-    // accepted publish as a failed restore. Print the normal success response
+    // accepted publish as a failed write. Print the normal success response
     // naming `our_id`, warn on stderr that verification was unavailable, and
     // exit 0 — a failed read is not a conflict.
     let live_stream = match fetch_canvas_ancestry(client, channel_id).await {
         Ok(stream) => stream,
         Err(_) => {
             eprintln!(
-                "warning: canvas restore {our_id} was published but its post-write verification read failed; the restore is preserved in history — check `buzz canvas history` if a concurrent edit may have landed"
+                "warning: canvas {action} {our_id} was published but its post-write verification read failed; the write is preserved in history — check `buzz canvas history` if a concurrent edit may have landed"
             );
             let _ = writeln!(out, "{}", normalize_write_response(&resp));
             return Ok(());
@@ -565,7 +598,7 @@ pub async fn cmd_restore_canvas(
     };
     if !buzz_sdk::canvas_write_survived(&our_id, &live_stream) {
         return Err(CliError::Conflict(format!(
-            "canvas restore {our_id} was superseded by a concurrent write; it is preserved in history — re-run restore against the current head if you still want it"
+            "canvas {action} {our_id} was superseded by a concurrent write; it is preserved in history — re-run {action} against the current head if you still want it"
         )));
     }
 
@@ -1808,10 +1841,14 @@ pub async fn cmd_delete_channel(client: &BuzzClient, channel_id: &str) -> Result
 pub async fn cmd_add_channel_member(
     client: &BuzzClient,
     channel_id: &str,
-    pubkey: &str,
+    pubkeys: &[String],
+    pubkeys_file: Option<&str>,
     role: Option<&str>,
 ) -> Result<(), CliError> {
-    validate_hex64(pubkey)?;
+    // A lone `--pubkey` keeps the single-add output and errors unchanged.
+    let single_add = pubkeys.len() == 1 && pubkeys_file.is_none();
+    let file_text = pubkeys_file.map(read_file_or_stdin).transpose()?;
+    let pubkeys = collect_member_pubkeys(pubkeys, file_text.as_deref())?;
     let channel_uuid = parse_uuid(channel_id)?;
 
     let typed_role = match role {
@@ -1827,13 +1864,188 @@ pub async fn cmd_add_channel_member(
             )))
         }
     };
-    let builder = buzz_sdk::build_add_member(channel_uuid, pubkey, typed_role)
-        .map_err(|e| CliError::Other(format!("build_add_member failed: {e}")))?;
+    if let (true, [pubkey]) = (single_add, pubkeys.as_slice()) {
+        let resp = send_add_members(
+            client,
+            channel_uuid,
+            std::slice::from_ref(pubkey),
+            typed_role,
+        )
+        .await?;
+        println!("{}", normalize_write_response(&resp));
+        return Ok(());
+    }
 
+    // Chunks go out in order: concurrent kind:9000 writes race on the relay.
+    let mut report = AddMembersReport::default();
+    let mut chunks = pubkeys.chunks(buzz_sdk::MAX_MEMBERS_PER_ADD);
+    while let Some(chunk) = chunks.next() {
+        let outcome = send_add_members(client, channel_uuid, chunk, typed_role).await;
+        if !report.record(chunk, outcome) {
+            // A relay from before block/buzz#8575 applies only the first
+            // person of a chunk, so sending the rest would only add more
+            // unknowns.
+            report.unknown.extend(chunks.flatten().cloned());
+            break;
+        }
+    }
+    println!("{}", report.to_json());
+    if report.is_ok() {
+        Ok(())
+    } else {
+        Err(CliError::Other(
+            "some people were not added; see `rejected`, `failed` and `unknown`".into(),
+        ))
+    }
+}
+
+async fn send_add_members(
+    client: &BuzzClient,
+    channel_uuid: Uuid,
+    pubkeys: &[String],
+    role: Option<buzz_sdk::MemberRole>,
+) -> Result<String, CliError> {
+    let refs: Vec<&str> = pubkeys.iter().map(String::as_str).collect();
+    let builder = buzz_sdk::build_add_members(channel_uuid, &refs, role)
+        .map_err(|e| CliError::Other(format!("build_add_members failed: {e}")))?;
     let event = client.sign_event(builder).await?;
-    let resp = client.submit_event(event).await?;
-    println!("{}", normalize_write_response(&resp));
-    Ok(())
+    client.submit_event(event).await
+}
+
+/// Merge `--pubkey` values and `--pubkeys-file` lines (blank lines skipped)
+/// into one validated, lowercased list without duplicates, in input order.
+fn collect_member_pubkeys(
+    flags: &[String],
+    file_text: Option<&str>,
+) -> Result<Vec<String>, CliError> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    let file_lines = file_text
+        .into_iter()
+        .flat_map(str::lines)
+        .enumerate()
+        .map(|(i, line)| (Some(i + 1), line.trim()))
+        .filter(|(_, line)| !line.is_empty());
+    for (line_no, pubkey) in flags.iter().map(|p| (None, p.as_str())).chain(file_lines) {
+        validate_hex64(pubkey).map_err(|e| match line_no {
+            Some(n) => CliError::Usage(format!("--pubkeys-file line {n}: {e}")),
+            None => e,
+        })?;
+        let pubkey = pubkey.to_ascii_lowercase();
+        if seen.insert(pubkey.clone()) {
+            out.push(pubkey);
+        }
+    }
+    if out.is_empty() {
+        return Err(CliError::Usage("no pubkeys given".into()));
+    }
+    Ok(out)
+}
+
+/// The combined report of a multi-person `channels add-member` run.
+#[derive(Default)]
+struct AddMembersReport {
+    added: Vec<String>,
+    updated: Vec<String>,
+    already_member: Vec<String>,
+    /// People in a one-person chunk: the relay accepted them without saying
+    /// whether they were added, updated or already members.
+    accepted: Vec<String>,
+    /// Outcome uncertain: people the relay's reply doesn't account for (a
+    /// multi-person chunk accepted without per-person results, a key missing
+    /// from the results, or a reply that isn't JSON), people in a chunk whose
+    /// receipt was lost, and people never sent to a relay too old for
+    /// multi-person adds.
+    unknown: Vec<String>,
+    rejected: Vec<serde_json::Value>,
+    failed: Vec<serde_json::Value>,
+}
+
+impl AddMembersReport {
+    /// Fold in one chunk's outcome: the relay's raw response, or the error
+    /// that kept the chunk from being applied. Returns false when the relay
+    /// accepted a multi-person chunk without per-person results, which means
+    /// it is too old to apply more than the first person.
+    fn record(&mut self, chunk: &[String], outcome: Result<String, CliError>) -> bool {
+        let raw = match outcome {
+            Ok(raw) => raw,
+            Err(CliError::DeliveryUnknown(_)) => {
+                self.unknown.extend_from_slice(chunk);
+                return true;
+            }
+            Err(error) => {
+                self.fail(chunk, error.to_string());
+                return true;
+            }
+        };
+        let Ok(resp) = serde_json::from_str::<serde_json::Value>(&normalize_write_response(&raw))
+        else {
+            self.unknown.extend_from_slice(chunk);
+            return true;
+        };
+        let message = resp["message"].as_str().unwrap_or("");
+        if resp["accepted"] != true {
+            self.fail(chunk, format!("relay rejected the event: {message}"));
+            return true;
+        }
+        let Some(members) = message
+            .strip_prefix("members: ")
+            .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+        else {
+            if chunk.len() == 1 {
+                self.accepted.extend_from_slice(chunk);
+                return true;
+            }
+            self.unknown.extend_from_slice(chunk);
+            return message.starts_with("duplicate:");
+        };
+        let mut reported = HashSet::new();
+        let names = |v: &serde_json::Value| {
+            v.as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect::<Vec<_>>()
+        };
+        for (key, list) in [
+            ("added", &mut self.added),
+            ("updated", &mut self.updated),
+            ("already_member", &mut self.already_member),
+        ] {
+            let found = names(&members[key]);
+            reported.extend(found.iter().cloned());
+            list.extend(found);
+        }
+        for rejected in members["rejected"].as_array().into_iter().flatten() {
+            reported.extend(names(&rejected["pubkeys"]));
+            self.rejected.push(rejected.clone());
+        }
+        self.unknown
+            .extend(chunk.iter().filter(|p| !reported.contains(*p)).cloned());
+        true
+    }
+
+    fn fail(&mut self, chunk: &[String], error: String) {
+        self.failed
+            .push(serde_json::json!({ "error": error, "pubkeys": chunk }));
+    }
+
+    fn is_ok(&self) -> bool {
+        self.rejected.is_empty() && self.failed.is_empty() && self.unknown.is_empty()
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "status": if self.is_ok() { "ok" } else { "partial" },
+            "added": self.added,
+            "updated": self.updated,
+            "already_member": self.already_member,
+            "accepted": self.accepted,
+            "unknown": self.unknown,
+            "rejected": self.rejected,
+            "failed": self.failed,
+        })
+    }
 }
 
 pub async fn cmd_remove_channel_member(
@@ -1898,13 +2110,67 @@ pub async fn cmd_set_add_policy(client: &BuzzClient, policy: &str) -> Result<(),
     Ok(())
 }
 
+/// Replace a channel's canvas. Without `expected` this is an unconditional
+/// replace. With `expected` (a revision event ID, or `none` for a first write)
+/// the write only lands if that revision is still the head: a moved head is a
+/// [`CliError::Conflict`] (exit 5), checked here, by the relay, and once more
+/// after the write.
 pub async fn cmd_set_canvas(
     client: &BuzzClient,
     channel_id: &str,
     content: &str,
+    expected: Option<&str>,
+    out: &mut dyn std::io::Write,
 ) -> Result<(), CliError> {
     let content = read_or_stdin(content)?;
     let channel_uuid = parse_uuid(channel_id)?;
+
+    if let Some(expected) = expected {
+        if expected != "none" {
+            validate_hex64(expected)?;
+        }
+        let head = fetch_canvas_head(client, channel_id, true).await?;
+        let head_id = head
+            .as_ref()
+            .and_then(|h| h.get("id"))
+            .and_then(|v| v.as_str());
+        let builder = match head_id {
+            None if expected == "none" => {
+                buzz_sdk::build_set_canvas(channel_uuid, &content, Some("none"))
+            }
+            Some(head_id) if head_id.eq_ignore_ascii_case(expected) => {
+                let head_created_at = head
+                    .as_ref()
+                    .and_then(|h| h.get("created_at"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                buzz_sdk::build_set_canvas_after_head(
+                    channel_uuid,
+                    &content,
+                    head_id,
+                    head_created_at,
+                )
+            }
+            Some(head_id) if expected == "none" => {
+                return Err(CliError::Conflict(format!(
+                    "the channel already has a canvas (head {head_id}) — read it with `buzz canvas get --revision {head_id}`, merge your change, and retry with --expected {head_id}"
+                )));
+            }
+            Some(head_id) => {
+                return Err(CliError::Conflict(format!(
+                    "canvas changed since revision {expected}; the head is now {head_id} — read it with `buzz canvas get --revision {head_id}`, merge your change, and retry with --expected {head_id}"
+                )));
+            }
+            None => {
+                return Err(CliError::Conflict(format!(
+                    "canvas revision {expected} is not the head: the channel has no canvas — retry with --expected none"
+                )));
+            }
+        }
+        .map_err(|e| CliError::Other(format!("build_set_canvas failed: {e}")))?;
+        let event = client.sign_event(builder).await?;
+        return submit_checked_canvas_write(client, channel_id, event, "set", out).await;
+    }
 
     // `set` is an unconditional replace — no `expected-revision` tag, so the
     // relay accepts the write regardless of the current head. A moved head is
@@ -1934,7 +2200,7 @@ pub async fn cmd_set_canvas(
 
     let event = client.sign_event(builder).await?;
     let resp = client.submit_event(event).await?;
-    println!("{}", normalize_write_response(&resp));
+    let _ = writeln!(out, "{}", normalize_write_response(&resp));
     Ok(())
 }
 
@@ -2046,8 +2312,18 @@ pub async fn dispatch(
         ChannelsCmd::AddMember {
             channel,
             pubkey,
+            pubkeys_file,
             role,
-        } => cmd_add_channel_member(client, &channel, &pubkey, role.as_deref()).await,
+        } => {
+            cmd_add_channel_member(
+                client,
+                &channel,
+                &pubkey,
+                pubkeys_file.as_deref(),
+                role.as_deref(),
+            )
+            .await
+        }
         ChannelsCmd::RemoveMember { channel, pubkey } => {
             cmd_remove_channel_member(client, &channel, &pubkey).await
         }
@@ -2061,7 +2337,20 @@ pub async fn dispatch_canvas(cmd: crate::CanvasCmd, client: &BuzzClient) -> Resu
         CanvasCmd::Get { channel, revision } => {
             cmd_get_canvas(client, &channel, revision.as_deref()).await
         }
-        CanvasCmd::Set { channel, content } => cmd_set_canvas(client, &channel, &content).await,
+        CanvasCmd::Set {
+            channel,
+            content,
+            expected,
+        } => {
+            cmd_set_canvas(
+                client,
+                &channel,
+                &content,
+                expected.as_deref(),
+                &mut std::io::stdout(),
+            )
+            .await
+        }
         CanvasCmd::History { channel, limit } => cmd_canvas_history(client, &channel, limit).await,
         CanvasCmd::Restore { channel, revision } => {
             cmd_restore_canvas(client, &channel, &revision, &mut std::io::stdout()).await
@@ -3576,7 +3865,7 @@ mod set_canvas_tests {
         }]);
         let (url, submitted, _) = relay(&head.to_string()).await;
 
-        cmd_set_canvas(&client(&url), CHANNEL, "new content")
+        cmd_set_canvas(&client(&url), CHANNEL, "new content", None, &mut vec![])
             .await
             .expect("set succeeds");
 
@@ -3610,7 +3899,7 @@ mod set_canvas_tests {
         }]);
         let (url, submitted, _) = relay(&head.to_string()).await;
 
-        let err = cmd_set_canvas(&client(&url), CHANNEL, "new content")
+        let err = cmd_set_canvas(&client(&url), CHANNEL, "new content", None, &mut vec![])
             .await
             .expect_err("a poisoned future head must be refused");
 
@@ -3631,7 +3920,7 @@ mod set_canvas_tests {
     async fn set_with_no_head_creates_without_expected_revision() {
         let (url, submitted, _) = relay("[]").await;
 
-        cmd_set_canvas(&client(&url), CHANNEL, "first content")
+        cmd_set_canvas(&client(&url), CHANNEL, "first content", None, &mut vec![])
             .await
             .expect("set on empty channel succeeds");
 
@@ -3663,7 +3952,7 @@ mod set_canvas_tests {
             "tags": [["h", CHANNEL]],
         }]);
         let (url, _, query_bodies) = relay(&head.to_string()).await;
-        cmd_set_canvas(&client(&url), CHANNEL, "new content")
+        cmd_set_canvas(&client(&url), CHANNEL, "new content", None, &mut vec![])
             .await
             .expect("set succeeds");
 
@@ -3740,8 +4029,8 @@ mod set_canvas_tests {
     }
 }
 
-/// Command-level coverage for `cmd_restore_canvas`'s post-write supersession
-/// check. After publishing the restored revision, the command re-reads the head
+/// Command-level coverage for the post-write supersession check shared by
+/// `cmd_restore_canvas` and `cmd_set_canvas --expected`. After publishing the restored revision, the command re-reads the head
 /// once and classifies the outcome via the SDK's `canvas_write_survived`
 /// predicate. These pin all three post-write outcomes deterministically —
 /// controlled relay responses, no timing, no sleeps — so a revert of the
@@ -3764,7 +4053,7 @@ mod restore_canvas_tests {
     use serde_json::{json, Value};
     use tokio::net::TcpListener;
 
-    use super::cmd_restore_canvas;
+    use super::{cmd_restore_canvas, cmd_set_canvas};
     use crate::client::BuzzClient;
     use crate::CliError;
 
@@ -3931,6 +4220,54 @@ mod restore_canvas_tests {
             "created_at": created_at,
             "tags": tags,
         })
+    }
+
+    /// `set --expected` pins the head it read and goes through the same
+    /// post-write check as restore.
+    #[tokio::test]
+    async fn set_with_expected_head_pins_it_and_succeeds() {
+        let (url, submitted, _) = relay(PostHead::OurEvent).await;
+        cmd_set_canvas(&client(&url), CHANNEL, "mine", Some(HEAD), &mut vec![])
+            .await
+            .expect("set against the current head succeeds");
+        let event = submitted.lock().unwrap().clone().expect("set must publish");
+        let tags = event.get("tags").and_then(|t| t.as_array()).unwrap();
+        assert!(tags.contains(&json!(["expected-revision", HEAD])));
+    }
+
+    /// A stale `--expected` (or `none` over an existing canvas) is a conflict
+    /// before anything is published.
+    #[tokio::test]
+    async fn set_with_stale_expected_conflicts_without_publishing() {
+        for expected in [REVISION, "none"] {
+            let (url, submitted, _) = relay(PostHead::OurEvent).await;
+            let err = cmd_set_canvas(&client(&url), CHANNEL, "mine", Some(expected), &mut vec![])
+                .await
+                .expect_err("a moved head must be refused");
+            assert!(
+                matches!(&err, CliError::Conflict(m) if m.contains(HEAD)
+                    && m.contains(if expected == "none" { "already has a canvas" } else { "the head is now" })),
+                "unexpected error: {err}"
+            );
+            assert!(
+                submitted.lock().unwrap().is_none(),
+                "nothing may be published"
+            );
+        }
+    }
+
+    /// A concurrent write that wins the head after `set --expected` lands is
+    /// reported as a conflict naming `set`.
+    #[tokio::test]
+    async fn set_with_expected_reports_supersession() {
+        let (url, _, _) = relay(PostHead::Stranger).await;
+        let err = cmd_set_canvas(&client(&url), CHANNEL, "mine", Some(HEAD), &mut vec![])
+            .await
+            .expect_err("a superseded set must be reported");
+        assert!(
+            matches!(&err, CliError::Conflict(m) if m.contains("re-run set against the current head")),
+            "unexpected error: {err}"
+        );
     }
 
     /// The post-write head is our own event → restore holds the head → success.
@@ -4113,6 +4450,9 @@ mod restore_canvas_tests {
         /// A is absent (only a stranger, no A in stream or IDs lookup) → genuine
         /// conflict → original `CliError::Relay { 409, .. }` returned unchanged.
         GenuinelyAbsent,
+        /// As `GenuinelyAbsent`, but the relay rejects because the expected
+        /// head was deleted (`canvas revision does not exist`) → Conflict.
+        HeadDeleted,
         /// Ancestry read fails (HTTP 500) → `CliError::DeliveryUnknown`.
         ReadFails,
         /// Ancestry succeeds with A unreachable (canvas_write_survived = false),
@@ -4193,7 +4533,7 @@ mod restore_canvas_tests {
                                             .to_string(),
                                     )
                                 }
-                                ConflictScenario::GenuinelyAbsent => {
+                                ConflictScenario::GenuinelyAbsent | ConflictScenario::HeadDeleted => {
                                     // A was never stored — empty response.
                                     (StatusCode::OK, json!([]).to_string())
                                 }
@@ -4216,7 +4556,7 @@ mod restore_canvas_tests {
                             ConflictScenario::ReadFails => {
                                 (StatusCode::INTERNAL_SERVER_ERROR, String::new())
                             }
-                            ConflictScenario::GenuinelyAbsent => {
+                            ConflictScenario::GenuinelyAbsent | ConflictScenario::HeadDeleted => {
                                 // A is absent — genuine conflict. Stream contains
                                 // only an unrelated stranger (no A, no B).
                                 (
@@ -4287,10 +4627,14 @@ mod restore_canvas_tests {
                         }
                         // Attempt 2 (same bytes — `submit_stored_event` retry):
                         // A is already stored; B built on A; relay returns canonical 409.
+                        let reason = if matches!(scenario, ConflictScenario::HeadDeleted) {
+                            "canvas revision does not exist"
+                        } else {
+                            "canvas changed since it was loaded"
+                        };
                         (
                             StatusCode::CONFLICT,
-                            r#"{"error":"conflict: canvas changed since it was loaded"}"#
-                                .to_string(),
+                            format!(r#"{{"error":"conflict: {reason}"}}"#),
                         )
                     }
                 }),
@@ -4490,28 +4834,35 @@ mod restore_canvas_tests {
     /// block (ignoring `canvas_write_survived`) makes this return `CliError::Conflict`
     /// instead of `CliError::Relay`.
     #[tokio::test]
-    async fn conflict_shaped_submit_stays_relay_error_when_our_event_absent() {
+    async fn conflict_shaped_submit_is_a_conflict_when_our_event_absent() {
         let (url, _, _) = conflict_relay(ConflictScenario::GenuinelyAbsent).await;
         let err = cmd_restore_canvas(&client(&url), CHANNEL, REVISION, &mut vec![])
             .await
             .expect_err("a genuine conflict must error");
 
-        // Must be the original Relay error (409) — not fabricated, not Conflict.
+        // Nothing was stored and another write holds the head: a write
+        // conflict (exit 5) that keeps the relay's reason.
         match &err {
-            CliError::Relay { status, body } => {
-                assert_eq!(
-                    *status, 409,
-                    "absent case must preserve the original 409 status"
-                );
-                assert!(
-                    body.contains("canvas changed"),
-                    "absent case must preserve the original conflict body: {body}"
-                );
-            }
-            other => {
-                panic!("expected Relay error (genuine conflict, nothing stored), got {other:?}")
-            }
+            CliError::Conflict(message) => assert!(
+                message.contains("canvas changed"),
+                "absent case must keep the relay's conflict reason: {message}"
+            ),
+            other => panic!("expected Conflict (lost race, nothing stored), got {other:?}"),
         }
+    }
+
+    /// The expected head deleted between the pre-read and the submit: the relay
+    /// answers 409 `canvas revision does not exist`, which is also a conflict.
+    #[tokio::test]
+    async fn conflict_shaped_submit_is_a_conflict_when_the_head_was_deleted() {
+        let (url, _, _) = conflict_relay(ConflictScenario::HeadDeleted).await;
+        let err = cmd_restore_canvas(&client(&url), CHANNEL, REVISION, &mut vec![])
+            .await
+            .expect_err("a deleted head must error");
+        assert!(
+            matches!(&err, CliError::Conflict(m) if m.contains("canvas revision does not exist")),
+            "expected Conflict keeping the relay's reason, got {err:?}"
+        );
     }
 
     /// A conflict-shaped submit where the ancestry walk itself fails. The
@@ -4918,5 +5269,302 @@ mod unlisted_support_tests {
         .unwrap();
 
         assert_eq!(submitted.lock().unwrap().len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod add_members_tests {
+    use super::{cmd_add_channel_member, collect_member_pubkeys, AddMembersReport};
+    use crate::error::CliError;
+    use serde_json::json;
+
+    fn pk(i: usize) -> String {
+        format!("{i:064x}")
+    }
+
+    #[test]
+    fn collects_flags_and_file_in_order_without_duplicates() {
+        let flags = vec![pk(1), pk(2).to_ascii_uppercase()];
+        let file = format!("{}\n\n  {}  \n{}\n", pk(3), pk(2), pk(1));
+        let got = collect_member_pubkeys(&flags, Some(&file)).unwrap();
+        assert_eq!(got, vec![pk(1), pk(2), pk(3)]);
+    }
+
+    #[test]
+    fn reads_pubkeys_file_from_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("keys.txt");
+        std::fs::write(&path, format!("{}\n{}\n", pk(7), pk(8))).unwrap();
+        let text = crate::validate::read_file_or_stdin(path.to_str().unwrap()).unwrap();
+        assert_eq!(
+            collect_member_pubkeys(&[], Some(&text)).unwrap(),
+            vec![pk(7), pk(8)]
+        );
+    }
+
+    #[test]
+    fn bad_file_line_names_the_line() {
+        let file = format!("{}\nnope\n", pk(1));
+        let err = collect_member_pubkeys(&[], Some(&file)).unwrap_err();
+        assert!(err.to_string().contains("line 2"), "{err}");
+    }
+
+    #[test]
+    fn empty_input_is_a_usage_error() {
+        assert!(collect_member_pubkeys(&[], Some("\n\n")).is_err());
+    }
+
+    #[test]
+    fn chunks_at_the_relay_limit() {
+        for (n, want) in [
+            (0, vec![]),
+            (100, vec![100]),
+            (101, vec![100, 1]),
+            (250, vec![100, 100, 50]),
+        ] {
+            let pubkeys: Vec<String> = (0..n).map(pk).collect();
+            let sizes: Vec<usize> = pubkeys
+                .chunks(buzz_sdk::MAX_MEMBERS_PER_ADD)
+                .map(<[String]>::len)
+                .collect();
+            assert_eq!(sizes, want, "{n} people");
+        }
+    }
+
+    fn ok_response(members: serde_json::Value) -> String {
+        json!({
+            "event_id": "e",
+            "accepted": true,
+            "message": format!("members: {members}"),
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn merges_chunks_and_keeps_going_after_a_failed_one() {
+        let mut report = AddMembersReport::default();
+        report.record(
+            &[pk(1), pk(2), pk(3)],
+            Ok(ok_response(json!({
+                "added": [pk(1)],
+                "updated": [pk(2)],
+                "already_member": [pk(3)],
+            }))),
+        );
+        report.record(
+            &[pk(4), pk(5)],
+            Err(CliError::Other("relay error 403: denied".into())),
+        );
+        report.record(
+            &[pk(6), pk(7)],
+            Ok(ok_response(json!({
+                "added": [pk(6)],
+                "rejected": [{ "reason": "archived", "pubkeys": [pk(7)] }],
+            }))),
+        );
+        report.record(
+            &[pk(8)],
+            Ok(json!({ "event_id": "e", "accepted": true, "message": "" }).to_string()),
+        );
+        assert!(!report.is_ok());
+        assert_eq!(
+            report.to_json(),
+            json!({
+                "status": "partial",
+                "added": [pk(1), pk(6)],
+                "updated": [pk(2)],
+                "already_member": [pk(3)],
+                "accepted": [pk(8)],
+                "unknown": [],
+                "rejected": [{ "reason": "archived", "pubkeys": [pk(7)] }],
+                "failed": [{ "error": "relay error 403: denied", "pubkeys": [pk(4), pk(5)] }],
+            })
+        );
+    }
+
+    #[test]
+    fn duplicate_reply_to_a_multi_person_chunk_is_unknown() {
+        let mut report = AddMembersReport::default();
+        report.record(
+            &[pk(1), pk(2)],
+            Ok(json!({ "event_id": "e", "accepted": true, "message": "duplicate:" }).to_string()),
+        );
+        let out = report.to_json();
+        assert_eq!(out["status"], "partial");
+        assert_eq!(out["unknown"], json!([pk(1), pk(2)]));
+        assert_eq!(out["accepted"], json!([]));
+    }
+
+    #[test]
+    fn lost_receipt_is_unknown_not_failed() {
+        let mut report = AddMembersReport::default();
+        report.record(
+            &[pk(1), pk(2)],
+            Err(CliError::DeliveryUnknown("receipt lost".into())),
+        );
+        let out = report.to_json();
+        assert_eq!(out["status"], "partial");
+        assert_eq!(out["unknown"], json!([pk(1), pk(2)]));
+        assert_eq!(out["failed"], json!([]));
+    }
+
+    /// A one-key `--pubkeys-file` gets the bulk report: a refused send is
+    /// recorded under `failed`, not returned as the single-add error.
+    #[tokio::test]
+    async fn one_key_file_gets_the_bulk_report() {
+        use axum::routing::post;
+        let app = axum::Router::new().route(
+            "/events",
+            post(|| async { (axum::http::StatusCode::FORBIDDEN, "denied") }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = crate::client::BuzzClient::new(
+            format!("http://{addr}"),
+            crate::credentials::Credentials::from_keys(nostr::Keys::generate()),
+        )
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("keys.txt");
+        std::fs::write(&path, format!("{}\n", pk(1))).unwrap();
+
+        let err = cmd_add_channel_member(
+            &client,
+            "326d56bc-c96c-4af0-86a1-5e804cd1b467",
+            &[],
+            Some(path.to_str().unwrap()),
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("some people were not added"),
+            "{err}"
+        );
+
+        // Two identical `--pubkey` flags also get the bulk report.
+        let err = cmd_add_channel_member(
+            &client,
+            "326d56bc-c96c-4af0-86a1-5e804cd1b467",
+            &[pk(1), pk(1)],
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("some people were not added"),
+            "{err}"
+        );
+
+        // The same key as a lone `--pubkey` keeps the single-add error.
+        let err = cmd_add_channel_member(
+            &client,
+            "326d56bc-c96c-4af0-86a1-5e804cd1b467",
+            &[pk(1)],
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            !err.to_string().contains("some people were not added"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn refused_reply_is_failed() {
+        let mut report = AddMembersReport::default();
+        report.record(
+            &[pk(1)],
+            Ok(json!({ "event_id": "e", "accepted": false, "message": "blocked: no" }).to_string()),
+        );
+        let out = report.to_json();
+        assert_eq!(out["status"], "partial");
+        assert_eq!(out["accepted"], json!([]));
+        assert_eq!(
+            out["failed"],
+            json!([{ "error": "relay rejected the event: blocked: no", "pubkeys": [pk(1)] }])
+        );
+    }
+
+    #[test]
+    fn keys_missing_from_the_results_are_unknown() {
+        let mut report = AddMembersReport::default();
+        report.record(&[pk(1), pk(2)], Ok(ok_response(json!({}))));
+        report.record(
+            &[pk(3), pk(4), pk(5)],
+            Ok(ok_response(json!({
+                "added": [pk(3)],
+                "rejected": [{ "reason": "archived", "pubkeys": [pk(4)] }],
+            }))),
+        );
+        let out = report.to_json();
+        assert_eq!(out["status"], "partial");
+        assert_eq!(out["unknown"], json!([pk(1), pk(2), pk(5)]));
+    }
+
+    #[test]
+    fn non_json_reply_is_unknown_not_accepted() {
+        let mut report = AddMembersReport::default();
+        report.record(&[pk(1)], Ok("<html>oops</html>".into()));
+        let out = report.to_json();
+        assert_eq!(out["status"], "partial");
+        assert_eq!(out["accepted"], json!([]));
+        assert_eq!(out["unknown"], json!([pk(1)]));
+    }
+
+    /// A relay that answers a multi-person chunk without per-person results
+    /// is too old for them: later chunks are marked unknown, not sent.
+    #[tokio::test]
+    async fn stops_sending_to_a_relay_too_old_for_multi_person_adds() {
+        use axum::routing::post;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let sends = Arc::new(AtomicUsize::new(0));
+        let counter = sends.clone();
+        let app = axum::Router::new().route(
+            "/events",
+            post(move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                async { axum::Json(json!({ "event_id": "e", "accepted": true, "message": "" })) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = crate::client::BuzzClient::new(
+            format!("http://{addr}"),
+            crate::credentials::Credentials::from_keys(nostr::Keys::generate()),
+        )
+        .unwrap();
+        let keys: Vec<String> = (0..250).map(pk).collect();
+        let err = cmd_add_channel_member(
+            &client,
+            "326d56bc-c96c-4af0-86a1-5e804cd1b467",
+            &keys,
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("some people were not added"),
+            "{err}"
+        );
+        assert_eq!(sends.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn all_chunks_applied_is_ok() {
+        let mut report = AddMembersReport::default();
+        report.record(
+            &[pk(1), pk(2)],
+            Ok(ok_response(json!({ "added": [pk(1), pk(2)] }))),
+        );
+        assert!(report.is_ok());
+        assert_eq!(report.to_json()["status"], "ok");
     }
 }

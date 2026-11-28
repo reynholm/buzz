@@ -712,7 +712,7 @@ fn extract_channel_from_filter(filter: &nostr::Filter) -> Option<uuid::Uuid> {
 // Nostr filter JSON. nostr::Filter silently drops unknown fields during
 // deserialization, so we extract them from the raw JSON Value first.
 
-const BRIDGE_FEED_MAX_LIMIT: i64 = 100;
+const BRIDGE_FEED_MAX_LIMIT: u32 = 100;
 const BRIDGE_THREAD_MAX_LIMIT: u32 = 500;
 
 /// The `before_id` extension field, with "present but malformed" kept distinct
@@ -1065,11 +1065,12 @@ async fn handle_channel_window_filter(
         }
     };
 
-    let limit = filter
-        .limit
-        .map(|l| (l as u32).min(BRIDGE_WINDOW_MAX_LIMIT))
-        .unwrap_or(BRIDGE_WINDOW_DEFAULT_LIMIT)
-        .max(1);
+    let limit = buzz_core::filter::clamp_limit(
+        filter.limit,
+        BRIDGE_WINDOW_DEFAULT_LIMIT,
+        BRIDGE_WINDOW_MAX_LIMIT,
+    )
+    .max(1);
     let kind_filter: Option<Vec<u32>> = filter
         .kinds
         .as_ref()
@@ -1236,6 +1237,7 @@ fn reject_code(msg: &str) -> &'static str {
 pub async fn submit_event(
     State(state): State<Arc<AppState>>,
     slot: AccessSlot,
+    event_type: Option<axum::Extension<crate::metrics::EventMetricType>>,
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<axum::response::Response, axum::response::Response> {
@@ -1296,7 +1298,15 @@ pub async fn submit_event(
     // Everything after auth — admission, replay, membership, parse, ingest —
     // runs inside the helper; the caller's access line is the request's one
     // line, covering every outcome including a refused login.
-    let outcome = submit_event_authed(&state, &tenant, &headers, &body, &mut caller).await;
+    let outcome = submit_event_authed(
+        &state,
+        &tenant,
+        &headers,
+        &body,
+        &mut caller,
+        event_type.as_ref().map(|extension| &extension.0),
+    )
+    .await;
     caller.complete(outcome.fields());
     Ok(outcome.into_response().into_response())
 }
@@ -1397,6 +1407,7 @@ async fn submit_event_authed(
     headers: &HeaderMap,
     body: &[u8],
     caller: &mut ProvenCaller,
+    event_type: Option<&crate::metrics::EventMetricType>,
 ) -> SubmitOutcome {
     // Admission and replay checks fire before body parse — a 429 or replay
     // reject on a malformed body must still be attributed.
@@ -1412,6 +1423,9 @@ async fn submit_event_authed(
     let event: nostr::Event = match serde_json::from_slice(body) {
         Ok(ev) => ev,
         Err(e) => {
+            if let Some(event_type) = event_type {
+                event_type.invalid();
+            }
             // Never log `e`'s Display string: serde_json embeds the offending
             // input verbatim in its error message, so a malformed field of
             // arbitrary size (the router allows 1 MiB bodies) would otherwise
@@ -1434,6 +1448,9 @@ async fn submit_event_authed(
     };
 
     let kind_u32 = buzz_core::kind::event_kind_u32(&event);
+    if let Some(event_type) = event_type {
+        event_type.parsed(kind_u32);
+    }
     let is_typing = kind_u32 == buzz_core::kind::KIND_TYPING_INDICATOR;
 
     // Enforce relay membership (with NIP-OA fallback via x-auth-tag header).
@@ -1915,10 +1932,11 @@ async fn query_member_events(
             None => continue,
         };
 
-        let limit = filter
-            .limit
-            .map(|l| (l as i64).min(BRIDGE_FEED_MAX_LIMIT))
-            .unwrap_or(20);
+        let limit = i64::from(buzz_core::filter::clamp_limit(
+            filter.limit,
+            20,
+            BRIDGE_FEED_MAX_LIMIT,
+        ));
         let since = filter
             .since
             .and_then(|s| chrono::DateTime::from_timestamp(s.as_secs() as i64, 0));
@@ -2033,10 +2051,7 @@ async fn query_member_events(
             }
         }
 
-        let limit = filter
-            .limit
-            .unwrap_or(100)
-            .min(BRIDGE_THREAD_MAX_LIMIT as usize) as u32;
+        let limit = buzz_core::filter::clamp_limit(filter.limit, 100, BRIDGE_THREAD_MAX_LIMIT);
         let thread_cursor = extract_thread_cursor(raw);
         let thread_replies = state
             .db
@@ -2732,7 +2747,7 @@ async fn handle_bridge_search(
             _ => continue,
         };
 
-        let limit = filter.limit.unwrap_or(100).min(500) as u32;
+        let limit = buzz_core::filter::clamp_limit(filter.limit, 100, 500);
         if limit == 0 {
             continue;
         }
@@ -5058,6 +5073,84 @@ pub(crate) mod postgres_tests {
             .await
             .expect("read response body");
         (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore = "requires Postgres and Redis"]
+    async fn event_type_metrics_cover_real_bridge_success_and_rejections() {
+        let state = bridge_handler_test_state()
+            .await
+            .expect("local Postgres and Redis");
+        let host = with_community(&state).await;
+        let keys = Keys::generate();
+        let profile = EventBuilder::new(Kind::Metadata, r#"{"name":"Example"}"#)
+            .sign_with_keys(&keys)
+            .expect("sign profile");
+        let archive = EventBuilder::new(Kind::Custom(9035), "")
+            .sign_with_keys(&keys)
+            .expect("sign archive without required tags");
+        let contacts = EventBuilder::new(Kind::ContactList, "")
+            .sign_with_keys(&keys)
+            .expect("sign registered contact list");
+        let cases = [
+            (
+                serde_json::to_vec(&contacts).expect("contact list JSON"),
+                true,
+                StatusCode::OK,
+                "kind_3",
+            ),
+            (
+                serde_json::to_vec(&profile).expect("profile JSON"),
+                true,
+                StatusCode::OK,
+                "profile_update",
+            ),
+            (
+                serde_json::to_vec(&archive).expect("archive JSON"),
+                true,
+                StatusCode::BAD_REQUEST,
+                "identity_archive",
+            ),
+            (
+                b"not JSON".to_vec(),
+                true,
+                StatusCode::BAD_REQUEST,
+                "invalid",
+            ),
+            (
+                b"not JSON".to_vec(),
+                false,
+                StatusCode::UNAUTHORIZED,
+                "unknown",
+            ),
+        ];
+        let (recorder, handle) = crate::metrics::readiness_test_recorder();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        for (body, authenticated, status, event_type) in cases {
+            let mut headers = HeaderMap::new();
+            if authenticated {
+                headers.insert(
+                    "x-pubkey",
+                    keys.public_key().to_hex().parse().expect("pubkey header"),
+                );
+            }
+            assert_eq!(
+                oneshot_request(state.clone(), "POST", "/events", &host, headers, &body).await,
+                status,
+                "{event_type}"
+            );
+            let exported = handle.render();
+            for metric in ["http_requests_total{", "http_request_latency_ms_count{"] {
+                assert!(
+                    exported.lines().any(|line| line.starts_with(metric)
+                        && line.contains("action=\"/events\"")
+                        && line.contains(&format!("code=\"{}\"", status.as_u16()))
+                        && line.contains(&format!("event_type=\"{event_type}\""))
+                        && line.ends_with(" 1")),
+                    "{exported}"
+                );
+            }
+        }
     }
 
     /// A workflow row without a channel has no readers, so even its owner
@@ -10152,6 +10245,16 @@ pub(crate) mod postgres_tests {
     }
 
     async fn cancel_fixture() -> CancelFixture {
+        cancel_fixture_with_reader_budget(None).await
+    }
+
+    /// `reader_budget` gives the state's replica pool a short acquire
+    /// timeout, like production's reader pool, so a read against a replica
+    /// held full sheds fast instead of waiting out sqlx's 30s default. Only a
+    /// test that holds the replica full needs it.
+    async fn cancel_fixture_with_reader_budget(
+        reader_budget: Option<std::time::Duration>,
+    ) -> CancelFixture {
         use buzz_db::channel::{ChannelType, ChannelVisibility};
         let admin_url = crate::test_support::database_url();
         let admin = sqlx::PgPool::connect(&admin_url).await.expect("admin pool");
@@ -10172,25 +10275,7 @@ pub(crate) mod postgres_tests {
                 .execute(&admin)
                 .await
                 .expect("create scratch db");
-            if role == "r" {
-                sqlx::query(sqlx::AssertSqlSafe(format!(
-                    "ALTER DATABASE {name} SET statement_timeout = '300ms'"
-                )))
-                .execute(&admin)
-                .await
-                .expect("replica statement_timeout");
-            }
-            // The replica gets a short acquire timeout, like production's
-            // reader pool, so a shed read against a held-full replica fails
-            // fast instead of waiting out sqlx's 30s default.
-            let options = sqlx::postgres::PgPoolOptions::new();
-            let options = if role == "r" {
-                options.acquire_timeout(std::time::Duration::from_secs(1))
-            } else {
-                options
-            };
-            let pool = options
-                .connect(&format!("{base}/{name}"))
+            let pool = sqlx::PgPool::connect(&format!("{base}/{name}"))
                 .await
                 .expect("connect scratch");
             buzz_db::migration::run_migrations(&pool)
@@ -10224,8 +10309,27 @@ pub(crate) mod postgres_tests {
             pools.push(pool);
             names.push(name);
         }
-        let replica = pools.pop().expect("replica");
-        let writer = pools.pop().expect("writer");
+        let [writer, setup_replica]: [sqlx::PgPool; 2] =
+            pools.try_into().expect("writer and replica");
+        // The replica's 300ms `statement_timeout` is the budget its reads are
+        // tested against, not one for migrating and seeding it, so it is set
+        // after setup and the replica is reopened: sessions read
+        // database-level settings when they start.
+        setup_replica.close().await;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "ALTER DATABASE {} SET statement_timeout = '300ms'",
+            names[1]
+        )))
+        .execute(&admin)
+        .await
+        .expect("replica statement_timeout");
+        let replica_url = format!("{base}/{}", names[1]);
+        let replica = match reader_budget {
+            Some(budget) => budgeted_reader(&replica_url, budget).await,
+            None => sqlx::PgPool::connect(&replica_url)
+                .await
+                .expect("connect replica"),
+        };
         let search_url = format!("{base}/{}", names[0]);
         let search = buzz_search::pool_options()
             .connect_with(
@@ -10280,6 +10384,50 @@ pub(crate) mod postgres_tests {
             channel: channel.to_string(),
             root: root.id.to_hex(),
             reader: Keys::generate(),
+        }
+    }
+
+    /// A pool whose acquires give up after `budget`, with every connection
+    /// already open and idle. sqlx bounds connection establishment by the
+    /// same deadline as the wait for a free connection, so a pool that still
+    /// had to connect would fail on any server stall longer than `budget`.
+    /// The pool does not ping on acquire, but sqlx still pings a connection
+    /// when it is released (`return_to_pool`) and closes it if that ping
+    /// fails. So, under one 30s deadline, this fills the pool (retrying each
+    /// timed-out connect), drops the connections, and waits for every one to
+    /// be idle again; whenever a release closed one and the pool is short, it
+    /// fills again. Afterwards an acquire waits only for a free connection,
+    /// the wait the budget is meant to bound.
+    async fn budgeted_reader(url: &str, budget: std::time::Duration) -> sqlx::PgPool {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(budget)
+            .test_before_acquire(false)
+            .connect_lazy(url)
+            .expect("reader pool");
+        let max = pool.options().get_max_connections();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            if pool.size() < max {
+                let mut open = Vec::new();
+                while open.len() < max as usize {
+                    match pool.acquire().await {
+                        Ok(conn) => open.push(conn),
+                        Err(sqlx::Error::PoolTimedOut)
+                            if tokio::time::Instant::now() < deadline => {}
+                        Err(e) => panic!("open reader connection: {e}"),
+                    }
+                }
+                drop(open);
+            }
+            if pool.num_idle() == max as usize {
+                return pool;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "reader connections returned idle: {} of {max}",
+                pool.num_idle()
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     }
 
@@ -10570,7 +10718,7 @@ pub(crate) mod postgres_tests {
     #[tokio::test]
     #[ignore = "requires Postgres"]
     async fn shed_history_read_maps_to_503_on_every_bridge_branch() {
-        let fx = cancel_fixture().await;
+        let fx = cancel_fixture_with_reader_budget(Some(std::time::Duration::from_secs(1))).await;
         let h = [&fx.channel];
         let cases = [
             (
@@ -10607,7 +10755,13 @@ pub(crate) mod postgres_tests {
             held.push(fx.replica.acquire().await.expect("hold reader connection"));
         }
         for (branch, filter) in &cases {
+            let started = std::time::Instant::now();
             let (status, body) = fx.http("/query", filter).await;
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(10),
+                "shed {branch} took {:?}, not the 1s reader budget",
+                started.elapsed()
+            );
             assert_eq!(
                 (status, body["error"].as_str()),
                 (
@@ -11155,6 +11309,7 @@ pub(crate) mod postgres_tests {
                     token_owner: None,
                     slot: AccessSlot::default(),
                 },
+                None,
             )
             .await;
             assert!(

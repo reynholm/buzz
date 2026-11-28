@@ -3,14 +3,20 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:buzz/shared/hosted/builderlab_account.dart';
+import 'package:buzz/shared/hosted/hosted_relay_auth.dart';
+import 'package:buzz/shared/http/app_http_client.dart';
 import 'package:buzz/shared/relay/media_auth.dart';
 import 'package:buzz/shared/relay/media_disk_cache.dart';
 import 'package:buzz/shared/relay/media_image.dart';
+import 'package:buzz/shared/relay/relay_provider.dart';
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/painting.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart' as http_testing;
+import 'package:nostr/nostr.dart' as nostr;
 import 'package:path/path.dart' as p;
 
 // Minimal valid 1x1 transparent PNG.
@@ -24,7 +30,7 @@ const _hash =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const _relayUrl = '$_relayBase/media/$_hash.png';
 const _thumbnailUrl = '$_relayBase/media/$_hash.thumb.jpg';
-const _hugeUrl =
+const _largeUrl =
     '$_relayBase/media/'
     'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png';
 const _corruptUrl =
@@ -38,6 +44,7 @@ const _externalUrls = [
   'https://images.example.org/b.png',
   'https://images.example.org/c.png',
 ];
+const _noStoreHeaders = {'cache-control': 'private, No-Store, max-age=0'};
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -58,24 +65,25 @@ void main() {
       'ones are refetched', () async {
     final fetched = <String>[];
     var online = true;
-    // While set, external images answer once it completes, with an image
-    // too large to save.
+    // While set, external images answer once it completes, with a large
+    // image.
     Completer<void>? replaceExternal;
     // While set, external images answer with a body that never decodes.
     var malformedExternal = false;
-    // Trailing bytes after IEND still decode, so this is a 5 MiB+ image.
-    final hugeBytes = [..._pngBytes, ...Uint8List(MediaDiskCache.maxFileBytes)];
+    // Trailing bytes after IEND still decode, so this is a 12 MiB image, the
+    // size of a full-resolution phone photo.
+    final largeBytes = [..._pngBytes, ...Uint8List(12 * 1024 * 1024)];
     final client = http_testing.MockClient((request) async {
       final url = request.url.toString();
       fetched.add(url);
       if (!online) throw const SocketException('offline');
-      if (url == _hugeUrl) return http.Response.bytes(hugeBytes, 200);
+      if (url == _largeUrl) return http.Response.bytes(largeBytes, 200);
       if (malformedExternal && _externalUrls.contains(url)) {
         return http.Response('not an image', 200);
       }
       if (replaceExternal != null && _externalUrls.contains(url)) {
         await replaceExternal.future;
-        return http.Response.bytes(hugeBytes, 200);
+        return http.Response.bytes(largeBytes, 200);
       }
       if (request.url.toString() == _corruptUrl) {
         return http.Response('not an image', 200);
@@ -123,12 +131,11 @@ void main() {
       ).resolve(ImageConfiguration.empty),
     );
 
-    const saved = [_relayUrl, _thumbnailUrl, ..._externalUrls];
-    const urls = [...saved, _hugeUrl];
+    const saved = [_relayUrl, _thumbnailUrl, _largeUrl, ..._externalUrls];
 
-    // First launch downloads everything and saves what fits.
+    // First launch downloads everything and saves what decodes.
     await launch((cache) async {
-      for (final url in urls) {
+      for (final url in saved) {
         expect(await show(cache, url), isNull, reason: url);
       }
       expect(await show(cache, _corruptUrl), isNotNull);
@@ -137,29 +144,29 @@ void main() {
       // saved bytes before retiring this launch and testing a cold reopen.
       await _until(() async {
         for (final url in saved) {
-          if (!listEquals((await cache.read(url))?.bytes, _pngBytes)) {
+          final expected = url == _largeUrl ? largeBytes : _pngBytes;
+          if (!listEquals((await cache.read(url))?.bytes, expected)) {
             return false;
           }
         }
         return true;
       });
     });
-    expect(fetched, [...urls, _corruptUrl, _truncatedUrl]);
+    expect(fetched, [...saved, _corruptUrl, _truncatedUrl]);
 
     // Offline relaunch: the original and its thumbnail are separate entries,
-    // both shown from disk. The oversized image and the bodies that failed
-    // to decode were never saved.
+    // both shown from disk, as is the large image. The bodies that failed to
+    // decode were never saved.
     fetched.clear();
     online = false;
     await launch((cache) async {
       for (final url in saved) {
         expect(await show(cache, url), isNull, reason: url);
       }
-      expect(await show(cache, _hugeUrl), isNotNull);
       expect(await show(cache, _corruptUrl), isNotNull);
       expect(await show(cache, _truncatedUrl), isNotNull);
     });
-    expect(fetched, [_hugeUrl, _corruptUrl, _truncatedUrl]);
+    expect(fetched, [_corruptUrl, _truncatedUrl]);
 
     // A week on, external images show from disk at once and refresh in the
     // background, two at a time. Relay media never goes stale.
@@ -173,27 +180,19 @@ void main() {
       }
       await _settle();
       expect(fetched, _externalUrls.take(2));
-      // The third waits for a slot. The replacements are too large to save,
-      // so the old copies go rather than showing in their place.
+      // The third waits for a slot. The replacements are saved in place of
+      // the old copies.
       replacement.complete();
       await _until(() async {
         for (final url in _externalUrls) {
-          if (await cache.read(url) != null) return false;
+          final hit = await cache.read(url);
+          if (hit?.bytes.length != largeBytes.length) return false;
         }
         return true;
       });
       expect(fetched, _externalUrls);
     });
     replaceExternal = null;
-
-    fetched.clear();
-    online = false;
-    await launch((cache) async {
-      for (final url in _externalUrls) {
-        expect(await show(cache, url), isNotNull, reason: url);
-      }
-    });
-    expect(fetched, _externalUrls);
 
     // A saved copy that no longer decodes is dropped and fetched again.
     fetched.clear();
@@ -285,6 +284,349 @@ void main() {
     );
   });
 
+  for (final (description, url, responseUrl, shouldSave) in [
+    ('external', _externalUrls.first, _externalUrls.first, false),
+    ('relay', _largeUrl, _largeUrl, true),
+    (
+      'other service on the relay host',
+      'http://relay.example.com/media/$_hash.png',
+      'http://relay.example.com/media/$_hash.png',
+      false,
+    ),
+    (
+      'other port on the relay host',
+      'https://relay.example.com:80/media/$_hash.png',
+      'https://relay.example.com:80/media/$_hash.png',
+      false,
+    ),
+    ('relay redirect to external', _largeUrl, _externalUrls.first, false),
+    ('external redirect to relay', _externalUrls.first, _largeUrl, false),
+    ('relay with unknown response URL', _largeUrl, null, false),
+    ('relay with relative redirect target', _largeUrl, '/media/$_hash', false),
+  ]) {
+    test(
+      'no-store disk policy on first load for $description images',
+      () async {
+        // Large enough to exercise the size range newly eligible for disk.
+        final bytes = Uint8List(12 * 1024 * 1024)..setAll(0, _pngBytes);
+        final transport = responseUrl == null
+            ? http_testing.MockClient(
+                (_) async =>
+                    http.Response.bytes(bytes, 200, headers: _noStoreHeaders),
+              )
+            : _ImageResponseClient(bytes, Uri.parse(responseUrl));
+        final client = SharedSessionClient(
+          transport,
+          cleartext: () => transport,
+        );
+        addTearDown(client.close);
+        final directory = MediaDiskCache.directoryFor(root, 'community-1', 's');
+        final cache = MediaDiskCache.open(directory);
+        try {
+          final stream = MediaImageProvider(
+            url: url,
+            auth: auth,
+            client: client,
+            diskCache: cache,
+          ).resolve(ImageConfiguration.empty);
+          expect(await _waitError(stream), isNull);
+          // Let a save queued by the decode reach the store before retiring it.
+          await cache.contains(url);
+        } finally {
+          await cache.dispose();
+        }
+        final reopened = MediaDiskCache.open(directory);
+        try {
+          final hit = await reopened.read(url);
+          expect(hit?.bytes.length, shouldSave ? bytes.length : isNull);
+          if (shouldSave) expect(hit?.isStale, isFalse);
+        } finally {
+          await reopened.dispose();
+        }
+      },
+    );
+  }
+
+  for (final (status, delay, redirectAge, age, imageHeaders, lifetime) in [
+    (301, 12, 3600, '900', {'cache-control': 'max-age=7200'}, 2700),
+    (301, 12, 3600, '0', {'cache-control': 'max-age=10'}, 22),
+    (308, 0, 7200, '0', {'expires': 'Thu, 01 Jan 2026 01:00:00 GMT'}, 3600),
+  ]) {
+    test('$status redirect cache expires after ${lifetime}s', () async {
+      final start = Uri.parse(_externalUrls[0]);
+      final target = Uri.parse(_externalUrls[1]);
+      final requests = <Uri>[];
+      var online = true;
+      final started = DateTime.utc(2026, 1, 1);
+      var now = started;
+      final client = http_testing.MockClient((request) async {
+        requests.add(request.url);
+        if (!online) throw const SocketException('offline');
+        if (request.url == start) {
+          now = now.add(Duration(seconds: delay));
+          return http.Response(
+            '',
+            status,
+            headers: {
+              'location': target.toString(),
+              'cache-control': 'public, max-age=$redirectAge',
+              'age': age,
+            },
+          );
+        }
+        return http.Response.bytes(_pngBytes, 200, headers: imageHeaders);
+      });
+      addTearDown(client.close);
+      MediaImageProvider.debugNow = () => now;
+      addTearDown(() => MediaImageProvider.debugNow = DateTime.now);
+      final directory = MediaDiskCache.directoryFor(root, 'community-1', 's');
+      Future<Object?> launch() async {
+        PaintingBinding.instance.imageCache.clear();
+        PaintingBinding.instance.imageCache.clearLiveImages();
+        final cache = MediaDiskCache.open(directory, now: () => now);
+        try {
+          final image = MediaImageProvider(
+            url: start.toString(),
+            auth: auth,
+            client: client,
+            diskCache: cache,
+          );
+          final result = await _waitError(
+            image.resolve(ImageConfiguration.empty),
+          );
+          if (online) await cache.contains(start.toString());
+          return result;
+        } finally {
+          await cache.dispose();
+        }
+      }
+
+      expect(await launch(), isNull);
+      expect(requests, [start, target]);
+      online = false;
+      now = started.add(Duration(seconds: lifetime - 1));
+      expect(await launch(), isNull);
+      expect(requests, [start, target]);
+      now = now.add(const Duration(seconds: 1));
+      expect(await launch(), isA<SocketException>());
+      expect(requests, [start, target, start]);
+    });
+  }
+
+  const fresh = {'cache-control': 'public, max-age=86400'};
+  const noStore = {'cache-control': 'private, No-Store, max-age=86400'};
+  for (final (description, status, returnsToStart, redirect, image) in [
+    ('temporary no-store', 302, false, noStore, fresh),
+    ('no-store returning to start', 302, true, noStore, fresh),
+    ('permanent no-store', 301, false, noStore, fresh),
+    ('no-store final image', 308, false, fresh, noStore),
+    ('temporary fresh', 302, false, fresh, fresh),
+    ('invalid expiry', 301, false, {'expires': 'invalid'}, fresh),
+  ]) {
+    test(
+      'does not cache an image behind a $description redirect chain',
+      () async {
+        final start = Uri.parse(_externalUrls[0]);
+        final target = Uri.parse(_externalUrls[1]);
+        final requests = <Uri>[];
+        final client = http_testing.MockClient((request) async {
+          requests.add(request.url);
+          if (!request.followRedirects && requests.length == 1) {
+            return http.Response(
+              '',
+              status,
+              headers: {...redirect, 'location': target.toString()},
+            );
+          }
+          if (!request.followRedirects &&
+              returnsToStart &&
+              requests.length == 2) {
+            return http.Response(
+              '',
+              302,
+              headers: {'location': start.toString()},
+            );
+          }
+          return http.Response.bytes(_pngBytes, 200, headers: image);
+        });
+        addTearDown(client.close);
+        final directory = MediaDiskCache.directoryFor(root, 'community-1', 's');
+        final cache = MediaDiskCache.open(directory);
+        try {
+          final bytes = await MediaImageProvider(
+            url: start.toString(),
+            auth: auth,
+            client: client,
+            diskCache: cache,
+          ).loadEncodedBytes(cancel: Completer<void>().future);
+          expect(bytes, _pngBytes);
+          await cache.contains(start.toString());
+        } finally {
+          await cache.dispose();
+        }
+        final reopened = MediaDiskCache.open(directory);
+        try {
+          expect(await reopened.contains(start.toString()), isFalse);
+          expect(requests, [start, target, if (returnsToStart) start]);
+        } finally {
+          await reopened.dispose();
+        }
+      },
+    );
+  }
+
+  for (final redirectsFromRelay in [false, true]) {
+    test(
+      redirectsFromRelay
+          ? 'a signed image redirect drops authorization on an HTTPS downgrade'
+          : 'a same-host HTTP image request does not attach relay authorization',
+      () async {
+        final relay = Uri.parse(_relayUrl);
+        final otherService = relay.replace(scheme: 'http');
+        final requests = <http.Request>[];
+        final client = http_testing.MockClient((request) async {
+          requests.add(request);
+          if (request.url == relay) {
+            return http.Response(
+              '',
+              302,
+              headers: {'location': otherService.toString()},
+            );
+          }
+          return http.Response.bytes(_pngBytes, 200);
+        });
+        addTearDown(client.close);
+        final cache = MediaDiskCache.open(root);
+        try {
+          final mediaAuth = MediaGetAuthService(
+            baseUrl: 'wss://relay.example.com',
+            nsec: nostr.Keys.generate().nsec,
+          );
+          expect(
+            await MediaImageProvider(
+              url: (redirectsFromRelay ? relay : otherService).toString(),
+              auth: mediaAuth,
+              client: client,
+              diskCache: cache,
+            ).loadEncodedBytes(cancel: Completer<void>().future),
+            _pngBytes,
+          );
+          expect(requests.map((request) => request.url), [
+            if (redirectsFromRelay) relay,
+            otherService,
+          ]);
+          if (redirectsFromRelay) {
+            expect(
+              requests.first.headers['authorization'],
+              startsWith('Nostr '),
+            );
+          }
+          expect(requests.last.headers, isNot(contains('authorization')));
+        } finally {
+          await cache.dispose();
+        }
+      },
+    );
+  }
+
+  for (final startsAtRelay in [true, false]) {
+    test(
+      startsAtRelay
+          ? 'an authenticated hosted image request keeps the redirect veto'
+          : 'an external image redirect does not attach hosted credentials',
+      () async {
+        final start = Uri.parse(startsAtRelay ? _relayUrl : _externalUrls[0]);
+        final target = Uri.parse(startsAtRelay ? _externalUrls[0] : _relayUrl);
+        final requests = <http.Request>[];
+        final transport = http_testing.MockClient((request) async {
+          requests.add(request);
+          if (request.url == start) {
+            return http.Response(
+              '',
+              302,
+              headers: {'location': target.toString()},
+            );
+          }
+          return http.Response.bytes(_pngBytes, 200);
+        });
+        final account = BuilderlabAccountClient(
+          httpClient: http_testing.MockClient(
+            (_) async => fail('Unexpected account request'),
+          ),
+        );
+        addTearDown(account.dispose);
+        final hostedAuth = _HostedRedirectAuth(account);
+        addTearDown(hostedAuth.dispose);
+        final client = HostedRelayHttpClient(
+          hostedAuth,
+          const RelayConfig(baseUrl: _relayBase),
+          inner: transport,
+        );
+        addTearDown(client.close);
+        final cache = MediaDiskCache.open(root);
+        try {
+          final load = MediaImageProvider(
+            url: start.toString(),
+            auth: auth,
+            client: client,
+            diskCache: cache,
+          ).loadEncodedBytes(cancel: Completer<void>().future);
+          if (startsAtRelay) {
+            await expectLater(load, throwsA(isA<NetworkImageLoadException>()));
+            expect(requests.map((request) => request.url), [start]);
+            expect(
+              requests.single.headers['nostr-federated-identity'],
+              'Bearer test',
+            );
+          } else {
+            expect(await load, _pngBytes);
+            expect(requests.map((request) => request.url), [start, target]);
+            expect(
+              requests.last.headers,
+              isNot(contains('nostr-federated-identity')),
+            );
+          }
+        } finally {
+          await cache.dispose();
+        }
+      },
+    );
+  }
+
+  test('a no-store refresh removes the saved external image', () async {
+    final url = _externalUrls.first;
+    final refreshed = Uint8List(12 * 1024 * 1024)..setAll(0, _pngBytes);
+    final client = _ImageResponseClient(refreshed, Uri.parse(url));
+    addTearDown(client.close);
+    final directory = MediaDiskCache.directoryFor(root, 'community-1', 's');
+    var now = DateTime.now();
+    final cache = MediaDiskCache.open(directory, now: () => now);
+    try {
+      await cache.write(url, _pngBytes, immutable: false);
+      now = now.add(const Duration(days: 8));
+      final shown = await MediaImageProvider(
+        url: url,
+        auth: auth,
+        client: client,
+        diskCache: cache,
+      ).loadEncodedBytes(cancel: Completer<void>().future);
+      expect(shown, _pngBytes);
+      await _until(() async {
+        final hit = await cache.read(url);
+        return hit == null || hit.bytes.length == refreshed.length;
+      });
+      expect(await cache.contains(url), isFalse);
+    } finally {
+      await cache.dispose();
+    }
+    final reopened = MediaDiskCache.open(directory);
+    try {
+      expect(await reopened.contains(url), isFalse);
+    } finally {
+      await reopened.dispose();
+    }
+  });
+
   test(
     'evicts least recently used files past the byte or file budget',
     () async {
@@ -364,8 +706,423 @@ void main() {
       expect(await refresh.read('other'), isNull);
       expect((await refresh.read('refreshed'))?.bytes, hasLength(8));
       await refresh.dispose();
+
+      // Overlapping saves of one URL, as when two sizes of one image decode
+      // at once, keep one file on disk.
+      final overlapping = await open('overlapping');
+      await Future.wait([
+        for (var i = 0; i < 2; i++)
+          overlapping.write('same', Uint8List(4), immutable: true),
+      ]);
+      final files = MediaDiskCache.directoryFor(root, 'overlapping', 's')
+          .listSync()
+          .where((entry) => !p.basename(entry.path).startsWith('index.json'));
+      expect(files, hasLength(1));
+      await overlapping.dispose();
+
+      // One eviction pass returns at most its limit, oldest first, and asks
+      // for another pass.
+      final indexDirectory = MediaDiskCache.directoryFor(root, 'index', 's')
+        ..createSync(recursive: true);
+      final index = MediaCacheIndex(
+        File(p.join(indexDirectory.path, 'index.json')),
+        indexDirectory,
+        0,
+        evictionsPerPass: 2,
+      );
+      await index.open();
+      final epoch = DateTime(2026);
+      for (var i = 0; i < 5; i++) {
+        await index.insert(
+          CacheObject(
+            'url-$i',
+            relativePath: 'file-$i',
+            validTill: epoch,
+            length: 1,
+            touched: epoch.add(Duration(minutes: i)),
+          ),
+          setTouchedToNow: false,
+        );
+      }
+      var morePasses = 0;
+      index.onMoreToEvict = () => morePasses++;
+      final firstPass = await index.getObjectsOverCapacity(100);
+      expect(firstPass.map((o) => o.url), ['url-1', 'url-0']);
+      expect(morePasses, 1);
+      // A retired index's pass in progress records no deletions.
+      final ids = [for (final o in await index.getAllObjects()) o.id!];
+      index.retire();
+      await index.deleteAll(ids);
+      expect(await index.getAllObjects(), hasLength(5));
+      await index.close();
+
+      // Once closed, the index saves nothing more. A read that marks a file
+      // used, or an eviction pass that finishes late, would otherwise save
+      // it over the index a reopened cache wrote since.
+      final indexFile = File(p.join(indexDirectory.path, 'index.json'));
+      final reopenedIndex = MediaCacheIndex(indexFile, indexDirectory, 100);
+      await reopenedIndex.open();
+      await reopenedIndex.insert(
+        CacheObject(
+          'newer',
+          relativePath: 'file-newer',
+          validTill: epoch,
+          length: 1,
+        ),
+      );
+      await reopenedIndex.close();
+      final written = indexFile.readAsStringSync();
+      await index.updateOrInsert(
+        CacheObject('late-read', relativePath: 'file-0', validTill: epoch),
+      );
+      await index.deleteAll(ids);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(indexFile.readAsStringSync(), written);
+
+      // So a large save into a cache full of small files evicts them over
+      // several passes, with no later reads to schedule them, until the
+      // directory is back in budget.
+      List<String> filesIn(Directory directory) => [
+        for (final entry in directory.listSync())
+          if (!p.basename(entry.path).startsWith('index.json'))
+            p.basename(entry.path),
+      ];
+      final passesDirectory = MediaDiskCache.directoryFor(root, 'passes', 's');
+      final passes = MediaDiskCache.open(
+        passesDirectory,
+        byteBudget: 20,
+        evictionDelay: const Duration(milliseconds: 200),
+        evictionsPerPass: 2,
+      );
+      for (var i = 0; i < 5; i++) {
+        await passes.write('small-$i', Uint8List(4), immutable: true);
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      await passes.write('large', Uint8List(16), immutable: true);
+      await _until(() async => filesIn(passesDirectory).length == 2);
+      expect(await passes.read('large'), isNotNull);
+      expect(await passes.read('small-4'), isNotNull);
+      await passes.dispose();
+
+      // Files the index doesn't track, such as a save cut short by a full
+      // disk or by the app exiting, are deleted on the next launch.
+      final sweptDirectory = MediaDiskCache.directoryFor(root, 'swept', 's');
+      final first = MediaDiskCache.open(sweptDirectory);
+      await first.write('kept', Uint8List(4), immutable: true);
+      await first.dispose();
+      final earlier = DateTime.now().subtract(const Duration(minutes: 1));
+      for (final name in ['untracked.file', 'interrupted.file.part']) {
+        File(p.join(sweptDirectory.path, name))
+          ..writeAsBytesSync(Uint8List(4))
+          ..setLastModifiedSync(earlier);
+      }
+      // Closing waits for the sweep, so the next cache to open the directory
+      // starts after it.
+      final manyDirectory = MediaDiskCache.directoryFor(root, 'many', 's')
+        ..createSync(recursive: true);
+      for (var i = 0; i < 300; i++) {
+        File(p.join(manyDirectory.path, 'orphan-$i.file'))
+          ..writeAsBytesSync(Uint8List(1))
+          ..setLastModifiedSync(earlier);
+      }
+      final manyIndex = MediaCacheIndex(
+        File(p.join(manyDirectory.path, 'index.json')),
+        manyDirectory,
+        100,
+      );
+      await manyIndex.open();
+      await manyIndex.close();
+      expect(filesIn(manyDirectory), isEmpty);
+
+      // The sweep runs in the background, and a save made while it runs
+      // stays.
+      // A part written just now may belong to a save in progress, so it
+      // stays too.
+      final fresh = File(p.join(sweptDirectory.path, 'fresh.file.part'))
+        ..writeAsBytesSync(Uint8List(4));
+      final relaunched = MediaDiskCache.open(sweptDirectory);
+      await relaunched.write('during', Uint8List(4), immutable: true);
+      expect(await relaunched.read('kept'), isNotNull);
+      await _until(() async => filesIn(sweptDirectory).length == 3);
+      expect(await relaunched.read('during'), isNotNull);
+      expect(fresh.existsSync(), isTrue);
+      await relaunched.dispose();
+
+      // A disposed cache's scheduled eviction pass, running after the
+      // community's cache was opened again, keeps the newer cache's saves.
+      final retiredDirectory = MediaDiskCache.directoryFor(
+        root,
+        'retired',
+        's',
+      );
+      Future<int> rows() async {
+        final index = File(p.join(retiredDirectory.path, 'index.json'));
+        return index.existsSync()
+            ? (jsonDecode(await index.readAsString()) as List).length
+            : 0;
+      }
+
+      const passDelay = Duration(milliseconds: 300);
+      final retired = MediaDiskCache.open(
+        retiredDirectory,
+        byteBudget: 80,
+        evictionDelay: passDelay,
+        evictionsPerPass: 1,
+      );
+      for (var i = 0; i < 6; i++) {
+        await retired.write('prior-$i', Uint8List(12), immutable: true);
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      // Two files over budget: the first pass evicts one and schedules
+      // another.
+      await retired.write('large', Uint8List(24), immutable: true);
+      await _until(() async => await rows() == 6);
+      // As the provider does, the old cache is disposed with a save and a
+      // read in progress, and not awaited before the reopen.
+      final inFlight = retired.write(
+        'in-flight',
+        Uint8List(4),
+        immutable: true,
+      );
+      final reading = retired.read('prior-3');
+      await Future<void>.delayed(Duration.zero);
+      final closing = retired.dispose();
+      final reopened = MediaDiskCache.open(retiredDirectory, byteBudget: 80);
+      await reopened.write('newer', Uint8List(4), immutable: true);
+      await Future.wait([inFlight, reading, closing]);
+      await reopened.dispose();
+      await Future<void>.delayed(passDelay * 3);
+      final relaunchedAgain = MediaDiskCache.open(
+        retiredDirectory,
+        byteBudget: 80,
+      );
+      expect(await relaunchedAgain.read('newer'), isNotNull);
+      expect(await relaunchedAgain.read('in-flight'), isNotNull);
+      // The old cache's next eviction would have taken it.
+      expect(await relaunchedAgain.read('prior-1'), isNotNull);
+      await relaunchedAgain.dispose();
+
+      // A cache reopened while the previous one is slow to close goes
+      // without the disk at first, then uses it once that close finishes.
+      final slowDirectory = MediaDiskCache.directoryFor(root, 'slow', 's');
+      final saving = MediaDiskCache.open(slowDirectory);
+      await saving.write('saved', Uint8List(4), immutable: true);
+      await saving.dispose();
+      final gated = _GatedDirectory(slowDirectory);
+      final slow = MediaDiskCache.open(gated);
+      // Opens the index, whose sweep then waits on the gate, and so does
+      // closing.
+      expect(await slow.read('saved'), isNotNull);
+      final slowSave = slow.write('slow-save', Uint8List(4), immutable: true);
+      await Future<void>.delayed(Duration.zero);
+      final slowClosing = slow.dispose();
+      const openTimeout = Duration(milliseconds: 100);
+      final waiting = MediaDiskCache.open(
+        slowDirectory,
+        openTimeout: openTimeout,
+      );
+      expect(await waiting.read('saved'), isNull);
+      gated.release();
+      await Future.wait([slowSave, slowClosing]);
+      await Future<void>.delayed(Duration.zero);
+      expect(await waiting.read('saved'), isNotNull);
+      await waiting.write('after-close', Uint8List(4), immutable: true);
+      await waiting.dispose();
+      final afterSlow = MediaDiskCache.open(slowDirectory);
+      expect(await afterSlow.read('after-close'), isNotNull);
+      expect(await afterSlow.read('slow-save'), isNotNull);
+      await afterSlow.dispose();
+
+      // Reads during refreshes see the old bytes or the new ones in full,
+      // never part of a file.
+      final refreshing = MediaDiskCache.open(
+        MediaDiskCache.directoryFor(root, 'refreshing', 's'),
+      );
+      const sizes = [1024, 8 * 1024 * 1024];
+      await refreshing.write('image', Uint8List(sizes[0]), immutable: false);
+      final lengths = <int?>{};
+      Future<void> refreshRepeatedly() async {
+        for (var i = 1; i <= 10; i++) {
+          await refreshing.write(
+            'image',
+            Uint8List(sizes[i % 2]),
+            immutable: false,
+          );
+        }
+      }
+
+      // A bounded number of reads: each one marks the file used, and a
+      // reader that never stops keeps the index save, and so the refresh,
+      // from finishing.
+      Future<void> readRepeatedly() async {
+        for (var i = 0; i < 20; i++) {
+          lengths.add((await refreshing.read('image'))?.bytes.length);
+        }
+      }
+
+      await Future.wait([
+        refreshRepeatedly(),
+        for (var i = 0; i < 3; i++) readRepeatedly(),
+      ]);
+      expect(lengths, everyElement(isIn(sizes)));
+      await refreshing.dispose();
     },
   );
+
+  test('encoded bytes for a native surface download once, across a '
+      'relaunch, and bytes that never decode are not saved', () async {
+    final fetched = <String>[];
+    final client = http_testing.MockClient((request) async {
+      fetched.add(request.url.toString());
+      if (request.url.toString() == _corruptUrl) {
+        return http.Response('not an image', 200);
+      }
+      return http.Response.bytes(_pngBytes, 200);
+    });
+    final directory = MediaDiskCache.directoryFor(
+      root,
+      'community-1',
+      'signer-1',
+    );
+    Future<Uint8List> load(MediaDiskCache cache, String url) =>
+        MediaImageProvider(
+          url: url,
+          auth: auth,
+          client: client,
+          diskCache: cache,
+        ).loadEncodedBytes(cancel: Completer<void>().future);
+
+    for (var launch = 0; launch < 2; launch++) {
+      final cache = MediaDiskCache.open(directory);
+      try {
+        expect(await load(cache, _relayUrl), _pngBytes);
+        await expectLater(load(cache, _corruptUrl), throwsA(anything));
+        await _settle();
+      } finally {
+        await cache.dispose();
+      }
+      // A failed body goes on cooldown; let the next launch retry it.
+      MediaImageProvider.debugResetCooldowns();
+    }
+
+    expect(fetched, [_relayUrl, _corruptUrl, _corruptUrl]);
+  });
+
+  test('encoded bytes remove a damaged saved copy so the next request '
+      'downloads it again', () async {
+    final fetched = <String>[];
+    final client = http_testing.MockClient((request) async {
+      fetched.add(request.url.toString());
+      return http.Response.bytes(_pngBytes, 200);
+    });
+    final cache = MediaDiskCache.open(
+      MediaDiskCache.directoryFor(root, 'community-1', 'signer-1'),
+    );
+    try {
+      await cache.write(
+        _truncatedUrl,
+        Uint8List.fromList(_pngBytes.sublist(0, 20)),
+        immutable: true,
+      );
+      Future<Uint8List> load() => MediaImageProvider(
+        url: _truncatedUrl,
+        auth: auth,
+        client: client,
+        diskCache: cache,
+      ).loadEncodedBytes(cancel: Completer<void>().future);
+
+      expect(await cache.contains(_truncatedUrl), isTrue);
+      await expectLater(load(), throwsA(anything));
+      expect(fetched, isEmpty);
+      await _settle();
+      expect(await cache.contains(_truncatedUrl), isFalse);
+      MediaImageProvider.debugResetCooldowns();
+      expect(await load(), _pngBytes);
+      expect(fetched, [_truncatedUrl]);
+    } finally {
+      await cache.dispose();
+    }
+  });
+
+  test(
+    'encoded bytes share one download with simultaneous image loads',
+    () async {
+      final fetched = <String>[];
+      final respond = Completer<void>();
+      final client = http_testing.MockClient((request) async {
+        fetched.add(request.url.toString());
+        await respond.future;
+        return http.Response.bytes(_pngBytes, 200);
+      });
+      final cache = MediaDiskCache.open(
+        MediaDiskCache.directoryFor(root, 'community-1', 'signer-1'),
+      );
+      try {
+        MediaImageProvider provider() => MediaImageProvider(
+          url: _relayUrl,
+          auth: auth,
+          client: client,
+          diskCache: cache,
+        );
+        final first = provider().loadEncodedBytes(
+          cancel: Completer<void>().future,
+        );
+        final second = provider().loadEncodedBytes(
+          cancel: Completer<void>().future,
+        );
+        final stream = provider().resolve(ImageConfiguration.empty);
+        final shown = _waitError(stream);
+        await _until(() async => fetched.isNotEmpty);
+        respond.complete();
+        expect(await first, _pngBytes);
+        expect(await second, _pngBytes);
+        expect(await shown, isNull);
+        expect(fetched, [_relayUrl]);
+      } finally {
+        await cache.dispose();
+      }
+    },
+  );
+}
+
+class _HostedRedirectAuth extends HostedRelayAuth {
+  _HostedRedirectAuth(super.account)
+    : super(organization: account, organizationRelay: (_) => true);
+
+  @override
+  Future<Map<String, String>> headers(
+    RelayConfig config, {
+    bool background = false,
+    bool fresh = false,
+  }) async => {'Nostr-Federated-Identity': 'Bearer test'};
+}
+
+/// Models the response after the platform transport has followed redirects.
+class _ImageResponseClient extends http.BaseClient {
+  _ImageResponseClient(this.bytes, this.responseUrl);
+
+  final Uint8List bytes;
+  final Uri responseUrl;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    return _ImageResponse(bytes, request, responseUrl);
+  }
+}
+
+class _ImageResponse extends http.StreamedResponse
+    implements http.BaseResponseWithUrl {
+  _ImageResponse(Uint8List bytes, http.BaseRequest request, this.url)
+    : super(
+        Stream.value(bytes),
+        200,
+        contentLength: bytes.length,
+        request: request,
+        headers: _noStoreHeaders,
+      );
+
+  @override
+  final Uri url;
 }
 
 /// Waits for background work that a fixed delay cannot bound on a slow
@@ -398,4 +1155,33 @@ Future<Object?> _waitError(ImageStream stream) {
   );
   stream.addListener(listener);
   return done.future;
+}
+
+/// [Directory] whose listing waits until [release], to hold a cache's
+/// sweep, and so its close.
+class _GatedDirectory implements Directory {
+  _GatedDirectory(this._inner);
+
+  final Directory _inner;
+  final _gate = Completer<void>();
+
+  void release() => _gate.complete();
+
+  @override
+  String get path => _inner.path;
+
+  @override
+  Future<bool> exists() => _inner.exists();
+
+  @override
+  Stream<FileSystemEntity> list({
+    bool recursive = false,
+    bool followLinks = true,
+  }) async* {
+    await _gate.future;
+    yield* _inner.list(recursive: recursive, followLinks: followLinks);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

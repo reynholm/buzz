@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:http/http.dart' as http;
+import 'package:buzz/shared/http/app_http_client.dart';
 
 import '../relay/relay_provider.dart';
 import 'builderlab_account.dart';
@@ -67,11 +68,13 @@ final hostedRelayAuthProvider = Provider<HostedRelayAuth>((ref) {
 });
 
 /// Each transport owns its client lifetime; configuration and auth are shared.
-final hostedHttpClientFactoryProvider = Provider<http.Client Function()>((ref) {
-  final auth = ref.watch(hostedRelayAuthProvider);
-  final config = ref.watch(relayConfigProvider);
-  return () => HostedRelayHttpClient(auth, config);
-});
+final hostedHttpClientFactoryProvider =
+    Provider<http.Client Function({HttpTraffic traffic})>((ref) {
+      final auth = ref.watch(hostedRelayAuthProvider);
+      final config = ref.watch(relayConfigProvider);
+      return ({HttpTraffic traffic = HttpTraffic.api}) =>
+          HostedRelayHttpClient(auth, config, inner: newAppHttpClient(traffic));
+    });
 
 /// The build's one Builderlab session, with a short-lived assertion for the
 /// current relay/key. A public build's hosted communities use [account] when
@@ -91,7 +94,7 @@ class HostedRelayAuth extends ChangeNotifier {
        _discover = discover ?? _fetchRequirement;
 
   static Future<bool> _fetchRequirement(Uri origin) async {
-    final client = http.Client();
+    final client = newAppHttpClient();
     try {
       return await fetchNipFiRequirement(client, origin);
     } finally {
@@ -500,16 +503,29 @@ class HostedRelayHttpClient extends http.BaseClient {
     this.config, {
     http.Client? inner,
     this.canSend,
-  }) : _inner = inner ?? http.Client();
+  }) : _inner = inner ?? newAppHttpClient();
   final HostedRelayAuth auth;
   final RelayConfig config;
   final http.Client _inner;
   final bool Function()? canSend;
 
+  /// Whether a request to [url] is scoped to the hosted relay's credentials.
+  bool protectsRequestTo(Uri url) =>
+      url.origin == Uri.parse(config.baseUrl).origin && auth.protects(config);
+
   @override
-  Future<http.StreamedResponse> send(http.BaseRequest request) async {
-    final origin = Uri.parse(config.baseUrl);
-    final scoped = request.url.origin == origin.origin && auth.protects(config);
+  Future<http.StreamedResponse> send(http.BaseRequest request) async =>
+      _send(request, scoped: protectsRequestTo(request.url));
+
+  /// Sends a manually followed redirect from an unscoped initial request.
+  /// A later URL must not cause hosted credentials to be minted or attached.
+  Future<http.StreamedResponse> sendRedirect(http.BaseRequest request) =>
+      _send(request, scoped: false);
+
+  Future<http.StreamedResponse> _send(
+    http.BaseRequest request, {
+    required bool scoped,
+  }) async {
     if (scoped) {
       request.followRedirects = false;
       request.headers.addAll(await auth.headers(config));

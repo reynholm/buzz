@@ -26,6 +26,7 @@ import '../../shared/widgets/modal_presentation.dart';
 import '../../shared/reminders/remind_me_later_sheet.dart';
 import '../../shared/reminders/reminder_service.dart';
 import 'channel_management_provider.dart';
+import 'me/me_page.dart';
 import 'channels_provider.dart';
 import '../../shared/emoji/emoji_picker.dart';
 import 'reaction_row.dart';
@@ -161,6 +162,26 @@ Future<void> showMessageActions({
                             // Copy to clipboard
                             final data = ClipboardData(text: message.content);
                             Clipboard.setData(data);
+                          },
+                        ),
+                        ListTile(
+                          leading: const Icon(BuzzIcons.messageCircle),
+                          title: const Text('Start Solo chat'),
+                          onTap: () {
+                            if (!_selectMessageAction(sheetContext)) return;
+                            unawaited(
+                              openSoloChatFromMessage(
+                                context,
+                                ref,
+                                channel: ref.read(
+                                  channelByIdProvider(channelId),
+                                ),
+                                channelId: channelId,
+                                messageId: message.id,
+                                threadRootId: message.rootId,
+                                content: message.content,
+                              ),
+                            );
                           },
                         ),
                       ],
@@ -382,6 +403,8 @@ String downloadedImageFilename(String imageUrl, String? contentType) {
   return 'buzz-${DateTime.now().millisecondsSinceEpoch}$extension';
 }
 
+const _photoLibrarySaver = MethodChannel('buzz/photo_library_saver');
+
 Future<void> _saveImageToPhotos(WidgetRef ref, String imageUrl) async {
   final needsPhotoLibraryPermission =
       defaultTargetPlatform == TargetPlatform.iOS ||
@@ -403,7 +426,17 @@ Future<void> _saveImageToPhotos(WidgetRef ref, String imageUrl) async {
     }
   }
   final image = await _downloadImage(ref, imageUrl);
-  await PhotoManager.editor.saveImage(image.bytes, filename: image.filename);
+  if (defaultTargetPlatform == TargetPlatform.iOS) {
+    // photo_manager reads the new asset back after writing it. Add-only access
+    // forbids that read, so iOS asks for full access and a completed save is
+    // reported as a failure. The native saver only writes.
+    await _photoLibrarySaver.invokeMethod<void>('saveImage', {
+      'bytes': image.bytes,
+      'filename': image.filename,
+    });
+  } else {
+    await PhotoManager.editor.saveImage(image.bytes, filename: image.filename);
+  }
 }
 
 Future<void> _saveImage(

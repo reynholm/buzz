@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:buzz/shared/emoji/emoji_picker.dart';
 import 'package:buzz/shared/emoji/recent_emoji_provider.dart';
@@ -7,14 +8,13 @@ import 'package:buzz/shared/custom_emoji/custom_emoji.dart';
 import 'package:buzz/shared/custom_emoji/custom_emoji_provider.dart';
 import 'package:buzz/shared/emoji/emoji_data.dart';
 import 'package:buzz/shared/emoji/emoji_data_provider.dart';
-import 'package:buzz/shared/hosted/builderlab_account.dart';
-import 'package:buzz/shared/hosted/hosted_relay_auth.dart';
 import 'package:buzz/shared/relay/relay.dart';
 import 'package:buzz/shared/theme/theme.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nostr/nostr.dart' as nostr;
@@ -139,31 +139,36 @@ const _relayCustomEmoji = [
   ),
 ];
 
-class _FakeRelayConfigNotifier extends RelayConfigNotifier {
-  _FakeRelayConfigNotifier(this.nsec);
+/// A 1x1 PNG, so loads pass the decode check.
+final _pngBytes = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAA'
+  'AAYAAjCB0C8AAAAASUVORK5CYII=',
+);
 
-  final String nsec;
+/// Media downloads that answer at once with [_pngBytes], except `slow` ones,
+/// which wait until the caller aborts them.
+class _MediaClient extends http.BaseClient {
+  final requests = <http.BaseRequest>[];
+  Completer<void>? _requestStarted;
+
+  Future<void> waitForRequests(int count) async {
+    while (requests.length < count) {
+      await (_requestStarted ??= Completer<void>()).future.timeout(
+        const Duration(seconds: 10),
+      );
+    }
+  }
 
   @override
-  RelayConfig build() =>
-      RelayConfig(baseUrl: 'https://relay.example', nsec: nsec);
-}
-
-/// A hosted relay that issues a fixed assertion.
-class _FakeHostedRelayAuth extends HostedRelayAuth {
-  _FakeHostedRelayAuth() : super(BuilderlabAccountClient(), enabled: false);
-
-  /// While set, issuance waits for it, like a slow account request.
-  Completer<void>? gate;
-
-  @override
-  Future<Map<String, String>> headers(
-    RelayConfig config, {
-    bool background = false,
-    bool fresh = false,
-  }) async {
-    await gate?.future;
-    return {'Nostr-Federated-Identity': 'Bearer hosted-token'};
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    requests.add(request);
+    _requestStarted?.complete();
+    _requestStarted = null;
+    if (request.url.path.contains('slow')) {
+      await (request as http.AbortableRequest).abortTrigger;
+      throw http.RequestAbortedException(request.url);
+    }
+    return http.StreamedResponse(Stream.value(_pngBytes), 200);
   }
 }
 
@@ -735,15 +740,25 @@ void main() {
       final previousPlatform = debugDefaultTargetPlatformOverride;
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
       final prefs = await _prefs();
-      final nsec = nostr.Keys.generate().nsec;
-      var clock = DateTime.utc(2026, 11, 5, 12);
       final mediaAuth = MediaGetAuthService(
         baseUrl: 'https://relay.example',
-        nsec: nsec,
-        now: () => clock,
+        nsec: nostr.Keys.generate().nsec,
       );
-      final hostedAuth = _FakeHostedRelayAuth();
-      addTearDown(hostedAuth.dispose);
+      final mediaClient = _MediaClient();
+      final diskDirectory = (await tester.runAsync(
+        () => Directory.systemTemp.createTemp('emoji_picker_test'),
+      ))!;
+      // The cache's own I/O and timers need the real event loop.
+      var cacheNow = DateTime.utc(2026);
+      final diskCache = (await tester.runAsync(
+        () async => MediaDiskCache.open(diskDirectory, now: () => cacheNow),
+      ))!;
+      addTearDown(
+        () => tester.runAsync(() async {
+          await diskCache.dispose();
+          await diskDirectory.delete(recursive: true);
+        }),
+      );
       MethodCall? presentation;
       final selected = <String>[];
       var dismissals = 0;
@@ -764,10 +779,8 @@ void main() {
                 ),
               ),
               mediaGetAuthServiceProvider.overrideWithValue(mediaAuth),
-              relayConfigProvider.overrideWith(
-                () => _FakeRelayConfigNotifier(nsec),
-              ),
-              hostedRelayAuthProvider.overrideWithValue(hostedAuth),
+              mediaHttpClientProvider.overrideWithValue(mediaClient),
+              mediaDiskCacheProvider.overrideWithValue(diskCache),
             ],
             child: MaterialApp(
               theme: AppTheme.light(),
@@ -806,56 +819,150 @@ void main() {
         ]);
         expect(find.byType(EmojiPickerSheet), findsNothing);
 
-        final externalHeaders = await _sendNativeEmojiPickerCall(
-          tester,
-          'mediaHeaders',
-          'https://example.test/parrot.gif',
-        );
-        expect(externalHeaders, <String, String>{});
-        final relayHeaders = await _sendNativeEmojiPickerCall(
-          tester,
-          'mediaHeaders',
-          'https://relay.example/media/buzzbee.png',
-        );
-        expect(
-          (relayHeaders as Map<Object?, Object?>)['Authorization'],
-          startsWith('Nostr '),
-        );
-        // Native downloads skip the hosted HTTP client, so the bridge must
-        // carry the relay assertion a hosted relay requires for media reads.
-        expect(relayHeaders['Nostr-Federated-Identity'], 'Bearer hosted-token');
+        // The sheet loads custom emoji bytes through Flutter's media path:
+        // signed per request, then remembered by URL so reopening the sheet
+        // does not download them again.
+        // Media loads run real timers and I/O.
+        await tester.runAsync(() async {
+          final relayBytes = await _sendNativeEmojiPickerCall(
+            tester,
+            'mediaBytes',
+            {'id': 1, 'url': 'https://relay.example/media/buzzbee.png'},
+          );
+          expect(relayBytes, _pngBytes);
+          expect(
+            mediaClient.requests.single.headers['Authorization'],
+            startsWith('Nostr '),
+          );
+          await _sendNativeEmojiPickerCall(tester, 'mediaBytes', {
+            'id': 2,
+            'url': 'https://relay.example/media/buzzbee.png',
+          });
+          expect(mediaClient.requests, hasLength(1));
 
-        // A slow assertion refresh must not age the 60-second media proof:
-        // it is minted only once the assertion is in hand.
-        hostedAuth.gate = Completer<void>();
-        final slowHeaders = _sendNativeEmojiPickerCall(
-          tester,
-          'mediaHeaders',
-          'https://relay.example/media/buzzbee.png',
-        );
-        await tester.pump();
-        clock = clock.add(const Duration(seconds: 90));
-        hostedAuth.gate!.complete();
-        final refreshed = (await slowHeaders) as Map<Object?, Object?>;
-        hostedAuth.gate = null;
-        final proof =
-            jsonDecode(
-                  utf8.decode(
-                    base64Url.decode(
-                      base64Url.normalize(
-                        (refreshed['Authorization'] as String).substring(6),
-                      ),
-                    ),
-                  ),
-                )
-                as Map<String, Object?>;
-        final expiration = (proof['tags'] as List)
-            .cast<List<Object?>>()
-            .firstWhere((tag) => tag.first == 'expiration')[1];
-        expect(
-          int.parse(expiration as String),
-          greaterThan(clock.millisecondsSinceEpoch ~/ 1000),
-        );
+          // A cell that scrolls away cancels its download.
+          final slow = _sendNativeEmojiPickerCall(tester, 'mediaBytes', {
+            'id': 3,
+            'url': 'https://example.test/slow.png',
+          });
+          await mediaClient.waitForRequests(2);
+          await _sendNativeEmojiPickerCall(tester, 'cancelMediaBytes', 3);
+          await expectLater(slow, throwsA(isA<PlatformException>()));
+          expect(mediaClient.requests, hasLength(2));
+
+          // At most four loads run at once; a queued load cancelled before
+          // its turn never downloads.
+          const redirected = 'https://example.test/redirect.png';
+          final expiresAt = cacheNow.add(const Duration(seconds: 1));
+          await diskCache.write(
+            redirected,
+            _pngBytes,
+            immutable: false,
+            redirect: (
+              targetUrl: 'https://example.test/target.png',
+              expiresAt: expiresAt,
+            ),
+          );
+          cacheNow = expiresAt;
+          mediaClient.requests.clear();
+          final running = [
+            for (var id = 10; id < 14; id++)
+              expectLater(
+                _sendNativeEmojiPickerCall(tester, 'mediaBytes', {
+                  'id': id,
+                  'url': 'https://example.test/slow-$id.png',
+                }),
+                throwsA(isA<PlatformException>()),
+              ),
+          ];
+          await mediaClient.waitForRequests(4);
+          // The expired redirect needs a slot just like an uncached emoji.
+          final queued = _sendNativeEmojiPickerCall(tester, 'mediaBytes', {
+            'id': 14,
+            'url': redirected,
+          });
+          final cancelled = expectLater(
+            queued,
+            throwsA(isA<PlatformException>()),
+          );
+          // An emoji already saved on disk does not wait for a slot. Its own
+          // disk round trips also give the queued load time to start, were
+          // it not waiting for a slot.
+          await diskCache.write(
+            'https://example.test/saved.png',
+            _pngBytes,
+            immutable: false,
+          );
+          expect(
+            await _sendNativeEmojiPickerCall(tester, 'mediaBytes', {
+              'id': 15,
+              'url': 'https://example.test/saved.png',
+            }),
+            _pngBytes,
+          );
+          expect(mediaClient.requests, hasLength(4));
+          await _sendNativeEmojiPickerCall(tester, 'cancelMediaBytes', 14);
+          await cancelled;
+          expect(mediaClient.requests, hasLength(4));
+
+          // A visible reaction can take over a queued download. One native
+          // cell scrolls away while another still needs the same bytes.
+          const visibleUrl = 'https://example.test/visible-reaction.png';
+          final waiting = _sendNativeEmojiPickerCall(tester, 'mediaBytes', {
+            'id': 16,
+            'url': visibleUrl,
+          });
+          final scrolledAway = expectLater(
+            _sendNativeEmojiPickerCall(tester, 'mediaBytes', {
+              'id': 17,
+              'url': visibleUrl,
+            }),
+            throwsA(isA<PlatformException>()),
+          );
+          expect(await diskCache.read(visibleUrl), isNull);
+          expect(mediaClient.requests, hasLength(4));
+          final stream = MediaImageProvider(
+            url: visibleUrl,
+            auth: mediaAuth,
+            client: mediaClient,
+            diskCache: diskCache,
+          ).resolve(ImageConfiguration.empty);
+          final displayed = Completer<void>();
+          final listener = ImageStreamListener((image, _) {
+            image.dispose();
+            displayed.complete();
+          }, onError: displayed.completeError);
+          stream.addListener(listener);
+          bool startedWhileFull;
+          try {
+            await _sendNativeEmojiPickerCall(tester, 'cancelMediaBytes', 17);
+            startedWhileFull = await mediaClient
+                .waitForRequests(5)
+                .then((_) => true)
+                .timeout(const Duration(seconds: 5), onTimeout: () => false);
+            // An unrelated retry still needs a picker slot.
+            final retry = _sendNativeEmojiPickerCall(tester, 'mediaBytes', {
+              'id': 18,
+              'url': redirected,
+            });
+            await _sendNativeEmojiPickerCall(tester, 'cancelMediaBytes', 10);
+            await displayed.future;
+            expect(await waiting, _pngBytes);
+            await scrolledAway;
+            expect(await retry, _pngBytes);
+          } finally {
+            stream.removeListener(listener);
+          }
+
+          for (var id = 10; id < 14; id++) {
+            await _sendNativeEmojiPickerCall(tester, 'cancelMediaBytes', id);
+          }
+          await Future.wait(running);
+          expect(mediaClient.requests, hasLength(6));
+          expect(mediaClient.requests[4].url.toString(), visibleUrl);
+          expect(mediaClient.requests.last.url.toString(), redirected);
+          expect(startedWhileFull, isTrue);
+        });
 
         await _sendNativeEmojiPickerCall(tester, 'skinToneChanged', 4);
         await _sendNativeEmojiPickerCall(tester, 'selected', '\u{1F525}');
@@ -1149,6 +1256,90 @@ void main() {
           await tester.pumpWidget(const SizedBox.shrink());
           _setMockNativeEmojiPickerHandler(null);
           debugDefaultTargetPlatformOverride = previousPlatform;
+        }
+      },
+    );
+
+    testWidgets(
+      'an open from an unmounted context does not block later opens',
+      (tester) async {
+        final previousPlatform = debugDefaultTargetPlatformOverride;
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        final prefs = await _prefs();
+        var presents = 0;
+        _setMockNativeEmojiPickerHandler((call) async {
+          if (call.method == 'present') presents += 1;
+          return true;
+        });
+
+        final showStaleRow = ValueNotifier(true);
+        late BuildContext staleContext;
+        var staleDismissals = 0;
+
+        try {
+          await tester.pumpWidget(
+            ProviderScope(
+              overrides: [
+                savedPrefsProvider.overrideWithValue(prefs),
+                myPubkeyProvider.overrideWithValue('self'),
+                customEmojiPaletteProvider.overrideWith(
+                  () => _FakeCustomEmojiPaletteNotifier(
+                    Future.value(_customEmoji),
+                  ),
+                ),
+              ],
+              child: MaterialApp(
+                theme: AppTheme.light(),
+                home: Scaffold(
+                  body: ValueListenableBuilder<bool>(
+                    valueListenable: showStaleRow,
+                    builder: (context, show, _) => Column(
+                      children: [
+                        if (show)
+                          Builder(
+                            builder: (rowContext) {
+                              staleContext = rowContext;
+                              return const SizedBox.shrink();
+                            },
+                          ),
+                        FilledButton(
+                          onPressed: () => showEmojiPicker(
+                            context: context,
+                            onSelect: (_) {},
+                          ),
+                          child: const Text('Open live'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+
+          // The message row an actions sheet captured is rebuilt away before
+          // its "+" opens the picker.
+          showStaleRow.value = false;
+          await tester.pumpAndSettle();
+          expect(staleContext.mounted, isFalse);
+
+          showEmojiPicker(
+            context: staleContext,
+            onSelect: (_) {},
+            onDismiss: () => staleDismissals += 1,
+          );
+          await tester.pumpAndSettle();
+          expect(staleDismissals, 1);
+          expect(presents, 0);
+
+          await tester.tap(find.text('Open live'));
+          await tester.pumpAndSettle();
+          expect(presents, 1);
+          await _sendNativeEmojiPickerCall(tester, 'dismissed');
+        } finally {
+          _setMockNativeEmojiPickerHandler(null);
+          debugDefaultTargetPlatformOverride = previousPlatform;
+          showStaleRow.dispose();
         }
       },
     );

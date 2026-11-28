@@ -31,12 +31,17 @@ drop-in generic YAML Value type. Replacing every direct consumer with it would
 require an additional compatibility layer. That work is unnecessary for this
 maintenance fix.
 
-The Kubernetes backend uses upstream `kube` `~4.0` with `k8s-openapi` 0.28.
+The Kubernetes backend uses upstream `kube` `~4.2.1` with `k8s-openapi` 0.28.
 [Kube 4 removed the deprecated YAML dependency](https://github.com/kube-rs/kube/releases/tag/4.0.0)
 in favor of `serde-saphyr`; kube 3.1 still depended on `serde_yaml`.
-The minor constraint retains the workspace's declared Rust 1.88 minimum;
-kube 4.2 raises it to 1.89. The provider explicitly retains kube 2's 295-second
-read timeout and disables kube 4's new automatic retries, so a stalled response
+Kube 4.2.1 addresses
+[RUSTSEC-2026-0600](https://rustsec.org/advisories/RUSTSEC-2026-0600.html)
+and requires Rust 1.89 for the Kubernetes backend. The backend uses
+`rustls-tls` with default kube features disabled. Kube uses the configured CA
+bundle when present and delegates to the platform verifier when no CA is
+configured.
+The provider retains kube 2's 295-second read timeout and disables kube 4's
+automatic retries, so a stalled response
 or a long Retry-After cannot hide the API failure until the provider deadline.
 The generated API schema changes from `v1_31` to `v1_32`, the earliest schema
 available in OpenAPI 0.28. No runtime server-version check is added. Configuration

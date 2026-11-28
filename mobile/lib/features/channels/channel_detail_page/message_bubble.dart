@@ -58,6 +58,12 @@ class _MessageBubble extends HookConsumerWidget {
     // Watch only this user's profile to avoid rebuilding on unrelated cache changes.
     final pk = message.pubkey.toLowerCase();
     final ownMessage = currentPubkey?.toLowerCase() == pk;
+    final showSenderIdentity = showMessageAuthorName(
+      ref,
+      currentChannelId,
+      message.pubkey,
+      currentPubkey,
+    );
     final profile =
         ref.watch(userCacheProvider.select((cache) => cache[pk])) ??
         ref.read(userCacheProvider.notifier).get(pk);
@@ -185,7 +191,7 @@ class _MessageBubble extends HookConsumerWidget {
                             : Alignment.centerLeft,
                         child: Padding(
                           padding: EdgeInsets.only(
-                            left: ownMessage
+                            left: ownMessage || !showSenderIdentity
                                 ? 0
                                 : messageAvatarSize + messageAvatarContentGap,
                           ),
@@ -242,7 +248,7 @@ class _MessageBubble extends HookConsumerWidget {
                             : TextDirection.ltr,
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          if (!ownMessage) ...[
+                          if (!ownMessage && showSenderIdentity) ...[
                             const SizedBox(width: messageAvatarSize),
                             const SizedBox(width: messageAvatarContentGap),
                           ],
@@ -268,13 +274,7 @@ class _MessageBubble extends HookConsumerWidget {
                                           Expanded(
                                             child: MessageAuthorMeta(
                                               timestampGap: Grid.half,
-                                              showIdentity:
-                                                  showMessageAuthorName(
-                                                    ref,
-                                                    currentChannelId,
-                                                    message.pubkey,
-                                                    currentPubkey,
-                                                  ),
+                                              showIdentity: showSenderIdentity,
                                               showTimestamp: true,
                                               reversed: false,
                                               alignment: ownMessage
@@ -348,6 +348,11 @@ class _MessageBubble extends HookConsumerWidget {
                                       content: message.content,
                                       edited: message.edited,
                                       bubble: true,
+                                      additionalTextWidth:
+                                          !ownMessage && !showSenderIdentity
+                                          ? messageAvatarSize +
+                                                messageAvatarContentGap
+                                          : 0,
                                       hasReactions:
                                           message.reactions.isNotEmpty,
                                       bubbleEnd: showAvatar,
@@ -435,7 +440,7 @@ class _MessageBubble extends HookConsumerWidget {
                           ),
                         ],
                       ),
-                      if (showAvatar && !ownMessage)
+                      if (showAvatar && !ownMessage && showSenderIdentity)
                         Positioned(
                           left: 0,
                           bottom: 0,

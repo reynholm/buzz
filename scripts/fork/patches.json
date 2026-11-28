@@ -4507,7 +4507,7 @@
     },
     {
       "path": "Cargo.lock",
-      "responsibility": "Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils >= 0.4.4 for RUSTSEC-2026-0385. Upgrade the gateway P-256 graph to crypto-bigint 0.7.6 for RUSTSEC-2026-0387. Lock patched pulldown-cmark >= 0.13.5 for RUSTSEC-2026-0414. Lock patched pulldown-cmark >= 0.13.6 for RUSTSEC-2026-0433. Lock hickory-net and hickory-resolver 0.26.2 for patched DNS validation and bounded lookup behavior.",
+      "responsibility": "Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils >= 0.4.4 for RUSTSEC-2026-0385. Upgrade the gateway P-256 graph to crypto-bigint 0.7.6 for RUSTSEC-2026-0387. Lock patched pulldown-cmark >= 0.13.5 for RUSTSEC-2026-0414. Lock patched pulldown-cmark >= 0.13.6 for RUSTSEC-2026-0433. Lock hickory-net and hickory-resolver 0.26.2 for patched DNS validation and bounded lookup behavior. Lock the patched Kubernetes client for RUSTSEC-2026-0600.",
       "is_new": false,
       "required_symbols": [],
       "invocation_seams": [],
@@ -5887,8 +5887,7 @@
       "responsibility": "Preserve root AUTH authority and synchronously retain accepted default-join descendants through socket cleanup and drain, including durable pending-roster retries.",
       "is_new": false,
       "required_symbols": [
-        "let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);",
-        "include!(\"auth_deploy_postgres_tests.rs\");"
+        "let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);"
       ],
       "invocation_seams": [
         {
@@ -16427,7 +16426,8 @@
       "responsibility": "Observe durable bytes before cold cache reopen instead of assuming image decoding completes asynchronous disk writes; preserve production and assertions.",
       "is_new": false,
       "required_symbols": [
-        "if (!listEquals((await cache.read(url))?.bytes, _pngBytes))"
+        "if (!listEquals((await cache.read(url))?.bytes, expected))",
+        "final expected = url == _largeUrl ? largeBytes : _pngBytes;"
       ],
       "invocation_seams": [],
       "verification_commands": [
@@ -16555,6 +16555,3968 @@
       "invocation_seams": [],
       "verification_commands": [
         "python3 crates/buzz-acp/tests/linux_resource_supervisor_test.py"
+      ]
+    },
+    {
+      "path": "CONTEXT.md",
+      "responsibility": "Track partial upstream replay from group A step 11 (95dd9d67d).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "VISION.md",
+      "responsibility": "Track partial upstream replay from group A step 239 (708081183).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "VISION_GOVERNANCE.md",
+      "responsibility": "Track partial upstream replay from group A step 239 (708081183).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "VISION_PROJECTS.md",
+      "responsibility": "Track partial upstream replay from group A step 239 (708081183).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "VISION_SOVEREIGN.md",
+      "responsibility": "Track partial upstream replay from group A step 239 (708081183).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-backend-kubernetes/Cargo.toml",
+      "responsibility": "Record the Rust version floor required by the patched Kubernetes client.",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test --locked -p buzz-backend-kubernetes",
+        "cargo deny --locked check"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/README.md",
+      "responsibility": "Track partial upstream replay from group A steps 23 (0e6037c74), 170 (b68c4edda), 230 (e21606bf9), 305 (55823dd54).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/cached_assertion.rs",
+      "responsibility": "Track partial upstream replay from group A step 84 (97188e90c).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/commands/channels.rs",
+      "responsibility": "Track partial upstream replay from group A steps 208 (8d4b30176), 305 (55823dd54).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/commands/sidebar.rs",
+      "responsibility": "Track partial upstream replay from group A step 34 (745d2a86e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/commands/sidebar_doc.rs",
+      "responsibility": "Track partial upstream replay from group A step 34 (745d2a86e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/commands/sidebar_sync.rs",
+      "responsibility": "Track partial upstream replay from group A step 34 (745d2a86e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/commands/users.rs",
+      "responsibility": "Track partial upstream replay from group A steps 170 (b68c4edda), 230 (e21606bf9).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/commands/verified_profiles.rs",
+      "responsibility": "Track partial upstream replay from group A step 170 (b68c4edda).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/desktop_provider.rs",
+      "responsibility": "Track partial upstream replay from group A step 84 (97188e90c).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-cli/src/federated_identity.rs",
+      "responsibility": "Track partial upstream replay from group A step 84 (97188e90c).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-core/src/filter.rs",
+      "responsibility": "Track partial upstream replay from group A step 6 (47674dc32).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/runtime/observability.rs",
+      "responsibility": "Track partial upstream replay from group A step 62 (359839f70).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/runtime/tests/pool_release_postgres_tests.rs",
+      "responsibility": "Track partial upstream replay from group A step 84 (97188e90c).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/workflow.rs",
+      "responsibility": "Track partial upstream replay from group A step 30 (aa9b44ef3).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/workflow/deletion.rs",
+      "responsibility": "Track partial upstream replay from group A step 62 (359839f70).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-media/src/thumbnail.rs",
+      "responsibility": "Track partial upstream replay from group A step 38 (432df8aa5).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-media/src/validation.rs",
+      "responsibility": "Track partial upstream replay from group A step 38 (432df8aa5).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-pubsub/src/rate_limiter.rs",
+      "responsibility": "Track partial upstream replay from group A step 162 (44e97e96f).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-push-gateway/src/http.rs",
+      "responsibility": "Track partial upstream replay from group A step 100 (9398918fa).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-push-gateway/src/http_delivery_tests.rs",
+      "responsibility": "Track partial upstream replay from group A step 100 (9398918fa).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-push-gateway/src/metrics.rs",
+      "responsibility": "Track partial upstream replay from group A step 100 (9398918fa).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-push-gateway/src/postgres.rs",
+      "responsibility": "Track partial upstream replay from group A step 146 (44cdd9fee).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/audio/join.rs",
+      "responsibility": "Track partial upstream replay from group A step 110 (6f438202a).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/audio/room.rs",
+      "responsibility": "Track partial upstream replay from group A step 110 (6f438202a).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/handlers/identity_archive.rs",
+      "responsibility": "Track partial upstream replay from group A step 194 (946d9c346).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/handlers/mod.rs",
+      "responsibility": "Register the PostgreSQL AUTH tests for retained default-channel work after socket cleanup.",
+      "is_new": false,
+      "required_symbols": [
+        "mod auth_deploy_postgres_tests;"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "scripts/postgres-test-run.sh -p buzz-relay --lib"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/handlers/tag_pushdown_postgres_tests.rs",
+      "responsibility": "Track partial upstream replay from group A step 17 (695c1c3aa).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/invite_preview.rs",
+      "responsibility": "Track partial upstream replay from group A step 7 (2c5c8343e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/membership_cache/tests.rs",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/metrics.rs",
+      "responsibility": "Track partial upstream replay from group A step 116 (b303271ad).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-sdk/src/builders.rs",
+      "responsibility": "Track partial upstream replay from group A steps 142 (051dd2d7a), 208 (8d4b30176).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-search/tests/postgres_fts_integration.rs",
+      "responsibility": "Track partial upstream replay from group A step 47 (279a31daa).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-test-client/src/acceptance/fake_relay.rs",
+      "responsibility": "Track partial upstream replay from group A step 226 (9f49216f8).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-test-client/src/acceptance/metrics.rs",
+      "responsibility": "Track partial upstream replay from group A step 226 (9f49216f8).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-test-client/src/acceptance/mod.rs",
+      "responsibility": "Track partial upstream replay from group A step 226 (9f49216f8).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-test-client/src/bin/acceptance.rs",
+      "responsibility": "Track partial upstream replay from group A step 226 (9f49216f8).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-test-client/src/lib.rs",
+      "responsibility": "Track partial upstream replay from group A step 226 (9f49216f8).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-test-client/tests/e2e_acceptance.rs",
+      "responsibility": "Track partial upstream replay from group A step 226 (9f49216f8).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "desktop/src/features/terminal/TerminalSubstrate.test.mjs",
+      "responsibility": "Track partial upstream replay from group A step 83 (94c154e22).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "docs/adr/0002-notification-message-text.md",
+      "responsibility": "Track partial upstream replay from group A steps 11 (95dd9d67d), 39 (defc2d5ea).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "docs/mention-editor.md",
+      "responsibility": "Track partial upstream replay from group A step 50 (3c0adc188).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "docs/nips/NIP-PL.md",
+      "responsibility": "Track partial upstream replay from group A step 100 (9398918fa).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "docs/nips/NIP-PM.md",
+      "responsibility": "Track partial upstream replay from group A step 191 (7bff21e51).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/README.md",
+      "responsibility": "Track partial upstream replay from group A step 44 (8f3f4e266).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/REVIEWING.md",
+      "responsibility": "Track partial upstream replay from group A step 122 (c8a1b2634).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/BuzzPushKit/Sources/BuzzPushKit/BuzzPushNotificationResolver.swift",
+      "responsibility": "Track partial upstream replay from group A steps 11 (95dd9d67d), 39 (defc2d5ea), 129 (1059d81fc).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/BuzzPushKit/Tests/BuzzPushKitTests/BuzzPushNotificationResolverTests.swift",
+      "responsibility": "Track partial upstream replay from group A step 11 (95dd9d67d).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/NativeControlTests/Fixtures/gallery-video.mp4",
+      "responsibility": "Track partial upstream replay from group A step 1 (b40f22114).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/NativeControlTests/NativePhotoZoomTests.swift",
+      "responsibility": "Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d), 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/NativeControlTests/PickerFilePreparationTests.swift",
+      "responsibility": "Track partial upstream replay from group A step 13 (ef57fec4d).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/NativeControlTests/SettingMenuSelectionTests.swift",
+      "responsibility": "Track partial upstream replay from group A step 174 (68d367cf2).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Podfile.lock",
+      "responsibility": "Track partial upstream replay from group A step 132 (148585c80).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme",
+      "responsibility": "Track partial upstream replay from group A step 132 (148585c80).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Runner/Assets.xcassets/ShortcutAgent.imageset/Contents.json",
+      "responsibility": "Track partial upstream replay from group A step 20 (27f0fe752).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Runner/Assets.xcassets/ShortcutAgent.imageset/agent.svg",
+      "responsibility": "Track partial upstream replay from group A step 20 (27f0fe752).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Runner/ConcentricSheetSurface.swift",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Runner/HomeScreenShortcuts.swift",
+      "responsibility": "Track partial upstream replay from group A steps 20 (27f0fe752), 40 (60b7fb817).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Runner/InlinePhotoPicker.swift",
+      "responsibility": "Track partial upstream replay from group A step 13 (ef57fec4d).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Runner/IosNavigationBar.swift",
+      "responsibility": "Track partial upstream replay from group A steps 16 (96e56c5b3), 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Runner/JumpToLatestGlassButton.swift",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Runner/NativeAddMembersSheet.swift",
+      "responsibility": "Track partial upstream replay from group A steps 20 (27f0fe752), 40 (60b7fb817).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Runner/NativeAttachmentPopover.swift",
+      "responsibility": "Track partial upstream replay from group A steps 13 (ef57fec4d), 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Runner/NativeAttachmentPopoverCoordinator.swift",
+      "responsibility": "Track partial upstream replay from group A steps 13 (ef57fec4d), 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Runner/NativeAttachmentPopoverMenu.swift",
+      "responsibility": "Track partial upstream replay from group A step 13 (ef57fec4d).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Runner/NativeChannelActionsSheet.swift",
+      "responsibility": "Track partial upstream replay from group A step 109 (921a05a37).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Runner/NativeEmojiPicker.swift",
+      "responsibility": "Track partial upstream replay from group A step 130 (ff652ed06).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Runner/NativeEmojiPickerView.swift",
+      "responsibility": "Track partial upstream replay from group A step 130 (ff652ed06).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Runner/NativePhotoZoomCoordinator.swift",
+      "responsibility": "Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d), 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Runner/NativeProfileTextEditor.swift",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Runner/NativeStatusEditor.swift",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Runner/PhotoLibrarySaver.swift",
+      "responsibility": "Track partial upstream replay from group A step 153 (a5b3dbc00).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/Runner/SceneDelegate.swift",
+      "responsibility": "Track partial upstream replay from group A step 20 (27f0fe752).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/RunnerTests/NativeEmojiRedirectPolicyTests.swift",
+      "responsibility": "Track partial upstream replay from group A step 130 (ff652ed06).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "mobile/ios/RunnerTests/ProfileSetupRecoveryTests.swift",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/ios/RunnerTests/RunnerTests.swift",
+      "responsibility": "Track partial upstream replay from group A steps 13 (ef57fec4d), 16 (96e56c5b3), 32 (cb69ad9e4), 130 (ff652ed06), 253 (e03a11f92).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/activity/activity_page/header_actions.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/activity/activity_provider.dart",
+      "responsibility": "Track partial upstream replay from group A step 71 (3dcdf1c05).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/agents/agent_avatar_picker.dart",
+      "responsibility": "Track partial upstream replay from group A step 126 (21802f019).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/agents/agent_creation_draft.dart",
+      "responsibility": "Track partial upstream replay from group A step 60 (a2d4ba026).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/agents/agents_page.dart",
+      "responsibility": "Track partial upstream replay from group A steps 2 (dd2d3cf4e), 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/agent_activity/transcript_item_widget.dart",
+      "responsibility": "Track partial upstream replay from group A step 56 (41587e028).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/bestie_conversation.dart",
+      "responsibility": "Track partial upstream replay from group A steps 20 (27f0fe752), 32 (cb69ad9e4).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel.dart",
+      "responsibility": "Track partial upstream replay from group A steps 4 (0aca7588e), 58 (642ce4165).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_detail_page/banners.dart",
+      "responsibility": "Track partial upstream replay from group A steps 4 (0aca7588e), 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_detail_page/dm_identity.dart",
+      "responsibility": "Track partial upstream replay from group A steps 16 (96e56c5b3), 99 (4ec5efa93).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_detail_page/empty_messages.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_detail_page/huddle_agent_connection.dart",
+      "responsibility": "Track partial upstream replay from group A step 2 (dd2d3cf4e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_detail_page/huddle_history.dart",
+      "responsibility": "Track partial upstream replay from group A step 31 (5f81803cb).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_detail_page/message_list.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_detail_page/placement_route.dart",
+      "responsibility": "Track partial upstream replay from group A step 58 (642ce4165).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_directory.dart",
+      "responsibility": "Track partial upstream replay from group A steps 4 (0aca7588e), 79 (c97c85d8f).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_event_order.dart",
+      "responsibility": "Track partial upstream replay from group A step 113 (aec571045).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_management_actions.dart",
+      "responsibility": "Track partial upstream replay from group A step 4 (0aca7588e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_management_provider.dart",
+      "responsibility": "Track partial upstream replay from group A steps 73 (15c65c76d), 98 (c16dac232).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_member_profile_actions.dart",
+      "responsibility": "Track partial upstream replay from group A step 70 (04af7081c).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_member_snapshots.dart",
+      "responsibility": "Track partial upstream replay from group A step 31 (5f81803cb).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_messages_provider.dart",
+      "responsibility": "Track partial upstream replay from group A steps 80 (bf422ac8e), 113 (aec571045).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_messages_provider/pagination.dart",
+      "responsibility": "Track partial upstream replay from group A step 113 (aec571045).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_messages_provider/thread_summaries.dart",
+      "responsibility": "Track partial upstream replay from group A step 80 (bf422ac8e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_mutes/channel_mutes_provider.dart",
+      "responsibility": "Track partial upstream replay from group A step 74 (9e40bf5d7).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_sections/channel_sections_provider.dart",
+      "responsibility": "Track partial upstream replay from group A step 74 (9e40bf5d7).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_sort/channel_sort_provider.dart",
+      "responsibility": "Track partial upstream replay from group A step 74 (9e40bf5d7).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_stars/channel_stars_provider.dart",
+      "responsibility": "Track partial upstream replay from group A step 74 (9e40bf5d7).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_typing_provider.dart",
+      "responsibility": "Track partial upstream replay from group A step 77 (3764a2e4d).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channel_unread_catch_up.dart",
+      "responsibility": "Track partial upstream replay from group A step 66 (237a39fe7).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channels_page/badges.dart",
+      "responsibility": "Track partial upstream replay from group A steps 15 (8f80b172e), 60 (a2d4ba026), 64 (d1a8c3607).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channels_page/community_switcher.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channels_page/sections.dart",
+      "responsibility": "Track partial upstream replay from group A steps 32 (cb69ad9e4), 35 (2636e986a), 78 (5f1cd6798), 174 (68d367cf2).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channels_page/skeleton.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channels_provider_joins.dart",
+      "responsibility": "Track partial upstream replay from group A step 4 (0aca7588e).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/channels_provider_lifecycle.dart",
+      "responsibility": "Track partial upstream replay from group A step 74 (9e40bf5d7).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/compose_bar.dart",
+      "responsibility": "Track partial upstream replay from group A steps 10 (1adde0e6b), 13 (ef57fec4d), 16 (96e56c5b3), 32 (cb69ad9e4), 111 (9ccad9534).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/compose_bar/agent_mention_prefill.dart",
+      "responsibility": "Track partial upstream replay from group A steps 10 (1adde0e6b), 50 (3c0adc188). Refresh untouched automatic mentions by identity and retire known archived bindings even during roster reload.",
+      "is_new": true,
+      "required_symbols": [
+        "activePubkeys.contains(agent.pubkey)"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "mobile/lib/features/channels/compose_bar/agent_mention_prefill.dart",
+          "callee_symbol": "hiddenArchivedIdentitiesProvider",
+          "invocation": "ref.watch(hiddenArchivedIdentitiesProvider)",
+          "behavior_test": "untouched prefill follows archive changes during a roster reload",
+          "verification_command": "cd mobile && flutter test test/features/channels/compose_bar_test.dart --plain-name 'untouched prefill follows'"
+        }
+      ],
+      "verification_commands": [
+        "just ci",
+        "cd mobile && flutter test test/features/channels/compose_bar_test.dart --plain-name 'untouched prefill follows'",
+        "cd mobile && flutter test test/features/channels/compose_bar_test.dart --plain-name 'typing during roster reload'"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/compose_bar/attachments.dart",
+      "responsibility": "Track partial upstream replay from group A steps 13 (ef57fec4d), 19 (85c715608).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/compose_bar/compose_bar_widget.dart",
+      "responsibility": "Track partial upstream replay from group A steps 10 (1adde0e6b), 32 (cb69ad9e4), 50 (3c0adc188), 111 (9ccad9534).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/compose_bar/dock.dart",
+      "responsibility": "Track partial upstream replay from group A step 16 (96e56c5b3).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/compose_bar/hardware_keyboard.dart",
+      "responsibility": "Track partial upstream replay from group A step 111 (9ccad9534).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/compose_bar/helpers.dart",
+      "responsibility": "Track partial upstream replay from group A steps 10 (1adde0e6b), 50 (3c0adc188), 111 (9ccad9534).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/compose_bar/ios_attachment_popover.dart",
+      "responsibility": "Track partial upstream replay from group A steps 32 (cb69ad9e4), 111 (9ccad9534).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/compose_bar/ios_photo_picker.dart",
+      "responsibility": "Track partial upstream replay from group A step 13 (ef57fec4d).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/compose_bar/layout.dart",
+      "responsibility": "Track partial upstream replay from group A steps 111 (9ccad9534), 256 (2b44717eb).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/compose_bar/markdown_editing_controller.dart",
+      "responsibility": "Track partial upstream replay from group A step 50 (3c0adc188).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/compose_bar/photo_gallery_picker.dart",
+      "responsibility": "Track partial upstream replay from group A step 13 (ef57fec4d).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/compose_bar/video_thumbnail.dart",
+      "responsibility": "Track partial upstream replay from group A step 13 (ef57fec4d).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/composer_geometry.dart",
+      "responsibility": "Track partial upstream replay from group A step 16 (96e56c5b3).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/default_agent_launcher.dart",
+      "responsibility": "Track partial upstream replay from group A step 20 (27f0fe752).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/dm_voice_agent_provider.dart",
+      "responsibility": "Track partial upstream replay from group A step 2 (dd2d3cf4e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/ios_add_members_sheet.dart",
+      "responsibility": "Track partial upstream replay from group A step 20 (27f0fe752).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/me/me_assistant_list.dart",
+      "responsibility": "Track partial upstream replay from group A step 5 (b483bbe76).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/me/me_chat_assistant.dart",
+      "responsibility": "Track partial upstream replay from group A step 5 (b483bbe76).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/me/me_chat_draft.dart",
+      "responsibility": "Track partial upstream replay from group A steps 5 (b483bbe76), 9 (0ac71eaf9).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/me/me_page.dart",
+      "responsibility": "Track partial upstream replay from group A steps 5 (b483bbe76), 9 (0ac71eaf9), 32 (cb69ad9e4), 35 (2636e986a), 58 (642ce4165).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/me/me_section.dart",
+      "responsibility": "Track partial upstream replay from group A step 35 (2636e986a).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/me/me_unread_provider.dart",
+      "responsibility": "Track partial upstream replay from group A step 58 (642ce4165).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/me/me_working_provider.dart",
+      "responsibility": "Track partial upstream replay from group A step 5 (b483bbe76).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/me/new_me_chat.dart",
+      "responsibility": "Track partial upstream replay from group A step 9 (0ac71eaf9).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/me/solo_working_dots.dart",
+      "responsibility": "Track partial upstream replay from group A step 97 (75d78eab6).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/media_viewer_page.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/media_viewer_page/image_controls.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/mentions/mention_candidates_provider.dart",
+      "responsibility": "Track partial upstream replay from group A step 2 (dd2d3cf4e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/message_author_visibility.dart",
+      "responsibility": "Track partial upstream replay from group A steps 16 (96e56c5b3), 25 (c0e30110d).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/message_content.dart",
+      "responsibility": "Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d), 16 (96e56c5b3), 19 (85c715608), 50 (3c0adc188), 56 (41587e028), 91 (44c8206be), 172 (8306e3874).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/message_content/bubble_segments.dart",
+      "responsibility": "Track partial upstream replay from group A step 56 (41587e028).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/message_content/edited_marker.dart",
+      "responsibility": "Track partial upstream replay from group A step 56 (41587e028).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/message_content/inline_components.dart",
+      "responsibility": "Track partial upstream replay from group A step 56 (41587e028).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/message_content/link_actions.dart",
+      "responsibility": "Track partial upstream replay from group A step 91 (44c8206be).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/message_content/link_normalizer.dart",
+      "responsibility": "Track partial upstream replay from group A step 56 (41587e028).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/message_content/markdown_escapes.dart",
+      "responsibility": "Track partial upstream replay from group A step 56 (41587e028).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/message_content/markdown_tables.dart",
+      "responsibility": "Track partial upstream replay from group A step 56 (41587e028).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/message_content/media_carousel.dart",
+      "responsibility": "Track partial upstream replay from group A step 1 (b40f22114).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/message_content/media_stack.dart",
+      "responsibility": "Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d), 19 (85c715608).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/message_content/mention_markdown.dart",
+      "responsibility": "Track partial upstream replay from group A steps 1 (b40f22114), 56 (41587e028).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/message_content/token_pill.dart",
+      "responsibility": "Track partial upstream replay from group A step 56 (41587e028).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/message_content/video_preview.dart",
+      "responsibility": "Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d), 19 (85c715608).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/message_gallery.dart",
+      "responsibility": "Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d), 19 (85c715608).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/mobile_huddle_controller.dart",
+      "responsibility": "Track partial upstream replay from group A step 31 (5f81803cb).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/native_channel_actions.dart",
+      "responsibility": "Track partial upstream replay from group A step 109 (921a05a37).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/native_channel_sheet_app.dart",
+      "responsibility": "Track partial upstream replay from group A step 109 (921a05a37).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/native_photo_zoom_preview.dart",
+      "responsibility": "Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d), 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/native_video_files.dart",
+      "responsibility": "Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d), 19 (85c715608). Limit native video receipt to the default relay upload budget while streaming to disk.",
+      "is_new": true,
+      "required_symbols": [
+        "this.maxBytes = 500 * 1024 * 1024"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci",
+        "cd mobile && flutter test test/features/channels/native_video_files_test.dart"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/photo_library.dart",
+      "responsibility": "Track partial upstream replay from group A step 13 (ef57fec4d).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/thread_detail_helpers.dart",
+      "responsibility": "Track partial upstream replay from group A step 113 (aec571045).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/timeline_message.dart",
+      "responsibility": "Track partial upstream replay from group A step 113 (aec571045).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/channels/voice_note_composer_recorder.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/forum/forum_post_card.dart",
+      "responsibility": "Track partial upstream replay from group A step 56 (41587e028).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/forum/forum_posts_view.dart",
+      "responsibility": "Track partial upstream replay from group A step 16 (96e56c5b3).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/home/home_screen_shortcut_host.dart",
+      "responsibility": "Track partial upstream replay from group A steps 20 (27f0fe752), 32 (cb69ad9e4), 40 (60b7fb817).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/home/messages_navigation_bar.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/invites/invite_create_page.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/invites/invite_create_page/invite_link_section.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/invites/invite_join_provider.dart",
+      "responsibility": "Track partial upstream replay from group A steps 60 (a2d4ba026), 64 (d1a8c3607).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/onboarding/hosted_connect_sheet.dart",
+      "responsibility": "Track partial upstream replay from group A step 61 (59ae028a3).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/onboarding/organization_sign_in_banner.dart",
+      "responsibility": "Track partial upstream replay from group A step 114 (d39545ebd).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/pairing/pairing_provider.dart",
+      "responsibility": "Track partial upstream replay from group A step 60 (a2d4ba026).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/pairing/pairing_provider_helpers.dart",
+      "responsibility": "Track partial upstream replay from group A steps 60 (a2d4ba026), 64 (d1a8c3607).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/pairing/pairing_qr_scanner/fallback_scanner.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/pairing/pairing_qr_scanner/scanner_camera.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/profile/animated_avatar_capture.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/profile/animated_avatar_capture/review_controls.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/profile/profile_avatar_draft.dart",
+      "responsibility": "Track partial upstream replay from group A step 126 (21802f019).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/profile/profile_edit_page.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/profile/profile_provider.dart",
+      "responsibility": "Track partial upstream replay from group A step 74 (9e40bf5d7).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/profile/set_status_sheet.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/search/search_page/message_tile.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/search/search_provider.dart",
+      "responsibility": "Track partial upstream replay from group A step 2 (dd2d3cf4e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/settings/settings_page/builderlab_account_section.dart",
+      "responsibility": "Track partial upstream replay from group A step 8 (045b637b0).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/settings/theme_option_sheets.dart",
+      "responsibility": "Track partial upstream replay from group A steps 32 (cb69ad9e4), 272 (a8cc77ac3).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/features/settings/theme_picker_page.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/organization_app_entry.dart",
+      "responsibility": "Track partial upstream replay from group A step 114 (d39545ebd).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/animated_avatar.dart",
+      "responsibility": "Track partial upstream replay from group A step 76 (11ea8c928).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/community/community_icon_provider.dart",
+      "responsibility": "Track partial upstream replay from group A step 60 (a2d4ba026).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/custom_emoji/custom_emoji_provider.dart",
+      "responsibility": "Track partial upstream replay from group A step 67 (9fc2b3332).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/custom_emoji/custom_emoji_render.dart",
+      "responsibility": "Track partial upstream replay from group A steps 37 (4a101752f), 56 (41587e028).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/emoji/emoji_picker.dart",
+      "responsibility": "Track partial upstream replay from group A steps 130 (ff652ed06), 229 (51b0ea62b).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/emoji/emoji_picker/ios_native_picker.dart",
+      "responsibility": "Track partial upstream replay from group A step 130 (ff652ed06).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/hosted/account_identity_store.dart",
+      "responsibility": "Track partial upstream replay from group A step 61 (59ae028a3).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/hosted/hosted_admission.dart",
+      "responsibility": "Track partial upstream replay from group A step 60 (a2d4ba026).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/hosted/hosted_flow.dart",
+      "responsibility": "Track partial upstream replay from group A step 61 (59ae028a3).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/hosted/hosted_flow_backup_consent.dart",
+      "responsibility": "Track partial upstream replay from group A step 61 (59ae028a3).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/hosted/hosted_identity_service.dart",
+      "responsibility": "Track partial upstream replay from group A steps 61 (59ae028a3), 259 (0d4fd74ad).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/hosted/hosted_relay_auth.dart",
+      "responsibility": "Track partial upstream replay from group A step 60 (a2d4ba026).",
+      "is_new": false,
+      "required_symbols": [
+        "Future<http.StreamedResponse> sendRedirect(http.BaseRequest request)"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/hosted/organization_sign_in.dart",
+      "responsibility": "Track partial upstream replay from group A step 114 (d39545ebd).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/hosted/saved_identity_profile.dart",
+      "responsibility": "Track partial upstream replay from group A step 60 (a2d4ba026).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/http/app_http_client.dart",
+      "responsibility": "Track partial upstream replay from group A steps 60 (a2d4ba026), 64 (d1a8c3607). Carry the transport-reported final response URL through the shared session for external image cache policy.",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [
+        {
+          "caller_path": "mobile/lib/shared/http/app_http_client.dart",
+          "callee_symbol": "_SessionResponseWithUrl",
+          "invocation": "http.BaseResponseWithUrl(:final url) => _SessionResponseWithUrl(",
+          "behavior_test": "no-store disk policy on first load for relay images",
+          "verification_command": "cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart --plain-name no-store"
+        }
+      ],
+      "verification_commands": [
+        "just ci",
+        "cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart --plain-name no-store"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/identity_archives/identity_archives.dart",
+      "responsibility": "Track partial upstream replay from group A steps 2 (dd2d3cf4e), 60 (a2d4ba026).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/me/me_archived_agents.dart",
+      "responsibility": "Track partial upstream replay from group A step 2 (dd2d3cf4e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "mobile/lib/shared/me/me_assistant_names.dart",
+      "responsibility": "Track partial upstream replay from group A step 5 (b483bbe76).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/me/me_assistants.dart",
+      "responsibility": "Track partial upstream replay from group A step 2 (dd2d3cf4e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/me/me_chat_title.dart",
+      "responsibility": "Track partial upstream replay from group A step 9 (0ac71eaf9).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/me/me_sync.dart",
+      "responsibility": "Track partial upstream replay from group A step 74 (9e40bf5d7).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/me/solo_chat_seed.dart",
+      "responsibility": "Track partial upstream replay from group A step 9 (0ac71eaf9).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/mentions/agent_identity_provider.dart",
+      "responsibility": "Track partial upstream replay from group A step 72 (99e65b6c2).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/mentions/mention_bindings.dart",
+      "responsibility": "Track partial upstream replay from group A step 50 (3c0adc188).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/profile/user_cache_provider.dart",
+      "responsibility": "Track partial upstream replay from group A step 65 (a540e7bd3).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/push/dev_push_lease.dart",
+      "responsibility": "Track partial upstream replay from group A step 60 (a2d4ba026).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/push/notification_body.dart",
+      "responsibility": "Track partial upstream replay from group A step 210 (34c8f5c7a).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/app_lifecycle_provider.dart",
+      "responsibility": "Track partial upstream replay from group A step 74 (9e40bf5d7).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/media_disk_cache.dart",
+      "responsibility": "Track partial upstream replay from group A steps 130 (ff652ed06), 276 (07dfdbc60). Stop serving persisted redirect entries at their HTTP freshness deadline.",
+      "is_new": false,
+      "required_symbols": [
+        "info.originalUrl != url && !info.validTill.isAfter(_now())"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/media_image.dart",
+      "responsibility": "Track partial upstream replay from group A steps 48 (0bbcf3e7c), 60 (a2d4ba026), 130 (ff652ed06). Respect external image no-store during initial load and purge stale copies on refresh while preserving offline relay media. Scope the relay exception to its configured HTTP origin. Cache permanent redirects only while every response in the chain is explicitly fresh.",
+      "is_new": false,
+      "required_symbols": [
+        "cacheable: expires != null || (!redirected && (directRelay || !noStore))"
+      ],
+      "invocation_seams": [
+        {
+          "caller_path": "mobile/lib/shared/relay/media_image.dart",
+          "callee_symbol": "remove",
+          "invocation": "await cache.remove(url);",
+          "behavior_test": "a no-store refresh removes the saved external image",
+          "verification_command": "cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart --plain-name no-store"
+        },
+        {
+          "caller_path": "mobile/lib/shared/relay/media_image.dart",
+          "callee_symbol": "isRelayMediaOrigin",
+          "invocation": "auth.isRelayMediaOrigin(uri)",
+          "behavior_test": "no-store disk policy on first load for other service on the relay host images",
+          "verification_command": "cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart"
+        },
+        {
+          "caller_path": "mobile/lib/shared/relay/media_image.dart",
+          "callee_symbol": "sendRedirect",
+          "invocation": "hosted?.sendRedirect ?? transport.send",
+          "behavior_test": "an external image redirect does not attach hosted credentials",
+          "verification_command": "cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart"
+        },
+        {
+          "caller_path": "mobile/lib/shared/relay/media_image.dart",
+          "callee_symbol": "_redirectExpiry",
+          "invocation": "_redirectExpiry(response)",
+          "behavior_test": "301 redirect cache expires after 22s",
+          "verification_command": "cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart"
+        }
+      ],
+      "verification_commands": [
+        "just ci",
+        "cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart --plain-name no-store",
+        "cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/media_upload.dart",
+      "responsibility": "Track partial upstream replay from group A steps 13 (ef57fec4d), 60 (a2d4ba026), 126 (21802f019), 198 (f7496607a), 202 (9bcb3e45a).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/media_upload/platform_bindings.dart",
+      "responsibility": "Track partial upstream replay from group A steps 13 (ef57fec4d), 60 (a2d4ba026).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/nostr_models.dart",
+      "responsibility": "Track partial upstream replay from group A step 4 (0aca7588e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/relay_author_provider.dart",
+      "responsibility": "Track partial upstream replay from group A step 60 (a2d4ba026).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/relay_client.dart",
+      "responsibility": "Track partial upstream replay from group A step 60 (a2d4ba026).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/relay_http_query_client.dart",
+      "responsibility": "Track partial upstream replay from group A steps 60 (a2d4ba026), 64 (d1a8c3607).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/relay_provider.dart",
+      "responsibility": "Track partial upstream replay from group A steps 44 (8f3f4e266), 60 (a2d4ba026).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/relay_session.dart",
+      "responsibility": "Track partial upstream replay from group A step 108 (7b8066fb9).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/relay_session_auth.dart",
+      "responsibility": "Track partial upstream replay from group A step 108 (7b8066fb9).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/relay_session_snapshot.dart",
+      "responsibility": "Track partial upstream replay from group A step 60 (a2d4ba026).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/thread_reference.dart",
+      "responsibility": "Track partial upstream replay from group A step 80 (bf422ac8e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/shortcuts/home_screen_shortcuts.dart",
+      "responsibility": "Track partial upstream replay from group A step 20 (27f0fe752).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/theme/theme_provider.dart",
+      "responsibility": "Track partial upstream replay from group A steps 266 (4a440b593), 272 (a8cc77ac3).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/utils/bounded_fetch.dart",
+      "responsibility": "Carry each redirect response and the effective URL to the external image cache policy.",
+      "is_new": false,
+      "required_symbols": [
+        "redirectTarget: redirects.isEmpty ? null : target",
+        "redirects: redirects"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/verified_profiles/verified_profile_directory.dart",
+      "responsibility": "Track partial upstream replay from group A step 68 (93bbd452a).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/verified_profiles/verified_profile_discovery_fetch.dart",
+      "responsibility": "Track partial upstream replay from group A step 60 (a2d4ba026).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/adaptive_conversation_pane.dart",
+      "responsibility": "Track partial upstream replay from group A steps 32 (cb69ad9e4), 78 (5f1cd6798), 89 (a4cac9a2d).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/app_route_observer.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/avatar_editor_options.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/avatar_editor_options_scope.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/avatar_image.dart",
+      "responsibility": "Track partial upstream replay from group A step 109 (921a05a37).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/avatar_image_native.dart",
+      "responsibility": "Track partial upstream replay from group A step 109 (921a05a37).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/avatar_image_source_controls.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/buzz_setting_menu.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/buzz_sheet_header.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/collapsible_sliver_body.dart",
+      "responsibility": "Track partial upstream replay from group A step 35 (2636e986a).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/concentric_sheet_surface.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/covered_route_keyboard_insets.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/dm_header_cluster.dart",
+      "responsibility": "Track partial upstream replay from group A step 16 (96e56c5b3).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/dm_header_portrait.dart",
+      "responsibility": "Track partial upstream replay from group A step 16 (96e56c5b3).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/duo_toolbar.dart",
+      "responsibility": "Track partial upstream replay from group A steps 32 (cb69ad9e4), 78 (5f1cd6798).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/duo_workspace_scaffold.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/emoji_avatar_controls.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/frosted_app_bar.dart",
+      "responsibility": "Track partial upstream replay from group A steps 16 (96e56c5b3), 32 (cb69ad9e4), 69 (b6db61faa), 78 (5f1cd6798).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/frosted_scaffold.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/ios_message_create_button.dart",
+      "responsibility": "Track partial upstream replay from group A steps 32 (cb69ad9e4), 174 (68d367cf2).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/ios_navigation_bar.dart",
+      "responsibility": "Track partial upstream replay from group A steps 16 (96e56c5b3), 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/ios_navigation_metrics.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/modal_presentation.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/navigation_backdrop.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/onboarding_step_page.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/preset_agent_avatar.dart",
+      "responsibility": "Track partial upstream replay from group A steps 169 (39ffc3dcc), 218 (03d09e20e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/profile_avatar_crop_page.dart",
+      "responsibility": "Track partial upstream replay from group A steps 32 (cb69ad9e4), 126 (21802f019).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/widgets/root_page_route.dart",
+      "responsibility": "Track partial upstream replay from group A step 43 (5bfbda4c3).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/packages/buzz_secp256k1/pubspec.lock",
+      "responsibility": "Track partial upstream replay from group A step 60 (a2d4ba026).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/packages/buzz_secp256k1/pubspec.yaml",
+      "responsibility": "Track partial upstream replay from group A step 60 (a2d4ba026).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/pubspec.lock",
+      "responsibility": "Track partial upstream replay from group A steps 32 (cb69ad9e4), 56 (41587e028), 60 (a2d4ba026), 64 (d1a8c3607), 117 (b0e55606f).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/activity/activity_provider_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 71 (3dcdf1c05).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/age_gate/age_gate_app_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/agents/agent_instructions_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 60 (a2d4ba026).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/agent_activity/transcript_item_widget_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 56 (41587e028).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/channel_actions_lifecycle_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 109 (921a05a37).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/channel_actions_sheet_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 43 (5bfbda4c3), 109 (921a05a37).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/channel_detail_page_test/archive_navigation_tests.dart",
+      "responsibility": "Track partial upstream replay from group A step 43 (5bfbda4c3).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/channel_detail_page_test/author_visibility_tests.dart",
+      "responsibility": "Track partial upstream replay from group A steps 16 (96e56c5b3), 25 (c0e30110d).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/channel_event_order_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 113 (aec571045).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/channel_management_provider_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 4 (0aca7588e), 58 (642ce4165), 73 (15c65c76d).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/channel_member_profile_actions_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 70 (04af7081c).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/channel_messages_provider_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 113 (aec571045).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/channel_typing_provider_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 77 (3764a2e4d).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/channel_window_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 113 (aec571045).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/channels_provider_join_cases.dart",
+      "responsibility": "Track partial upstream replay from group A step 4 (0aca7588e).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/channels_provider_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 4 (0aca7588e), 66 (237a39fe7), 79 (c97c85d8f).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/channels_sync_journey_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 74 (9e40bf5d7).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/compose_bar_test/agent_prefill_tests.dart",
+      "responsibility": "Track partial upstream replay from group A steps 10 (1adde0e6b), 50 (3c0adc188).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/compose_bar_test/exact_mention_tests.dart",
+      "responsibility": "Track partial upstream replay from group A step 50 (3c0adc188).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/compose_bar_test/mixed_gallery_tests.dart",
+      "responsibility": "Track partial upstream replay from group A steps 13 (ef57fec4d), 19 (85c715608).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/default_agent_launcher_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 20 (27f0fe752), 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/emoji_picker_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 130 (ff652ed06), 229 (51b0ea62b).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/me/me_chat_assistant_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 5 (b483bbe76), 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/me/me_page_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 5 (b483bbe76), 20 (27f0fe752), 58 (642ce4165).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/me/me_unread_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 20 (27f0fe752), 58 (642ce4165).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/me/me_working_provider_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 5 (b483bbe76).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/me/solo_working_dots_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 97 (75d78eab6).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/media_viewer_page/image_rail_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/members_sheet_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 2 (dd2d3cf4e), 70 (04af7081c).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/message_attachment_rendering_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 91 (44c8206be).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/message_content/edited_marker_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 56 (41587e028).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/message_content/link_normalizer_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 56 (41587e028).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/message_content/markdown_tables_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 56 (41587e028).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/message_content_bubble_cases.dart",
+      "responsibility": "Track partial upstream replay from group A steps 56 (41587e028), 91 (44c8206be).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/message_content_custom_emoji_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 56 (41587e028).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/message_content_exact_mentions_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 50 (3c0adc188).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/message_content_stability_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 56 (41587e028).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/message_content_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 13 (ef57fec4d), 19 (85c715608), 56 (41587e028), 91 (44c8206be), 172 (8306e3874).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/message_stack_cases.dart",
+      "responsibility": "Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d), 19 (85c715608).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/native_photo_zoom_preview_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/native_video_files_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 1 (b40f22114).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/reaction_row_test/shortcode_tests.dart",
+      "responsibility": "Track partial upstream replay from group A step 37 (4a101752f).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/thread_replies_provider_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 113 (aec571045).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/channels/timeline_message_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 113 (aec571045).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/forum/forum_widgets_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 16 (96e56c5b3).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/home/home_page_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 20 (27f0fe752), 32 (cb69ad9e4), 40 (60b7fb817), 78 (5f1cd6798).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/invites/invite_create_page_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/onboarding/fullscreen_onboarding_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/onboarding/hosted_backup_consent_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 61 (59ae028a3).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/onboarding/hosted_journeys_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 61 (59ae028a3), 259 (0d4fd74ad).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/onboarding/internal_build_entry_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/onboarding/organization_sign_in_banner_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 114 (d39545ebd).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/pairing/pairing_hosted_handoff_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 61 (59ae028a3).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/profile/presence_shell_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 52 (3d3f9cf15).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/profile/profile_avatar_crop_cancel_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/profile/profile_avatar_crop_resize_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/profile/profile_edit_page_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 32 (cb69ad9e4), 126 (21802f019).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/profile/profile_edit_retry_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 126 (21802f019).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/profile/set_status_sheet_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/profile/user_profile_sheet_message_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 109 (921a05a37).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/search/search_channels_journey_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 2 (dd2d3cf4e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/search/search_page_lazy_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 2 (dd2d3cf4e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/settings/builderlab_account_row_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 8 (045b637b0), 32 (cb69ad9e4).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/settings/notification_toggle_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 44 (8f3f4e266).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/settings/settings_overlay_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 20 (27f0fe752).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/features/settings/theme_picker_page_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 32 (cb69ad9e4), 266 (4a440b593), 272 (a8cc77ac3).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/flutter_test_config.dart",
+      "responsibility": "Track partial upstream replay from group A step 44 (8f3f4e266).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/helpers/hosted_journey_fixture.dart",
+      "responsibility": "Track partial upstream replay from group A step 61 (59ae028a3).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/helpers/message_link_finders.dart",
+      "responsibility": "Track partial upstream replay from group A step 91 (44c8206be).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/animated_avatar_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 76 (11ea8c928).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/community/community_icon_provider_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 60 (a2d4ba026).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/custom_emoji/custom_emoji_provider_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 67 (9fc2b3332).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/custom_emoji/custom_emoji_render_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 56 (41587e028).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/hosted/account_identity_store_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 61 (59ae028a3).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/hosted/hosted_communities_flow_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 61 (59ae028a3).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/hosted/hosted_multi_backup_recovery_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 259 (0d4fd74ad).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/hosted/identity_choice_lifecycle_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 61 (59ae028a3).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/http/app_http_client_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 60 (a2d4ba026), 64 (d1a8c3607).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/identity_archives/identity_archives_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 2 (dd2d3cf4e), 60 (a2d4ba026).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/me/me_archived_agents_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 2 (dd2d3cf4e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ],
+      "deleted": true
+    },
+    {
+      "path": "mobile/test/shared/me/me_assistant_names_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 5 (b483bbe76).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/me/me_assistants_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 2 (dd2d3cf4e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/me/me_sync_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 2 (dd2d3cf4e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/me/solo_chat_seed_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 9 (0ac71eaf9).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/mentions/agent_identity_provider_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 72 (99e65b6c2).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/mentions/mention_bindings_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 50 (3c0adc188).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/profile/user_cache_provider_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 65 (a540e7bd3).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/push/notification_body_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 210 (34c8f5c7a).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/push/push_bridge_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 44 (8f3f4e266).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/push/push_root_isolation_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/relay/media_image_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 48 (0bbcf3e7c), 49 (bf3bdd0ea), 130 (ff652ed06).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/relay/media_upload_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 198 (f7496607a), 202 (9bcb3e45a).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/relay/relay_http_query_client_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 60 (a2d4ba026).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/relay/relay_session_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 108 (7b8066fb9).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/theme/appearance_mode_provider_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 266 (4a440b593).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/verified_profiles/verified_profile_directory_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 68 (93bbd452a).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/widgets/adaptive_conversation_pane_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 32 (cb69ad9e4), 89 (a4cac9a2d).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/widgets/adaptive_conversation_recording_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/widgets/buzz_setting_menu_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/widgets/collapsible_sliver_body_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 35 (2636e986a).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/widgets/dm_header_cluster_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 16 (96e56c5b3).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/widgets/frosted_app_bar_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 16 (96e56c5b3), 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/widgets/ios_message_create_button_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 174 (68d367cf2).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/widgets/ios_navigation_bar_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 16 (96e56c5b3), 32 (cb69ad9e4), 69 (b6db61faa).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/widgets/modal_presentation_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 32 (cb69ad9e4).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/widgets/native_avatar_image_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 109 (921a05a37).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/widgets/preset_agent_avatar_test.dart",
+      "responsibility": "Track partial upstream replay from group A steps 16 (96e56c5b3), 169 (39ffc3dcc), 218 (03d09e20e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/test/shared/widgets/root_page_route_test.dart",
+      "responsibility": "Track partial upstream replay from group A step 43 (5bfbda4c3).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "previews/invite-video/README.md",
+      "responsibility": "Track partial upstream replay from group A step 7 (2c5c8343e).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "schema/tables/public/scheduled_workflow_fires.sql",
+      "responsibility": "Track partial upstream replay from group A step 30 (aa9b44ef3).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "scripts/flake-check.mjs",
+      "responsibility": "Track partial upstream replay from group A step 44 (8f3f4e266).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "scripts/flake-check.test.mjs",
+      "responsibility": "Track partial upstream replay from group A step 44 (8f3f4e266).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "scripts/test-mobile-photo-zoom.sh",
+      "responsibility": "Track partial upstream replay from group A step 1 (b40f22114).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "scripts/test-mobile-picker-preparation.sh",
+      "responsibility": "Track partial upstream replay from group A step 13 (ef57fec4d).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "scripts/test-relay-image-eligibility-workflow.sh",
+      "responsibility": "Track partial upstream replay from group A step 151 (bc3afbb29).",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "test-fixtures/notification-body.json",
+      "responsibility": "Track partial upstream replay from group A steps 11 (95dd9d67d), 39 (defc2d5ea), 129 (1059d81fc), 210 (34c8f5c7a).",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "just ci"
+      ]
+    },
+    {
+      "path": "mobile/lib/shared/relay/media_auth.dart",
+      "responsibility": "Classify relay image authorization and the offline media exception by the configured HTTP origin.",
+      "is_new": false,
+      "required_symbols": [
+        "bool isRelayMediaOrigin(Uri uri)"
+      ],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart"
       ]
     }
   ],
