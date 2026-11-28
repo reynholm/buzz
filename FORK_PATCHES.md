@@ -9058,6 +9058,14 @@ New module: `false`.
 - Verify: `just test`
 - Verify: `just ci`
 
+## `docs/nips/NIP-IA.md`
+
+Preserve archive snapshot ordering and client account or relay scoping
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db -p buzz-relay`
+
 ## `crates/buzz-relay/src/handlers/workflows_deploy_postgres.rs`
 
 Verify accepted-work drain and descendant completion
