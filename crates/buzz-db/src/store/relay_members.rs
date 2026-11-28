@@ -282,6 +282,9 @@ async fn delete_member_with_acceptances(
     expected_role: Option<&str>,
 ) -> Result<bool> {
     let community = tx.community();
+    // A first owner link that commits before the removal must be visible to
+    // the cascade. Share the admission lock before taking any membership rows.
+    crate::relay_invite::lock_admission(tx.conn(), community).await?;
     let locked = sqlx::query(
         "SELECT 1 FROM relay_members WHERE community_id = $1 AND pubkey = $2 \
          AND CASE WHEN $3::text IS NULL THEN role <> 'owner' ELSE role = $3 END \
@@ -1420,6 +1423,49 @@ impl Db {
         add_relay_member(&self.pool, community, pubkey, role, added_by, relay_keypair).await
     }
 
+    /// Applies a disconnect only while the roster that committed the removal
+    /// is current. The shared replacement lock puts the synchronous effect
+    /// before any later membership change can commit.
+    pub async fn with_current_relay_roster<T>(
+        &self,
+        community: CommunityId,
+        relay_pubkey: &nostr::PublicKey,
+        roster_id: &nostr::EventId,
+        apply: impl FnOnce() -> T,
+    ) -> Result<Option<T>> {
+        let mut tx = crate::begin_community_write_transaction(
+            &self.pool,
+            community,
+            observability::WriterOperation::Authorization,
+        )
+        .await?;
+        let kind = buzz_core::kind::KIND_NIP43_MEMBERSHIP_LIST as i32;
+        let lock_key = replaceable::event_replacement_lock_key(
+            community,
+            kind,
+            relay_pubkey.as_bytes().as_slice(),
+            None,
+        );
+        sqlx::query("SELECT pg_advisory_xact_lock_shared($1)")
+            .bind(lock_key)
+            .execute(tx.conn())
+            .await?;
+        let current: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM events WHERE community_id = $1 \
+             AND kind = $2 AND pubkey = $3 AND id = $4 \
+             AND channel_id IS NULL AND deleted_at IS NULL)",
+        )
+        .bind(community.as_uuid())
+        .bind(kind)
+        .bind(relay_pubkey.as_bytes().as_slice())
+        .bind(roster_id.as_bytes().as_slice())
+        .fetch_one(tx.conn())
+        .await?;
+        let result = current.then(apply);
+        tx.commit().await?;
+        Ok(result)
+    }
+
     /// Adds a roster member and records default-channel work atomically.
     /// Unlike the roster-only `add_relay_member`, this opts into auto-join.
     #[datastore_span(name = "add_relay_member_with_default_channels", system = "postgresql")]
@@ -2197,6 +2243,100 @@ mod postgres_tests {
         );
         assert_eq!(role_of(&pool, community, &agent).await, None);
         assert_eq!(acceptances(&pool, community, &agent).await, 0);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn cascade_waits_for_first_owner_link_before_collecting_agents() {
+        let pool = setup_pool().await;
+        let (community, _) = owned_community(&pool).await;
+        let (human, agent) = (test_pubkey(), test_pubkey());
+        for key in [&human, &agent] {
+            add_with_acceptance(&pool, community, key, "member").await;
+            crate::user::ensure_user(&pool, community, &hex::decode(key).unwrap())
+                .await
+                .expect("ensure user");
+        }
+
+        // Pause the first link just before commit, using the same admission
+        // lock as the production ownership writer.
+        let mut link = pool.begin().await.expect("begin ownership write");
+        crate::relay_invite::lock_admission(&mut link, community)
+            .await
+            .expect("lock admission");
+        sqlx::query(
+            "UPDATE users SET agent_owner_pubkey = decode($2, 'hex') \
+             WHERE community_id = $1 AND pubkey = decode($3, 'hex')",
+        )
+        .bind(community.as_uuid())
+        .bind(&human)
+        .bind(&agent)
+        .execute(&mut *link)
+        .await
+        .expect("write owner before commit");
+
+        let name = format!("first-owner-cascade-{}", Uuid::new_v4().simple());
+        let remover = crate::test_support::named_pool(&name).await;
+        let removal = tokio::spawn(async move {
+            remove_relay_member(&remover, community, &human, &nostr::Keys::generate())
+                .await
+                .expect("remove owner")
+        });
+        crate::test_support::wait_for_lock_wait(&pool, &name).await;
+        link.commit().await.expect("commit ownership");
+        assert_eq!(
+            removal.await.expect("join removal").outcome,
+            RemoveResult::Removed
+        );
+        assert_eq!(role_of(&pool, community, &agent).await, None);
+        assert_eq!(acceptances(&pool, community, &agent).await, 0);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn removal_roster_fences_disconnect_after_rejoin() {
+        let pool = setup_pool().await;
+        let (community, _) = owned_community(&pool).await;
+        let member = test_pubkey();
+        let keys = nostr::Keys::generate();
+        let db = crate::Db::from_pool(pool);
+        add_with_acceptance(db.pool(), community, &member, "member").await;
+        let write = db
+            .remove_relay_member(community, &member, &keys)
+            .await
+            .unwrap();
+        let roster_id = write.snapshot.unwrap().event.id;
+        assert_eq!(
+            db.with_current_relay_roster(community, &keys.public_key(), &roster_id, || true,)
+                .await
+                .unwrap(),
+            Some(true)
+        );
+
+        let rejoined = claim_relay_membership(
+            db.pool(),
+            community,
+            &member,
+            "member",
+            Some(&"d".repeat(64)),
+            &keys,
+        )
+        .await
+        .expect("rejoin member");
+        assert!(rejoined.outcome);
+        assert_eq!(
+            db.with_current_relay_roster(community, &keys.public_key(), &roster_id, || panic!(
+                "stale disconnect"
+            ),)
+                .await
+                .unwrap(),
+            None::<bool>
+        );
+        assert_eq!(
+            role_of(db.pool(), community, &member).await.as_deref(),
+            Some("member")
+        );
+        assert_eq!(acceptances(db.pool(), community, &member).await, 1);
     }
 
     async fn owned_community(pool: &PgPool) -> (CommunityId, String) {

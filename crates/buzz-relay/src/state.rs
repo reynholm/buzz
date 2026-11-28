@@ -2640,6 +2640,26 @@ impl AppState {
                             }
                         });
                     }
+                    ConnControl::DisconnectRemovedMember { pubkey, roster_id } => {
+                        let state = Arc::clone(&self);
+                        let community = scoped.community_id;
+                        checks.spawn(async move {
+                            if let Err(error) = state.db.with_current_relay_roster(
+                                community,
+                                &state.relay_keypair.public_key(),
+                                &roster_id,
+                                || state.disconnect_pubkey_local(
+                                    community,
+                                    &pubkey,
+                                    &roster_id.to_hex(),
+                                    "blocked: access revoked",
+                                    false,
+                                ),
+                            ).await {
+                                tracing::warn!(%community, %roster_id, %error, "could not verify member disconnect");
+                            }
+                        });
+                    }
                     ConnControl::DisconnectPubkey {
                         pubkey,
                         event_id,

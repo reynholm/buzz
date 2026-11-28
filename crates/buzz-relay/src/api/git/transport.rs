@@ -289,27 +289,42 @@ impl GitAuth {
             }
         })?;
 
-        // A token owner other than the agent's stored owner is refused; an
-        // unset stored owner is recorded.
-        if let Some(owner) = token_owner {
+        // Record the verified owner after admission, as on other HTTP
+        // paths. An assertion takes precedence over an attached NIP-OA tag.
+        let owner = token_owner.or_else(|| {
+            crate::api::relay_members::extract_nip_oa_owner(
+                pubkey.as_bytes(),
+                auth_tag,
+                Some(signed_auth_created_at),
+            )
+        });
+        if let Some(owner) = owner {
             use crate::api::relay_members::{link_agent_owner, OwnerLink};
             match link_agent_owner(state, &tenant, &pubkey, &owner).await {
                 OwnerLink::Linked => {}
                 OwnerLink::Conflict => {
-                    crate::nip_fi_http::owner_refused(
-                        buzz_auth::DenialClass::AuthorizationDenied,
-                        "not_stored_owner",
-                    );
+                    if token_owner.is_some() {
+                        crate::nip_fi_http::owner_refused(
+                            buzz_auth::DenialClass::AuthorizationDenied,
+                            "not_stored_owner",
+                        );
+                    }
                     slot.finish(AuthResult::Denied(crate::access::AuthReason::OwnerMismatch));
-                    return Err(crate::nip_fi_core::http_denial(
-                        buzz_auth::DenialClass::AuthorizationDenied,
+                    return Err(denied(
+                        (
+                            StatusCode::FORBIDDEN,
+                            crate::api::relay_members::OWNER_MISMATCH,
+                        )
+                            .into_response(),
                     ));
                 }
                 OwnerLink::Unavailable => {
-                    crate::nip_fi_http::owner_refused(
-                        buzz_auth::DenialClass::AuthorizationUnavailable,
-                        "owner_link_unavailable",
-                    );
+                    if token_owner.is_some() {
+                        crate::nip_fi_http::owner_refused(
+                            buzz_auth::DenialClass::AuthorizationUnavailable,
+                            "owner_link_unavailable",
+                        );
+                    }
                     slot.finish(AuthResult::Denied(
                         crate::access::AuthReason::NipOaOwnerUnlinked,
                     ));
@@ -4706,6 +4721,96 @@ mod off_mode_precedence_tests {
                 assert_eq!(line["level"], level, "{line}");
                 assert_eq!(line["status"], status, "{line}");
             }
+        }
+
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn git_nip_oa_admission_records_owner_for_membership_cascade() {
+            use base64::Engine as _;
+            let mut state = off_mode_state().await.expect("local Postgres");
+            {
+                let config = Arc::make_mut(&mut Arc::make_mut(&mut state).config);
+                config.require_relay_membership = true;
+                config.allow_nip_oa_auth = false;
+            }
+            let host = format!("git-link-{}.example", uuid::Uuid::new_v4().simple());
+            let community = state
+                .db
+                .ensure_configured_community(&host)
+                .await
+                .expect("ensure community")
+                .id;
+            let (owner, agent) = (nostr::Keys::generate(), nostr::Keys::generate());
+            for keys in [&owner, &agent] {
+                let write = state
+                    .db
+                    .add_relay_member(
+                        community,
+                        &keys.public_key().to_hex(),
+                        "member",
+                        None,
+                        &state.relay_keypair,
+                    )
+                    .await
+                    .expect("seed member");
+                assert!(write.outcome);
+            }
+
+            let url = format!(
+                "{}://{host}/git/{OWNER_HEX}/myrepo",
+                if state.config.relay_url.starts_with("wss://") {
+                    "https"
+                } else {
+                    "http"
+                },
+            );
+            let attestation = buzz_sdk::nip_oa::compute_auth_tag(&owner, &agent.public_key(), "")
+                .expect("NIP-OA");
+            let tag: Vec<String> = serde_json::from_str(&attestation).expect("auth tag");
+            let event = nostr::EventBuilder::new(nostr::Kind::HttpAuth, "")
+                .tags([
+                    nostr::Tag::parse(["u", url.as_str()]).expect("u tag"),
+                    nostr::Tag::parse(["method", "GET"]).expect("method tag"),
+                    nostr::Tag::parse(tag).expect("attestation"),
+                ])
+                .sign_with_keys(&agent)
+                .expect("sign NIP-98");
+            let auth = format!(
+                "Nostr {}",
+                base64::engine::general_purpose::STANDARD
+                    .encode(serde_json::to_vec(&event).expect("serialize")),
+            );
+            let (status, _, _) = git_request(Arc::clone(&state), &host, Some(&auth)).await;
+            assert_eq!(
+                status,
+                StatusCode::NOT_FOUND,
+                "admission reached repository lookup"
+            );
+            assert!(state
+                .db
+                .is_agent_owner(
+                    community,
+                    agent.public_key().as_bytes(),
+                    owner.public_key().as_bytes(),
+                )
+                .await
+                .expect("recorded owner lookup"));
+
+            let removal = state
+                .db
+                .remove_relay_member(
+                    community,
+                    &owner.public_key().to_hex(),
+                    &state.relay_keypair,
+                )
+                .await
+                .expect("remove owner");
+            assert_eq!(
+                removal.outcome,
+                buzz_db::relay_members::RemoveResult::Removed
+            );
+            let (status, _, _) = git_request(state, &host, Some(&auth)).await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
         }
 
         /// A Git request dropped while its relay-membership lookup is in

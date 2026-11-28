@@ -121,6 +121,12 @@ pub enum ConnControl {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         archived_at: Option<DateTime<Utc>>,
     },
+    /// Revoke a member's live access under the roster committed by its removal.
+    /// A relay applies this only while that roster is still current.
+    DisconnectRemovedMember {
+        pubkey: Vec<u8>,
+        roster_id: nostr::EventId,
+    },
     /// Disconnect every live connection authenticated as `pubkey` in the
     /// carrying community — live ban enforcement. `pubkey` is 32 raw bytes.
     /// `event_id` and `reason` reproduce the same NIP-01 `OK` frame the origin
