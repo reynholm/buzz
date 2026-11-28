@@ -64,7 +64,7 @@ void main() {
       tester
           .widgetList<AgentCard>(find.byType(AgentCard))
           .map((card) => card.name),
-      ['Zulu'],
+      ['Old app agent', 'Zulu'],
     );
     // Restored elsewhere: pulling to refresh rereads the archive list.
     archived = {};
@@ -78,7 +78,7 @@ void main() {
       tester
           .widgetList<AgentCard>(find.byType(AgentCard))
           .map((card) => card.name),
-      ['alpha', 'Zulu'],
+      ['alpha', 'Old app agent', 'Zulu'],
     );
   });
 }

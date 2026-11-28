@@ -189,6 +189,111 @@ void agentPrefillTests() {
     expect(sent, [first, second]);
   });
 
+  testWidgets('untouched prefill follows a new agent with the same name', (
+    tester,
+  ) async {
+    final viewer = 'f' * 64;
+    final first = 'a' * 64;
+    final second = 'b' * 64;
+    List<String>? sent;
+    final upload = _testUploadService(nostr.Keys.generate().nsec);
+    Widget build(String id, String agent) => _buildComposeBar(
+      uploadService: upload,
+      currentPubkey: viewer,
+      channels: [_makeCurrentChannel()],
+      loadMembers: () async => [
+        for (final key in [first, second])
+          ChannelMember(
+            pubkey: key,
+            displayName: 'Scout',
+            role: 'bot',
+            joinedAt: DateTime(2025),
+          ),
+      ],
+      prefillScopeMessages: [
+        TimelineMessage(
+          id: id,
+          pubkey: viewer,
+          createdAt: 10,
+          content: '',
+          tags: [
+            const ['h', 'channel-1'],
+            ['p', agent],
+          ],
+        ),
+      ],
+      onSend: (_, mentions, {mediaTags = const []}) async => sent = mentions,
+    );
+
+    await tester.pumpWidget(build('1', first));
+    await tester.pumpAndSettle();
+    expect(find.text('@Scout'), findsOneWidget);
+    await tester.pumpWidget(build('2', second));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('@Scout'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '@Scout hi');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(BuzzIcons.arrowUp));
+    await tester.pumpAndSettle();
+    expect(sent, [second]);
+  });
+
+  testWidgets(
+    'untouched prefill follows archive changes for a channel member',
+    (tester) async {
+      final viewer = 'f' * 64;
+      final agent = 'a' * 64;
+      var archived = {agent};
+      await tester.pumpWidget(
+        _buildComposeBar(
+          uploadService: _testUploadService(nostr.Keys.generate().nsec),
+          currentPubkey: viewer,
+          channels: [_makeCurrentChannel()],
+          loadMembers: () async => [
+            ChannelMember(
+              pubkey: agent,
+              displayName: 'Retired',
+              role: 'bot',
+              joinedAt: DateTime(2025),
+            ),
+          ],
+          prefillScopeMessages: [
+            TimelineMessage(
+              id: '1',
+              pubkey: viewer,
+              createdAt: 10,
+              content: '',
+              tags: [
+                const ['h', 'channel-1'],
+                ['p', agent],
+              ],
+            ),
+          ],
+          archivedIdentities: () => archived,
+          onSend: (_, _, {mediaTags = const []}) async {},
+        ),
+      );
+      await tester.pumpAndSettle();
+      final mention = find.text('@Retired');
+      expect(mention, findsNothing);
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ComposeBar)),
+      );
+      archived = {};
+      container.invalidate(hiddenArchivedIdentitiesProvider);
+      await tester.pumpAndSettle();
+      expect(mention, findsOneWidget);
+
+      archived = {agent};
+      container.invalidate(hiddenArchivedIdentitiesProvider);
+      await tester.pumpAndSettle();
+      expect(mention, findsNothing);
+      expect(find.text('Message…'), findsOneWidget);
+    },
+  );
+
   testWidgets('takes back an untouched prefill once it is out of date', (
     tester,
   ) async {

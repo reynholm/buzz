@@ -36,12 +36,15 @@ void main() {
         final h = await AgentsHarness.create();
         await h.open(tester, directory: [existing]);
         expect(find.text('Select an agent'), findsOneWidget);
-        await tester.tap(find.byKey(ValueKey(existing)));
+        final selectedCard = find.byKey(ValueKey(existing));
+        final legacyCard = find.byKey(ValueKey(oldAppAgentKeys.public));
+        await tester.tap(selectedCard);
         await tester.pumpAndSettle();
         expect(find.byType(BottomSheet), findsNothing);
         final profile = find.byType(UserProfileSheet);
         expect(profile, findsOneWidget);
-        expect(find.byType(AgentCard).hitTestable(), findsOneWidget);
+        expect(selectedCard.hitTestable(), findsOneWidget);
+        expect(legacyCard.hitTestable(), findsOneWidget);
         expect(tester.getRect(profile).left, closeTo(376, .01));
         expect(tester.getRect(profile).right, 951);
         final artwork = find.descendant(
@@ -85,7 +88,8 @@ void main() {
         tester.view.viewPadding = const FakeViewPadding(right: 76, bottom: 21);
         await tester.pumpAndSettle();
         expect(tester.element(profile), same(profileElement));
-        expect(find.byType(AgentCard).hitTestable(), findsOneWidget);
+        expect(selectedCard.hitTestable(), findsOneWidget);
+        expect(legacyCard.hitTestable(), findsOneWidget);
 
         tester.view.padding = const FakeViewPadding(left: 76, bottom: 21);
         tester.view.viewPadding = const FakeViewPadding(left: 76, bottom: 21);
@@ -98,7 +102,8 @@ void main() {
         await tester.pumpAndSettle();
         expect(profile, findsNothing);
         expect(find.text('Select an agent'), findsOneWidget);
-        expect(find.byType(AgentCard).hitTestable(), findsOneWidget);
+        expect(selectedCard.hitTestable(), findsOneWidget);
+        expect(legacyCard.hitTestable(), findsOneWidget);
         tester.view.physicalSize = const Size(466, 678);
         tester.view.padding = const FakeViewPadding(right: 76, bottom: 21);
         tester.view.viewPadding = const FakeViewPadding(right: 76, bottom: 21);

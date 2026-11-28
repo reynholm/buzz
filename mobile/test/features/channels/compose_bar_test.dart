@@ -31,6 +31,7 @@ import 'package:buzz/features/channels/voice_note_waveform.dart';
 import 'package:buzz/shared/custom_emoji/custom_emoji.dart';
 import 'package:buzz/shared/custom_emoji/custom_emoji_provider.dart';
 import 'package:buzz/shared/agents/owned_agent_directory.dart';
+import 'package:buzz/shared/identity_archives/identity_archives.dart';
 import 'package:buzz/shared/mentions/agent_identity_provider.dart';
 import 'package:buzz/shared/relay/relay.dart';
 import 'package:buzz/features/activity/compose_drafts_provider.dart';
@@ -221,9 +222,14 @@ Widget _buildComposeBar({
   List<OwnedAgentDirectoryEntry>? ownedAgents,
   bool ownedAgentsUnknown = false,
   List<TimelineMessage>? prefillScopeMessages,
+  Set<String> Function()? archivedIdentities,
 }) {
   return ProviderScope(
     overrides: [
+      if (archivedIdentities != null)
+        hiddenArchivedIdentitiesProvider.overrideWith(
+          (ref) => archivedIdentities(),
+        ),
       if (ownedAgents != null)
         ownedAgentDirectoryProvider.overrideWith((ref) async => ownedAgents),
       if (ownedAgentsUnknown)

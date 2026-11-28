@@ -57,10 +57,16 @@ void _useAgentMentionPrefill({
         : latestOwnMessageMentions(scopeMessages, viewer: viewer),
     [scopeMessages, viewer],
   );
-  // Current members only: an agent that has left is not carried forward.
-  final members = source == null || source.pubkeys.isEmpty
+  final pubkeys = source?.pubkeys ?? const <String>[];
+  final archived = pubkeys.isEmpty
+      ? const <String>{}
+      : ref.watch(hiddenArchivedIdentitiesProvider);
+  final activePubkeys = pubkeys.where((key) => !archived.contains(key));
+  // Only current, non-archived agent members carry forward.
+  final members = activePubkeys.isEmpty
       ? null
       : ref.watch(channelMembersProvider(channelId)).asData?.value;
+  final membersPending = activePubkeys.isNotEmpty && members == null;
   final memberCandidates = members == null
       ? const <MentionCandidate>[]
       : buildMentionCandidates(
@@ -72,7 +78,7 @@ void _useAgentMentionPrefill({
               ref.watch(agentOwnersProvider).asData?.value ?? const {},
         );
   final agents = <MentionCandidate>[
-    for (final pubkey in source?.pubkeys ?? const <String>[])
+    for (final pubkey in activePubkeys)
       ?memberCandidates
           .where((c) => c.pubkey == pubkey && c.isAgent && c.isMember)
           .firstOrNull,
@@ -96,13 +102,9 @@ void _useAgentMentionPrefill({
 
   useEffect(() {
     final prefill = prefillText.value;
-    // The latest message has no agents to carry over (or they all left): take
-    // back an untouched prefill, which describes an older message. While the
-    // members are still loading, nothing is known yet, so leave it.
-    final noAgents =
-        source == null ||
-        source.pubkeys.isEmpty ||
-        (members != null && agents.isEmpty);
+    // Take back untouched prefill when there are no eligible agents. While
+    // members are still loading, keep the prefill until membership is known.
+    final noAgents = source == null || (!membersPending && agents.isEmpty);
     if (noAgents) {
       if (prefill != null && controller.text == prefill) {
         prefillText.value = null;
@@ -118,7 +120,7 @@ void _useAgentMentionPrefill({
     }
     if (agents.isEmpty || settledFor.value == source.messageId) return null;
     // Fill only an empty composer, or replace this hook's own prefill.
-    if (hasAttachments ||
+    if ((hasAttachments && prefill == null) ||
         (controller.text.isNotEmpty && controller.text != prefill)) {
       return null;
     }
@@ -136,11 +138,13 @@ void _useAgentMentionPrefill({
       labels.add('@$label ');
     }
     final text = labels.join();
-    if (text == controller.text) return null;
     prefillText.value = text;
     mentionMap.value
       ..clear()
       ..addAll(bindings);
+    // A different agent can have the same label. Always refresh its binding
+    // while leaving the selection alone when the displayed text is unchanged.
+    if (text == controller.text) return null;
     isModifyingText.value = true;
     try {
       controller.value = TextEditingValue(
@@ -151,5 +155,5 @@ void _useAgentMentionPrefill({
       isModifyingText.value = false;
     }
     return null;
-  }, [source?.messageId, agentsKey, members == null, draftKey, hasAttachments]);
+  }, [source?.messageId, agentsKey, membersPending, draftKey, hasAttachments]);
 }
