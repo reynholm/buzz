@@ -112,6 +112,10 @@ pub async fn cmd_list_channels(
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
     let effective_limit = limit.unwrap_or(500);
+    if effective_limit == 0 {
+        println!("[]");
+        return Ok(());
+    }
     let filtered = visibility.is_some() || exclude_archived;
     let keep = |event: &serde_json::Value| is_listed(event, visibility, exclude_archived);
     // `--limit` counts the channels printed, including on filtered lists.
@@ -2661,6 +2665,26 @@ mod tests {
         ];
         assert_eq!(listed(&events, None, false), vec!["live", "old"]);
         assert_eq!(listed(&events, None, true), vec!["live"]);
+    }
+
+    #[tokio::test]
+    async fn zero_limit_filtered_membership_list_needs_no_relay_query() {
+        let client = BuzzClient::new(
+            "http://127.0.0.1:0".to_owned(),
+            crate::credentials::Credentials::from_keys(nostr::Keys::generate()),
+        )
+        .unwrap();
+
+        super::cmd_list_channels(
+            &client,
+            Some("open"),
+            Some(true),
+            true,
+            Some(0),
+            &crate::OutputFormat::Json,
+        )
+        .await
+        .unwrap();
     }
 
     #[test]
