@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:io' show HttpDate, HttpException;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -292,8 +293,14 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
     }
     final image = await _fetchImage(fetch.aborted);
     if (image.cacheable) {
-      fetch.onDecoded = () =>
-          unawaited(cache.write(url, image.bytes, immutable: image.immutable));
+      fetch.onDecoded = () => unawaited(
+        cache.write(
+          url,
+          image.bytes,
+          immutable: image.immutable,
+          redirect: image.redirect,
+        ),
+      );
     }
     return image.bytes;
   }
@@ -338,7 +345,12 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
       // Nothing displays these bytes yet, so check they decode before they
       // replace the saved copy.
       await _checkDecodes(image.bytes);
-      await cache.write(url, image.bytes, immutable: image.immutable);
+      await cache.write(
+        url,
+        image.bytes,
+        immutable: image.immutable,
+        redirect: image.redirect,
+      );
     } on Object catch (error) {
       // The stale bytes stay; the next load after the cooldown retries.
       debugPrint('[MediaImageProvider] refresh of $url failed: $error');
@@ -415,9 +427,15 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
 
   /// Downloads [url]. Completing [abort] means every load waiting for this
   /// download was abandoned, so the URL is not put on cooldown.
-  Future<({Uint8List bytes, bool cacheable, bool immutable})> _fetchImage(
-    Future<void> abort,
-  ) async {
+  Future<
+    ({
+      Uint8List bytes,
+      bool cacheable,
+      bool immutable,
+      MediaCacheRedirect? redirect,
+    })
+  >
+  _fetchImage(Future<void> abort) async {
     final until = _cooldownUntil[_cooldownKey];
     if (until != null) {
       if (debugNow().isBefore(until)) {
@@ -430,6 +448,7 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
     final relayRequest = auth.isRelayMediaOrigin(uri);
     final transport = client;
     final hosted = transport is HostedRelayHttpClient ? transport : null;
+    final started = debugNow();
     final BoundedResponse response;
     try {
       response = await boundedGet(
@@ -474,27 +493,30 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
       throw NetworkImageLoadException(statusCode: 200, uri: uri);
     }
     final responseUrl = response.url;
-    final redirected =
-        response.followedRedirect ||
-        (responseUrl != null &&
-            responseUrl.removeFragment() != uri.removeFragment());
+    final target = response.redirectTarget?.removeFragment();
+    final responseMatches =
+        responseUrl == null ||
+        responseUrl.removeFragment() == (target ?? uri.removeFragment());
+    final redirected = target != null || !responseMatches;
     // Offline relay copies have their own local-cache contract. Only a
     // direct response from the configured relay origin qualifies.
     final directRelay = !redirected && relayRequest && responseUrl != null;
-    final cacheControl = response.headers['cache-control'] ?? '';
-    final noStore = _cacheDirectives
-        .allMatches(cacheControl)
-        .any((directive) => directive[0]!.trim().toLowerCase() == 'no-store');
+    final noStore = _directives(response.headers).any((d) => d == 'no-store');
+    final expires =
+        target != null && target != uri.removeFragment() && responseMatches
+        ? _redirectExpiry(response, started)
+        : null;
     return (
       bytes: bytes,
-      // Keep redirects out of the source URL's disk entry. A cacheable final
-      // response cannot grant permission to replay an earlier redirect.
-      cacheable: !redirected && (directRelay || !noStore),
+      cacheable: expires != null || (!redirected && (directRelay || !noStore)),
       immutable:
           relayRequest &&
           !redirected &&
           !uri.hasQuery &&
           _relayContentPath.hasMatch(uri.path),
+      redirect: expires == null
+          ? null
+          : (targetUrl: target!.toString(), expiresAt: expires),
     );
   }
 
@@ -728,6 +750,78 @@ final _relayContentPath = RegExp(
 
 // Cache-Control is comma-separated except within quoted directive values.
 final _cacheDirectives = RegExp(r'(?:[^",]|"(?:[^"\\]|\\.)*")+');
+
+Iterable<String> _directives(Map<String, String> headers) => _cacheDirectives
+    .allMatches(headers['cache-control'] ?? '')
+    .map((match) => match[0]!.trim().toLowerCase());
+
+DateTime? _redirectExpiry(BoundedResponse response, DateTime started) {
+  DateTime? earliest;
+  for (final hop in response.redirects) {
+    if (hop.statusCode != 301 && hop.statusCode != 308) return null;
+    final expiry = _explicitExpiry(hop.headers, started);
+    if (expiry == null) return null;
+    if (earliest == null || expiry.isBefore(earliest)) earliest = expiry;
+  }
+  final imageExpiry = _explicitExpiry(response.headers, started);
+  if (imageExpiry == null) return null;
+  return earliest == null || imageExpiry.isBefore(earliest)
+      ? imageExpiry
+      : earliest;
+}
+
+DateTime? _explicitExpiry(Map<String, String> headers, DateTime started) {
+  // The disk key is a URL. Only transport encodings can vary without
+  // changing which decoded image that key represents.
+  final vary = headers['vary'];
+  if (vary != null &&
+      vary.split(',').any((value) {
+        final field = value.trim().toLowerCase();
+        return field.isNotEmpty && field != 'accept-encoding';
+      })) {
+    return null;
+  }
+  int? maxAge;
+  for (final directive in _directives(headers)) {
+    final equals = directive.indexOf('=');
+    final name = equals < 0 ? directive : directive.substring(0, equals).trim();
+    if (name == 'no-store' || name == 'no-cache') return null;
+    if (name != 'max-age') continue;
+    if (equals < 0 || maxAge != null) return null;
+    maxAge = _deltaSeconds(directive.substring(equals + 1).trim());
+    if (maxAge == null || maxAge == 0) return null;
+  }
+  final age = _deltaSeconds(headers['age']?.trim() ?? '0');
+  if (age == null) return null;
+  final date = _httpDate(headers['date']) ?? started;
+  // Use the start of the whole fetch to conservatively account for transit
+  // time and avoid resetting a redirect's lifetime at the final response.
+  final aged = started.subtract(Duration(seconds: age));
+  final base = date.isBefore(aged) ? date : aged;
+  if (maxAge != null) return base.add(Duration(seconds: maxAge));
+  final expires = _httpDate(headers['expires']);
+  return expires == null ? null : base.add(expires.difference(date));
+}
+
+int? _deltaSeconds(String value) {
+  if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
+    value = value.substring(1, value.length - 1);
+  }
+  if (!_digitsOnly.hasMatch(value)) return null;
+  const maxDelta = 2147483648;
+  return (int.tryParse(value) ?? maxDelta).clamp(0, maxDelta);
+}
+
+final _digitsOnly = RegExp(r'^\d+$');
+
+DateTime? _httpDate(String? value) {
+  if (value == null) return null;
+  try {
+    return HttpDate.parse(value);
+  } on HttpException {
+    return null;
+  }
+}
 
 final _relayBlobPath = RegExp(r'^/media/([0-9a-f]{64})(?:\.[a-z0-9]{1,8})?$');
 

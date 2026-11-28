@@ -17,6 +17,9 @@ import 'relay_provider.dart' show pubkeyFromNsec;
 /// Image bytes saved on disk, and whether they are due a background refresh.
 typedef MediaDiskCacheHit = ({Uint8List bytes, bool isStale});
 
+/// A permanent redirect's final URL and the earliest expiry in its chain.
+typedef MediaCacheRedirect = ({String targetUrl, DateTime expiresAt});
+
 /// Persistent store for one community's remote image bytes: custom emoji,
 /// avatars, attachments and anything else [MediaImageProvider] loads.
 ///
@@ -26,9 +29,9 @@ typedef MediaDiskCacheHit = ({Uint8List bytes, bool isStale});
 /// [mediaCacheRootProvider]), deleted with the community or account. Least recently used files are evicted once
 /// the directory holds more than [maxBytes].
 ///
-/// Relay media URLs are content hashes and never go stale. Other URLs can
-/// change in place, so they are served from disk but refetched in the
-/// background once older than [externalRefreshAge].
+/// Relay media URLs are content hashes and never go stale. Other direct
+/// responses are refreshed in the background once older than
+/// [externalRefreshAge]. Redirected images can only be served while fresh.
 class MediaDiskCache {
   /// Opens the store in [directory], creating it on first write, or a store
   /// that saves nothing when [directory] is null. Reads and writes wait for
@@ -254,7 +257,7 @@ class MediaDiskCache {
 
   /// [url]'s saved bytes, or null when they are not on disk.
   Future<MediaDiskCacheHit?> read(String url) async {
-    final FileInfo? info;
+    FileInfo? info;
     final Uint8List bytes;
     final manager = await _manager;
     if (manager == null || isClosed) return null;
@@ -264,22 +267,51 @@ class MediaDiskCache {
       // to the index marks it used, and schedules eviction.
       info = await manager.getFileFromCache(url, ignoreMemCache: true);
       if (info == null) return null;
+      if (_expiredRedirect(url, info)) {
+        await _removeIfCurrent(manager, url, info);
+        return null;
+      }
       bytes = await info.file.readAsBytes();
     } on FileSystemException {
-      // The OS may purge cache files under the index. Drop the entry and
-      // load from the network.
-      unawaited(remove(url));
+      // The OS may purge the file, or a refresh may have replaced it.
+      if (info != null) unawaited(_removeIfCurrent(manager, url, info));
       return null;
     }
     if (bytes.isEmpty) return null;
     return (bytes: bytes, isStale: info.validTill.isBefore(_now()));
   }
 
+  Future<void> _removeIfCurrent(
+    CacheManager manager,
+    String url,
+    FileInfo info,
+  ) => _mutate(url, () async {
+    try {
+      final current = await manager.getFileFromCache(url, ignoreMemCache: true);
+      if (current?.file.path == info.file.path &&
+          current?.validTill == info.validTill) {
+        await manager.removeFile(url);
+      }
+    } on Object catch (error) {
+      _logFailure(error);
+    }
+  });
+
+  bool _expiredRedirect(String url, FileInfo info) =>
+      info.originalUrl != url && !info.validTill.isAfter(_now());
+
   /// Saves [bytes] for [url]. [immutable] bytes (relay media) are never
-  /// refetched; others are refetched after [externalRefreshAge]. Failures are
-  /// logged, never thrown: a missing entry only costs a later download.
-  Future<void> write(String url, Uint8List bytes, {required bool immutable}) =>
-      _mutate(url, () => _write(url, bytes, immutable: immutable));
+  /// refetched. Other direct responses are refetched after [externalRefreshAge].
+  /// A [redirect] expires at its HTTP deadline. Failures only cost a download.
+  Future<void> write(
+    String url,
+    Uint8List bytes, {
+    required bool immutable,
+    MediaCacheRedirect? redirect,
+  }) => _mutate(
+    url,
+    () => _write(url, bytes, immutable: immutable, redirect: redirect),
+  );
 
   Future<void> _mutate(String url, Future<void> Function() change) {
     if (isClosed) return Future.value();
@@ -299,6 +331,7 @@ class MediaDiskCache {
     String url,
     Uint8List bytes, {
     required bool immutable,
+    required MediaCacheRedirect? redirect,
   }) async {
     // A download that finishes after its account or community was retired
     // must not repopulate the cache.
@@ -307,26 +340,37 @@ class MediaDiskCache {
     if (manager == null || isClosed) return;
     try {
       final store = manager.store;
-      // Like `putFile`, keep the URL's path, but publish the bytes with a
-      // rename so a reader sees the old file or the new one, never a part.
       final previous = await store.retrieveCacheData(url);
-      final saved =
-          (previous ??
-                  CacheObject(
-                    url,
-                    relativePath: '${const Uuid().v1()}.file',
-                    validTill: _now(),
-                  ))
-              .copyWith(
-                validTill: _now().add(
-                  immutable ? _neverStale : externalRefreshAge,
-                ),
-              );
+      final now = _now();
+      final expiry = redirect?.expiresAt;
+      if (expiry != null && !expiry.isAfter(now)) {
+        await manager.removeFile(url);
+        return;
+      }
+      // Give redirected bytes their own file so a reader with an older index
+      // entry cannot apply that entry's freshness policy to the new bytes.
+      final reusePath = previous?.url == url && redirect == null;
+      final saved = CacheObject(
+        redirect?.targetUrl ?? url,
+        key: url,
+        id: previous?.id,
+        relativePath: reusePath
+            ? previous!.relativePath
+            : '${const Uuid().v1()}.file',
+        validTill:
+            expiry ?? now.add(immutable ? _neverStale : externalRefreshAge),
+      );
       await (store.fileSystem as _DirectoryFileSystem).replace(
         saved.relativePath,
         bytes,
       );
       await store.putFile(saved);
+      if (!reusePath && previous != null) {
+        final replaced = await store.fileSystem.createFile(
+          previous.relativePath,
+        );
+        await replaced.delete();
+      }
       // Replacing a URL the package already holds in memory schedules no
       // eviction, so a refresh that grows the cache would leave it over
       // budget. An index lookup schedules it.

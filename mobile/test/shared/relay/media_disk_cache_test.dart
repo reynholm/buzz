@@ -347,59 +347,129 @@ void main() {
     );
   }
 
-  for (final returnsToStart in [false, true]) {
-    test('does not save a cacheable image behind a no-store redirect '
-        '(returns to start: $returnsToStart)', () async {
+  for (final (status, redirectAge, age, imageHeaders, lifetime) in [
+    (301, 3600, '900', {'cache-control': 'max-age=7200'}, 2700),
+    (308, 7200, '0', {'expires': 'Thu, 01 Jan 2026 01:00:00 GMT'}, 3600),
+  ]) {
+    test('$status image redirect survives relaunch until it expires', () async {
       final start = Uri.parse(_externalUrls[0]);
       final target = Uri.parse(_externalUrls[1]);
       final requests = <Uri>[];
+      var online = true;
       final client = http_testing.MockClient((request) async {
         requests.add(request.url);
-        if (!request.followRedirects && requests.length == 1) {
+        if (!online) throw const SocketException('offline');
+        if (request.url == start) {
           return http.Response(
             '',
-            302,
-            headers: {..._noStoreHeaders, 'location': target.toString()},
+            status,
+            headers: {
+              'location': target.toString(),
+              'cache-control': 'public, max-age=$redirectAge',
+              'age': age,
+            },
           );
         }
-        if (!request.followRedirects &&
-            returnsToStart &&
-            requests.length == 2) {
-          return http.Response(
-            '',
-            302,
-            headers: {'location': start.toString()},
-          );
-        }
-        return http.Response.bytes(
-          _pngBytes,
-          200,
-          headers: {'cache-control': 'public, max-age=86400'},
-        );
+        return http.Response.bytes(_pngBytes, 200, headers: imageHeaders);
       });
       addTearDown(client.close);
+      var now = DateTime.utc(2026, 1, 1);
+      MediaImageProvider.debugNow = () => now;
+      addTearDown(() => MediaImageProvider.debugNow = DateTime.now);
       final directory = MediaDiskCache.directoryFor(root, 'community-1', 's');
-      final cache = MediaDiskCache.open(directory);
-      try {
-        final bytes = await MediaImageProvider(
-          url: start.toString(),
-          auth: auth,
-          client: client,
-          diskCache: cache,
-        ).loadEncodedBytes(cancel: Completer<void>().future);
-        expect(bytes, _pngBytes);
-        await cache.contains(start.toString());
-      } finally {
-        await cache.dispose();
+      Future<Object?> launch() async {
+        PaintingBinding.instance.imageCache.clear();
+        PaintingBinding.instance.imageCache.clearLiveImages();
+        final cache = MediaDiskCache.open(directory, now: () => now);
+        try {
+          final image = MediaImageProvider(
+            url: start.toString(),
+            auth: auth,
+            client: client,
+            diskCache: cache,
+          );
+          final result = await _waitError(
+            image.resolve(ImageConfiguration.empty),
+          );
+          if (online) await cache.contains(start.toString());
+          return result;
+        } finally {
+          await cache.dispose();
+        }
       }
-      final reopened = MediaDiskCache.open(directory);
-      try {
-        expect(await reopened.contains(start.toString()), isFalse);
-        expect(requests, [start, target, if (returnsToStart) start]);
-      } finally {
-        await reopened.dispose();
-      }
+
+      expect(await launch(), isNull);
+      expect(requests, [start, target]);
+      online = false;
+      now = now.add(Duration(seconds: lifetime - 1));
+      expect(await launch(), isNull);
+      expect(requests, [start, target]);
+      now = now.add(const Duration(seconds: 1));
+      expect(await launch(), isA<SocketException>());
+      expect(requests, [start, target, start]);
     });
+  }
+
+  const fresh = {'cache-control': 'public, max-age=86400'};
+  const noStore = {'cache-control': 'private, No-Store, max-age=86400'};
+  for (final (description, status, returnsToStart, redirect, image) in [
+    ('temporary no-store', 302, false, noStore, fresh),
+    ('no-store returning to start', 302, true, noStore, fresh),
+    ('permanent no-store', 301, false, noStore, fresh),
+    ('no-store final image', 308, false, fresh, noStore),
+    ('temporary fresh', 302, false, fresh, fresh),
+    ('invalid expiry', 301, false, {'expires': 'invalid'}, fresh),
+  ]) {
+    test(
+      'does not cache an image behind a $description redirect chain',
+      () async {
+        final start = Uri.parse(_externalUrls[0]);
+        final target = Uri.parse(_externalUrls[1]);
+        final requests = <Uri>[];
+        final client = http_testing.MockClient((request) async {
+          requests.add(request.url);
+          if (!request.followRedirects && requests.length == 1) {
+            return http.Response(
+              '',
+              status,
+              headers: {...redirect, 'location': target.toString()},
+            );
+          }
+          if (!request.followRedirects &&
+              returnsToStart &&
+              requests.length == 2) {
+            return http.Response(
+              '',
+              302,
+              headers: {'location': start.toString()},
+            );
+          }
+          return http.Response.bytes(_pngBytes, 200, headers: image);
+        });
+        addTearDown(client.close);
+        final directory = MediaDiskCache.directoryFor(root, 'community-1', 's');
+        final cache = MediaDiskCache.open(directory);
+        try {
+          final bytes = await MediaImageProvider(
+            url: start.toString(),
+            auth: auth,
+            client: client,
+            diskCache: cache,
+          ).loadEncodedBytes(cancel: Completer<void>().future);
+          expect(bytes, _pngBytes);
+          await cache.contains(start.toString());
+        } finally {
+          await cache.dispose();
+        }
+        final reopened = MediaDiskCache.open(directory);
+        try {
+          expect(await reopened.contains(start.toString()), isFalse);
+          expect(requests, [start, target, if (returnsToStart) start]);
+        } finally {
+          await reopened.dispose();
+        }
+      },
+    );
   }
 
   for (final redirectsFromRelay in [false, true]) {

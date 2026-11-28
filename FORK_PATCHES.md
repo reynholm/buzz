@@ -13029,22 +13029,24 @@ New module: `false`.
 
 ## `mobile/lib/shared/relay/media_disk_cache.dart`
 
-Track partial upstream replay from group A steps 130 (ff652ed06), 276 (07dfdbc60).
+Track partial upstream replay from group A steps 130 (ff652ed06), 276 (07dfdbc60). Stop serving persisted redirect entries at their HTTP freshness deadline.
 
 New module: `false`.
 
+- Required symbol: `info.originalUrl != url && !info.validTill.isAfter(_now())`
 - Verify: `just ci`
 
 ## `mobile/lib/shared/relay/media_image.dart`
 
-Track partial upstream replay from group A steps 48 (0bbcf3e7c), 60 (a2d4ba026), 130 (ff652ed06). Respect external image no-store during initial load and purge stale copies on refresh while preserving offline relay media. Limit the relay media exception to the configured HTTP origin and keep redirected bytes out of the source URL cache.
+Track partial upstream replay from group A steps 48 (0bbcf3e7c), 60 (a2d4ba026), 130 (ff652ed06). Respect external image no-store during initial load and purge stale copies on refresh while preserving offline relay media. Scope the relay exception to its configured HTTP origin. Cache permanent redirects only while every response in the chain is explicitly fresh.
 
 New module: `false`.
 
-- Required symbol: `cacheable: !redirected && (directRelay || !noStore)`
+- Required symbol: `cacheable: expires != null || (!redirected && (directRelay || !noStore))`
 - Invocation: `mobile/lib/shared/relay/media_image.dart` → `remove`; exact call `await cache.remove(url);`; behavior test `a no-store refresh removes the saved external image`; verify `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart --plain-name no-store`
 - Invocation: `mobile/lib/shared/relay/media_image.dart` → `isRelayMediaOrigin`; exact call `auth.isRelayMediaOrigin(uri)`; behavior test `no-store disk policy on first load for other service on the relay host images`; verify `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart`
 - Invocation: `mobile/lib/shared/relay/media_image.dart` → `sendRedirect`; exact call `hosted?.sendRedirect ?? transport.send`; behavior test `an external image redirect does not attach hosted credentials`; verify `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart`
+- Invocation: `mobile/lib/shared/relay/media_image.dart` → `_redirectExpiry`; exact call `_redirectExpiry(response, started)`; behavior test `301 image redirect survives relaunch until it expires`; verify `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart`
 - Verify: `just ci`
 - Verify: `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart --plain-name no-store`
 - Verify: `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart`
@@ -13155,11 +13157,12 @@ New module: `false`.
 
 ## `mobile/lib/shared/utils/bounded_fetch.dart`
 
-Carry the effective response URL to the external image cache policy.
+Carry each redirect response and the effective URL to the external image cache policy.
 
 New module: `false`.
 
-- Required symbol: `followedRedirect: redirects != 0`
+- Required symbol: `redirectTarget: redirects.isEmpty ? null : target`
+- Required symbol: `redirects: redirects`
 - Verify: `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart`
 
 ## `mobile/lib/shared/verified_profiles/verified_profile_directory.dart`

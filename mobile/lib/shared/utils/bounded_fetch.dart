@@ -11,6 +11,9 @@ const defaultStallTimeout = Duration(seconds: 20);
 /// trickles bytes cannot hold a connection indefinitely.
 const defaultMaxFetchDuration = Duration(minutes: 5);
 
+/// An observed redirect response, before its body is discarded.
+typedef BoundedRedirect = ({int statusCode, Map<String, String> headers});
+
 /// A GET response read by [boundedGet]. [bytes] is empty unless the status
 /// was 200: an error body is never read.
 class BoundedResponse {
@@ -19,7 +22,8 @@ class BoundedResponse {
     this.headers,
     this.bytes, {
     this.url,
-    this.followedRedirect = false,
+    this.redirectTarget,
+    this.redirects = const [],
   });
 
   final int statusCode;
@@ -30,8 +34,11 @@ class BoundedResponse {
   /// a relative redirect target without its base URL.
   final Uri? url;
 
-  /// Whether [boundedGet] followed a redirect explicitly.
-  final bool followedRedirect;
+  /// Last requested URL when [boundedGet] followed redirects explicitly.
+  final Uri? redirectTarget;
+
+  /// Intermediate responses in the order they were followed.
+  final List<BoundedRedirect> redirects;
 }
 
 /// The 200 body of a [boundedGet] exceeded its `maxBytes`.
@@ -101,14 +108,16 @@ Future<BoundedResponse> boundedGet(
   try {
     var target = uri;
     var forwardedHeaders = headers;
-    var redirects = 0;
+    final redirects = <BoundedRedirect>[];
     late http.StreamedResponse streamed;
     for (;;) {
       final request =
           http.AbortableRequest('GET', target, abortTrigger: stop.future)
             ..headers.addAll(forwardedHeaders)
             ..followRedirects = followRedirects && sendRedirect == null;
-      streamed = await (redirects == 0 ? client.send : sendRedirect!)(request);
+      streamed = await (redirects.isEmpty ? client.send : sendRedirect!)(
+        request,
+      );
       restartStallTimer();
       final next = followRedirects && sendRedirect != null
           ? _redirectTarget(target, streamed)
@@ -120,9 +129,13 @@ Future<BoundedResponse> boundedGet(
           .cancel()
           .ignore();
       if (stop.isCompleted) throw http.RequestAbortedException(uri);
-      if (++redirects > request.maxRedirects) {
+      if (redirects.length >= request.maxRedirects) {
         throw http.ClientException('Redirect limit exceeded', uri);
       }
+      redirects.add((
+        statusCode: streamed.statusCode,
+        headers: streamed.headers,
+      ));
       if (next.origin != target.origin) forwardedHeaders = const {};
       target = next;
     }
@@ -151,7 +164,8 @@ Future<BoundedResponse> boundedGet(
         http.BaseResponseWithUrl(:final url) => url,
         _ => null,
       },
-      followedRedirect: redirects != 0,
+      redirectTarget: redirects.isEmpty ? null : target,
+      redirects: redirects,
     );
   } catch (_) {
     if (cancelled) throw FetchCancelledException(uri);
