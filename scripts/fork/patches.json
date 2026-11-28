@@ -5715,6 +5715,66 @@
       ]
     },
     {
+      "path": "crates/buzz-db/src/store/thread_window.rs",
+      "responsibility": "Apply cursor and auxiliary time bounds while preserving relay filter semantics",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/thread_window/postgres_tests.rs",
+      "responsibility": "Apply cursor and auxiliary time bounds while preserving relay filter semantics",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/api/bridge/thread_window.rs",
+      "responsibility": "Apply cursor and auxiliary time bounds while preserving relay filter semantics",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/api/bridge/thread_window/postgres_tests.rs",
+      "responsibility": "Apply cursor and auxiliary time bounds while preserving relay filter semantics",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db"
+      ]
+    },
+    {
+      "path": "docs/bridge-channel-window.md",
+      "responsibility": "Apply cursor and auxiliary time bounds while preserving relay filter semantics",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db"
+      ]
+    },
+    {
+      "path": "docs/nips/NIP-CW.md",
+      "responsibility": "Apply cursor and auxiliary time bounds while preserving relay filter semantics",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db"
+      ]
+    },
+    {
       "path": "crates/buzz-relay/src/api/gifs.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
       "is_new": false,
@@ -9099,6 +9159,16 @@
       ],
       "verification_commands": [
         "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/thread.rs",
+      "responsibility": "Apply the timestamp range bound to deep channel-window pages alongside composite event pagination",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db"
       ]
     },
     {
