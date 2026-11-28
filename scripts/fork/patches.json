@@ -5464,6 +5464,86 @@
       ]
     },
     {
+      "path": "crates/buzz-db/src/store/event_deletion/postgres_tests.rs",
+      "responsibility": "Verify the application timestamp floor during the mixed-version rollout while preserving canonical managed delivery and push follow-ups",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/event_floor_postgres_tests.rs",
+      "responsibility": "Verify the application timestamp floor during the mixed-version rollout while preserving canonical managed delivery and push follow-ups",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/event_hydration/postgres_tests.rs",
+      "responsibility": "Verify the application timestamp floor during the mixed-version rollout while preserving canonical managed delivery and push follow-ups",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/personal_read/participation_postgres_tests.rs",
+      "responsibility": "Verify the application timestamp floor during the mixed-version rollout while preserving canonical managed delivery and push follow-ups",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/personal_read/postgres_tests.rs",
+      "responsibility": "Verify the application timestamp floor during the mixed-version rollout while preserving canonical managed delivery and push follow-ups",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/personal_read/threads_postgres_tests.rs",
+      "responsibility": "Verify the application timestamp floor during the mixed-version rollout while preserving canonical managed delivery and push follow-ups",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/test_support/recent_pass_tests.rs",
+      "responsibility": "Verify the application timestamp floor during the mixed-version rollout while preserving canonical managed delivery and push follow-ups",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db"
+      ]
+    },
+    {
+      "path": "scripts/seed-admin-dashboard.sh",
+      "responsibility": "Verify the application timestamp floor during the mixed-version rollout while preserving canonical managed delivery and push follow-ups",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db"
+      ]
+    },
+    {
       "path": "crates/buzz-db/src/runtime/tests.rs",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
       "is_new": false,
@@ -9099,6 +9179,16 @@
       ],
       "verification_commands": [
         "BUZZ_TEST_BIN_DIR=\"$PWD/target/debug\" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/thread.rs",
+      "responsibility": "Apply the timestamp range bound to deep channel-window pages alongside composite event pagination",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db"
       ]
     },
     {

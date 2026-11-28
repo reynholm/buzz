@@ -256,6 +256,72 @@ async fn normal_and_managed_reports_commit_one_durable_push_job() {
     db.pool().close().await;
 }
 
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn managed_report_floor_rejects_only_new_events_and_preserves_push_work() {
+    let (_, scratch) = crate::test_support::ScratchDb::migrated(
+        &crate::test_support::database_url(),
+        "managed_floor",
+    )
+    .await;
+    let db = Db::new(&DbConfig {
+        push_enabled: true,
+        database_url: scratch.url().to_owned(),
+        ..DbConfig::default()
+    })
+    .await
+    .expect("connect to isolated migrated database");
+    sqlx::query("ALTER TABLE events DISABLE TRIGGER events_created_at_floor")
+        .execute(db.pool())
+        .await
+        .expect("disable the backstop only in this test database");
+    let community = create_community(db.pool()).await;
+    let keys = Keys::generate();
+    let channel = create_channel(db.pool(), community, &keys.public_key().to_bytes()).await;
+    let now = Utc::now().timestamp();
+    activate_lease(db.pool(), community, &keys, 1, now + 3600).await;
+
+    let key = Uuid::new_v4().to_string();
+    let report = |timestamp: i64| {
+        EventBuilder::new(Kind::Custom(9), "managed floor report")
+            .tags([
+                Tag::parse(["h", &channel.to_string()]).expect("channel tag"),
+                Tag::parse(["buzz-delivery", &key]).expect("delivery tag"),
+            ])
+            .custom_created_at(nostr::Timestamp::from(timestamp as u64))
+            .sign_with_keys(&keys)
+            .expect("signed report")
+    };
+    let old = report(now - crate::replica_fence::CREATED_AT_FLOOR_SECS - 60);
+    let fresh = report(now);
+
+    let rejected = db.insert_event(community, &old, Some(channel)).await;
+    assert!(
+        matches!(rejected, Err(DbError::CreatedAtFloorRejected)),
+        "expected app floor rejection for new managed report, got {rejected:?}"
+    );
+    assert_eq!(event_count(db.pool(), community, &old).await, 0);
+    assert_eq!(match_count(&db, community, &old).await, 0);
+
+    let (accepted, inserted) = db
+        .recover_managed_delivery(community, &fresh, channel, None, &old)
+        .await
+        .expect("accept the current recovery candidate");
+    assert!(inserted);
+    assert_eq!(accepted.event.id, fresh.id);
+    assert_eq!(match_count(&db, community, &fresh).await, 1);
+
+    let (canonical, inserted) = db
+        .insert_event(community, &old, Some(channel))
+        .await
+        .expect("confirm the existing report across the timestamp floor");
+    assert!(!inserted);
+    assert_eq!(canonical.event.id, fresh.id);
+    assert_eq!(event_count(db.pool(), community, &old).await, 0);
+    assert_eq!(match_count(&db, community, &old).await, 0);
+    assert_eq!(match_count(&db, community, &fresh).await, 1);
+}
+
 #[cfg(unix)]
 #[tokio::test]
 #[ignore = "requires Postgres"]

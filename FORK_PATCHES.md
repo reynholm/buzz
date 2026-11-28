@@ -3169,6 +3169,70 @@ New module: `false`.
 
 - Verify: `just ci`
 
+## `crates/buzz-db/src/store/event_deletion/postgres_tests.rs`
+
+Verify the application timestamp floor during the mixed-version rollout while preserving canonical managed delivery and push follow-ups
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+
+## `crates/buzz-db/src/store/event_floor_postgres_tests.rs`
+
+Verify the application timestamp floor during the mixed-version rollout while preserving canonical managed delivery and push follow-ups
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-db`
+
+## `crates/buzz-db/src/store/event_hydration/postgres_tests.rs`
+
+Verify the application timestamp floor during the mixed-version rollout while preserving canonical managed delivery and push follow-ups
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+
+## `crates/buzz-db/src/store/personal_read/participation_postgres_tests.rs`
+
+Verify the application timestamp floor during the mixed-version rollout while preserving canonical managed delivery and push follow-ups
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+
+## `crates/buzz-db/src/store/personal_read/postgres_tests.rs`
+
+Verify the application timestamp floor during the mixed-version rollout while preserving canonical managed delivery and push follow-ups
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+
+## `crates/buzz-db/src/store/personal_read/threads_postgres_tests.rs`
+
+Verify the application timestamp floor during the mixed-version rollout while preserving canonical managed delivery and push follow-ups
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+
+## `crates/buzz-db/src/test_support/recent_pass_tests.rs`
+
+Verify the application timestamp floor during the mixed-version rollout while preserving canonical managed delivery and push follow-ups
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+
+## `scripts/seed-admin-dashboard.sh`
+
+Verify the application timestamp floor during the mixed-version rollout while preserving canonical managed delivery and push follow-ups
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+
 ## `crates/buzz-db/src/runtime/tests.rs`
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
@@ -5943,6 +6007,14 @@ New module: `false`.
                 None,
             )`; behavior test `managed_recovery_and_original_race_share_one_election`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib managed_recovery_and_original_race_share_one_election -- --ignored --test-threads=1`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
+
+## `crates/buzz-db/src/store/thread.rs`
+
+Apply the timestamp range bound to deep channel-window pages alongside composite event pagination
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
 
 ## `crates/buzz-db/src/store/managed_delivery.rs`
 
