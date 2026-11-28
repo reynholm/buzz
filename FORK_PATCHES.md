@@ -14463,3 +14463,43 @@ New module: `false`.
 
 - Required symbol: `bool isRelayMediaOrigin(Uri uri)`
 - Verify: `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart`
+
+## `mobile/lib/features/channels/compose_bar/send_button.dart`
+
+Preserve named failures when sending messages
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test`
+
+## `mobile/lib/shared/relay/relay.dart`
+
+Expose shared relay error formatting to Mobile callers
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test`
+
+## `mobile/lib/shared/relay/relay_closed_policy.dart`
+
+Keep the closed relay refusal formatter distinct
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test`
+
+## `mobile/lib/shared/relay/relay_error_text.dart`
+
+Format send, upload, and invite failures consistently
+
+New module: `true`.
+
+- Verify: `cd mobile && flutter test`
+
+## `mobile/test/shared/relay/relay_error_text_test.dart`
+
+Exercise the shared Mobile relay error formatter
+
+New module: `true`.
+
+- Verify: `cd mobile && flutter test`
