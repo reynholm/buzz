@@ -208,69 +208,14 @@ pub mod relay_members {
         signed_auth_created_at: Option<u64>,
         token_owner: Option<nostr::PublicKey>,
     ) -> Result<MembershipDecision, String> {
-        check_membership(
-            state,
-            community,
-            pubkey_bytes,
-            auth_tag_header,
-            signed_auth_created_at,
-            token_owner,
-            false,
-        )
-        .await
-    }
-
-    /// [`check_relay_membership`] reading principal and owner membership from
-    /// the writer. The final admission fence uses it: a removal whose
-    /// disconnect already ran must not be undone by a stale replica row.
-    pub async fn check_relay_membership_authoritative(
-        state: &AppState,
-        community: CommunityId,
-        pubkey_bytes: &[u8],
-        auth_tag_header: Option<&str>,
-        signed_auth_created_at: Option<u64>,
-        token_owner: Option<nostr::PublicKey>,
-    ) -> Result<MembershipDecision, String> {
-        check_membership(
-            state,
-            community,
-            pubkey_bytes,
-            auth_tag_header,
-            signed_auth_created_at,
-            token_owner,
-            true,
-        )
-        .await
-    }
-
-    async fn read_membership(
-        state: &AppState,
-        community: CommunityId,
-        pubkey_hex: &str,
-        writer: bool,
-    ) -> buzz_db::Result<bool> {
-        if writer {
-            state.db.is_relay_member_writer(community, pubkey_hex).await
-        } else {
-            state.db.is_relay_member(community, pubkey_hex).await
-        }
-    }
-
-    async fn check_membership(
-        state: &AppState,
-        community: CommunityId,
-        pubkey_bytes: &[u8],
-        auth_tag_header: Option<&str>,
-        signed_auth_created_at: Option<u64>,
-        token_owner: Option<nostr::PublicKey>,
-        writer: bool,
-    ) -> Result<MembershipDecision, String> {
         if !state.config.require_relay_membership {
             return Ok(MembershipDecision::OpenRelay);
         }
 
         let pubkey_hex = hex::encode(pubkey_bytes);
-        let is_member = read_membership(state, community, &pubkey_hex, writer)
+        let is_member = state
+            .db
+            .is_relay_member(community, &pubkey_hex)
             .await
             .map_err(|e| format!("relay membership check failed: {e}"))?;
         if is_member {
@@ -281,7 +226,9 @@ pub mod relay_members {
         // NIP-FI binding check, so its owner's membership admits the agent
         // without NIP-OA.
         if let Some(owner) = token_owner {
-            let owner_is_member = read_membership(state, community, &owner.to_hex(), writer)
+            let owner_is_member = state
+                .db
+                .is_relay_member(community, &owner.to_hex())
                 .await
                 .map_err(|e| format!("relay membership check (token owner) failed: {e}"))?;
             return Ok(if owner_is_member {
@@ -307,7 +254,9 @@ pub mod relay_members {
                 ) {
                     Ok(owner_pubkey) => {
                         let owner_hex = owner_pubkey.to_hex();
-                        let owner_is_member = read_membership(state, community, &owner_hex, writer)
+                        let owner_is_member = state
+                            .db
+                            .is_relay_member(community, &owner_hex)
                             .await
                             .map_err(|e| format!("relay membership check (owner) failed: {e}"))?;
                         if owner_is_member {
@@ -448,7 +397,13 @@ pub mod relay_members {
             token_owner,
         )
         .await?;
-        if let Some(token_owner) = token_owner {
+        // Every admitted request records its verified owner here, whatever
+        // the relay mode or how it was admitted: removing or banning the owner
+        // reaches the agent only through that record.
+        let recorded = token_owner.or(owner).or_else(|| {
+            extract_nip_oa_owner(pubkey_bytes, auth_tag_header, signed_auth_created_at)
+        });
+        if let Some(recorded) = recorded {
             let Ok(agent) = nostr::PublicKey::from_slice(pubkey_bytes) else {
                 return Err((
                     AuthReason::MembershipUnavailable,
@@ -456,13 +411,15 @@ pub mod relay_members {
                     None,
                 ));
             };
-            match link_agent_owner(state, tenant, &agent, &token_owner).await {
+            match link_agent_owner(state, tenant, &agent, &recorded).await {
                 OwnerLink::Linked => {}
+                // A different stored owner is a permanent mismatch, not
+                // storage trouble; routes map it by its reason.
                 OwnerLink::Conflict => {
                     return Err((
                         AuthReason::OwnerMismatch,
                         super::api_error(StatusCode::FORBIDDEN, OWNER_MISMATCH),
-                        Some("not_stored_owner"),
+                        token_owner.map(|_| "not_stored_owner"),
                     ))
                 }
                 OwnerLink::Unavailable => {
@@ -472,7 +429,7 @@ pub mod relay_members {
                             StatusCode::SERVICE_UNAVAILABLE,
                             crate::handlers::auth::OWNER_LINK_ERROR,
                         ),
-                        Some("owner_link_unavailable"),
+                        token_owner.map(|_| "owner_link_unavailable"),
                     ))
                 }
             }
@@ -532,8 +489,8 @@ pub mod relay_members {
 
     /// Extract NIP-OA owner from an auth tag without membership enforcement.
     ///
-    /// Used on open relays (`require_relay_membership = false`) to opportunistically
-    /// extract the owner pubkey for agent→owner backfill. The NIP-OA signature is
+    /// Extracts the owner pubkey for agent→owner recording on any admitted
+    /// request, whatever the relay mode. The NIP-OA signature is
     /// cryptographically self-proving, so no feature flag is needed. Temporal
     /// conditions are evaluated against `signed_auth_created_at`. Returns
     /// `None` if the tag, timestamp, or conditions are absent or invalid.

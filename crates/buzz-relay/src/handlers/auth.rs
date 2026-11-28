@@ -2,9 +2,9 @@
 //!
 //! Relay membership enforcement uses the shared
 //! [`crate::api::relay_members::enforce_relay_membership`] helper, which supports
-//! NIP-OA owner-delegation fallback on closed relays. On open relays, the auth
+//! NIP-OA owner-delegation fallback on closed relays. On any admitted AUTH, the
 //! handler calls [`crate::api::relay_members::extract_nip_oa_owner`] directly to
-//! extract the owner pubkey for agent→owner backfill (observer frame auth).
+//! record the agent→owner link (owner removal, bans, observer frame auth).
 //!
 //! For WebSocket auth, the NIP-OA `auth` tag is extracted from the signed AUTH
 //! event itself (the tag is integrity-protected by the event signature).
@@ -314,6 +314,7 @@ pub(crate) fn ban_admission_denial(ban: BanOutcome) -> Option<AdmissionDenial> {
 /// socket whose cancellation token fired. Both reads fail closed.
 pub(crate) async fn final_admission_denial(
     state: &AppState,
+    control: &crate::state::CommunityConnectionControl,
     community: buzz_core::CommunityId,
     pubkey: nostr::PublicKey,
     auth_tag_json: Option<&str>,
@@ -333,24 +334,41 @@ pub(crate) async fn final_admission_denial(
     if let Some(denial) = ban_verdict_denial(ban) {
         return Some(denial);
     }
-    match crate::api::relay_members::check_relay_membership_authoritative(
-        state,
-        community,
-        pubkey.as_bytes(),
-        auth_tag_json,
-        signed_auth_created_at,
-        token_owner,
-    )
-    .await
-    {
-        Ok(crate::api::relay_members::MembershipDecision::Denied) => Some(AdmissionDenial {
+    let principal = state.config.require_relay_membership.then_some(&pubkey);
+    let owner = principal.and_then(|principal| {
+        token_owner.or_else(|| {
+            if state.config.allow_nip_oa_auth {
+                crate::api::relay_members::extract_nip_oa_owner(
+                    principal.as_bytes(),
+                    auth_tag_json,
+                    signed_auth_created_at,
+                )
+            } else {
+                None
+            }
+        })
+    });
+    #[cfg(test)]
+    crate::nip_fi_test_hooks::before_roster_admission(community).await;
+    let membership = state
+        .db
+        .with_relay_roster_admission(
+            community,
+            &state.relay_keypair.public_key(),
+            principal,
+            owner.as_ref(),
+            |version| control.bind_roster_version(version),
+        )
+        .await;
+    match membership {
+        Ok(None) => Some(AdmissionDenial {
             metric: "not_relay_member",
             reason: "restricted: not a relay member",
             outcome: AuthOutcome::NotRelayMember,
             class: buzz_auth::DenialClass::AuthorizationDenied,
             owner_reason: None,
         }),
-        Ok(_) => None,
+        Ok(Some(())) => None,
         Err(e) => {
             warn!(pubkey = %pubkey.to_hex(), error = %e, "relay membership recheck failed, denying (fail-closed)");
             Some(AdmissionDenial {
@@ -809,20 +827,15 @@ pub async fn handle_auth(event: nostr::Event, conn: Arc<ConnectionState>, state:
                 }
             };
 
-            // Open relay NIP-OA backfill: extract owner for agent→owner DB mapping
-            // (needed for observer frame auth). Only runs on open relays — on closed
-            // relays, enforce_relay_membership already handles NIP-OA delegation.
-            // No feature flag needed: NIP-OA is cryptographically self-proving.
+            // Record any verified NIP-OA owner, whatever the relay mode or how
+            // this AUTH was admitted: removing or banning the owner reaches the
+            // agent only through that record. Refused attempts returned above.
             let nip_oa_owner = nip_oa_owner.or(token_owner).or_else(|| {
-                if !state.config.require_relay_membership && auth_tag_json.is_some() {
-                    crate::api::relay_members::extract_nip_oa_owner(
-                        pubkey.as_bytes(),
-                        auth_tag_json.as_deref(),
-                        Some(signed_auth_created_at),
-                    )
-                } else {
-                    None
-                }
+                crate::api::relay_members::extract_nip_oa_owner(
+                    pubkey.as_bytes(),
+                    auth_tag_json.as_deref(),
+                    Some(signed_auth_created_at),
+                )
             });
 
             // B2: acquire a session effect permit after the last policy read
@@ -929,6 +942,7 @@ pub async fn handle_auth(event: nostr::Event, conn: Arc<ConnectionState>, state:
                 };
             let denial = match final_admission_denial(
                 &state,
+                &conn.community_control,
                 conn.tenant.community(),
                 pubkey,
                 auth_tag_json.as_deref(),
@@ -2590,6 +2604,74 @@ pub(super) mod tests {
             builder.sign_with_keys(keys).unwrap()
         }
 
+        /// An owner ban landing after AUTH's first checks but before its final
+        /// check refuses the agent's sign-in, yet the verified owner stays
+        /// recorded: the accepted late-refusal rule. Paused at the AUTH commit
+        /// hook, so no timing sleeps.
+        /// Mutation: skip the owner write on this path → the owner is not
+        /// recorded → RED; drop `final_admission_denial` → admitted → RED.
+        #[tokio::test]
+        #[ignore = "requires Postgres — runs in postgres-ci nextest lane"]
+        async fn late_refused_auth_keeps_the_recorded_owner() {
+            use std::sync::Arc;
+            let state = auth_test_state_real_db_expect().await;
+            let community = seeded_community(&state).await;
+            let (owner, agent) = (Keys::generate(), Keys::generate());
+            let tag = buzz_sdk::nip_oa::compute_auth_tag(&owner, &agent.public_key(), "")
+                .expect("sign NIP-OA credential");
+            let tag: Vec<String> = serde_json::from_str(&tag).expect("tag JSON");
+            let (conn, _ctrl) = registered_pending_conn(&state, community, "late-refusal");
+            let (arrived, release) =
+                crate::nip_fi_test_hooks::auth_commit_hook::arm(conn.tenant.community());
+            let handle = tokio::spawn(handle_auth(
+                signed_auth(&agent, "late-refusal", Some(tag)),
+                Arc::clone(&conn),
+                Arc::clone(&state),
+            ));
+            tokio::time::timeout(std::time::Duration::from_secs(5), arrived)
+                .await
+                .expect("AUTH must pause after its first checks")
+                .expect("hook channel closed");
+            state
+                .db
+                .ensure_user(community, owner.public_key().as_bytes())
+                .await
+                .expect("ensure owner");
+            state
+                .db
+                .ban_community_member(
+                    community,
+                    &owner.public_key().to_bytes(),
+                    &Keys::generate().public_key().to_bytes(),
+                    None,
+                    None,
+                )
+                .await
+                .expect("ban owner");
+            release.notify_one();
+            tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+                .await
+                .expect("AUTH must finish")
+                .expect("AUTH must not panic");
+
+            assert!(
+                !matches!(conn.auth_state_snapshot(), AuthState::Authenticated(_)),
+                "the sign-in is refused and the agent is not authenticated"
+            );
+            assert!(
+                state
+                    .db
+                    .is_agent_owner(
+                        community,
+                        agent.public_key().as_bytes(),
+                        owner.public_key().as_bytes(),
+                    )
+                    .await
+                    .expect("owner lookup"),
+                "the verified owner stays recorded"
+            );
+        }
+
         /// A ban whose disconnect lands after AUTH's policy reads but before it
         /// binds the socket must still refuse admission: the final check runs
         /// after the bind. A user in another community, paused at the same
@@ -2887,6 +2969,119 @@ pub(super) mod tests {
             );
         }
 
+        /// On a closed relay with NIP-OA admission off, a member agent's
+        /// verified NIP-OA tag records its owner; a tag for another agent or
+        /// one that has expired records nothing; a refused AUTH (agent not a
+        /// member) records nothing. Removing the recorded owner then refuses
+        /// the agent's next AUTH.
+        /// Mutation: restore the `!require_relay_membership` guard on the
+        /// recording step → the member agent's owner stays NULL → RED.
+        #[tokio::test]
+        #[ignore = "requires Postgres — runs in postgres-ci nextest lane"]
+        async fn closed_relay_auth_records_only_verified_admitted_owner() {
+            use std::sync::Arc;
+            let pool = sqlx::PgPool::connect(&crate::test_support::database_url())
+                .await
+                .expect("PostgreSQL must be available");
+            let state = state_with_pool(pool, |c| {
+                c.require_relay_membership = true;
+                c.allow_nip_oa_auth = false;
+            })
+            .await;
+            let community = seeded_community(&state).await;
+            let owner = Keys::generate();
+            let (valid, wrong_agent, stale, refused) = (
+                Keys::generate(),
+                Keys::generate(),
+                Keys::generate(),
+                Keys::generate(),
+            );
+            for keys in [&owner, &valid, &wrong_agent, &stale] {
+                state
+                    .db
+                    .add_relay_member(
+                        community,
+                        &keys.public_key().to_hex(),
+                        "member",
+                        None,
+                        &nostr::Keys::generate(),
+                    )
+                    .await
+                    .map(|write| write.outcome)
+                    .expect("add agent");
+            }
+            let tag = |agent: &nostr::PublicKey, conditions: &str| -> Vec<String> {
+                let json = buzz_sdk::nip_oa::compute_auth_tag(&owner, agent, conditions)
+                    .expect("sign NIP-OA credential");
+                serde_json::from_str(&json).expect("tag JSON")
+            };
+            let cases = [
+                (&valid, tag(&valid.public_key(), ""), true, true),
+                (&wrong_agent, tag(&stale.public_key(), ""), true, false),
+                (
+                    &stale,
+                    tag(&stale.public_key(), "created_at<1"),
+                    true,
+                    false,
+                ),
+                (&refused, tag(&refused.public_key(), ""), false, false),
+            ];
+            for (i, (keys, auth_tag, admitted, recorded)) in cases.into_iter().enumerate() {
+                let challenge = format!("record-owner-{i}");
+                let (conn, _ctrl) = registered_pending_conn(&state, community, &challenge);
+                handle_auth(
+                    signed_auth(keys, &challenge, Some(auth_tag)),
+                    Arc::clone(&conn),
+                    Arc::clone(&state),
+                )
+                .await;
+                assert_eq!(
+                    matches!(conn.auth_state_snapshot(), AuthState::Authenticated(_)),
+                    admitted,
+                    "case {i} admission"
+                );
+                let stored: Option<Option<Vec<u8>>> = sqlx::query_scalar(
+                    "SELECT agent_owner_pubkey FROM users WHERE community_id = $1 AND pubkey = $2",
+                )
+                .bind(community.as_uuid())
+                .bind(keys.public_key().as_bytes().as_slice())
+                .fetch_optional(state.db.pool())
+                .await
+                .expect("read owner");
+                assert_eq!(
+                    stored.flatten(),
+                    recorded.then(|| owner.public_key().to_bytes().to_vec()),
+                    "case {i} owner record"
+                );
+            }
+
+            // The recorded owner's removal takes the agent with it.
+            buzz_db::relay_members::remove_relay_member(
+                state.db.pool(),
+                community,
+                &owner.public_key().to_hex(),
+                &nostr::Keys::generate(),
+            )
+            .await
+            .map(|write| write.outcome)
+            .expect("remove owner");
+            let (conn, _ctrl) = registered_pending_conn(&state, community, "record-owner-after");
+            handle_auth(
+                signed_auth(
+                    &valid,
+                    "record-owner-after",
+                    Some(tag(&valid.public_key(), "")),
+                ),
+                Arc::clone(&conn),
+                Arc::clone(&state),
+            )
+            .await;
+            assert!(
+                !matches!(conn.auth_state_snapshot(), AuthState::Authenticated(_)),
+                "the agent is refused after its owner's removal"
+            );
+        }
+
         /// Root AUTH records each agent's owner on its socket — the proven
         /// NIP-OA owner, or the stored owner link when the agent signs in
         /// without a credential — so revoking the owner closes both agents
@@ -2968,6 +3163,295 @@ pub(super) mod tests {
                 "the stored-link agent closes"
             );
             assert!(!conns[2].cancel.is_cancelled(), "the bystander stays");
+        }
+
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn removal_retry_closes_old_sessions_after_roster_republication() {
+            check_removal_retry_sessions(true).await;
+        }
+
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn removal_retry_preserves_agent_admitted_after_first_owner_link() {
+            check_removal_retry_sessions(false).await;
+        }
+
+        #[tokio::test]
+        #[ignore = "requires Postgres"]
+        async fn removal_retry_preserves_auth_that_observes_rejoined_membership() {
+            use buzz_pubsub::conn_control::{ConnControl, ScopedConnControl};
+            use std::sync::Arc;
+            use std::time::Duration;
+
+            let mut state = auth_test_state_real_db_expect().await;
+            Arc::make_mut(&mut Arc::make_mut(&mut state).config).require_relay_membership = true;
+            let community = seeded_community(&state).await;
+            let member = Keys::generate();
+            let pubkey = member.public_key().to_hex();
+            assert!(
+                state
+                    .db
+                    .add_relay_member(community, &pubkey, "member", None, &state.relay_keypair)
+                    .await
+                    .expect("add member")
+                    .outcome
+            );
+            let challenge = "removal-rejoin-during-auth";
+            let (conn, _ctrl) = registered_pending_conn(&state, community, challenge);
+            let (arrived, release) =
+                crate::nip_fi_test_hooks::roster_admission_hook::arm(community);
+            let auth = tokio::spawn(handle_auth(
+                signed_auth(&member, challenge, None),
+                Arc::clone(&conn),
+                Arc::clone(&state),
+            ));
+            tokio::time::timeout(Duration::from_secs(5), arrived)
+                .await
+                .expect("AUTH reaches final membership check")
+                .expect("hook arrives");
+
+            let removed = state
+                .db
+                .remove_relay_member(community, &pubkey, &state.relay_keypair)
+                .await
+                .expect("remove member while AUTH is pending");
+            let roster_id = removed.snapshot.expect("signed removal roster").event.id;
+            assert!(
+                state
+                    .db
+                    .add_relay_member(community, &pubkey, "member", None, &state.relay_keypair)
+                    .await
+                    .expect("member rejoins before final membership read")
+                    .outcome
+            );
+            release.notify_one();
+            auth.await.expect("join AUTH");
+            assert!(matches!(
+                conn.auth_state_snapshot(),
+                AuthState::Authenticated(_)
+            ));
+
+            let (tx, rx) = tokio::sync::broadcast::channel(4);
+            tx.send(ScopedConnControl {
+                community_id: community,
+                command: ConnControl::DisconnectRemovedMember {
+                    pubkey: member.public_key().to_bytes().to_vec(),
+                    roster_id,
+                },
+            })
+            .expect("send retry");
+            drop(tx);
+            state.run_conn_control_consumer(rx).await;
+            assert!(
+                !conn.cancel.is_cancelled(),
+                "AUTH admitted the rejoined member under the new roster"
+            );
+        }
+
+        async fn check_removal_retry_sessions(republish: bool) {
+            use buzz_pubsub::conn_control::{ConnControl, ScopedConnControl};
+            use futures_util::{SinkExt as _, StreamExt as _};
+            use std::sync::Arc;
+            use std::time::Duration;
+            use tokio_tungstenite::tungstenite::{client::IntoClientRequest as _, Message};
+
+            let mut state = auth_test_state_real_db_expect().await;
+            Arc::make_mut(&mut Arc::make_mut(&mut state).config).require_relay_membership = true;
+            let community = seeded_community(&state).await;
+            let host = format!("admission-{}.example", community.as_uuid().simple());
+            let tenant = buzz_core::tenant::TenantContext::resolved(community, host.clone());
+            let relay_url =
+                crate::api::bridge::nip42_expected_relay_url(&state.config.relay_url, &tenant);
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind relay");
+            let addr = listener.local_addr().expect("relay address");
+            let router = crate::router::build_router(Arc::clone(&state));
+            let server = tokio::spawn(async move {
+                axum::serve(
+                    listener,
+                    router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                )
+                .await
+                .expect("serve relay");
+            });
+            let (member, early_agent, late_agent) =
+                (Keys::generate(), Keys::generate(), Keys::generate());
+            for key in [&member, &early_agent, &late_agent] {
+                state
+                    .db
+                    .add_relay_member(
+                        community,
+                        &key.public_key().to_hex(),
+                        "member",
+                        None,
+                        &state.relay_keypair,
+                    )
+                    .await
+                    .expect("add member");
+            }
+            let auth_tag = |agent: &Keys| {
+                let tag = buzz_sdk::nip_oa::compute_auth_tag(&member, &agent.public_key(), "")
+                    .expect("sign NIP-OA credential");
+                serde_json::from_str(&tag).expect("tag JSON")
+            };
+            let connect = |keys: Keys, tag: Option<Vec<String>>| {
+                let host = host.clone();
+                let relay_url = relay_url.clone();
+                async move {
+                    let mut request = format!("ws://{addr}/")
+                        .into_client_request()
+                        .expect("WebSocket request");
+                    request
+                        .headers_mut()
+                        .insert("host", host.parse().expect("host header"));
+                    let (mut socket, _) = tokio_tungstenite::connect_async(request)
+                        .await
+                        .expect("open socket");
+                    let challenge = tokio::time::timeout(Duration::from_secs(8), async {
+                        loop {
+                            let Message::Text(text) = socket
+                                .next()
+                                .await
+                                .expect("AUTH message")
+                                .expect("read AUTH")
+                            else {
+                                continue;
+                            };
+                            let frame: serde_json::Value =
+                                serde_json::from_str(&text).expect("decode AUTH");
+                            if frame[0] == "AUTH" {
+                                break frame[1].as_str().expect("challenge").to_owned();
+                            }
+                        }
+                    })
+                    .await
+                    .expect("relay asks for AUTH");
+                    let mut builder = EventBuilder::new(Kind::Authentication, "")
+                        .tag(Tag::parse(["relay", &relay_url]).expect("relay tag"))
+                        .tag(Tag::parse(["challenge", &challenge]).expect("challenge tag"));
+                    if let Some(tag) = tag {
+                        builder = builder.tag(Tag::parse(tag).expect("auth tag"));
+                    }
+                    let event = builder.sign_with_keys(&keys).expect("sign AUTH");
+                    socket
+                        .send(Message::Text(
+                            serde_json::json!(["AUTH", event]).to_string().into(),
+                        ))
+                        .await
+                        .expect("send AUTH");
+                    tokio::time::timeout(Duration::from_secs(8), async {
+                        loop {
+                            let Message::Text(text) = socket
+                                .next()
+                                .await
+                                .expect("AUTH result")
+                                .expect("read AUTH result")
+                            else {
+                                continue;
+                            };
+                            let frame: serde_json::Value =
+                                serde_json::from_str(&text).expect("decode AUTH result");
+                            if frame[0] == "OK" {
+                                assert_eq!(frame[2], true, "socket is admitted: {frame}");
+                                break;
+                            }
+                        }
+                    })
+                    .await
+                    .expect("relay accepts AUTH");
+                    socket
+                }
+            };
+            let mut old_member = connect(member.clone(), None).await;
+            let mut old_agent = connect(early_agent.clone(), Some(auth_tag(&early_agent))).await;
+
+            let removal = state
+                .db
+                .remove_relay_member(
+                    community,
+                    &member.public_key().to_hex(),
+                    &state.relay_keypair,
+                )
+                .await
+                .expect("remove member without publishing");
+            let roster_id = removal.snapshot.expect("removal roster").event.id;
+            let mut surviving =
+                vec![connect(late_agent.clone(), Some(auth_tag(&late_agent))).await];
+
+            if republish {
+                let current = state
+                    .db
+                    .rewrite_nip43_membership_list(community, &state.relay_keypair)
+                    .await
+                    .expect("republish unchanged roster");
+                assert_ne!(
+                    current.snapshot.expect("republished roster").event.id,
+                    roster_id
+                );
+                state
+                    .db
+                    .add_relay_member(
+                        community,
+                        &member.public_key().to_hex(),
+                        "member",
+                        None,
+                        &state.relay_keypair,
+                    )
+                    .await
+                    .expect("re-admit member");
+                surviving.push(connect(member.clone(), None).await);
+            }
+
+            let (tx, rx) = tokio::sync::broadcast::channel(4);
+            tx.send(ScopedConnControl {
+                community_id: community,
+                command: ConnControl::DisconnectRemovedMember {
+                    pubkey: member.public_key().to_bytes().to_vec(),
+                    roster_id,
+                },
+            })
+            .expect("send removal retry");
+            drop(tx);
+            state.run_conn_control_consumer(rx).await;
+            for old in [&mut old_member, &mut old_agent] {
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    while let Some(Ok(frame)) = old.next().await {
+                        if frame.is_close() {
+                            break;
+                        }
+                    }
+                })
+                .await
+                .expect("the session from before removal closes");
+            }
+            for mut socket in surviving {
+                let ping = b"after-retry".to_vec();
+                socket
+                    .send(Message::Ping(ping.clone().into()))
+                    .await
+                    .expect("ping newly admitted socket");
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    loop {
+                        match socket
+                            .next()
+                            .await
+                            .expect("socket stays open")
+                            .expect("read socket")
+                        {
+                            Message::Pong(payload) if payload == ping.as_slice() => break,
+                            Message::Close(frame) => {
+                                panic!("newly admitted socket closed: {frame:?}")
+                            }
+                            _ => {}
+                        }
+                    }
+                })
+                .await
+                .expect("the newly admitted socket answers the ping");
+            }
+            server.abort();
         }
 
         /// Flags `names` as default channels in `community`, oldest first.

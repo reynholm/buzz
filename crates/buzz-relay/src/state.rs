@@ -133,6 +133,8 @@ pub(crate) struct CommunityConnectionControl {
     pubkey: Arc<std::sync::OnceLock<[u8; 32]>>,
     /// Owner of an admitted agent; revoking the owner closes this socket.
     owner: Arc<std::sync::OnceLock<[u8; 32]>>,
+    /// Roster version observed before the socket's final membership check.
+    roster_version: Arc<std::sync::OnceLock<i64>>,
     /// Shadow-mode observation of this socket; no enforce path reads it.
     nip_fi_shadow: Arc<std::sync::OnceLock<Arc<crate::nip_fi_shadow_session::ShadowSession>>>,
     /// A shadow upgrade would-deny's line, owned by the connection task.
@@ -165,6 +167,7 @@ impl CommunityConnectionControl {
             terminal_frame_tx: Arc::new(std::sync::Mutex::new(None)),
             pubkey: Arc::default(),
             owner: Arc::default(),
+            roster_version: Arc::default(),
             nip_fi_shadow: Arc::default(),
             nip_fi_line: Arc::default(),
             nip_fi_enforce: Arc::default(),
@@ -249,6 +252,16 @@ impl CommunityConnectionControl {
     /// socket without a database lookup.
     pub(crate) fn bind_owner(&self, owner: [u8; 32]) {
         let _ = self.owner.set(owner);
+    }
+
+    pub(crate) fn bind_roster_version(&self, version: Option<i64>) {
+        let _ = self.roster_version.set(version.unwrap_or(i64::MIN));
+    }
+
+    fn predates_removal(&self, removed_at: i64) -> bool {
+        self.roster_version
+            .get()
+            .is_some_and(|version| *version < removed_at)
     }
 
     fn matches_revocation(&self, pubkey: &[u8], unowned_only: bool) -> bool {
@@ -618,10 +631,20 @@ impl CommunityConnectionRegistry {
         pubkey: &[u8],
         unowned_only: bool,
     ) -> usize {
+        self.disconnect_matching(community_id, |control| {
+            control.matches_revocation(pubkey, unowned_only)
+        })
+    }
+
+    fn disconnect_matching(
+        &self,
+        community_id: CommunityId,
+        matches: impl Fn(&CommunityConnectionControl) -> bool,
+    ) -> usize {
         let mut closed = 0;
         for entry in self.connections.iter() {
             let (community, control) = entry.value();
-            if *community == community_id && control.matches_revocation(pubkey, unowned_only) {
+            if *community == community_id && matches(control) {
                 control.revoke_access();
                 closed += 1;
             }
@@ -1098,19 +1121,30 @@ impl ConnectionManager {
         reason: &str,
         unowned_only: bool,
     ) -> usize {
-        let frame = crate::protocol::RelayMessage::ok(event_id, false, reason);
-        let mut closed = 0usize;
-        for entry in self.connections.iter() {
+        self.disconnect_matching(community, event_id, reason, |entry| {
             let principal = entry
                 .authenticated_pubkey
                 .read()
                 .is_ok_and(|key| key.as_deref() == Some(pubkey));
-            let matches = match entry.admitted_owner.get() {
+            match entry.admitted_owner.get() {
                 Some(_) if unowned_only => false,
                 Some(owner) => principal || owner[..] == *pubkey,
                 None => principal,
-            };
-            if entry.community_id != community || !matches {
+            }
+        })
+    }
+
+    fn disconnect_matching(
+        &self,
+        community: CommunityId,
+        event_id: &str,
+        reason: &str,
+        matches: impl Fn(&ConnEntry) -> bool,
+    ) -> usize {
+        let frame = crate::protocol::RelayMessage::ok(event_id, false, reason);
+        let mut closed = 0usize;
+        for entry in self.connections.iter() {
+            if entry.community_id != community || !matches(entry.value()) {
                 continue;
             }
             // Best-effort delivery: a full control buffer still gets the
@@ -2402,6 +2436,57 @@ impl AppState {
                 .disconnect_pubkey(community, pubkey, unowned_only)
     }
 
+    /// Reapply the committed removal to sockets that saw an earlier roster.
+    async fn retry_removed_member_disconnect(
+        &self,
+        community: CommunityId,
+        pubkey: &[u8],
+        roster_id: nostr::EventId,
+    ) -> buzz_db::Result<()> {
+        let Some(removal) = self
+            .db
+            .relay_roster_removal(
+                community,
+                &self.relay_keypair.public_key(),
+                &roster_id,
+                &hex::encode(pubkey),
+            )
+            .await?
+        else {
+            tracing::warn!(%community, %roster_id, "membership removal roster unavailable");
+            return Ok(());
+        };
+        let removed: HashSet<&[u8]> = removal.pubkeys.iter().map(Vec::as_slice).collect();
+        self.conn_manager.disconnect_matching(
+            community,
+            &roster_id.to_hex(),
+            "blocked: access revoked",
+            |entry| {
+                entry.community_control.predates_removal(removal.version)
+                    && (entry
+                        .admitted_owner
+                        .get()
+                        .is_some_and(|owner| owner.as_slice() == pubkey)
+                        || entry.authenticated_pubkey.read().is_ok_and(|key| {
+                            key.as_deref().is_some_and(|key| removed.contains(key))
+                        }))
+            },
+        );
+        self.community_connections
+            .disconnect_matching(community, |control| {
+                control.predates_removal(removal.version)
+                    && (control
+                        .owner
+                        .get()
+                        .is_some_and(|owner| owner.as_slice() == pubkey)
+                        || control
+                            .pubkey
+                            .get()
+                            .is_some_and(|key| removed.contains(key.as_slice())))
+            });
+        Ok(())
+    }
+
     /// Close every live session of `pubkey` and of the agents it owns, on
     /// every pod. Ban, report-action ban, and roster removal (admin or
     /// self-leave) all end access this way, because an agent's access is
@@ -2637,6 +2722,15 @@ impl AppState {
                                     %error,
                                     "could not verify archive disconnect; retaining sockets until lifecycle revalidation"
                                 ),
+                            }
+                        });
+                    }
+                    ConnControl::DisconnectRemovedMember { pubkey, roster_id } => {
+                        let state = Arc::clone(&self);
+                        let community = scoped.community_id;
+                        checks.spawn(async move {
+                            if let Err(error) = state.retry_removed_member_disconnect(community, &pubkey, roster_id).await {
+                                tracing::warn!(%community, %roster_id, %error, "could not verify member disconnect");
                             }
                         });
                     }

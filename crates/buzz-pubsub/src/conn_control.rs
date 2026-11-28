@@ -121,6 +121,13 @@ pub enum ConnControl {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         archived_at: Option<DateTime<Utc>>,
     },
+    /// Revoke sessions admitted before the committed membership removal.
+    DisconnectRemovedMember {
+        /// Raw bytes of the removal's target, including any dependent sessions.
+        pubkey: Vec<u8>,
+        /// Event ID of the committed replacement membership list.
+        roster_id: nostr::EventId,
+    },
     /// Disconnect every live connection authenticated as `pubkey` in the
     /// carrying community — live ban enforcement. `pubkey` is 32 raw bytes.
     /// `event_id` and `reason` reproduce the same NIP-01 `OK` frame the origin

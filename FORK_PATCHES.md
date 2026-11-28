@@ -5944,6 +5944,14 @@ New module: `false`.
             )`; behavior test `managed_recovery_and_original_race_share_one_election`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib managed_recovery_and_original_race_share_one_election -- --ignored --test-threads=1`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
 
+## `crates/buzz-db/src/store/thread.rs`
+
+Apply the timestamp range bound to deep channel-window pages alongside composite event pagination
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+
 ## `crates/buzz-db/src/store/managed_delivery.rs`
 
 Elect once per community/author/UUID under a transaction advisory lock; adopt accepted or soft-deleted originals, otherwise commit candidate, thread counters, callback mentions and durable binding together.
@@ -11389,6 +11397,70 @@ New module: `false`.
 
 - Verify: `just ci`
 
+## `crates/buzz-db/src/store/admission_postgres_tests.rs`
+
+Check tenant and parent references in admitted transactions before the foreign-key retirement phase
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db -p buzz-relay`
+
+## `crates/buzz-db/src/store/product_feedback.rs`
+
+Check tenant and parent references in admitted transactions before the foreign-key retirement phase
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db -p buzz-relay`
+
+## `crates/buzz-db/src/store/reference_check.rs`
+
+Check tenant and parent references in admitted transactions before the foreign-key retirement phase
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-db -p buzz-relay`
+
+## `crates/buzz-db/src/store/reference_check_postgres_tests.rs`
+
+Check tenant and parent references in admitted transactions before the foreign-key retirement phase
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-db -p buzz-relay`
+
+## `crates/buzz-db/src/store/relay_invite.rs`
+
+Check tenant and parent references in admitted transactions before the foreign-key retirement phase
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db -p buzz-relay`
+
+## `crates/buzz-db/src/store/relay_invite/claim_owner.rs`
+
+Check tenant and parent references in admitted transactions before the foreign-key retirement phase
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db -p buzz-relay`
+
+## `crates/buzz-db/src/store/workflow/deletion_tests.rs`
+
+Check tenant and parent references in admitted transactions before the foreign-key retirement phase
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db -p buzz-relay`
+
+## `crates/buzz-db/src/store/workflow/reference_tests.rs`
+
+Check tenant and parent references in admitted transactions before the foreign-key retirement phase
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-db -p buzz-relay`
+
 ## `crates/buzz-db/src/store/workflow/deletion.rs`
 
 Track partial upstream replay from group A step 62 (359839f70).
@@ -14367,3 +14439,11 @@ New module: `false`.
 
 - Required symbol: `bool isRelayMediaOrigin(Uri uri)`
 - Verify: `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart`
+
+## `docs/nips/NIP-FI.md`
+
+Document community roster removal for agents with a recorded owner
+
+New module: `false`.
+
+- Verify: `python3 scripts/fork/sync.py validate`

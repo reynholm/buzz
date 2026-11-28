@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use buzz_core::tenant::{relay_url_authority, TenantContext};
 use buzz_db::{
     partition::{PartitionAuditOutcome, PartitionAuditReport},
@@ -84,6 +84,11 @@ enum Command {
         /// Omit to remove regardless of role.
         #[arg(long)]
         role: Option<String>,
+
+        /// Retry disconnect publication for this committed roster snapshot.
+        /// Exit 7 if those roster records do not identify a removal of this member.
+        #[arg(long, conflicts_with = "role")]
+        retry_disconnect: Option<nostr::EventId>,
     },
     /// Rewrite the community's kind:13534 membership list from the stored
     /// members and push it to live clients.
@@ -239,7 +244,11 @@ async fn run(cli: Cli) -> Result<i32> {
         Command::StorageSnapshot { max_objects } => cmd_storage_snapshot(max_objects).await,
         Command::PartitionAudit { months_ahead } => cmd_partition_audit(months_ahead).await,
         Command::AddMember { pubkey, role } => cmd_add_member(pubkey, role).await,
-        Command::RemoveMember { pubkey, role } => cmd_remove_member(pubkey, role).await,
+        Command::RemoveMember {
+            pubkey,
+            role,
+            retry_disconnect,
+        } => cmd_remove_member(pubkey, role, retry_disconnect).await,
         Command::RepublishMembers => cmd_republish_members().await,
         Command::ListMembers => cmd_list_members().await,
         Command::ProductFeedback {
@@ -530,7 +539,11 @@ async fn cmd_add_member(pubkey_arg: String, role: String) -> Result<i32> {
     Ok(0)
 }
 
-async fn cmd_remove_member(pubkey_arg: String, role_filter: Option<String>) -> Result<i32> {
+async fn cmd_remove_member(
+    pubkey_arg: String,
+    role_filter: Option<String>,
+    retry_disconnect: Option<nostr::EventId>,
+) -> Result<i32> {
     if let Some(ref role) = role_filter {
         if let Err(msg) = validate_role(role) {
             eprintln!("error: {msg}");
@@ -549,6 +562,30 @@ async fn cmd_remove_member(pubkey_arg: String, role_filter: Option<String>) -> R
     let (db, pubsub, relay_keypair) = connect_member_services().await?;
 
     let tenant = resolve_admin_tenant(&db).await?;
+    if let Some(roster_id) = retry_disconnect {
+        if db
+            .relay_roster_removal(
+                tenant.community(),
+                &relay_keypair.public_key(),
+                &roster_id,
+                &pubkey_hex,
+            )
+            .await?
+            .is_none()
+        {
+            eprintln!("error: roster {roster_id} does not identify a removal of {pubkey_hex}");
+            return Ok(7);
+        }
+        let command = buzz_pubsub::conn_control::ConnControl::DisconnectRemovedMember {
+            pubkey: hex::decode(&pubkey_hex)?,
+            roster_id,
+        };
+        return Ok(report_member_disconnect(
+            matches!(pubsub.publish_conn_control(&tenant, &command).await, Ok(n) if n > 0),
+            &pubkey_hex,
+            roster_id,
+        ));
+    }
     use buzz_db::relay_members::RemoveResult;
     let result = if let Some(ref role) = role_filter {
         db.remove_relay_member_if_role(tenant.community(), &pubkey_hex, role, &relay_keypair)
@@ -560,32 +597,95 @@ async fn cmd_remove_member(pubkey_arg: String, role_filter: Option<String>) -> R
 
     match result.map(|write| (write.outcome, write.snapshot)) {
         Ok((RemoveResult::Removed, snapshot)) => {
+            let roster_id = snapshot
+                .as_ref()
+                .context("removal did not commit a roster")?
+                .event
+                .id;
             println!("removed {pubkey_hex}");
+            println!("removal roster: {roster_id}");
             fan_out_membership_list(&pubsub, &tenant, snapshot).await;
+            let published =
+                publish_member_disconnects(&db, &pubsub, &tenant, &pubkey_hex, roster_id).await;
+            Ok(report_member_disconnect(published, &pubkey_hex, roster_id))
         }
         Ok((RemoveResult::NotFound, _)) => {
             eprintln!("error: member not found: {pubkey_hex}");
-            return Ok(2);
+            Ok(2)
         }
         Ok((RemoveResult::IsOwner, _)) => {
             eprintln!(
                 "error: cannot remove relay owner: {pubkey_hex}\n\
                  To change the owner, update RELAY_OWNER_PUBKEY and restart."
             );
-            return Ok(3);
+            Ok(3)
         }
         Ok((RemoveResult::RoleMismatch, _)) => {
             let role_str = role_filter.as_deref().unwrap_or("(unknown)");
             eprintln!("error: role mismatch — {pubkey_hex} is not currently '{role_str}'");
-            return Ok(4);
+            Ok(4)
         }
         Err(e) => {
             eprintln!("error: DB write failed: {e}");
-            return Ok(5);
+            Ok(5)
         }
     }
+}
 
-    Ok(0)
+/// Exit code after a committed removal: 0 once every disconnect was
+/// published, 6 when publication must be retried for the same roster.
+fn removed_exit_code(disconnect_published: bool) -> i32 {
+    if disconnect_published {
+        0
+    } else {
+        6
+    }
+}
+
+fn report_member_disconnect(published: bool, pubkey_hex: &str, roster_id: nostr::EventId) -> i32 {
+    if published {
+        println!("disconnect published");
+    } else {
+        eprintln!("warning: disconnect publication reached no confirmed subscriber");
+        eprintln!(
+            "retry: buzz-admin remove-member --pubkey {pubkey_hex} --retry-disconnect {roster_id}"
+        );
+    }
+    removed_exit_code(published)
+}
+
+/// Publish, to every relay server, a disconnect for `pubkey_hex` and every
+/// agent recorded as its own. Retries are fenced to the committed roster. Returns
+/// whether each disconnect reached at least one subscribed relay server; that
+/// is publication, not observed socket closure.
+async fn publish_member_disconnects(
+    db: &Db,
+    pubsub: &PubSubManager,
+    tenant: &TenantContext,
+    pubkey_hex: &str,
+    roster_id: nostr::EventId,
+) -> bool {
+    let Ok(pubkey) = hex::decode(pubkey_hex) else {
+        return false;
+    };
+    let agents = match db.list_agents_for_owner(tenant.community(), &pubkey).await {
+        Ok(agents) => agents,
+        Err(e) => {
+            eprintln!("warning: owned-agent lookup failed: {e}; disconnect not published");
+            return false;
+        }
+    };
+    let mut published = true;
+    for key in std::iter::once(pubkey).chain(agents) {
+        let command = buzz_pubsub::conn_control::ConnControl::DisconnectPubkey {
+            pubkey: key,
+            event_id: roster_id.to_hex(),
+            reason: "blocked: access revoked".to_owned(),
+            unowned_only: false,
+        };
+        published &= matches!(pubsub.publish_conn_control(tenant, &command).await, Ok(n) if n > 0);
+    }
+    published
 }
 
 async fn cmd_republish_members() -> Result<i32> {
@@ -953,6 +1053,14 @@ mod storage_snapshot_tests {
 mod tests {
     use super::*;
 
+    /// A committed removal whose disconnect was not published exits nonzero
+    /// so the operator reruns it; a published one exits 0.
+    #[test]
+    fn unpublished_disconnect_after_removal_asks_for_a_rerun() {
+        assert_eq!(removed_exit_code(false), 6);
+        assert_eq!(removed_exit_code(true), 0);
+    }
+
     #[test]
     fn migration_timeout_flags_are_paired_and_positive() {
         assert!(
@@ -994,6 +1102,22 @@ mod tests {
             Cli::try_parse_from(["buzz-admin", "migrate"]).is_ok(),
             "legacy callers retain the unbounded migration policy"
         );
+    }
+
+    #[test]
+    fn accepts_an_explicit_removal_snapshot_for_disconnect_retry() {
+        let key = "a".repeat(64);
+        let snapshot = "b".repeat(64);
+        let args = [
+            "buzz-admin",
+            "remove-member",
+            "--pubkey",
+            &key,
+            "--retry-disconnect",
+            &snapshot,
+        ];
+        Cli::try_parse_from(args).expect("disconnect retry names a committed removal snapshot");
+        assert!(Cli::try_parse_from(args.into_iter().chain(["--role", "member"])).is_err());
     }
 
     #[test]
