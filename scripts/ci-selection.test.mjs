@@ -181,7 +181,7 @@ async function select(paths, pullRequest = false, apiStatus = 200) {
   const rawOutputs = Object.fromEntries(
     [
       ...readFileSync(output, "utf8").matchAll(
-        /^(rust|desktop|desktop-rust|web|mobile)<<([^\n]+)\n(true|false)\n\2/gm,
+        /^(rust|desktop|desktop-rust|web|mobile|mobile-native)<<([^\n]+)\n(true|false)\n\2/gm,
       ),
     ].map(([, key, , value]) => [key, value]),
   );
@@ -214,9 +214,64 @@ const scenarios = [
       "mobile/lib/features/age_gate/age_signal_provider.dart",
       "mobile/test/features/age_gate/age_signal_provider_test.dart",
     ],
+    ["mobile", "mobile-native"],
+  ],
+  ["mobile lockfile", ["mobile/pubspec.lock"], ["mobile", "mobile-native"]],
+  [
+    "Flutter SDK pin",
+    ["bin/.flutter-3.47.9.pkg"],
+    ["mobile", "mobile-native"],
+  ],
+  [
+    "mobile bundled font",
+    ["mobile/assets/fonts/InterVariable.ttf"],
+    ["mobile", "mobile-native"],
+  ],
+  [
+    "mobile bundled shader",
+    ["mobile/shaders/toast_island.frag"],
+    ["mobile", "mobile-native"],
+  ],
+  [
+    "Flutter project metadata",
+    ["mobile/.metadata"],
+    ["mobile", "mobile-native"],
+  ],
+  [
+    "mobile build script",
+    ["mobile/scripts/require-push-gateway-origin.sh"],
+    ["mobile", "mobile-native"],
+  ],
+  [
+    "mobile iOS source",
+    ["mobile/ios/Runner/IosMediaCarousel.swift"],
+    ["mobile", "mobile-native"],
+  ],
+  [
+    "mobile native package",
+    ["mobile/packages/buzz_secp256k1/src/buzz_secp256k1_ecdh.c"],
+    ["mobile", "mobile-native"],
+  ],
+  [
+    "mobile Dart tests",
+    ["mobile/test/features/age_gate/age_signal_provider_test.dart"],
     ["mobile"],
   ],
-  ["mobile lockfile", ["mobile/pubspec.lock"], ["mobile"]],
+  [
+    "mobile Android source",
+    ["mobile/android/app/build.gradle.kts"],
+    ["mobile"],
+  ],
+  [
+    "mobile native control script",
+    ["scripts/test-mobile-carousel.sh"],
+    ["mobile", "mobile-native"],
+  ],
+  [
+    "clients workflow",
+    [".github/workflows/_ci-clients.yml"],
+    ["mobile", "mobile-native", "rust"],
+  ],
   [
     "mobile release source helper",
     ["scripts/mobile-release-source.sh"],
@@ -235,7 +290,7 @@ const scenarios = [
   [
     "shared workflow",
     [".github/workflows/ci.yml"],
-    ["desktop", "mobile", "rust"],
+    ["desktop", "mobile", "mobile-native", "rust"],
   ],
   [
     "desktop workflow",
@@ -250,12 +305,12 @@ const scenarios = [
   [
     "mixed mobile and relay",
     ["mobile/lib/main.dart", "crates/buzz-core/src/lib.rs"],
-    ["rust", "mobile"],
+    ["rust", "mobile", "mobile-native"],
   ],
   [
     "mixed mobile and desktop",
     ["mobile/lib/main.dart", "desktop/src/main.tsx"],
-    ["desktop", "mobile"],
+    ["desktop", "mobile", "mobile-native"],
   ],
   ["web", ["web/src/main.tsx"], ["web"]],
   ["documentation", ["README.md"], []],
@@ -300,7 +355,7 @@ const scenarios = [
 for (const [name, paths, expected] of scenarios) {
   test(`real paths-filter: ${name}`, async () => {
     const outputs = await select(paths);
-    assert.equal(Object.keys(outputs).length, 5);
+    assert.equal(Object.keys(outputs).length, 6);
     assert.deepEqual(
       Object.keys(outputs)
         .filter((key) => outputs[key] === "true")
@@ -319,7 +374,7 @@ for (const [name, paths, expected] of [
   [
     "mixed mobile and Markdown",
     ["VISION_MOBILE.md", "mobile/lib/main.dart"],
-    ["mobile"],
+    ["mobile", "mobile-native"],
   ],
   [
     "mixed desktop and Markdown",
@@ -329,7 +384,7 @@ for (const [name, paths, expected] of [
 ]) {
   test(`PR file list ignores newer base changes: ${name}`, async () => {
     const outputs = await select(paths, true);
-    assert.equal(Object.keys(outputs).length, 5);
+    assert.equal(Object.keys(outputs).length, 6);
     assert.deepEqual(
       Object.keys(outputs)
         .filter((key) => outputs[key] === "true")
@@ -341,7 +396,14 @@ for (const [name, paths, expected] of [
 
 test("workflow consumes guarded selection outputs", () => {
   const outputs = workflow.match(/ {4}outputs:\n([\s\S]*?) {4}steps:/)[1];
-  for (const key of ["rust", "desktop", "desktop-rust", "web", "mobile"]) {
+  for (const key of [
+    "rust",
+    "desktop",
+    "desktop-rust",
+    "web",
+    "mobile",
+    "mobile-native",
+  ]) {
     assert.ok(outputs.includes(`steps.selection.outputs.${key}`));
   }
   assert.match(
@@ -349,6 +411,28 @@ test("workflow consumes guarded selection outputs", () => {
     /id: selection\n {8}env:\n {10}FILTER_OUTPUTS: \$\{\{ toJSON\(steps.filter.outputs\) \}\}\n {8}run: node scripts\/ci-runtime-selection.mjs/,
   );
 });
+test("Swift matrix retains Release and selects Native for mobile pushes", () => {
+  const swiftCall = workflow.match(
+    /  mobile-swift-domain:\n([\s\S]*?)(?=\n  [^  ])/,
+  )[1];
+  assert.match(
+    swiftCall,
+    /mobile_native: \$\{\{ github.event_name == 'push' \|\| needs.changes.outputs.mobile-native == 'true' \}\}/,
+  );
+  const clients = readFileSync(
+    new URL("../.github/workflows/_ci-clients.yml", import.meta.url),
+    "utf8",
+  );
+  const matrix = clients.match(
+    /include: \$\{\{ fromJSON\(inputs.mobile_native && '([^']+)' \|\| '([^']+)'\) \}\}/,
+  );
+  assert.deepEqual(JSON.parse(matrix[1]).map(({ lane }) => lane), [
+    "native",
+    "release",
+  ]);
+  assert.deepEqual(JSON.parse(matrix[2]).map(({ lane }) => lane), ["release"]);
+});
+
 for (const count of [2999, 3000, 3001]) {
   test(`PR file-list ceiling: ${count} changed files`, async () => {
     const paths = Array.from(
