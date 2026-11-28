@@ -3370,6 +3370,54 @@ New module: `false`.
 
 - Verify: `just ci`
 
+## `crates/buzz-db/src/store/thread_window.rs`
+
+Apply cursor and auxiliary time bounds while preserving relay filter semantics
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+
+## `crates/buzz-db/src/store/thread_window/postgres_tests.rs`
+
+Apply cursor and auxiliary time bounds while preserving relay filter semantics
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+
+## `crates/buzz-relay/src/api/bridge/thread_window.rs`
+
+Apply cursor and auxiliary time bounds while preserving relay filter semantics
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+
+## `crates/buzz-relay/src/api/bridge/thread_window/postgres_tests.rs`
+
+Apply cursor and auxiliary time bounds while preserving relay filter semantics
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+
+## `docs/bridge-channel-window.md`
+
+Apply cursor and auxiliary time bounds while preserving relay filter semantics
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+
+## `docs/nips/NIP-CW.md`
+
+Apply cursor and auxiliary time bounds while preserving relay filter semantics
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+
 ## `crates/buzz-relay/src/api/gifs.rs`
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches
