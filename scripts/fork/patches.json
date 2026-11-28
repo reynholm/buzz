@@ -13669,6 +13669,16 @@
       ]
     },
     {
+      "path": "docs/nips/NIP-IA.md",
+      "responsibility": "Preserve archive snapshot ordering and client account or relay scoping",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db -p buzz-relay"
+      ]
+    },
+    {
       "path": "crates/buzz-relay/src/handlers/workflows_deploy_postgres.rs",
       "responsibility": "Verify accepted-work drain and descendant completion",
       "is_new": true,

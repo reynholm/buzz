@@ -18,12 +18,14 @@ void main() {
       final authority = nostr.Keys.generate();
       final impostor = nostr.Keys.generate();
       final target = 'a' * 64;
+      var createdAt = 1700000000;
       NostrEvent snapshot(nostr.Keys signer, {bool marker = true}) =>
           NostrEvent.fromJson(
             nostr.Event.from(
               kind: 13535,
               content: '',
               secretKey: signer.secret,
+              createdAt: createdAt++,
               tags: [
                 if (marker) ['-'],
                 ['p', target],
@@ -41,27 +43,47 @@ void main() {
       });
       final container = ProviderContainer(
         overrides: [
-          meSyncProvider.overrideWithValue(
-            MeSync(
-              relay,
+          relayConfigProvider.overrideWith(
+            () => _Config(
               RelayConfig(baseUrl: 'https://relay.test', nsec: owner.nsec),
             ),
+          ),
+          meSyncProvider.overrideWith(
+            (ref) => MeSync(relay, ref.watch(relayConfigProvider)),
           ),
           relayInformationClientProvider.overrideWithValue(client),
         ],
       );
       addTearDown(container.dispose);
       addTearDown(client.close);
-      expect(await container.read(identityArchivesProvider.future), {target});
+      container.listen(hiddenArchivedIdentitiesProvider, (_, _) {});
+      Future<Set<String>> hidden() async {
+        await container.read(identityArchivesProvider.future);
+        await pumpEventQueue();
+        return container.read(hiddenArchivedIdentitiesProvider);
+      }
+
+      expect(await hidden(), {target});
       expect(relay.author, authority.public);
-      for (final invalid in [
-        snapshot(impostor),
-        snapshot(authority, marker: false),
-        NostrEvent.fromJson(snapshot(authority).toJson()..['sig'] = '0' * 128),
+      for (final invalid in <NostrEvent Function()>[
+        () => snapshot(impostor),
+        () => snapshot(authority, marker: false),
+        () => NostrEvent.fromJson(
+          snapshot(authority).toJson()..['sig'] = '0' * 128,
+        ),
       ]) {
-        relay.event = invalid;
+        final verified = snapshot(authority);
+        relay.event = verified;
         container.invalidate(identityArchivesProvider);
-        expect(await container.read(identityArchivesProvider.future), isEmpty);
+        final previouslyHidden = await hidden();
+        expect(previouslyHidden, {target});
+        relay.event = invalid();
+        container.invalidate(identityArchivesProvider);
+        expect(await hidden(), isEmpty);
+        relay.event = null;
+        container.invalidate(identityArchivesProvider);
+        expect(await hidden(), same(previouslyHidden));
+        expect(relay.since, verified.createdAt);
       }
       relay.event = snapshot(authority);
       container.invalidate(identityArchivesProvider);
@@ -77,17 +99,19 @@ void main() {
       final authority = nostr.Keys.generate();
       final archivedInA = 'a' * 64;
       final archivedInB = 'b' * 64;
-      NostrEvent snapshot(List<String> keys) => NostrEvent.fromJson(
-        nostr.Event.from(
-          kind: 13535,
-          content: '',
-          secretKey: authority.secret,
-          tags: [
-            ['-'],
-            for (final key in keys) ['p', key],
-          ],
-        ).toMap(),
-      );
+      NostrEvent snapshot(List<String> keys, {int? createdAt}) =>
+          NostrEvent.fromJson(
+            nostr.Event.from(
+              kind: 13535,
+              content: '',
+              secretKey: authority.secret,
+              createdAt: createdAt,
+              tags: [
+                ['-'],
+                for (final key in keys) ['p', key],
+              ],
+            ).toMap(),
+          );
       // Community A's list also names the viewer, who must stay visible.
       final relay = _ArchiveRelay(snapshot([archivedInA, viewer.public]));
       final communityB = Completer<void>();
@@ -110,7 +134,10 @@ void main() {
       );
       addTearDown(container.dispose);
       addTearDown(client.close);
-      container.listen(hiddenArchivedIdentitiesProvider, (_, _) {});
+      var hiddenChanges = 0;
+      container.listen(hiddenArchivedIdentitiesProvider, (_, _) {
+        hiddenChanges++;
+      });
       Future<Set<String>> settled() async {
         await container.read(identityArchivesProvider.future);
         await pumpEventQueue();
@@ -122,9 +149,29 @@ void main() {
       container.invalidate(identityArchivesProvider);
       expect(container.read(hiddenArchivedIdentitiesProvider), {archivedInA});
       expect(await settled(), {archivedInA});
+      // An unchanged list leaves the hidden set alone for every watcher.
+      relay.event = snapshot([
+        archivedInA,
+      ], createdAt: relay.event!.createdAt + 10);
+      container.invalidate(identityArchivesProvider);
+      expect(await settled(), {archivedInA});
+      final changes = hiddenChanges;
+      container.invalidate(identityArchivesProvider);
+      expect(await settled(), {archivedInA});
+      expect(hiddenChanges, changes);
 
-      // Switch community and account: A's list no longer applies, so nobody
-      // is hidden until B's list arrives.
+      // Changing accounts on the same community reads a fresh snapshot, even
+      // when the relay and its signing authority have not changed.
+      relay.event = snapshot([viewer.public, other.public], createdAt: 1);
+      container
+          .read(relayConfigProvider.notifier)
+          .update(baseUrl: 'https://a.test', nsec: other.nsec);
+      expect(container.read(hiddenArchivedIdentitiesProvider), isEmpty);
+      expect(await settled(), {viewer.public});
+      expect(relay.since, isNull);
+
+      // Switch community: A's list no longer applies, so nobody is hidden
+      // until B's list arrives.
       relay.event = snapshot([archivedInB]);
       container
           .read(relayConfigProvider.notifier)
@@ -135,6 +182,102 @@ void main() {
       expect(await settled(), {archivedInB});
     },
   );
+
+  test('a refresh accepts a legacy same-second replacement once', () async {
+    final owner = nostr.Keys.generate();
+    final authority = nostr.Keys.generate();
+    NostrEvent snapshot(String target, int createdAt) => NostrEvent.fromJson(
+      nostr.Event.from(
+        kind: 13535,
+        content: '',
+        secretKey: authority.secret,
+        createdAt: createdAt,
+        tags: [
+          ['-'],
+          ['p', target],
+        ],
+      ).toMap(),
+    );
+    const timestamp = 1700000000;
+    final sameSecond = [
+      snapshot('a' * 64, timestamp),
+      snapshot('b' * 64, timestamp),
+    ]..sort((left, right) => left.id.compareTo(right.id));
+    final initial = sameSecond.last;
+    final replacement = sameSecond.first;
+    final relay = _ArchiveRelay(initial);
+    final client = MockClient(
+      (_) async => http.Response(jsonEncode({'self': authority.public}), 200),
+    );
+    final config = RelayConfig(baseUrl: 'https://relay.test', nsec: owner.nsec);
+    final container = ProviderContainer(
+      overrides: [
+        relayConfigProvider.overrideWith(() => _Config(config)),
+        meSyncProvider.overrideWithValue(MeSync(relay, config)),
+        relayInformationClientProvider.overrideWithValue(client),
+      ],
+    );
+    addTearDown(container.dispose);
+    addTearDown(client.close);
+    container.listen(hiddenArchivedIdentitiesProvider, (_, _) {});
+    final initialSet = await container.read(identityArchivesProvider.future);
+    expect(initialSet, {initial.tags.last[1]});
+    expect(relay.since, isNull);
+
+    // The legacy relay can serve the exact same snapshot on a refresh.
+    container.invalidate(identityArchivesProvider);
+    expect(
+      await container.read(identityArchivesProvider.future),
+      same(initialSet),
+    );
+
+    // A smaller NIP-01 ID wins even when the timestamp does not advance.
+    relay.event = replacement;
+    container.invalidate(identityArchivesProvider);
+    final replacementSet = await container.read(
+      identityArchivesProvider.future,
+    );
+    expect(replacementSet, {replacement.tags.last[1]});
+    expect(relay.since, timestamp);
+    await pumpEventQueue();
+    expect(
+      container.read(hiddenArchivedIdentitiesProvider),
+      same(replacementSet),
+    );
+
+    // Neither a repeat of the winner nor a stale tie can change the cache.
+    for (final response in [replacement, initial]) {
+      relay.event = response;
+      container.invalidate(identityArchivesProvider);
+      expect(
+        await container.read(identityArchivesProvider.future),
+        same(replacementSet),
+      );
+    }
+
+    // Replaced: the newer list wins and becomes the new baseline.
+    relay.event = snapshot('c' * 64, 1700000100);
+    container.invalidate(identityArchivesProvider);
+    final latestSet = await container.read(identityArchivesProvider.future);
+    expect(latestSet, {'c' * 64});
+    container.invalidate(identityArchivesProvider);
+    expect(
+      await container.read(identityArchivesProvider.future),
+      same(latestSet),
+    );
+    expect(relay.since, 1700000100);
+
+    // Even a relay that returns a valid but out-of-range result cannot roll
+    // back the latest verified archive state.
+    relay.honorSince = false;
+    relay.event = initial;
+    container.invalidate(identityArchivesProvider);
+    expect(
+      await container.read(identityArchivesProvider.future),
+      same(latestSet),
+    );
+    expect(relay.since, 1700000100);
+  });
 
   test('slow metadata has a total deadline and cancels its stream', () async {
     final owner = nostr.Keys.generate();
@@ -226,6 +369,8 @@ class _ArchiveRelay extends RelaySessionNotifier {
   _ArchiveRelay(this.event);
   NostrEvent? event;
   String? author;
+  int? since;
+  bool honorSince = true;
   @override
   Future<List<NostrEvent>> fetchHistory(
     NostrFilter filter, {
@@ -233,7 +378,13 @@ class _ArchiveRelay extends RelaySessionNotifier {
   }) async {
     expect(filter.kinds, [13535]);
     author = filter.authors!.single;
-    return [?event];
+    since = filter.since;
+    final event = this.event;
+    if (event == null ||
+        (honorSince && event.createdAt < (filter.since ?? 0))) {
+      return [];
+    }
+    return [event];
   }
 }
 
