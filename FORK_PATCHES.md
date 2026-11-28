@@ -5944,6 +5944,14 @@ New module: `false`.
             )`; behavior test `managed_recovery_and_original_race_share_one_election`; verify `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib managed_recovery_and_original_race_share_one_election -- --ignored --test-threads=1`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" cargo test -p buzz-relay --lib handlers::ingest::postgres_tests::managed_delivery_tests:: -- --ignored --test-threads=1`
 
+## `crates/buzz-db/src/store/thread.rs`
+
+Apply the timestamp range bound to deep channel-window pages alongside composite event pagination
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db`
+
 ## `crates/buzz-db/src/store/managed_delivery.rs`
 
 Elect once per community/author/UUID under a transaction advisory lock; adopt accepted or soft-deleted originals, otherwise commit candidate, thread counters, callback mentions and durable binding together.
