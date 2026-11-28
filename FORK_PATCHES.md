@@ -2714,7 +2714,7 @@ New module: `false`.
 
 ## `Cargo.lock`
 
-Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils >= 0.4.4 for RUSTSEC-2026-0385. Upgrade the gateway P-256 graph to crypto-bigint 0.7.6 for RUSTSEC-2026-0387. Lock patched pulldown-cmark >= 0.13.5 for RUSTSEC-2026-0414. Lock patched pulldown-cmark >= 0.13.6 for RUSTSEC-2026-0433. Lock hickory-net and hickory-resolver 0.26.2 for patched DNS validation and bounded lookup behavior.
+Preserve the fork dependency graph with patched rustls, emSign TLS verification and trust stores, Negentropy and ZIP versions and one immutable MeshLLM compatibility source; include ctutils >= 0.4.4 for RUSTSEC-2026-0385. Upgrade the gateway P-256 graph to crypto-bigint 0.7.6 for RUSTSEC-2026-0387. Lock patched pulldown-cmark >= 0.13.5 for RUSTSEC-2026-0414. Lock patched pulldown-cmark >= 0.13.6 for RUSTSEC-2026-0433. Lock hickory-net and hickory-resolver 0.26.2 for patched DNS validation and bounded lookup behavior. Lock the patched Kubernetes client for RUSTSEC-2026-0600.
 
 New module: `false`.
 
@@ -3508,7 +3508,6 @@ Preserve root AUTH authority and synchronously retain accepted default-join desc
 New module: `false`.
 
 - Required symbol: `let work = state.track_accepted_child(crate::deploy_drain::WorkKind::Background);`
-- Required symbol: `include!("auth_deploy_postgres_tests.rs");`
 - Invocation: `crates/buzz-relay/src/handlers/auth.rs` → `run_accepted`; exact call `tokio::spawn(crate::deploy_drain::run_accepted(work, async move {`; behavior test `root_auth_first_default_join_remains_owned_after_socket_closes; root_auth_pending_default_join_remains_owned_after_socket_closes`; verify `scripts/postgres-test-run.sh -p buzz-relay --lib`
 - Verify: `just ci`
 - Verify: `cargo test --locked -p buzz-relay`
@@ -11146,7 +11145,8 @@ Observe durable bytes before cold cache reopen instead of assuming image decodin
 
 New module: `false`.
 
-- Required symbol: `if (!listEquals((await cache.read(url))?.bytes, _pngBytes))`
+- Required symbol: `if (!listEquals((await cache.read(url))?.bytes, expected))`
+- Required symbol: `final expected = url == _largeUrl ? largeBytes : _pngBytes;`
 - Verify: `cd mobile && flutter test --no-pub test/shared/relay/media_disk_cache_test.dart`
 
 ## `mobile/test/shared/community/community_provider_test.dart`
@@ -11227,3 +11227,3115 @@ New module: `true`.
 - Required symbol: `def test_oom_between_counter_read_and_child_poll_remains_terminal(self):`
 - Required symbol: `def test_owner_exit_before_supervisor_initialization_refuses_payload(self):`
 - Verify: `python3 crates/buzz-acp/tests/linux_resource_supervisor_test.py`
+
+## `CONTEXT.md`
+
+Track partial upstream replay from group A step 11 (95dd9d67d).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `VISION.md`
+
+Track partial upstream replay from group A step 239 (708081183).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `VISION_GOVERNANCE.md`
+
+Track partial upstream replay from group A step 239 (708081183).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `VISION_PROJECTS.md`
+
+Track partial upstream replay from group A step 239 (708081183).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `VISION_SOVEREIGN.md`
+
+Track partial upstream replay from group A step 239 (708081183).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-backend-kubernetes/Cargo.toml`
+
+Record the Rust version floor required by the patched Kubernetes client.
+
+New module: `false`.
+
+- Verify: `cargo test --locked -p buzz-backend-kubernetes`
+- Verify: `cargo deny --locked check`
+
+## `crates/buzz-cli/README.md`
+
+Track partial upstream replay from group A steps 23 (0e6037c74), 170 (b68c4edda), 230 (e21606bf9), 305 (55823dd54).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-cli/src/cached_assertion.rs`
+
+Track partial upstream replay from group A step 84 (97188e90c).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-cli/src/commands/channels.rs`
+
+Track partial upstream replay from group A steps 208 (8d4b30176), 305 (55823dd54).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-cli/src/commands/sidebar.rs`
+
+Track partial upstream replay from group A step 34 (745d2a86e).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-cli/src/commands/sidebar_doc.rs`
+
+Track partial upstream replay from group A step 34 (745d2a86e).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-cli/src/commands/sidebar_sync.rs`
+
+Track partial upstream replay from group A step 34 (745d2a86e).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-cli/src/commands/users.rs`
+
+Track partial upstream replay from group A steps 170 (b68c4edda), 230 (e21606bf9).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-cli/src/commands/verified_profiles.rs`
+
+Track partial upstream replay from group A step 170 (b68c4edda).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-cli/src/desktop_provider.rs`
+
+Track partial upstream replay from group A step 84 (97188e90c).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-cli/src/federated_identity.rs`
+
+Track partial upstream replay from group A step 84 (97188e90c).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-core/src/filter.rs`
+
+Track partial upstream replay from group A step 6 (47674dc32).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-db/src/runtime/observability.rs`
+
+Track partial upstream replay from group A step 62 (359839f70).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-db/src/runtime/tests/pool_release_postgres_tests.rs`
+
+Track partial upstream replay from group A step 84 (97188e90c).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-db/src/store/workflow.rs`
+
+Track partial upstream replay from group A step 30 (aa9b44ef3).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-db/src/store/workflow/deletion.rs`
+
+Track partial upstream replay from group A step 62 (359839f70).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-media/src/thumbnail.rs`
+
+Track partial upstream replay from group A step 38 (432df8aa5).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-media/src/validation.rs`
+
+Track partial upstream replay from group A step 38 (432df8aa5).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-pubsub/src/rate_limiter.rs`
+
+Track partial upstream replay from group A step 162 (44e97e96f).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-push-gateway/src/http.rs`
+
+Track partial upstream replay from group A step 100 (9398918fa).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-push-gateway/src/http_delivery_tests.rs`
+
+Track partial upstream replay from group A step 100 (9398918fa).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-push-gateway/src/metrics.rs`
+
+Track partial upstream replay from group A step 100 (9398918fa).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-push-gateway/src/postgres.rs`
+
+Track partial upstream replay from group A step 146 (44cdd9fee).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/audio/join.rs`
+
+Track partial upstream replay from group A step 110 (6f438202a).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/audio/room.rs`
+
+Track partial upstream replay from group A step 110 (6f438202a).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/handlers/identity_archive.rs`
+
+Track partial upstream replay from group A step 194 (946d9c346).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/handlers/mod.rs`
+
+Register the PostgreSQL AUTH tests for retained default-channel work after socket cleanup.
+
+New module: `false`.
+
+- Required symbol: `mod auth_deploy_postgres_tests;`
+- Verify: `scripts/postgres-test-run.sh -p buzz-relay --lib`
+
+## `crates/buzz-relay/src/handlers/tag_pushdown_postgres_tests.rs`
+
+Track partial upstream replay from group A step 17 (695c1c3aa).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/invite_preview.rs`
+
+Track partial upstream replay from group A step 7 (2c5c8343e).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/membership_cache/tests.rs`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-relay/src/metrics.rs`
+
+Track partial upstream replay from group A step 116 (b303271ad).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-sdk/src/builders.rs`
+
+Track partial upstream replay from group A steps 142 (051dd2d7a), 208 (8d4b30176).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-search/tests/postgres_fts_integration.rs`
+
+Track partial upstream replay from group A step 47 (279a31daa).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-test-client/src/acceptance/fake_relay.rs`
+
+Track partial upstream replay from group A step 226 (9f49216f8).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-test-client/src/acceptance/metrics.rs`
+
+Track partial upstream replay from group A step 226 (9f49216f8).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-test-client/src/acceptance/mod.rs`
+
+Track partial upstream replay from group A step 226 (9f49216f8).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-test-client/src/bin/acceptance.rs`
+
+Track partial upstream replay from group A step 226 (9f49216f8).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `crates/buzz-test-client/src/lib.rs`
+
+Track partial upstream replay from group A step 226 (9f49216f8).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `crates/buzz-test-client/tests/e2e_acceptance.rs`
+
+Track partial upstream replay from group A step 226 (9f49216f8).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `desktop/src/features/terminal/TerminalSubstrate.test.mjs`
+
+Track partial upstream replay from group A step 83 (94c154e22).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `docs/adr/0002-notification-message-text.md`
+
+Track partial upstream replay from group A steps 11 (95dd9d67d), 39 (defc2d5ea).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `docs/mention-editor.md`
+
+Track partial upstream replay from group A step 50 (3c0adc188).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `docs/nips/NIP-PL.md`
+
+Track partial upstream replay from group A step 100 (9398918fa).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `docs/nips/NIP-PM.md`
+
+Track partial upstream replay from group A step 191 (7bff21e51).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/README.md`
+
+Track partial upstream replay from group A step 44 (8f3f4e266).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/REVIEWING.md`
+
+Track partial upstream replay from group A step 122 (c8a1b2634).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/ios/BuzzPushKit/Sources/BuzzPushKit/BuzzPushNotificationResolver.swift`
+
+Track partial upstream replay from group A steps 11 (95dd9d67d), 39 (defc2d5ea), 129 (1059d81fc).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/BuzzPushKit/Tests/BuzzPushKitTests/BuzzPushNotificationResolverTests.swift`
+
+Track partial upstream replay from group A step 11 (95dd9d67d).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/NativeControlTests/Fixtures/gallery-video.mp4`
+
+Track partial upstream replay from group A step 1 (b40f22114).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/ios/NativeControlTests/NativePhotoZoomTests.swift`
+
+Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d), 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/NativeControlTests/PickerFilePreparationTests.swift`
+
+Track partial upstream replay from group A step 13 (ef57fec4d).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/ios/NativeControlTests/SettingMenuSelectionTests.swift`
+
+Track partial upstream replay from group A step 174 (68d367cf2).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Podfile.lock`
+
+Track partial upstream replay from group A step 132 (148585c80).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme`
+
+Track partial upstream replay from group A step 132 (148585c80).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/Assets.xcassets/ShortcutAgent.imageset/Contents.json`
+
+Track partial upstream replay from group A step 20 (27f0fe752).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/Assets.xcassets/ShortcutAgent.imageset/agent.svg`
+
+Track partial upstream replay from group A step 20 (27f0fe752).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/ConcentricSheetSurface.swift`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/HomeScreenShortcuts.swift`
+
+Track partial upstream replay from group A steps 20 (27f0fe752), 40 (60b7fb817).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/InlinePhotoPicker.swift`
+
+Track partial upstream replay from group A step 13 (ef57fec4d).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/IosNavigationBar.swift`
+
+Track partial upstream replay from group A steps 16 (96e56c5b3), 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/JumpToLatestGlassButton.swift`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/NativeAddMembersSheet.swift`
+
+Track partial upstream replay from group A steps 20 (27f0fe752), 40 (60b7fb817).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/NativeAttachmentPopover.swift`
+
+Track partial upstream replay from group A steps 13 (ef57fec4d), 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/NativeAttachmentPopoverCoordinator.swift`
+
+Track partial upstream replay from group A steps 13 (ef57fec4d), 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/NativeAttachmentPopoverMenu.swift`
+
+Track partial upstream replay from group A step 13 (ef57fec4d).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/NativeChannelActionsSheet.swift`
+
+Track partial upstream replay from group A step 109 (921a05a37).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/NativeEmojiPicker.swift`
+
+Track partial upstream replay from group A step 130 (ff652ed06).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/NativeEmojiPickerView.swift`
+
+Track partial upstream replay from group A step 130 (ff652ed06).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/NativePhotoZoomCoordinator.swift`
+
+Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d), 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/NativeProfileTextEditor.swift`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/NativeStatusEditor.swift`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/PhotoLibrarySaver.swift`
+
+Track partial upstream replay from group A step 153 (a5b3dbc00).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/ios/Runner/SceneDelegate.swift`
+
+Track partial upstream replay from group A step 20 (27f0fe752).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/RunnerTests/NativeEmojiRedirectPolicyTests.swift`
+
+Track partial upstream replay from group A step 130 (ff652ed06).
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+
+## `mobile/ios/RunnerTests/ProfileSetupRecoveryTests.swift`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/ios/RunnerTests/RunnerTests.swift`
+
+Track partial upstream replay from group A steps 13 (ef57fec4d), 16 (96e56c5b3), 32 (cb69ad9e4), 130 (ff652ed06), 253 (e03a11f92).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/activity/activity_page/header_actions.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/activity/activity_provider.dart`
+
+Track partial upstream replay from group A step 71 (3dcdf1c05).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/agents/agent_avatar_picker.dart`
+
+Track partial upstream replay from group A step 126 (21802f019).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/agents/agent_creation_draft.dart`
+
+Track partial upstream replay from group A step 60 (a2d4ba026).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/agents/agents_page.dart`
+
+Track partial upstream replay from group A steps 2 (dd2d3cf4e), 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/agent_activity/transcript_item_widget.dart`
+
+Track partial upstream replay from group A step 56 (41587e028).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/bestie_conversation.dart`
+
+Track partial upstream replay from group A steps 20 (27f0fe752), 32 (cb69ad9e4).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel.dart`
+
+Track partial upstream replay from group A steps 4 (0aca7588e), 58 (642ce4165).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_detail_page/banners.dart`
+
+Track partial upstream replay from group A steps 4 (0aca7588e), 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_detail_page/dm_identity.dart`
+
+Track partial upstream replay from group A steps 16 (96e56c5b3), 99 (4ec5efa93).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_detail_page/empty_messages.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_detail_page/huddle_agent_connection.dart`
+
+Track partial upstream replay from group A step 2 (dd2d3cf4e).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_detail_page/huddle_history.dart`
+
+Track partial upstream replay from group A step 31 (5f81803cb).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_detail_page/message_list.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_detail_page/placement_route.dart`
+
+Track partial upstream replay from group A step 58 (642ce4165).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_directory.dart`
+
+Track partial upstream replay from group A steps 4 (0aca7588e), 79 (c97c85d8f).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_event_order.dart`
+
+Track partial upstream replay from group A step 113 (aec571045).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_management_actions.dart`
+
+Track partial upstream replay from group A step 4 (0aca7588e).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_management_provider.dart`
+
+Track partial upstream replay from group A steps 73 (15c65c76d), 98 (c16dac232).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_member_profile_actions.dart`
+
+Track partial upstream replay from group A step 70 (04af7081c).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_member_snapshots.dart`
+
+Track partial upstream replay from group A step 31 (5f81803cb).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_messages_provider.dart`
+
+Track partial upstream replay from group A steps 80 (bf422ac8e), 113 (aec571045).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_messages_provider/pagination.dart`
+
+Track partial upstream replay from group A step 113 (aec571045).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_messages_provider/thread_summaries.dart`
+
+Track partial upstream replay from group A step 80 (bf422ac8e).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_mutes/channel_mutes_provider.dart`
+
+Track partial upstream replay from group A step 74 (9e40bf5d7).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_sections/channel_sections_provider.dart`
+
+Track partial upstream replay from group A step 74 (9e40bf5d7).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_sort/channel_sort_provider.dart`
+
+Track partial upstream replay from group A step 74 (9e40bf5d7).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_stars/channel_stars_provider.dart`
+
+Track partial upstream replay from group A step 74 (9e40bf5d7).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_typing_provider.dart`
+
+Track partial upstream replay from group A step 77 (3764a2e4d).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channel_unread_catch_up.dart`
+
+Track partial upstream replay from group A step 66 (237a39fe7).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channels_page/badges.dart`
+
+Track partial upstream replay from group A steps 15 (8f80b172e), 60 (a2d4ba026), 64 (d1a8c3607).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channels_page/community_switcher.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channels_page/sections.dart`
+
+Track partial upstream replay from group A steps 32 (cb69ad9e4), 35 (2636e986a), 78 (5f1cd6798), 174 (68d367cf2).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channels_page/skeleton.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channels_provider_joins.dart`
+
+Track partial upstream replay from group A step 4 (0aca7588e).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/channels_provider_lifecycle.dart`
+
+Track partial upstream replay from group A step 74 (9e40bf5d7).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/compose_bar.dart`
+
+Track partial upstream replay from group A steps 10 (1adde0e6b), 13 (ef57fec4d), 16 (96e56c5b3), 32 (cb69ad9e4), 111 (9ccad9534).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/compose_bar/agent_mention_prefill.dart`
+
+Track partial upstream replay from group A steps 10 (1adde0e6b), 50 (3c0adc188).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/compose_bar/attachments.dart`
+
+Track partial upstream replay from group A steps 13 (ef57fec4d), 19 (85c715608).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/compose_bar/compose_bar_widget.dart`
+
+Track partial upstream replay from group A steps 10 (1adde0e6b), 32 (cb69ad9e4), 50 (3c0adc188), 111 (9ccad9534).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/compose_bar/dock.dart`
+
+Track partial upstream replay from group A step 16 (96e56c5b3).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/compose_bar/hardware_keyboard.dart`
+
+Track partial upstream replay from group A step 111 (9ccad9534).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/compose_bar/helpers.dart`
+
+Track partial upstream replay from group A steps 10 (1adde0e6b), 50 (3c0adc188), 111 (9ccad9534).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/compose_bar/ios_attachment_popover.dart`
+
+Track partial upstream replay from group A steps 32 (cb69ad9e4), 111 (9ccad9534).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/compose_bar/ios_photo_picker.dart`
+
+Track partial upstream replay from group A step 13 (ef57fec4d).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/compose_bar/layout.dart`
+
+Track partial upstream replay from group A steps 111 (9ccad9534), 256 (2b44717eb).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/compose_bar/markdown_editing_controller.dart`
+
+Track partial upstream replay from group A step 50 (3c0adc188).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/compose_bar/photo_gallery_picker.dart`
+
+Track partial upstream replay from group A step 13 (ef57fec4d).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/compose_bar/video_thumbnail.dart`
+
+Track partial upstream replay from group A step 13 (ef57fec4d).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/composer_geometry.dart`
+
+Track partial upstream replay from group A step 16 (96e56c5b3).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/default_agent_launcher.dart`
+
+Track partial upstream replay from group A step 20 (27f0fe752).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/dm_voice_agent_provider.dart`
+
+Track partial upstream replay from group A step 2 (dd2d3cf4e).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/ios_add_members_sheet.dart`
+
+Track partial upstream replay from group A step 20 (27f0fe752).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/me/me_assistant_list.dart`
+
+Track partial upstream replay from group A step 5 (b483bbe76).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/me/me_chat_assistant.dart`
+
+Track partial upstream replay from group A step 5 (b483bbe76).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/me/me_chat_draft.dart`
+
+Track partial upstream replay from group A steps 5 (b483bbe76), 9 (0ac71eaf9).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/me/me_page.dart`
+
+Track partial upstream replay from group A steps 5 (b483bbe76), 9 (0ac71eaf9), 32 (cb69ad9e4), 35 (2636e986a), 58 (642ce4165).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/me/me_section.dart`
+
+Track partial upstream replay from group A step 35 (2636e986a).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/me/me_unread_provider.dart`
+
+Track partial upstream replay from group A step 58 (642ce4165).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/me/me_working_provider.dart`
+
+Track partial upstream replay from group A step 5 (b483bbe76).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/me/new_me_chat.dart`
+
+Track partial upstream replay from group A step 9 (0ac71eaf9).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/me/solo_working_dots.dart`
+
+Track partial upstream replay from group A step 97 (75d78eab6).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/media_viewer_page.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/media_viewer_page/image_controls.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/mentions/mention_candidates_provider.dart`
+
+Track partial upstream replay from group A step 2 (dd2d3cf4e).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/message_author_visibility.dart`
+
+Track partial upstream replay from group A steps 16 (96e56c5b3), 25 (c0e30110d).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/message_content.dart`
+
+Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d), 16 (96e56c5b3), 19 (85c715608), 50 (3c0adc188), 56 (41587e028), 91 (44c8206be), 172 (8306e3874).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/message_content/bubble_segments.dart`
+
+Track partial upstream replay from group A step 56 (41587e028).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/message_content/edited_marker.dart`
+
+Track partial upstream replay from group A step 56 (41587e028).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/message_content/inline_components.dart`
+
+Track partial upstream replay from group A step 56 (41587e028).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/message_content/link_actions.dart`
+
+Track partial upstream replay from group A step 91 (44c8206be).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/message_content/link_normalizer.dart`
+
+Track partial upstream replay from group A step 56 (41587e028).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/message_content/markdown_escapes.dart`
+
+Track partial upstream replay from group A step 56 (41587e028).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/message_content/markdown_tables.dart`
+
+Track partial upstream replay from group A step 56 (41587e028).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/message_content/media_carousel.dart`
+
+Track partial upstream replay from group A step 1 (b40f22114).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/message_content/media_stack.dart`
+
+Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d), 19 (85c715608).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/message_content/mention_markdown.dart`
+
+Track partial upstream replay from group A steps 1 (b40f22114), 56 (41587e028).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/message_content/token_pill.dart`
+
+Track partial upstream replay from group A step 56 (41587e028).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/message_content/video_preview.dart`
+
+Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d), 19 (85c715608).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/message_gallery.dart`
+
+Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d), 19 (85c715608).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/mobile_huddle_controller.dart`
+
+Track partial upstream replay from group A step 31 (5f81803cb).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/native_channel_actions.dart`
+
+Track partial upstream replay from group A step 109 (921a05a37).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/native_channel_sheet_app.dart`
+
+Track partial upstream replay from group A step 109 (921a05a37).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/native_photo_zoom_preview.dart`
+
+Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d), 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/native_video_files.dart`
+
+Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d), 19 (85c715608).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/photo_library.dart`
+
+Track partial upstream replay from group A step 13 (ef57fec4d).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/thread_detail_helpers.dart`
+
+Track partial upstream replay from group A step 113 (aec571045).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/timeline_message.dart`
+
+Track partial upstream replay from group A step 113 (aec571045).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/channels/voice_note_composer_recorder.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/forum/forum_post_card.dart`
+
+Track partial upstream replay from group A step 56 (41587e028).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/forum/forum_posts_view.dart`
+
+Track partial upstream replay from group A step 16 (96e56c5b3).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/home/home_screen_shortcut_host.dart`
+
+Track partial upstream replay from group A steps 20 (27f0fe752), 32 (cb69ad9e4), 40 (60b7fb817).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/home/messages_navigation_bar.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/invites/invite_create_page.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/invites/invite_create_page/invite_link_section.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/invites/invite_join_provider.dart`
+
+Track partial upstream replay from group A steps 60 (a2d4ba026), 64 (d1a8c3607).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/onboarding/hosted_connect_sheet.dart`
+
+Track partial upstream replay from group A step 61 (59ae028a3).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/onboarding/organization_sign_in_banner.dart`
+
+Track partial upstream replay from group A step 114 (d39545ebd).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/pairing/pairing_provider.dart`
+
+Track partial upstream replay from group A step 60 (a2d4ba026).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/pairing/pairing_provider_helpers.dart`
+
+Track partial upstream replay from group A steps 60 (a2d4ba026), 64 (d1a8c3607).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/pairing/pairing_qr_scanner/fallback_scanner.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/pairing/pairing_qr_scanner/scanner_camera.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/profile/animated_avatar_capture.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/profile/animated_avatar_capture/review_controls.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/profile/profile_avatar_draft.dart`
+
+Track partial upstream replay from group A step 126 (21802f019).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/profile/profile_edit_page.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/profile/profile_provider.dart`
+
+Track partial upstream replay from group A step 74 (9e40bf5d7).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/profile/set_status_sheet.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/search/search_page/message_tile.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/search/search_provider.dart`
+
+Track partial upstream replay from group A step 2 (dd2d3cf4e).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/settings/settings_page/builderlab_account_section.dart`
+
+Track partial upstream replay from group A step 8 (045b637b0).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/settings/theme_option_sheets.dart`
+
+Track partial upstream replay from group A steps 32 (cb69ad9e4), 272 (a8cc77ac3).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/features/settings/theme_picker_page.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/organization_app_entry.dart`
+
+Track partial upstream replay from group A step 114 (d39545ebd).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/animated_avatar.dart`
+
+Track partial upstream replay from group A step 76 (11ea8c928).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/community/community_icon_provider.dart`
+
+Track partial upstream replay from group A step 60 (a2d4ba026).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/custom_emoji/custom_emoji_provider.dart`
+
+Track partial upstream replay from group A step 67 (9fc2b3332).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/custom_emoji/custom_emoji_render.dart`
+
+Track partial upstream replay from group A steps 37 (4a101752f), 56 (41587e028).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/emoji/emoji_picker.dart`
+
+Track partial upstream replay from group A steps 130 (ff652ed06), 229 (51b0ea62b).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/emoji/emoji_picker/ios_native_picker.dart`
+
+Track partial upstream replay from group A step 130 (ff652ed06).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/hosted/account_identity_store.dart`
+
+Track partial upstream replay from group A step 61 (59ae028a3).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/hosted/hosted_admission.dart`
+
+Track partial upstream replay from group A step 60 (a2d4ba026).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/hosted/hosted_flow.dart`
+
+Track partial upstream replay from group A step 61 (59ae028a3).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/hosted/hosted_flow_backup_consent.dart`
+
+Track partial upstream replay from group A step 61 (59ae028a3).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/hosted/hosted_identity_service.dart`
+
+Track partial upstream replay from group A steps 61 (59ae028a3), 259 (0d4fd74ad).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/hosted/hosted_relay_auth.dart`
+
+Track partial upstream replay from group A step 60 (a2d4ba026).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/hosted/organization_sign_in.dart`
+
+Track partial upstream replay from group A step 114 (d39545ebd).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/hosted/saved_identity_profile.dart`
+
+Track partial upstream replay from group A step 60 (a2d4ba026).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/http/app_http_client.dart`
+
+Track partial upstream replay from group A steps 60 (a2d4ba026), 64 (d1a8c3607).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/identity_archives/identity_archives.dart`
+
+Track partial upstream replay from group A steps 2 (dd2d3cf4e), 60 (a2d4ba026).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/me/me_archived_agents.dart`
+
+Track partial upstream replay from group A step 2 (dd2d3cf4e).
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/me/me_assistant_names.dart`
+
+Track partial upstream replay from group A step 5 (b483bbe76).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/me/me_assistants.dart`
+
+Track partial upstream replay from group A step 2 (dd2d3cf4e).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/me/me_chat_title.dart`
+
+Track partial upstream replay from group A step 9 (0ac71eaf9).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/me/me_sync.dart`
+
+Track partial upstream replay from group A step 74 (9e40bf5d7).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/me/solo_chat_seed.dart`
+
+Track partial upstream replay from group A step 9 (0ac71eaf9).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/mentions/agent_identity_provider.dart`
+
+Track partial upstream replay from group A step 72 (99e65b6c2).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/mentions/mention_bindings.dart`
+
+Track partial upstream replay from group A step 50 (3c0adc188).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/profile/user_cache_provider.dart`
+
+Track partial upstream replay from group A step 65 (a540e7bd3).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/push/dev_push_lease.dart`
+
+Track partial upstream replay from group A step 60 (a2d4ba026).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/push/notification_body.dart`
+
+Track partial upstream replay from group A step 210 (34c8f5c7a).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/relay/app_lifecycle_provider.dart`
+
+Track partial upstream replay from group A step 74 (9e40bf5d7).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/relay/media_disk_cache.dart`
+
+Track partial upstream replay from group A steps 130 (ff652ed06), 276 (07dfdbc60).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/relay/media_image.dart`
+
+Track partial upstream replay from group A steps 48 (0bbcf3e7c), 60 (a2d4ba026), 130 (ff652ed06).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/relay/media_upload.dart`
+
+Track partial upstream replay from group A steps 13 (ef57fec4d), 60 (a2d4ba026), 126 (21802f019), 198 (f7496607a), 202 (9bcb3e45a).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/relay/media_upload/platform_bindings.dart`
+
+Track partial upstream replay from group A steps 13 (ef57fec4d), 60 (a2d4ba026).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/relay/nostr_models.dart`
+
+Track partial upstream replay from group A step 4 (0aca7588e).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/relay/relay_author_provider.dart`
+
+Track partial upstream replay from group A step 60 (a2d4ba026).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/relay/relay_client.dart`
+
+Track partial upstream replay from group A step 60 (a2d4ba026).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/relay/relay_http_query_client.dart`
+
+Track partial upstream replay from group A steps 60 (a2d4ba026), 64 (d1a8c3607).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/relay/relay_provider.dart`
+
+Track partial upstream replay from group A steps 44 (8f3f4e266), 60 (a2d4ba026).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/relay/relay_session.dart`
+
+Track partial upstream replay from group A step 108 (7b8066fb9).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/relay/relay_session_auth.dart`
+
+Track partial upstream replay from group A step 108 (7b8066fb9).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/relay/relay_session_snapshot.dart`
+
+Track partial upstream replay from group A step 60 (a2d4ba026).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/relay/thread_reference.dart`
+
+Track partial upstream replay from group A step 80 (bf422ac8e).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/shortcuts/home_screen_shortcuts.dart`
+
+Track partial upstream replay from group A step 20 (27f0fe752).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/theme/theme_provider.dart`
+
+Track partial upstream replay from group A steps 266 (4a440b593), 272 (a8cc77ac3).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/utils/bounded_fetch.dart`
+
+Carry the effective response URL to the external image cache policy.
+
+New module: `false`.
+
+- Verify: `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart`
+
+## `mobile/lib/shared/verified_profiles/verified_profile_directory.dart`
+
+Track partial upstream replay from group A step 68 (93bbd452a).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/verified_profiles/verified_profile_discovery_fetch.dart`
+
+Track partial upstream replay from group A step 60 (a2d4ba026).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/adaptive_conversation_pane.dart`
+
+Track partial upstream replay from group A steps 32 (cb69ad9e4), 78 (5f1cd6798), 89 (a4cac9a2d).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/app_route_observer.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/avatar_editor_options.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/avatar_editor_options_scope.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/avatar_image.dart`
+
+Track partial upstream replay from group A step 109 (921a05a37).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/avatar_image_native.dart`
+
+Track partial upstream replay from group A step 109 (921a05a37).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/avatar_image_source_controls.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/buzz_setting_menu.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/buzz_sheet_header.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/collapsible_sliver_body.dart`
+
+Track partial upstream replay from group A step 35 (2636e986a).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/concentric_sheet_surface.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/covered_route_keyboard_insets.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/dm_header_cluster.dart`
+
+Track partial upstream replay from group A step 16 (96e56c5b3).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/dm_header_portrait.dart`
+
+Track partial upstream replay from group A step 16 (96e56c5b3).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/duo_toolbar.dart`
+
+Track partial upstream replay from group A steps 32 (cb69ad9e4), 78 (5f1cd6798).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/duo_workspace_scaffold.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/emoji_avatar_controls.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/frosted_app_bar.dart`
+
+Track partial upstream replay from group A steps 16 (96e56c5b3), 32 (cb69ad9e4), 69 (b6db61faa), 78 (5f1cd6798).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/frosted_scaffold.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/ios_message_create_button.dart`
+
+Track partial upstream replay from group A steps 32 (cb69ad9e4), 174 (68d367cf2).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/ios_navigation_bar.dart`
+
+Track partial upstream replay from group A steps 16 (96e56c5b3), 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/ios_navigation_metrics.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/modal_presentation.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/navigation_backdrop.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/onboarding_step_page.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/preset_agent_avatar.dart`
+
+Track partial upstream replay from group A steps 169 (39ffc3dcc), 218 (03d09e20e).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/profile_avatar_crop_page.dart`
+
+Track partial upstream replay from group A steps 32 (cb69ad9e4), 126 (21802f019).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/lib/shared/widgets/root_page_route.dart`
+
+Track partial upstream replay from group A step 43 (5bfbda4c3).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/packages/buzz_secp256k1/pubspec.lock`
+
+Track partial upstream replay from group A step 60 (a2d4ba026).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/packages/buzz_secp256k1/pubspec.yaml`
+
+Track partial upstream replay from group A step 60 (a2d4ba026).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/pubspec.lock`
+
+Track partial upstream replay from group A steps 32 (cb69ad9e4), 56 (41587e028), 60 (a2d4ba026), 64 (d1a8c3607), 117 (b0e55606f).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/activity/activity_provider_test.dart`
+
+Track partial upstream replay from group A step 71 (3dcdf1c05).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/age_gate/age_gate_app_test.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/agents/agent_instructions_test.dart`
+
+Track partial upstream replay from group A step 60 (a2d4ba026).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/agent_activity/transcript_item_widget_test.dart`
+
+Track partial upstream replay from group A step 56 (41587e028).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/channel_actions_lifecycle_test.dart`
+
+Track partial upstream replay from group A step 109 (921a05a37).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/channel_actions_sheet_test.dart`
+
+Track partial upstream replay from group A steps 43 (5bfbda4c3), 109 (921a05a37).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/channel_detail_page_test/archive_navigation_tests.dart`
+
+Track partial upstream replay from group A step 43 (5bfbda4c3).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/channel_detail_page_test/author_visibility_tests.dart`
+
+Track partial upstream replay from group A steps 16 (96e56c5b3), 25 (c0e30110d).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/channel_event_order_test.dart`
+
+Track partial upstream replay from group A step 113 (aec571045).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/channel_management_provider_test.dart`
+
+Track partial upstream replay from group A steps 4 (0aca7588e), 58 (642ce4165), 73 (15c65c76d).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/channel_member_profile_actions_test.dart`
+
+Track partial upstream replay from group A step 70 (04af7081c).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/channel_messages_provider_test.dart`
+
+Track partial upstream replay from group A step 113 (aec571045).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/channel_typing_provider_test.dart`
+
+Track partial upstream replay from group A step 77 (3764a2e4d).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/channel_window_test.dart`
+
+Track partial upstream replay from group A step 113 (aec571045).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/channels_provider_join_cases.dart`
+
+Track partial upstream replay from group A step 4 (0aca7588e).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/channels_provider_test.dart`
+
+Track partial upstream replay from group A steps 4 (0aca7588e), 66 (237a39fe7), 79 (c97c85d8f).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/channels_sync_journey_test.dart`
+
+Track partial upstream replay from group A step 74 (9e40bf5d7).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/compose_bar_test/agent_prefill_tests.dart`
+
+Track partial upstream replay from group A steps 10 (1adde0e6b), 50 (3c0adc188).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/compose_bar_test/exact_mention_tests.dart`
+
+Track partial upstream replay from group A step 50 (3c0adc188).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/compose_bar_test/mixed_gallery_tests.dart`
+
+Track partial upstream replay from group A steps 13 (ef57fec4d), 19 (85c715608).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/default_agent_launcher_test.dart`
+
+Track partial upstream replay from group A steps 20 (27f0fe752), 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/emoji_picker_test.dart`
+
+Track partial upstream replay from group A steps 130 (ff652ed06), 229 (51b0ea62b).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/me/me_chat_assistant_test.dart`
+
+Track partial upstream replay from group A steps 5 (b483bbe76), 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/me/me_page_test.dart`
+
+Track partial upstream replay from group A steps 5 (b483bbe76), 20 (27f0fe752), 58 (642ce4165).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/me/me_unread_test.dart`
+
+Track partial upstream replay from group A steps 20 (27f0fe752), 58 (642ce4165).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/me/me_working_provider_test.dart`
+
+Track partial upstream replay from group A step 5 (b483bbe76).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/me/solo_working_dots_test.dart`
+
+Track partial upstream replay from group A step 97 (75d78eab6).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/media_viewer_page/image_rail_test.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/members_sheet_test.dart`
+
+Track partial upstream replay from group A steps 2 (dd2d3cf4e), 70 (04af7081c).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/message_attachment_rendering_test.dart`
+
+Track partial upstream replay from group A step 91 (44c8206be).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/message_content/edited_marker_test.dart`
+
+Track partial upstream replay from group A step 56 (41587e028).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/message_content/link_normalizer_test.dart`
+
+Track partial upstream replay from group A step 56 (41587e028).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/message_content/markdown_tables_test.dart`
+
+Track partial upstream replay from group A step 56 (41587e028).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/message_content_bubble_cases.dart`
+
+Track partial upstream replay from group A steps 56 (41587e028), 91 (44c8206be).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/message_content_custom_emoji_test.dart`
+
+Track partial upstream replay from group A step 56 (41587e028).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/message_content_exact_mentions_test.dart`
+
+Track partial upstream replay from group A step 50 (3c0adc188).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/message_content_stability_test.dart`
+
+Track partial upstream replay from group A step 56 (41587e028).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/message_content_test.dart`
+
+Track partial upstream replay from group A steps 13 (ef57fec4d), 19 (85c715608), 56 (41587e028), 91 (44c8206be), 172 (8306e3874).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/message_stack_cases.dart`
+
+Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d), 19 (85c715608).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/native_photo_zoom_preview_test.dart`
+
+Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/native_video_files_test.dart`
+
+Track partial upstream replay from group A step 1 (b40f22114).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/reaction_row_test/shortcode_tests.dart`
+
+Track partial upstream replay from group A step 37 (4a101752f).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/thread_replies_provider_test.dart`
+
+Track partial upstream replay from group A step 113 (aec571045).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/channels/timeline_message_test.dart`
+
+Track partial upstream replay from group A step 113 (aec571045).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/forum/forum_widgets_test.dart`
+
+Track partial upstream replay from group A step 16 (96e56c5b3).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/home/home_page_test.dart`
+
+Track partial upstream replay from group A steps 20 (27f0fe752), 32 (cb69ad9e4), 40 (60b7fb817), 78 (5f1cd6798).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/invites/invite_create_page_test.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/onboarding/fullscreen_onboarding_test.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/onboarding/hosted_backup_consent_test.dart`
+
+Track partial upstream replay from group A step 61 (59ae028a3).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/onboarding/hosted_journeys_test.dart`
+
+Track partial upstream replay from group A steps 61 (59ae028a3), 259 (0d4fd74ad).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/onboarding/internal_build_entry_test.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/onboarding/organization_sign_in_banner_test.dart`
+
+Track partial upstream replay from group A step 114 (d39545ebd).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/pairing/pairing_hosted_handoff_test.dart`
+
+Track partial upstream replay from group A step 61 (59ae028a3).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/profile/presence_shell_test.dart`
+
+Track partial upstream replay from group A step 52 (3d3f9cf15).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/profile/profile_avatar_crop_cancel_test.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/profile/profile_avatar_crop_resize_test.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/profile/profile_edit_page_test.dart`
+
+Track partial upstream replay from group A steps 32 (cb69ad9e4), 126 (21802f019).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/profile/profile_edit_retry_test.dart`
+
+Track partial upstream replay from group A step 126 (21802f019).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/profile/set_status_sheet_test.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/profile/user_profile_sheet_message_test.dart`
+
+Track partial upstream replay from group A step 109 (921a05a37).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/search/search_channels_journey_test.dart`
+
+Track partial upstream replay from group A step 2 (dd2d3cf4e).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/search/search_page_lazy_test.dart`
+
+Track partial upstream replay from group A step 2 (dd2d3cf4e).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/settings/builderlab_account_row_test.dart`
+
+Track partial upstream replay from group A steps 8 (045b637b0), 32 (cb69ad9e4).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/settings/notification_toggle_test.dart`
+
+Track partial upstream replay from group A step 44 (8f3f4e266).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/settings/settings_overlay_test.dart`
+
+Track partial upstream replay from group A step 20 (27f0fe752).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/features/settings/theme_picker_page_test.dart`
+
+Track partial upstream replay from group A steps 32 (cb69ad9e4), 266 (4a440b593), 272 (a8cc77ac3).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/flutter_test_config.dart`
+
+Track partial upstream replay from group A step 44 (8f3f4e266).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/helpers/hosted_journey_fixture.dart`
+
+Track partial upstream replay from group A step 61 (59ae028a3).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/helpers/message_link_finders.dart`
+
+Track partial upstream replay from group A step 91 (44c8206be).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/animated_avatar_test.dart`
+
+Track partial upstream replay from group A step 76 (11ea8c928).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/community/community_icon_provider_test.dart`
+
+Track partial upstream replay from group A step 60 (a2d4ba026).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/custom_emoji/custom_emoji_provider_test.dart`
+
+Track partial upstream replay from group A step 67 (9fc2b3332).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/custom_emoji/custom_emoji_render_test.dart`
+
+Track partial upstream replay from group A step 56 (41587e028).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/hosted/account_identity_store_test.dart`
+
+Track partial upstream replay from group A step 61 (59ae028a3).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/hosted/hosted_communities_flow_test.dart`
+
+Track partial upstream replay from group A step 61 (59ae028a3).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/hosted/hosted_multi_backup_recovery_test.dart`
+
+Track partial upstream replay from group A step 259 (0d4fd74ad).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/hosted/identity_choice_lifecycle_test.dart`
+
+Track partial upstream replay from group A step 61 (59ae028a3).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/http/app_http_client_test.dart`
+
+Track partial upstream replay from group A steps 60 (a2d4ba026), 64 (d1a8c3607).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/identity_archives/identity_archives_test.dart`
+
+Track partial upstream replay from group A steps 2 (dd2d3cf4e), 60 (a2d4ba026).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/me/me_archived_agents_test.dart`
+
+Track partial upstream replay from group A step 2 (dd2d3cf4e).
+
+New module: `false`.
+
+Registered upstream deletion: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/me/me_assistant_names_test.dart`
+
+Track partial upstream replay from group A step 5 (b483bbe76).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/me/me_assistants_test.dart`
+
+Track partial upstream replay from group A step 2 (dd2d3cf4e).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/me/me_sync_test.dart`
+
+Track partial upstream replay from group A step 2 (dd2d3cf4e).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/me/solo_chat_seed_test.dart`
+
+Track partial upstream replay from group A step 9 (0ac71eaf9).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/mentions/agent_identity_provider_test.dart`
+
+Track partial upstream replay from group A step 72 (99e65b6c2).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/mentions/mention_bindings_test.dart`
+
+Track partial upstream replay from group A step 50 (3c0adc188).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/profile/user_cache_provider_test.dart`
+
+Track partial upstream replay from group A step 65 (a540e7bd3).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/push/notification_body_test.dart`
+
+Track partial upstream replay from group A step 210 (34c8f5c7a).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/push/push_bridge_test.dart`
+
+Track partial upstream replay from group A step 44 (8f3f4e266).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/push/push_root_isolation_test.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/relay/media_image_test.dart`
+
+Track partial upstream replay from group A steps 48 (0bbcf3e7c), 49 (bf3bdd0ea), 130 (ff652ed06).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/relay/media_upload_test.dart`
+
+Track partial upstream replay from group A steps 198 (f7496607a), 202 (9bcb3e45a).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/relay/relay_http_query_client_test.dart`
+
+Track partial upstream replay from group A step 60 (a2d4ba026).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/relay/relay_session_test.dart`
+
+Track partial upstream replay from group A step 108 (7b8066fb9).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/theme/appearance_mode_provider_test.dart`
+
+Track partial upstream replay from group A step 266 (4a440b593).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/verified_profiles/verified_profile_directory_test.dart`
+
+Track partial upstream replay from group A step 68 (93bbd452a).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/widgets/adaptive_conversation_pane_test.dart`
+
+Track partial upstream replay from group A steps 32 (cb69ad9e4), 89 (a4cac9a2d).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/widgets/adaptive_conversation_recording_test.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/widgets/buzz_setting_menu_test.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/widgets/collapsible_sliver_body_test.dart`
+
+Track partial upstream replay from group A step 35 (2636e986a).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/widgets/dm_header_cluster_test.dart`
+
+Track partial upstream replay from group A step 16 (96e56c5b3).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/widgets/frosted_app_bar_test.dart`
+
+Track partial upstream replay from group A steps 16 (96e56c5b3), 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/widgets/ios_message_create_button_test.dart`
+
+Track partial upstream replay from group A step 174 (68d367cf2).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/widgets/ios_navigation_bar_test.dart`
+
+Track partial upstream replay from group A steps 16 (96e56c5b3), 32 (cb69ad9e4), 69 (b6db61faa).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/widgets/modal_presentation_test.dart`
+
+Track partial upstream replay from group A step 32 (cb69ad9e4).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/widgets/native_avatar_image_test.dart`
+
+Track partial upstream replay from group A step 109 (921a05a37).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/widgets/preset_agent_avatar_test.dart`
+
+Track partial upstream replay from group A steps 16 (96e56c5b3), 169 (39ffc3dcc), 218 (03d09e20e).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `mobile/test/shared/widgets/root_page_route_test.dart`
+
+Track partial upstream replay from group A step 43 (5bfbda4c3).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `previews/invite-video/README.md`
+
+Track partial upstream replay from group A step 7 (2c5c8343e).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `schema/tables/public/scheduled_workflow_fires.sql`
+
+Track partial upstream replay from group A step 30 (aa9b44ef3).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `scripts/flake-check.mjs`
+
+Track partial upstream replay from group A step 44 (8f3f4e266).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `scripts/flake-check.test.mjs`
+
+Track partial upstream replay from group A step 44 (8f3f4e266).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `scripts/test-mobile-photo-zoom.sh`
+
+Track partial upstream replay from group A step 1 (b40f22114).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `scripts/test-mobile-picker-preparation.sh`
+
+Track partial upstream replay from group A step 13 (ef57fec4d).
+
+New module: `true`.
+
+- Verify: `just ci`
+
+## `scripts/test-relay-image-eligibility-workflow.sh`
+
+Track partial upstream replay from group A step 151 (bc3afbb29).
+
+New module: `false`.
+
+- Verify: `just ci`
+
+## `test-fixtures/notification-body.json`
+
+Track partial upstream replay from group A steps 11 (95dd9d67d), 39 (defc2d5ea), 129 (1059d81fc), 210 (34c8f5c7a).
+
+New module: `true`.
+
+- Verify: `just ci`
