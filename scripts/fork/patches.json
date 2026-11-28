@@ -15971,6 +15971,16 @@
       ]
     },
     {
+      "path": "crates/buzz-cli/tests/channel_list_pagination.rs",
+      "responsibility": "Exercise filtered CLI membership paging, distinct channels and same-second cursors through the standalone binary",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-cli --test channel_list_pagination"
+      ]
+    },
+    {
       "path": "crates/buzz-cli/tests/raw_publish_exit.rs",
       "responsibility": "Port upstream CLI behavior while keeping the fork's desktop pairing, attached-media handling and compatible output",
       "is_new": true,

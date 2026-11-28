@@ -10815,6 +10815,14 @@ New module: `true`.
 
 - Verify: `cargo test -p buzz-cli -p buzz-sdk`
 
+## `crates/buzz-cli/tests/channel_list_pagination.rs`
+
+Exercise filtered CLI membership paging, distinct channels and same-second cursors through the standalone binary
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-cli --test channel_list_pagination`
+
 ## `crates/buzz-cli/tests/raw_publish_exit.rs`
 
 Port upstream CLI behavior while keeping the fork's desktop pairing, attached-media handling and compatible output

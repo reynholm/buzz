@@ -100,8 +100,48 @@ fn listed_metadata(event: &serde_json::Value) -> Result<serde_json::Value, CliEr
     Ok(output)
 }
 
-/// Most kind:39002 memberships read when filling a filtered list.
-const MAX_LISTED_MEMBERSHIPS: u32 = 10_000;
+/// Each membership page selects candidates in relay cursor order. Keep the
+/// relay's metadata order within that page when collecting matching channels.
+async fn filtered_member_channels(
+    client: &BuzzClient,
+    mut member_filter: serde_json::Value,
+    limit: usize,
+    keep: impl Fn(&serde_json::Value) -> bool,
+) -> Result<Vec<serde_json::Value>, CliError> {
+    let mut matched_ids = HashSet::new();
+    let mut matched = Vec::new();
+    loop {
+        let (memberships, done) = client
+            .query_page(&mut member_filter, crate::client::QUERY_PAGE_SIZE as usize)
+            .await?;
+        let mut ids: Vec<_> = memberships
+            .iter()
+            .map(extract_d_tag)
+            .filter(|id| !id.is_empty() && !matched_ids.contains(id))
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+
+        if !ids.is_empty() {
+            let metadata_filter = serde_json::json!({"kinds": [39000], "#d": &ids});
+            let metadata = client
+                .query_paginated(metadata_filter, ids.len() as u32)
+                .await?;
+            for event in metadata.into_iter().filter(&keep) {
+                let id = extract_d_tag(&event);
+                if ids.binary_search(&id).is_ok() && matched_ids.insert(id) {
+                    matched.push(event);
+                    if matched.len() == limit {
+                        return Ok(matched);
+                    }
+                }
+            }
+        }
+        if done {
+            return Ok(matched);
+        }
+    }
+}
 
 pub async fn cmd_list_channels(
     client: &BuzzClient,
@@ -125,21 +165,17 @@ pub async fn cmd_list_channels(
             "kinds": [39002],
             "#p": [my_pk],
         });
-        let membership_limit = if filtered {
-            MAX_LISTED_MEMBERSHIPS
+        if filtered {
+            filtered_member_channels(client, member_filter, effective_limit as usize, keep).await?
         } else {
-            effective_limit
-        };
-        let member_events = client
-            .query_paginated(member_filter, membership_limit)
-            .await?;
-        let channel_ids: Vec<String> = member_events
-            .iter()
-            .map(extract_d_tag)
-            .filter(|id| !id.is_empty())
-            .collect();
-
-        if !filtered {
+            let member_events = client
+                .query_paginated(member_filter, effective_limit)
+                .await?;
+            let channel_ids: Vec<_> = member_events
+                .iter()
+                .map(extract_d_tag)
+                .filter(|id| !id.is_empty())
+                .collect();
             if channel_ids.is_empty() {
                 println!("[]");
                 return Ok(());
@@ -151,24 +187,6 @@ pub async fn cmd_list_channels(
             client
                 .query_paginated(metadata_filter, effective_limit)
                 .await?
-        } else {
-            // Bound each filter to one page of channel IDs.
-            let mut kept = Vec::new();
-            for chunk in channel_ids.chunks(crate::client::QUERY_PAGE_SIZE as usize) {
-                let metadata_filter = serde_json::json!({
-                    "kinds": [39000],
-                    "#d": chunk,
-                });
-                let page = client
-                    .query_paginated(metadata_filter, chunk.len() as u32)
-                    .await?;
-                kept.extend(page.into_iter().filter(keep));
-                if kept.len() >= effective_limit as usize {
-                    break;
-                }
-            }
-            kept.truncate(effective_limit as usize);
-            kept
         }
     } else {
         let filter = serde_json::json!({

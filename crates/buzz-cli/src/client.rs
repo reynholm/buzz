@@ -826,16 +826,7 @@ impl BuzzClient {
                 }
                 _ => QUERY_PAGE_SIZE as usize,
             };
-            filter["limit"] = serde_json::json!(page_limit);
-
-            let raw = self.query(&filter).await?;
-            let page: Vec<serde_json::Value> = serde_json::from_str(&raw)
-                .map_err(|e| CliError::Other(format!("failed to parse query response: {e}")))?;
-            let done = page.len() < page_limit;
-
-            if !done {
-                advance_query_cursor(&mut filter, &page)?;
-            }
+            let (page, done) = self.query_page(&mut filter, page_limit).await?;
             events.extend(page.into_iter().filter(|e| keep.is_none_or(|keep| keep(e))));
             if done {
                 break;
@@ -846,6 +837,24 @@ impl BuzzClient {
             events.truncate(limit as usize);
         }
         Ok(events)
+    }
+
+    /// Read one page, updating the composite cursor if the page was full.
+    /// The boolean indicates whether the result set is exhausted.
+    pub(crate) async fn query_page(
+        &self,
+        filter: &mut serde_json::Value,
+        page_limit: usize,
+    ) -> Result<(Vec<serde_json::Value>, bool), CliError> {
+        filter["limit"] = serde_json::json!(page_limit);
+        let raw = self.query(filter).await?;
+        let page: Vec<serde_json::Value> = serde_json::from_str(&raw)
+            .map_err(|e| CliError::Other(format!("failed to parse query response: {e}")))?;
+        let done = page.len() < page_limit;
+        if !done {
+            advance_query_cursor(filter, &page)?;
+        }
+        Ok((page, done))
     }
 
     /// Query up to `limit` historical events that `keep` accepts, paging past
