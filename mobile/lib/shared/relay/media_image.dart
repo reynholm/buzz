@@ -282,7 +282,7 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
   /// fail to decode are removed instead.
   Future<Uint8List> _loadBytes(
     _SharedFetch fetch, {
-    Future<VoidCallback> Function(Future<void> abort)? acquireDownloadSlot,
+    Future<VoidCallback?> Function(Future<void>)? acquireDownloadSlot,
   }) async {
     final cache = diskCache;
     final hit = cache == null ? null : await cache.read(url);
@@ -294,8 +294,9 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
       return hit.bytes;
     }
     VoidCallback? release;
-    if (acquireDownloadSlot != null && !fetch.isAborted) {
-      release = await acquireDownloadSlot(fetch.aborted);
+    final stopWaiting = fetch.stopWaitingForSlot;
+    if (acquireDownloadSlot != null && stopWaiting != null) {
+      release = await acquireDownloadSlot(stopWaiting);
     }
     try {
       if (fetch.isAborted) throw FetchCancelledException(Uri.parse(url));
@@ -374,21 +375,24 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
   /// once they decode. Saved bytes that fail to decode are removed, so the
   /// next request downloads them again. Completing [cancel] leaves the
   /// download, which stops once no load is waiting for it.
-  /// On a cache miss, [acquireDownloadSlot] can queue a new shared download
-  /// until a slot is free. Its returned callback releases the slot when the
-  /// download finishes.
+  /// On a cache miss, [acquireDownloadSlot] can queue a new shared download.
+  /// It receives a signal to stop waiting and returns a callback to release
+  /// the slot, or null if the wait stops before admission. A visible image
+  /// load can start a queued download and share its bytes.
   Future<Uint8List> loadEncodedBytes({
     required Future<void> cancel,
-    Future<VoidCallback> Function(Future<void> abort)? acquireDownloadSlot,
+    Future<VoidCallback?> Function(Future<void>)? acquireDownloadSlot,
   }) async {
+    final needsDownloadSlot = acquireDownloadSlot != null;
     final fetchKey = (url, auth, isThumbnailFallback);
     final fetch = _inFlight[fetchKey] ??= _SharedFetch(
       (fetch) => _loadBytes(fetch, acquireDownloadSlot: acquireDownloadSlot),
+      needsDownloadSlot: needsDownloadSlot,
       onFinished: (fetch) {
         if (_inFlight[fetchKey] == fetch) _inFlight.remove(fetchKey);
       },
     );
-    fetch.join();
+    fetch.join(needsDownloadSlot: needsDownloadSlot);
     var cancelled = false;
     var left = false;
     void leave() {
@@ -704,7 +708,8 @@ class _SharedFetch {
   _SharedFetch(
     Future<Uint8List> Function(_SharedFetch fetch) load, {
     required this.onFinished,
-  }) {
+    bool needsDownloadSlot = false,
+  }) : _slotWait = needsDownloadSlot ? Completer<void>() : null {
     bytes = load(this).whenComplete(() {
       _done = true;
       onFinished(this);
@@ -715,6 +720,7 @@ class _SharedFetch {
 
   final void Function(_SharedFetch) onFinished;
   final _abort = Completer<void>();
+  final Completer<void>? _slotWait;
   late final Future<Uint8List> bytes;
   var _waiting = 0;
   var _done = false;
@@ -722,6 +728,18 @@ class _SharedFetch {
   /// Completes when every load waiting for this download was abandoned.
   Future<void> get aborted => _abort.future;
   bool get isAborted => _abort.isCompleted;
+
+  /// The first unrestricted consumer or the last departing consumer
+  /// interrupts the wait for a picker slot.
+  Future<void>? get stopWaitingForSlot {
+    final wait = _slotWait;
+    return wait == null || wait.isCompleted ? null : wait.future;
+  }
+
+  void _interruptSlotWait() {
+    final wait = _slotWait;
+    if (wait != null && !wait.isCompleted) wait.complete();
+  }
 
   /// Run by the first load that decodes a frame: saves downloaded bytes,
   /// or refreshes stale saved ones.
@@ -738,13 +756,17 @@ class _SharedFetch {
     pending?.call();
   }
 
-  void join() => _waiting++;
+  void join({bool needsDownloadSlot = false}) {
+    _waiting++;
+    if (!needsDownloadSlot) _interruptSlotWait();
+  }
 
   /// Called once per joined load, when it is abandoned or has its result.
   void leave() {
     _waiting--;
     if (_waiting == 0 && !_done && !_abort.isCompleted) {
       _abort.complete();
+      _interruptSlotWait();
       onFinished(this);
     }
   }

@@ -905,19 +905,63 @@ void main() {
           await cancelled;
           expect(mediaClient.requests, hasLength(4));
 
-          // A retry downloads as soon as a slot becomes available.
-          final retry = _sendNativeEmojiPickerCall(tester, 'mediaBytes', {
+          // A visible reaction can take over a queued download. One native
+          // cell scrolls away while another still needs the same bytes.
+          const visibleUrl = 'https://example.test/visible-reaction.png';
+          final waiting = _sendNativeEmojiPickerCall(tester, 'mediaBytes', {
             'id': 16,
-            'url': redirected,
+            'url': visibleUrl,
           });
-          await _sendNativeEmojiPickerCall(tester, 'cancelMediaBytes', 10);
-          expect(await retry, _pngBytes);
+          final scrolledAway = expectLater(
+            _sendNativeEmojiPickerCall(tester, 'mediaBytes', {
+              'id': 17,
+              'url': visibleUrl,
+            }),
+            throwsA(isA<PlatformException>()),
+          );
+          expect(await diskCache.read(visibleUrl), isNull);
+          expect(mediaClient.requests, hasLength(4));
+          final stream = MediaImageProvider(
+            url: visibleUrl,
+            auth: mediaAuth,
+            client: mediaClient,
+            diskCache: diskCache,
+          ).resolve(ImageConfiguration.empty);
+          final displayed = Completer<void>();
+          final listener = ImageStreamListener((image, _) {
+            image.dispose();
+            displayed.complete();
+          }, onError: displayed.completeError);
+          stream.addListener(listener);
+          bool startedWhileFull;
+          try {
+            await _sendNativeEmojiPickerCall(tester, 'cancelMediaBytes', 17);
+            startedWhileFull = await mediaClient
+                .waitForRequests(5)
+                .then((_) => true)
+                .timeout(const Duration(seconds: 5), onTimeout: () => false);
+            // An unrelated retry still needs a picker slot.
+            final retry = _sendNativeEmojiPickerCall(tester, 'mediaBytes', {
+              'id': 18,
+              'url': redirected,
+            });
+            await _sendNativeEmojiPickerCall(tester, 'cancelMediaBytes', 10);
+            await displayed.future;
+            expect(await waiting, _pngBytes);
+            await scrolledAway;
+            expect(await retry, _pngBytes);
+          } finally {
+            stream.removeListener(listener);
+          }
+
           for (var id = 10; id < 14; id++) {
             await _sendNativeEmojiPickerCall(tester, 'cancelMediaBytes', id);
           }
           await Future.wait(running);
-          expect(mediaClient.requests, hasLength(5));
+          expect(mediaClient.requests, hasLength(6));
+          expect(mediaClient.requests[4].url.toString(), visibleUrl);
           expect(mediaClient.requests.last.url.toString(), redirected);
+          expect(startedWhileFull, isTrue);
         });
 
         await _sendNativeEmojiPickerCall(tester, 'skinToneChanged', 4);

@@ -141,16 +141,16 @@ Future<void> _presentIosEmojiPicker({
     }
   }
 
-  Future<VoidCallback> acquireMediaLoad(Future<void> abort) async {
+  Future<VoidCallback?> acquireMediaLoad(Future<void> stopWaiting) async {
     if (activeMediaLoads < _maxNativeMediaLoads) {
       activeMediaLoads++;
     } else {
       final admitted = Completer<void>();
       queuedMediaLoads.add(admitted);
-      await Future.any([admitted.future, abort]);
+      await Future.any([admitted.future, stopWaiting]);
       if (!admitted.isCompleted) {
         queuedMediaLoads.remove(admitted);
-        throw StateError('Media bytes load cancelled');
+        return null;
       }
     }
     return releaseMediaLoad;
