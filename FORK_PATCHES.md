@@ -8656,6 +8656,78 @@ New module: `false`.
 - Verify: `just ci`
 - Verify: `scripts/postgres-test-run.sh`
 
+## `NOSTR.md`
+
+Exercise channel visibility and event target scoping on the fork's PostgreSQL and relay paths
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db -p buzz-relay`
+
+## `crates/buzz-db/src/store/channel_name_postgres_tests.rs`
+
+Exercise channel visibility and event target scoping on the fork's PostgreSQL and relay paths
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db -p buzz-relay`
+
+## `crates/buzz-db/src/store/unlisted_channels_postgres_tests.rs`
+
+Exercise channel visibility and event target scoping on the fork's PostgreSQL and relay paths
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db -p buzz-relay`
+
+## `crates/buzz-relay/src/api/artifact_postgres_tests/sync_access_postgres_tests.rs`
+
+Exercise channel visibility and event target scoping on the fork's PostgreSQL and relay paths
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db -p buzz-relay`
+
+## `crates/buzz-relay/src/api/artifact_postgres_tests/sync_cursor_postgres_tests.rs`
+
+Exercise channel visibility and event target scoping on the fork's PostgreSQL and relay paths
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db -p buzz-relay`
+
+## `crates/buzz-relay/src/api/artifact_postgres_tests/sync_policy_postgres_tests.rs`
+
+Exercise channel visibility and event target scoping on the fork's PostgreSQL and relay paths
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db -p buzz-relay`
+
+## `crates/buzz-relay/src/api/artifact_postgres_tests/sync_postgres_tests.rs`
+
+Exercise channel visibility and event target scoping on the fork's PostgreSQL and relay paths
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db -p buzz-relay`
+
+## `crates/buzz-relay/src/handlers/edit_metadata_postgres_tests.rs`
+
+Exercise channel visibility and event target scoping on the fork's PostgreSQL and relay paths
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db -p buzz-relay`
+
+## `docs/operator-user-deletion-executor.md`
+
+Exercise channel visibility and event target scoping on the fork's PostgreSQL and relay paths
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-db -p buzz-relay`
+
 ## `crates/buzz-db/src/store/channel_members.rs`
 
 Keep member/channel writer regressions aligned with direct durable enqueue.
