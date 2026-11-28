@@ -23,6 +23,7 @@ for line in sys.stdin:
 
 async fn permission_view_case(label: &str, tool: Value, complete: bool) {
     let observer = observer::ObserverHandle::in_process();
+    let mut live_events = observer.subscribe();
     let request = json!({
         "jsonrpc":"2.0", "id":0, "method":"session/request_permission",
         "params":{"sessionId":"view-session", "toolCall":tool,
@@ -74,11 +75,12 @@ async fn permission_view_case(label: &str, tool: Value, complete: bool) {
     .await
     .unwrap();
     client.set_observer(Some(observer.clone()), 0);
+    let started_at = chrono::Utc::now().to_rfc3339();
     client.set_observer_context(observer::context_for_turn(
         Some(channel),
         Some("view-session".into()),
         "view-turn".into(),
-        chrono::Utc::now().to_rfc3339(),
+        started_at.clone(),
     ));
     client.initialize().await.unwrap();
     client
@@ -111,22 +113,36 @@ async fn permission_view_case(label: &str, tool: Value, complete: bool) {
     client.shutdown().await;
     server.abort();
 
-    // Use the production queue, trimmer, signer and NIP-44 publisher. An
-    // in-process snapshot alone still contains the oversized original.
+    // Replay and live subscribers must receive the same budgeted event.
     let (publisher, mut published) = RelayEventPublisher::test_pair();
     let mut queue = ObserverPublishQueue::default();
     let snapshot = observer.snapshot();
-    let request_seq = snapshot
+    let replay_request = snapshot
         .iter()
         .find(|event| {
-            event.kind == "acp_read" && event.payload["method"] == "session/request_permission"
+            event.kind == "acp_read"
+                && (event.payload["method"] == "session/request_permission"
+                    || (!complete && event.payload["elided"] == "acp_read payload too large"))
         })
-        .unwrap()
-        .seq;
+        .unwrap();
+    let request_seq = replay_request.seq;
+    let live_request = loop {
+        let event = live_events.try_recv().unwrap();
+        if event.seq == request_seq {
+            break event;
+        }
+    };
+    let encoded = serde_json::to_vec(replay_request).unwrap();
+    assert_eq!(encoded, serde_json::to_vec(&live_request).unwrap());
+    assert!(encoded.len() <= OBSERVER_MAX_PLAINTEXT_LEN, "{label}");
+
+    // Use the production queue, signer and NIP-44 publisher to check the
+    // actual owner-visible view, including the near-limit singleton.
     for event in snapshot {
         queue.ingest(event);
     }
     let mut owner_events = Vec::new();
+    let mut standalone_request = false;
     while let Some(frame) = queue.next_frame() {
         publish_relay_observer_event(
             &publisher,
@@ -146,6 +162,7 @@ async fn permission_view_case(label: &str, tool: Value, complete: bool) {
         if let Some(events) = frame.pointer("/payload/events").and_then(Value::as_array) {
             owner_events.extend(events.iter().cloned());
         } else {
+            standalone_request |= frame["seq"] == request_seq;
             owner_events.push(frame);
         }
     }
@@ -165,6 +182,16 @@ async fn permission_view_case(label: &str, tool: Value, complete: bool) {
         .unwrap();
     }
     if complete {
+        assert_eq!(viewed["channelId"], channel.to_string());
+        assert_eq!(viewed["sessionId"], "view-session");
+        assert_eq!(viewed["turnId"], "view-turn");
+        assert_eq!(viewed["startedAt"], started_at);
+        if label == "near-limit" {
+            assert!(
+                standalone_request,
+                "near-limit request requires a standalone frame"
+            );
+        }
         assert_eq!(
             viewed["payload"], request,
             "{label}: approved request changed in transport"
@@ -206,6 +233,13 @@ async fn kimi_manual_permission_requires_unabridged_published_owner_view() {
             "Bash",
             "command",
             format!("{} {middle} {}", "a".repeat(15_000), "z".repeat(15_000)),
+            true,
+        ),
+        (
+            "near-limit",
+            "Bash",
+            "command",
+            format!("{} {middle} {}", "a".repeat(32_400), "z".repeat(32_400)),
             true,
         ),
         (

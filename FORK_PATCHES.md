@@ -9648,6 +9648,38 @@ New module: `false`.
 - Required symbol: `pub(crate) fn can_publish_intact(`
 - Verify: `BUZZ_TEST_BIN_DIR="$PWD/target/debug" env -u BUZZ_ACP_ALLOWED_RESPOND_TO -u BUZZ_ACP_LAZY_POOL -u BUZZ_ACP_IDLE_POOL_SLEEP -u BUZZ_ACP_SESSION_POLICY cargo test --locked -p buzz-acp -- --test-threads=1`
 
+## `crates/buzz-acp/src/observer/packing_tests.rs`
+
+Verify observer queue ordering and bounded retention with the fork's scoped permission mirror
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-acp`
+
+## `crates/buzz-acp/src/observer/perf_tests.rs`
+
+Verify observer queue ordering and bounded retention with the fork's scoped permission mirror
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-acp`
+
+## `crates/buzz-acp/src/observer/tests.rs`
+
+Verify observer queue ordering and bounded retention with the fork's scoped permission mirror
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-acp`
+
+## `crates/buzz-acp/src/observer_publish_queue_tests.rs`
+
+Verify observer queue ordering and bounded retention with the fork's scoped permission mirror
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-acp`
+
 ## `crates/buzz-acp/src/permission_view_tests.rs`
 
 Exercise real ACP permissions through production telemetry queue, trimming, signing and encryption; deny manual approval of clipped Bash, Write, patch, escaped and aggregate payloads

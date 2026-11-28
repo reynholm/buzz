@@ -1049,12 +1049,16 @@ impl AcpClient {
 
     /// Emit a semantic event to the local observer feed, if enabled.
     pub fn observe(&self, kind: impl Into<String>, payload: serde_json::Value) {
+        self.observe_with(kind, || payload);
+    }
+
+    fn observe_with(&self, kind: impl Into<String>, payload: impl FnOnce() -> serde_json::Value) {
         if let Some(observer) = &self.observer {
             observer.emit(
                 kind,
                 self.observer_agent_index,
                 &self.observer_context,
-                payload,
+                payload(),
             );
         }
     }
@@ -1122,38 +1126,37 @@ impl AcpClient {
         if kimi_frame {
             self.trace_kimi_wire("←", msg);
         }
-        if self.kimi {
-            if let Some(error) = msg.get("error") {
-                let failure = kimi_recovery::KimiFailure::from_json(error);
-                let safe = serde_json::json!({"jsonrpc":"2.0","id":msg.get("id"),"error":{
-                    "code":failure.code,"message":failure.to_string(),"data":{
-                        "name":failure.error_type,"status":failure.status,"class":failure.class.label()
-                    }
-                }});
-                self.observe("acp_read", safe);
-                return;
-            }
-            if msg
-                .pointer("/result/_meta/jetbrains/air/sessionFailure")
-                .is_some()
-            {
-                let diagnostic = match provider_failure::check_kimi_response(&msg["result"]) {
-                    Err(AcpError::KimiFailure(failure)) => serde_json::json!({
-                        "class":failure.class.label(), "errorType":failure.error_type,
-                        "transient":failure.class.is_transient(),
-                    }),
-                    _ => serde_json::json!({"redacted":true}),
-                };
-                let mut safe = msg.clone();
-                safe["result"]["_meta"]["jetbrains"]["air"]["sessionFailure"] = diagnostic;
-                self.observe("acp_read", safe);
-                return;
-            }
-        }
         if !kimi_frame {
             tracing::debug!(target:"acp::wire", "← {wire}");
         }
-        self.observe("acp_read", msg.clone());
+        self.observe_with("acp_read", || {
+            if self.kimi {
+                if let Some(error) = msg.get("error") {
+                    let failure = kimi_recovery::KimiFailure::from_json(error);
+                    return serde_json::json!({"jsonrpc":"2.0","id":msg.get("id"),"error":{
+                        "code":failure.code,"message":failure.to_string(),"data":{
+                            "name":failure.error_type,"status":failure.status,"class":failure.class.label()
+                        }
+                    }});
+                }
+                if msg
+                    .pointer("/result/_meta/jetbrains/air/sessionFailure")
+                    .is_some()
+                {
+                    let diagnostic = match provider_failure::check_kimi_response(&msg["result"]) {
+                        Err(AcpError::KimiFailure(failure)) => serde_json::json!({
+                            "class":failure.class.label(), "errorType":failure.error_type,
+                            "transient":failure.class.is_transient(),
+                        }),
+                        _ => serde_json::json!({"redacted":true}),
+                    };
+                    let mut safe = msg.clone();
+                    safe["result"]["_meta"]["jetbrains"]["air"]["sessionFailure"] = diagnostic;
+                    return safe;
+                }
+            }
+            msg.clone()
+        });
     }
 
     /// Send the ACP `authenticate` request for an adapter-advertised method.
@@ -1824,7 +1827,7 @@ impl AcpClient {
         written
             .map_err(|_| AcpError::WriteTimeout(WRITE_TIMEOUT))?
             .map_err(AcpError::Io)?;
-        self.observe("acp_write", value.clone());
+        self.observe_with("acp_write", || value.clone());
         Ok(())
     }
 
@@ -4231,6 +4234,8 @@ mod tests {
         let mut client =
             spawn_script(r#"while IFS= read -r line; do printf '%s\n' "$line"; done"#).await;
         let mut stdin = client.stdin.take().expect("test stdin");
+        // Raw wire payload copies must be lazy when observation is disabled.
+        client.observe_with("acp_read", || panic!("disabled observer copied payload"));
         let observer = ObserverHandle::in_process();
         let mut events = observer.subscribe();
         client.set_observer(Some(observer), 0);
@@ -4273,6 +4278,10 @@ mod tests {
                     );
                     if let Ok(event) = events.try_recv() {
                         assert_eq!(event.kind, "acp_read");
+                        assert_eq!(
+                            event.payload,
+                            serde_json::from_str::<serde_json::Value>(&frame).unwrap()
+                        );
                         break;
                     }
                     assert!(

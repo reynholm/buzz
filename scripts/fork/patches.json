@@ -14470,6 +14470,46 @@
       ]
     },
     {
+      "path": "crates/buzz-acp/src/observer/packing_tests.rs",
+      "responsibility": "Verify observer queue ordering and bounded retention with the fork's scoped permission mirror",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/observer/perf_tests.rs",
+      "responsibility": "Verify observer queue ordering and bounded retention with the fork's scoped permission mirror",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/observer/tests.rs",
+      "responsibility": "Verify observer queue ordering and bounded retention with the fork's scoped permission mirror",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp"
+      ]
+    },
+    {
+      "path": "crates/buzz-acp/src/observer_publish_queue_tests.rs",
+      "responsibility": "Verify observer queue ordering and bounded retention with the fork's scoped permission mirror",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-acp"
+      ]
+    },
+    {
       "path": "crates/buzz-acp/src/permission_view_tests.rs",
       "responsibility": "Exercise real ACP permissions through production telemetry queue, trimming, signing and encryption; deny manual approval of clipped Bash, Write, patch, escaped and aggregate payloads",
       "is_new": true,
