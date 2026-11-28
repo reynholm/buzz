@@ -347,19 +347,23 @@ void main() {
     );
   }
 
-  for (final (status, redirectAge, age, imageHeaders, lifetime) in [
-    (301, 3600, '900', {'cache-control': 'max-age=7200'}, 2700),
-    (308, 7200, '0', {'expires': 'Thu, 01 Jan 2026 01:00:00 GMT'}, 3600),
+  for (final (status, delay, redirectAge, age, imageHeaders, lifetime) in [
+    (301, 12, 3600, '900', {'cache-control': 'max-age=7200'}, 2700),
+    (301, 12, 3600, '0', {'cache-control': 'max-age=10'}, 22),
+    (308, 0, 7200, '0', {'expires': 'Thu, 01 Jan 2026 01:00:00 GMT'}, 3600),
   ]) {
-    test('$status image redirect survives relaunch until it expires', () async {
+    test('$status redirect cache expires after ${lifetime}s', () async {
       final start = Uri.parse(_externalUrls[0]);
       final target = Uri.parse(_externalUrls[1]);
       final requests = <Uri>[];
       var online = true;
+      final started = DateTime.utc(2026, 1, 1);
+      var now = started;
       final client = http_testing.MockClient((request) async {
         requests.add(request.url);
         if (!online) throw const SocketException('offline');
         if (request.url == start) {
+          now = now.add(Duration(seconds: delay));
           return http.Response(
             '',
             status,
@@ -373,7 +377,6 @@ void main() {
         return http.Response.bytes(_pngBytes, 200, headers: imageHeaders);
       });
       addTearDown(client.close);
-      var now = DateTime.utc(2026, 1, 1);
       MediaImageProvider.debugNow = () => now;
       addTearDown(() => MediaImageProvider.debugNow = DateTime.now);
       final directory = MediaDiskCache.directoryFor(root, 'community-1', 's');
@@ -401,7 +404,7 @@ void main() {
       expect(await launch(), isNull);
       expect(requests, [start, target]);
       online = false;
-      now = now.add(Duration(seconds: lifetime - 1));
+      now = started.add(Duration(seconds: lifetime - 1));
       expect(await launch(), isNull);
       expect(requests, [start, target]);
       now = now.add(const Duration(seconds: 1));

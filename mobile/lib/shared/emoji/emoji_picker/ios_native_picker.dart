@@ -141,6 +141,21 @@ Future<void> _presentIosEmojiPicker({
     }
   }
 
+  Future<VoidCallback> acquireMediaLoad(Future<void> abort) async {
+    if (activeMediaLoads < _maxNativeMediaLoads) {
+      activeMediaLoads++;
+    } else {
+      final admitted = Completer<void>();
+      queuedMediaLoads.add(admitted);
+      await Future.any([admitted.future, abort]);
+      if (!admitted.isCompleted) {
+        queuedMediaLoads.remove(admitted);
+        throw StateError('Media bytes load cancelled');
+      }
+    }
+    return releaseMediaLoad;
+  }
+
   final prefs = container.read(savedPrefsProvider);
   final colors = context.colors;
   var dismissed = false;
@@ -169,40 +184,21 @@ Future<void> _presentIosEmojiPicker({
         if (emojiBytes.lookup(url) case final Uint8List bytes) return bytes;
         final cancel = Completer<void>();
         mediaBytesCancels[id] = cancel;
-        // Only downloads wait for a slot; saved emoji load at once.
-        var admittedLoad = false;
         try {
-          if (await mediaDiskCache?.contains(url) ?? false) {
-            // Read from disk below without a slot.
-          } else if (activeMediaLoads < _maxNativeMediaLoads) {
-            activeMediaLoads++;
-            admittedLoad = true;
-          } else {
-            final admitted = Completer<void>();
-            queuedMediaLoads.add(admitted);
-            await Future.any([admitted.future, cancel.future]);
-            if (!admitted.isCompleted) {
-              queuedMediaLoads.remove(admitted);
-              throw StateError('Media bytes load cancelled');
-            }
-            admittedLoad = true;
-          }
-        } on Object {
-          mediaBytesCancels.remove(id);
-          rethrow;
-        }
-        try {
-          final bytes = await MediaImageProvider(
+          final image = MediaImageProvider(
             url: url,
             auth: mediaAuth,
             client: mediaClient,
             diskCache: mediaDiskCache,
-          ).loadEncodedBytes(cancel: cancel.future);
+          );
+          final bytes = await image.loadEncodedBytes(
+            cancel: cancel.future,
+            acquireDownloadSlot: acquireMediaLoad,
+          );
           emojiBytes.remember(url, bytes);
           return bytes;
         } finally {
           mediaBytesCancels.remove(id);
-          if (admittedLoad) releaseMediaLoad();
         }
       case 'cancelMediaBytes':
         final cancel = mediaBytesCancels.remove(call.arguments as int);

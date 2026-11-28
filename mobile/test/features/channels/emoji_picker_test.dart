@@ -149,10 +149,21 @@ final _pngBytes = base64Decode(
 /// which wait until the caller aborts them.
 class _MediaClient extends http.BaseClient {
   final requests = <http.BaseRequest>[];
+  Completer<void>? _requestStarted;
+
+  Future<void> waitForRequests(int count) async {
+    while (requests.length < count) {
+      await (_requestStarted ??= Completer<void>()).future.timeout(
+        const Duration(seconds: 10),
+      );
+    }
+  }
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
     requests.add(request);
+    _requestStarted?.complete();
+    _requestStarted = null;
     if (request.url.path.contains('slow')) {
       await (request as http.AbortableRequest).abortTrigger;
       throw http.RequestAbortedException(request.url);
@@ -738,8 +749,9 @@ void main() {
         () => Directory.systemTemp.createTemp('emoji_picker_test'),
       ))!;
       // The cache's own I/O and timers need the real event loop.
+      var cacheNow = DateTime.utc(2026);
       final diskCache = (await tester.runAsync(
-        () async => MediaDiskCache.open(diskDirectory),
+        () async => MediaDiskCache.open(diskDirectory, now: () => cacheNow),
       ))!;
       addTearDown(
         () => tester.runAsync(() async {
@@ -833,13 +845,25 @@ void main() {
             'id': 3,
             'url': 'https://example.test/slow.png',
           });
-          await tester.pump();
+          await mediaClient.waitForRequests(2);
           await _sendNativeEmojiPickerCall(tester, 'cancelMediaBytes', 3);
           await expectLater(slow, throwsA(isA<PlatformException>()));
           expect(mediaClient.requests, hasLength(2));
 
           // At most four loads run at once; a queued load cancelled before
           // its turn never downloads.
+          const redirected = 'https://example.test/redirect.png';
+          final expiresAt = cacheNow.add(const Duration(seconds: 1));
+          await diskCache.write(
+            redirected,
+            _pngBytes,
+            immutable: false,
+            redirect: (
+              targetUrl: 'https://example.test/target.png',
+              expiresAt: expiresAt,
+            ),
+          );
+          cacheNow = expiresAt;
           mediaClient.requests.clear();
           final running = [
             for (var id = 10; id < 14; id++)
@@ -851,20 +875,16 @@ void main() {
                 throwsA(isA<PlatformException>()),
               ),
           ];
-          final queued = expectLater(
-            _sendNativeEmojiPickerCall(tester, 'mediaBytes', {
-              'id': 14,
-              'url': 'https://example.test/queued.png',
-            }),
+          await mediaClient.waitForRequests(4);
+          // The expired redirect needs a slot just like an uncached emoji.
+          final queued = _sendNativeEmojiPickerCall(tester, 'mediaBytes', {
+            'id': 14,
+            'url': redirected,
+          });
+          final cancelled = expectLater(
+            queued,
             throwsA(isA<PlatformException>()),
           );
-          // Each load checks the disk cache first, so wait for the four to
-          // reach the network rather than for a fixed time.
-          final deadline = DateTime.now().add(const Duration(seconds: 10));
-          while (mediaClient.requests.length < 4) {
-            if (DateTime.now().isAfter(deadline)) fail('loads never started');
-            await Future<void>.delayed(const Duration(milliseconds: 10));
-          }
           // An emoji already saved on disk does not wait for a slot. Its own
           // disk round trips also give the queued load time to start, were
           // it not waiting for a slot.
@@ -882,12 +902,22 @@ void main() {
           );
           expect(mediaClient.requests, hasLength(4));
           await _sendNativeEmojiPickerCall(tester, 'cancelMediaBytes', 14);
-          await queued;
+          await cancelled;
+          expect(mediaClient.requests, hasLength(4));
+
+          // A retry downloads as soon as a slot becomes available.
+          final retry = _sendNativeEmojiPickerCall(tester, 'mediaBytes', {
+            'id': 16,
+            'url': redirected,
+          });
+          await _sendNativeEmojiPickerCall(tester, 'cancelMediaBytes', 10);
+          expect(await retry, _pngBytes);
           for (var id = 10; id < 14; id++) {
             await _sendNativeEmojiPickerCall(tester, 'cancelMediaBytes', id);
           }
           await Future.wait(running);
-          expect(mediaClient.requests, hasLength(4));
+          expect(mediaClient.requests, hasLength(5));
+          expect(mediaClient.requests.last.url.toString(), redirected);
         });
 
         await _sendNativeEmojiPickerCall(tester, 'skinToneChanged', 4);

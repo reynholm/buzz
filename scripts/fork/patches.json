@@ -18862,8 +18862,8 @@
         {
           "caller_path": "mobile/lib/shared/relay/media_image.dart",
           "callee_symbol": "_redirectExpiry",
-          "invocation": "_redirectExpiry(response, started)",
-          "behavior_test": "301 image redirect survives relaunch until it expires",
+          "invocation": "_redirectExpiry(response)",
+          "behavior_test": "301 redirect cache expires after 22s",
           "verification_command": "cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart"
         }
       ],

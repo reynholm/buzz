@@ -12,7 +12,11 @@ const defaultStallTimeout = Duration(seconds: 20);
 const defaultMaxFetchDuration = Duration(minutes: 5);
 
 /// An observed redirect response, before its body is discarded.
-typedef BoundedRedirect = ({int statusCode, Map<String, String> headers});
+typedef BoundedRedirect = ({
+  int statusCode,
+  Map<String, String> headers,
+  DateTime requestStartedAt,
+});
 
 /// A GET response read by [boundedGet]. [bytes] is empty unless the status
 /// was 200: an error body is never read.
@@ -21,6 +25,7 @@ class BoundedResponse {
     this.statusCode,
     this.headers,
     this.bytes, {
+    required this.requestStartedAt,
     this.url,
     this.redirectTarget,
     this.redirects = const [],
@@ -29,6 +34,9 @@ class BoundedResponse {
   final int statusCode;
   final Map<String, String> headers;
   final Uint8List bytes;
+
+  /// When the GET that returned these headers started.
+  final DateTime requestStartedAt;
 
   /// Response URL reported by the client, if available. Some clients supply
   /// a relative redirect target without its base URL.
@@ -82,6 +90,7 @@ Future<BoundedResponse> boundedGet(
   Duration stallTimeout = defaultStallTimeout,
   Duration maxFetchDuration = defaultMaxFetchDuration,
   Future<void>? cancel,
+  DateTime Function() now = DateTime.now,
 }) async {
   final stop = Completer<void>();
   var cancelled = false;
@@ -110,11 +119,13 @@ Future<BoundedResponse> boundedGet(
     var forwardedHeaders = headers;
     final redirects = <BoundedRedirect>[];
     late http.StreamedResponse streamed;
+    late DateTime requestStartedAt;
     for (;;) {
       final request =
           http.AbortableRequest('GET', target, abortTrigger: stop.future)
             ..headers.addAll(forwardedHeaders)
             ..followRedirects = followRedirects && sendRedirect == null;
+      requestStartedAt = now();
       streamed = await (redirects.isEmpty ? client.send : sendRedirect!)(
         request,
       );
@@ -135,6 +146,7 @@ Future<BoundedResponse> boundedGet(
       redirects.add((
         statusCode: streamed.statusCode,
         headers: streamed.headers,
+        requestStartedAt: requestStartedAt,
       ));
       if (next.origin != target.origin) forwardedHeaders = const {};
       target = next;
@@ -160,6 +172,7 @@ Future<BoundedResponse> boundedGet(
       streamed.statusCode,
       streamed.headers,
       bytes.takeBytes(),
+      requestStartedAt: requestStartedAt,
       url: switch (streamed) {
         http.BaseResponseWithUrl(:final url) => url,
         _ => null,

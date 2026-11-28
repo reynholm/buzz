@@ -159,7 +159,7 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
   /// saved bytes and refreshes the next time it loads from disk.
   static const _maxQueuedRefreshes = 64;
 
-  /// Injectable clock for cooldown tests.
+  /// Injectable clock for cooldown and HTTP freshness tests.
   @visibleForTesting
   static DateTime Function() debugNow = DateTime.now;
 
@@ -280,29 +280,40 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
   /// saved once they decode, if eligible). Stale saved bytes are shown, and
   /// once they decode a background download refreshes them; saved bytes that
   /// fail to decode are removed instead.
-  Future<Uint8List> _loadBytes(_SharedFetch fetch) async {
+  Future<Uint8List> _loadBytes(
+    _SharedFetch fetch, {
+    Future<VoidCallback> Function(Future<void> abort)? acquireDownloadSlot,
+  }) async {
     final cache = diskCache;
-    if (cache == null) return (await _fetchImage(fetch.aborted)).bytes;
-    final hit = await cache.read(url);
-    if (hit != null) {
+    final hit = cache == null ? null : await cache.read(url);
+    if (cache != null && hit != null) {
       // Refresh only after the decode, so a refresh can never land before
       // the removal of bytes that failed it.
       if (hit.isStale) fetch.onDecoded = () => _scheduleRefresh(cache);
       fetch.onFailed = () => unawaited(cache.remove(url));
       return hit.bytes;
     }
-    final image = await _fetchImage(fetch.aborted);
-    if (image.cacheable) {
-      fetch.onDecoded = () => unawaited(
-        cache.write(
-          url,
-          image.bytes,
-          immutable: image.immutable,
-          redirect: image.redirect,
-        ),
-      );
+    VoidCallback? release;
+    if (acquireDownloadSlot != null && !fetch.isAborted) {
+      release = await acquireDownloadSlot(fetch.aborted);
     }
-    return image.bytes;
+    try {
+      if (fetch.isAborted) throw FetchCancelledException(Uri.parse(url));
+      final image = await _fetchImage(fetch.aborted);
+      if (cache != null && image.cacheable) {
+        fetch.onDecoded = () => unawaited(
+          cache.write(
+            url,
+            image.bytes,
+            immutable: image.immutable,
+            redirect: image.redirect,
+          ),
+        );
+      }
+      return image.bytes;
+    } finally {
+      release?.call();
+    }
   }
 
   void _scheduleRefresh(MediaDiskCache cache) {
@@ -363,10 +374,16 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
   /// once they decode. Saved bytes that fail to decode are removed, so the
   /// next request downloads them again. Completing [cancel] leaves the
   /// download, which stops once no load is waiting for it.
-  Future<Uint8List> loadEncodedBytes({required Future<void> cancel}) async {
+  /// On a cache miss, [acquireDownloadSlot] can queue a new shared download
+  /// until a slot is free. Its returned callback releases the slot when the
+  /// download finishes.
+  Future<Uint8List> loadEncodedBytes({
+    required Future<void> cancel,
+    Future<VoidCallback> Function(Future<void> abort)? acquireDownloadSlot,
+  }) async {
     final fetchKey = (url, auth, isThumbnailFallback);
     final fetch = _inFlight[fetchKey] ??= _SharedFetch(
-      _loadBytes,
+      (fetch) => _loadBytes(fetch, acquireDownloadSlot: acquireDownloadSlot),
       onFinished: (fetch) {
         if (_inFlight[fetchKey] == fetch) _inFlight.remove(fetchKey);
       },
@@ -448,7 +465,6 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
     final relayRequest = auth.isRelayMediaOrigin(uri);
     final transport = client;
     final hosted = transport is HostedRelayHttpClient ? transport : null;
-    final started = debugNow();
     final BoundedResponse response;
     try {
       response = await boundedGet(
@@ -463,6 +479,7 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
         stallTimeout: stallTimeout,
         maxFetchDuration: maxFetchDuration,
         cancel: abort,
+        now: debugNow,
       );
     } catch (error) {
       final wasAbandoned = error is FetchCancelledException;
@@ -504,7 +521,7 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
     final noStore = _directives(response.headers).any((d) => d == 'no-store');
     final expires =
         target != null && target != uri.removeFragment() && responseMatches
-        ? _redirectExpiry(response, started)
+        ? _redirectExpiry(response)
         : null;
     return (
       bytes: bytes,
@@ -704,6 +721,7 @@ class _SharedFetch {
 
   /// Completes when every load waiting for this download was abandoned.
   Future<void> get aborted => _abort.future;
+  bool get isAborted => _abort.isCompleted;
 
   /// Run by the first load that decodes a frame: saves downloaded bytes,
   /// or refreshes stale saved ones.
@@ -755,15 +773,18 @@ Iterable<String> _directives(Map<String, String> headers) => _cacheDirectives
     .allMatches(headers['cache-control'] ?? '')
     .map((match) => match[0]!.trim().toLowerCase());
 
-DateTime? _redirectExpiry(BoundedResponse response, DateTime started) {
+DateTime? _redirectExpiry(BoundedResponse response) {
   DateTime? earliest;
   for (final hop in response.redirects) {
     if (hop.statusCode != 301 && hop.statusCode != 308) return null;
-    final expiry = _explicitExpiry(hop.headers, started);
+    final expiry = _explicitExpiry(hop.headers, hop.requestStartedAt);
     if (expiry == null) return null;
     if (earliest == null || expiry.isBefore(earliest)) earliest = expiry;
   }
-  final imageExpiry = _explicitExpiry(response.headers, started);
+  final imageExpiry = _explicitExpiry(
+    response.headers,
+    response.requestStartedAt,
+  );
   if (imageExpiry == null) return null;
   return earliest == null || imageExpiry.isBefore(earliest)
       ? imageExpiry
@@ -794,8 +815,7 @@ DateTime? _explicitExpiry(Map<String, String> headers, DateTime started) {
   final age = _deltaSeconds(headers['age']?.trim() ?? '0');
   if (age == null) return null;
   final date = _httpDate(headers['date']) ?? started;
-  // Use the start of the whole fetch to conservatively account for transit
-  // time and avoid resetting a redirect's lifetime at the final response.
+  // Use the start of this request to account for its own transit time.
   final aged = started.subtract(Duration(seconds: age));
   final base = date.isBefore(aged) ? date : aged;
   if (maxAge != null) return base.add(Duration(seconds: maxAge));

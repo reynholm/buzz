@@ -13046,7 +13046,7 @@ New module: `false`.
 - Invocation: `mobile/lib/shared/relay/media_image.dart` → `remove`; exact call `await cache.remove(url);`; behavior test `a no-store refresh removes the saved external image`; verify `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart --plain-name no-store`
 - Invocation: `mobile/lib/shared/relay/media_image.dart` → `isRelayMediaOrigin`; exact call `auth.isRelayMediaOrigin(uri)`; behavior test `no-store disk policy on first load for other service on the relay host images`; verify `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart`
 - Invocation: `mobile/lib/shared/relay/media_image.dart` → `sendRedirect`; exact call `hosted?.sendRedirect ?? transport.send`; behavior test `an external image redirect does not attach hosted credentials`; verify `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart`
-- Invocation: `mobile/lib/shared/relay/media_image.dart` → `_redirectExpiry`; exact call `_redirectExpiry(response, started)`; behavior test `301 image redirect survives relaunch until it expires`; verify `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart`
+- Invocation: `mobile/lib/shared/relay/media_image.dart` → `_redirectExpiry`; exact call `_redirectExpiry(response)`; behavior test `301 redirect cache expires after 22s`; verify `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart`
 - Verify: `just ci`
 - Verify: `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart --plain-name no-store`
 - Verify: `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart`
