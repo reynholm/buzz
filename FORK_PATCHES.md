@@ -12178,11 +12178,13 @@ New module: `false`.
 
 ## `mobile/lib/features/channels/compose_bar/agent_mention_prefill.dart`
 
-Track partial upstream replay from group A steps 10 (1adde0e6b), 50 (3c0adc188).
+Track partial upstream replay from group A steps 10 (1adde0e6b), 50 (3c0adc188). Refresh untouched automatic mentions by identity and retire known archived bindings even during roster reload.
 
 New module: `true`.
 
+- Invocation: `mobile/lib/features/channels/compose_bar/agent_mention_prefill.dart` → `hiddenArchivedIdentitiesProvider`; exact call `ref.watch(hiddenArchivedIdentitiesProvider)`; behavior test `untouched prefill follows archive changes during a roster reload`; verify `cd mobile && flutter test test/features/channels/compose_bar_test.dart --plain-name 'untouched prefill follows'`
 - Verify: `just ci`
+- Verify: `cd mobile && flutter test test/features/channels/compose_bar_test.dart --plain-name 'untouched prefill follows'`
 
 ## `mobile/lib/features/channels/compose_bar/attachments.dart`
 
@@ -12554,11 +12556,13 @@ New module: `false`.
 
 ## `mobile/lib/features/channels/native_video_files.dart`
 
-Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d), 19 (85c715608).
+Track partial upstream replay from group A steps 1 (b40f22114), 13 (ef57fec4d), 19 (85c715608). Limit native video receipt to the default relay upload budget while streaming to disk.
 
 New module: `true`.
 
+- Required symbol: `this.maxBytes = 500 * 1024 * 1024`
 - Verify: `just ci`
+- Verify: `cd mobile && flutter test test/features/channels/native_video_files_test.dart`
 
 ## `mobile/lib/features/channels/photo_library.dart`
 
@@ -12906,11 +12910,13 @@ New module: `false`.
 
 ## `mobile/lib/shared/http/app_http_client.dart`
 
-Track partial upstream replay from group A steps 60 (a2d4ba026), 64 (d1a8c3607).
+Track partial upstream replay from group A steps 60 (a2d4ba026), 64 (d1a8c3607). Carry the transport-reported final response URL through the shared session for external image cache policy.
 
 New module: `true`.
 
+- Invocation: `mobile/lib/shared/http/app_http_client.dart` → `_SessionResponseWithUrl`; exact call `http.BaseResponseWithUrl(:final url) => _SessionResponseWithUrl(`; behavior test `no-store disk policy on first load for relay images`; verify `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart --plain-name no-store`
 - Verify: `just ci`
+- Verify: `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart --plain-name no-store`
 
 ## `mobile/lib/shared/identity_archives/identity_archives.dart`
 
@@ -13028,11 +13034,13 @@ New module: `false`.
 
 ## `mobile/lib/shared/relay/media_image.dart`
 
-Track partial upstream replay from group A steps 48 (0bbcf3e7c), 60 (a2d4ba026), 130 (ff652ed06).
+Track partial upstream replay from group A steps 48 (0bbcf3e7c), 60 (a2d4ba026), 130 (ff652ed06). Respect external image no-store during initial load and purge stale copies on refresh while preserving offline relay media.
 
 New module: `false`.
 
+- Invocation: `mobile/lib/shared/relay/media_image.dart` → `remove`; exact call `await cache.remove(url);`; behavior test `a no-store refresh removes the saved external image`; verify `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart --plain-name no-store`
 - Verify: `just ci`
+- Verify: `cd mobile && flutter test test/shared/relay/media_disk_cache_test.dart --plain-name no-store`
 
 ## `mobile/lib/shared/relay/media_upload.dart`
 
