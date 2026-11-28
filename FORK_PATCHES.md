@@ -2688,6 +2688,30 @@ New module: `false`.
 
 - Verify: `just ci`
 
+## `scripts/ci-runtime-selection.mjs`
+
+Keep mobile native and image workflow selection aligned with the fork CI
+
+New module: `false`.
+
+- Verify: `node --test scripts/ci-selection.test.mjs`
+
+## `scripts/ci-selection.test.mjs`
+
+Keep mobile native and image workflow selection aligned with the fork CI
+
+New module: `false`.
+
+- Verify: `node --test scripts/ci-selection.test.mjs`
+
+## `scripts/push-gateway-image-inputs-changed.sh`
+
+Keep mobile native and image workflow selection aligned with the fork CI
+
+New module: `true`.
+
+- Verify: `node --test scripts/ci-selection.test.mjs`
+
 ## `.github/workflows/codex-security-review.yml`
 
 Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches

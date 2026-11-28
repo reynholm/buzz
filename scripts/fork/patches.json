@@ -4476,6 +4476,36 @@
       ]
     },
     {
+      "path": "scripts/ci-runtime-selection.mjs",
+      "responsibility": "Keep mobile native and image workflow selection aligned with the fork CI",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "node --test scripts/ci-selection.test.mjs"
+      ]
+    },
+    {
+      "path": "scripts/ci-selection.test.mjs",
+      "responsibility": "Keep mobile native and image workflow selection aligned with the fork CI",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "node --test scripts/ci-selection.test.mjs"
+      ]
+    },
+    {
+      "path": "scripts/push-gateway-image-inputs-changed.sh",
+      "responsibility": "Keep mobile native and image workflow selection aligned with the fork CI",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "node --test scripts/ci-selection.test.mjs"
+      ]
+    },
+    {
       "path": ".github/workflows/codex-security-review.yml",
       "responsibility": "Integrate existing reynholm/buzz main 33f54de2 without retiring fork patches",
       "is_new": false,
