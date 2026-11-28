@@ -231,14 +231,13 @@ class MediaDiskCache {
 
   /// Removes [url]'s saved bytes, for example when they no longer decode.
   /// Failures are logged; a later read finds the same bad bytes.
-  Future<void> remove(String url) async {
-    if (isClosed) return;
+  Future<void> remove(String url) => _mutate(url, () async {
     try {
       await (await _manager)?.removeFile(url);
     } on Object catch (error) {
       _logFailure(error);
     }
-  }
+  });
 
   /// Whether [url] has saved bytes, from the index alone, without reading
   /// them.
@@ -279,20 +278,22 @@ class MediaDiskCache {
   /// Saves [bytes] for [url]. [immutable] bytes (relay media) are never
   /// refetched; others are refetched after [externalRefreshAge]. Failures are
   /// logged, never thrown: a missing entry only costs a later download.
-  Future<void> write(String url, Uint8List bytes, {required bool immutable}) {
+  Future<void> write(String url, Uint8List bytes, {required bool immutable}) =>
+      _mutate(url, () => _write(url, bytes, immutable: immutable));
+
+  Future<void> _mutate(String url, Future<void> Function() change) {
+    if (isClosed) return Future.value();
     // Overlapping saves of one URL would each create a file, and the index
-    // tracks only the last, so the other would stay on disk past eviction.
-    // Each save waits for the one before it, then replaces its file.
-    final saved = (_writes[url] ?? Future.value()).then(
-      (_) => _write(url, bytes, immutable: immutable),
-    );
-    _writes[url] = saved;
-    return saved.whenComplete(() {
-      if (identical(_writes[url], saved)) _writes.remove(url);
+    // tracks only the last. Serialize saves and removals so the file and
+    // index changes for each URL finish together.
+    final changed = (_mutations[url] ?? Future.value()).then((_) => change());
+    _mutations[url] = changed;
+    return changed.whenComplete(() {
+      if (identical(_mutations[url], changed)) _mutations.remove(url);
     });
   }
 
-  final _writes = <String, Future<void>>{};
+  final _mutations = <String, Future<void>>{};
 
   Future<void> _write(
     String url,
@@ -335,7 +336,7 @@ class MediaDiskCache {
     }
   }
 
-  /// Stops writes, lets saves in progress finish, then flushes the index.
+  /// Stops new mutations, lets pending ones settle, then flushes the index.
   Future<void> dispose() {
     if (_closed.isCompleted) return _disposed;
     _closed.complete();
@@ -344,7 +345,7 @@ class MediaDiskCache {
     _index?.retire();
     final disposed = _disposed = _manager
         .then((manager) async {
-          await Future.wait(_writes.values.toList());
+          await Future.wait(_mutations.values.toList());
           await manager?.dispose();
         })
         .catchError((Object error) {

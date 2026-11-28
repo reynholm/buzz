@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:buzz/shared/http/app_http_client.dart';
 import 'package:buzz/shared/relay/media_auth.dart';
 import 'package:buzz/shared/relay/media_disk_cache.dart';
 import 'package:buzz/shared/relay/media_image.dart';
@@ -39,6 +40,7 @@ const _externalUrls = [
   'https://images.example.org/b.png',
   'https://images.example.org/c.png',
 ];
+const _noStoreHeaders = {'cache-control': 'private, No-Store, max-age=0'};
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -138,7 +140,8 @@ void main() {
       // saved bytes before retiring this launch and testing a cold reopen.
       await _until(() async {
         for (final url in saved) {
-          if (!listEquals((await cache.read(url))?.bytes, _pngBytes)) {
+          final expected = url == _largeUrl ? largeBytes : _pngBytes;
+          if (!listEquals((await cache.read(url))?.bytes, expected)) {
             return false;
           }
         }
@@ -275,6 +278,89 @@ void main() {
       await MediaDiskCache.communityDirectory(root, 'community-1').exists(),
       isFalse,
     );
+  });
+
+  for (final (description, url, responseUrl, shouldSave) in [
+    ('external', _externalUrls.first, _externalUrls.first, false),
+    ('relay', _largeUrl, _largeUrl, true),
+    ('relay redirect to external', _largeUrl, _externalUrls.first, false),
+    ('external redirect to relay', _externalUrls.first, _largeUrl, false),
+    ('relay with unknown response URL', _largeUrl, null, false),
+    ('relay with relative redirect target', _largeUrl, '/media/$_hash', false),
+  ]) {
+    test(
+      'no-store disk policy on first load for $description images',
+      () async {
+        // Large enough to exercise the size range newly eligible for disk.
+        final bytes = Uint8List(12 * 1024 * 1024)..setAll(0, _pngBytes);
+        final client = SharedSessionClient(
+          responseUrl == null
+              ? http_testing.MockClient(
+                  (_) async =>
+                      http.Response.bytes(bytes, 200, headers: _noStoreHeaders),
+                )
+              : _ImageResponseClient(bytes, Uri.parse(responseUrl)),
+        );
+        addTearDown(client.close);
+        final directory = MediaDiskCache.directoryFor(root, 'community-1', 's');
+        final cache = MediaDiskCache.open(directory);
+        try {
+          final stream = MediaImageProvider(
+            url: url,
+            auth: auth,
+            client: client,
+            diskCache: cache,
+          ).resolve(ImageConfiguration.empty);
+          expect(await _waitError(stream), isNull);
+          // Let a save queued by the decode reach the store before retiring it.
+          await cache.contains(url);
+        } finally {
+          await cache.dispose();
+        }
+        final reopened = MediaDiskCache.open(directory);
+        try {
+          final hit = await reopened.read(url);
+          expect(hit?.bytes.length, shouldSave ? bytes.length : isNull);
+          if (shouldSave) expect(hit?.isStale, isFalse);
+        } finally {
+          await reopened.dispose();
+        }
+      },
+    );
+  }
+
+  test('a no-store refresh removes the saved external image', () async {
+    final url = _externalUrls.first;
+    final refreshed = Uint8List(12 * 1024 * 1024)..setAll(0, _pngBytes);
+    final client = _ImageResponseClient(refreshed, Uri.parse(url));
+    addTearDown(client.close);
+    final directory = MediaDiskCache.directoryFor(root, 'community-1', 's');
+    var now = DateTime.now();
+    final cache = MediaDiskCache.open(directory, now: () => now);
+    try {
+      await cache.write(url, _pngBytes, immutable: false);
+      now = now.add(const Duration(days: 8));
+      final shown = await MediaImageProvider(
+        url: url,
+        auth: auth,
+        client: client,
+        diskCache: cache,
+      ).loadEncodedBytes(cancel: Completer<void>().future);
+      expect(shown, _pngBytes);
+      await _until(() async {
+        final hit = await cache.read(url);
+        return hit == null || hit.bytes.length == refreshed.length;
+      });
+      expect(await cache.contains(url), isFalse);
+    } finally {
+      await cache.dispose();
+    }
+    final reopened = MediaDiskCache.open(directory);
+    try {
+      expect(await reopened.contains(url), isFalse);
+    } finally {
+      await reopened.dispose();
+    }
   });
 
   test(
@@ -733,6 +819,34 @@ void main() {
       }
     },
   );
+}
+
+/// Models the response after the platform transport has followed redirects.
+class _ImageResponseClient extends http.BaseClient {
+  _ImageResponseClient(this.bytes, this.responseUrl);
+
+  final Uint8List bytes;
+  final Uri responseUrl;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    return _ImageResponse(bytes, request, responseUrl);
+  }
+}
+
+class _ImageResponse extends http.StreamedResponse
+    implements http.BaseResponseWithUrl {
+  _ImageResponse(Uint8List bytes, http.BaseRequest request, this.url)
+    : super(
+        Stream.value(bytes),
+        200,
+        contentLength: bytes.length,
+        request: request,
+        headers: _noStoreHeaders,
+      );
+
+  @override
+  final Uri url;
 }
 
 /// Waits for background work that a fixed delay cannot bound on a slow

@@ -276,12 +276,12 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
   }
 
   /// [url]'s bytes from [diskCache] when saved there, else downloaded (and
-  /// saved once they decode). Stale saved bytes are shown, and once they
-  /// decode a background download replaces them; saved bytes that fail to
-  /// decode are removed instead.
+  /// saved once they decode, if eligible). Stale saved bytes are shown, and
+  /// once they decode a background download refreshes them; saved bytes that
+  /// fail to decode are removed instead.
   Future<Uint8List> _loadBytes(_SharedFetch fetch) async {
     final cache = diskCache;
-    if (cache == null) return _fetchBytes(fetch.aborted);
+    if (cache == null) return (await _fetchImage(fetch.aborted)).bytes;
     final hit = await cache.read(url);
     if (hit != null) {
       // Refresh only after the decode, so a refresh can never land before
@@ -290,11 +290,12 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
       fetch.onFailed = () => unawaited(cache.remove(url));
       return hit.bytes;
     }
-    final bytes = await _fetchBytes(fetch.aborted);
-    final immutable = _isContentAddressed;
-    fetch.onDecoded = () =>
-        unawaited(cache.write(url, bytes, immutable: immutable));
-    return bytes;
+    final image = await _fetchImage(fetch.aborted);
+    if (image.cacheable) {
+      fetch.onDecoded = () =>
+          unawaited(cache.write(url, image.bytes, immutable: image.immutable));
+    }
+    return image.bytes;
   }
 
   void _scheduleRefresh(MediaDiskCache cache) {
@@ -329,11 +330,15 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
     try {
       // Nobody is waiting on it, so it stops only when its cache retires.
       if (cache.isClosed) return;
-      final bytes = await _fetchBytes(cache.closed);
+      final image = await _fetchImage(cache.closed);
+      if (!image.cacheable) {
+        await cache.remove(url);
+        return;
+      }
       // Nothing displays these bytes yet, so check they decode before they
       // replace the saved copy.
-      await _checkDecodes(bytes);
-      await cache.write(url, bytes, immutable: _isContentAddressed);
+      await _checkDecodes(image.bytes);
+      await cache.write(url, image.bytes, immutable: image.immutable);
     } on Object catch (error) {
       // The stale bytes stay; the next load after the cooldown retries.
       debugPrint('[MediaImageProvider] refresh of $url failed: $error');
@@ -408,17 +413,11 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
     }
   }
 
-  /// A relay blob or its thumbnail: named by content hash, so its bytes
-  /// never change.
-  bool get _isContentAddressed {
-    if (!auth.isRelayMediaUrl(url)) return false;
-    final uri = Uri.parse(url);
-    return !uri.hasQuery && _relayContentPath.hasMatch(uri.path);
-  }
-
   /// Downloads [url]. Completing [abort] means every load waiting for this
   /// download was abandoned, so the URL is not put on cooldown.
-  Future<Uint8List> _fetchBytes(Future<void> abort) async {
+  Future<({Uint8List bytes, bool cacheable, bool immutable})> _fetchImage(
+    Future<void> abort,
+  ) async {
     final until = _cooldownUntil[_cooldownKey];
     if (until != null) {
       if (debugNow().isBefore(until)) {
@@ -467,7 +466,26 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
       _cooldownUntil[_cooldownKey] = debugNow().add(_defaultCooldown);
       throw NetworkImageLoadException(statusCode: 200, uri: uri);
     }
-    return bytes;
+    final relayRequest = auth.isRelayMediaUrl(url);
+    final responseUrl = response.url;
+    // Offline relay copies have their own local-cache contract. Only a
+    // relay media request served by relay media qualifies for that policy.
+    final relayResponse =
+        responseUrl != null && auth.isRelayMediaUrl(responseUrl.toString());
+    final cacheControl = response.headers['cache-control'] ?? '';
+    final noStore = _cacheDirectives
+        .allMatches(cacheControl)
+        .any((directive) => directive[0]!.trim().toLowerCase() == 'no-store');
+    return (
+      bytes: bytes,
+      cacheable: (relayRequest && relayResponse) || !noStore,
+      // A redirect can change in place regardless of the URL's path.
+      immutable:
+          relayRequest &&
+          (responseUrl == null || responseUrl == uri) &&
+          !uri.hasQuery &&
+          _relayContentPath.hasMatch(uri.path),
+    );
   }
 
   Duration _cooldownFor(BoundedResponse response) {
@@ -697,6 +715,9 @@ class MediaImageCooldownException implements Exception {
 final _relayContentPath = RegExp(
   r'^/media/[0-9a-f]{64}(?:\.thumb\.(?:jpg|webp)|\.[a-z0-9]{1,8})?$',
 );
+
+// Cache-Control is comma-separated except within quoted directive values.
+final _cacheDirectives = RegExp(r'(?:[^",]|"(?:[^"\\]|\\.)*")+');
 
 final _relayBlobPath = RegExp(r'^/media/([0-9a-f]{64})(?:\.[a-z0-9]{1,8})?$');
 

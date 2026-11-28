@@ -168,16 +168,14 @@ class SharedSessionClient extends http.BaseClient {
         return inner.cancel();
       };
 
-    return http.StreamedResponse(
-      http.ByteStream(body.stream),
-      response.statusCode,
-      contentLength: response.contentLength,
-      request: response.request,
-      headers: response.headers,
-      isRedirect: response.isRedirect,
-      persistentConnection: response.persistentConnection,
-      reasonPhrase: response.reasonPhrase,
-    );
+    return switch (response) {
+      http.BaseResponseWithUrl(:final url) => _SessionResponseWithUrl(
+        body.stream,
+        response,
+        url,
+      ),
+      _ => _SessionResponse(body.stream, response),
+    };
   }
 
   static bool _isStreamedUpload(http.BaseRequest request) =>
@@ -231,6 +229,28 @@ class SharedSessionClient extends http.BaseClient {
     _inFlight.clear();
     _cleartext?.close();
   }
+}
+
+class _SessionResponse extends http.StreamedResponse {
+  _SessionResponse(Stream<List<int>> body, http.StreamedResponse original)
+    : super(
+        body,
+        original.statusCode,
+        contentLength: original.contentLength,
+        request: original.request,
+        headers: original.headers,
+        isRedirect: original.isRedirect,
+        persistentConnection: original.persistentConnection,
+        reasonPhrase: original.reasonPhrase,
+      );
+}
+
+class _SessionResponseWithUrl extends _SessionResponse
+    implements http.BaseResponseWithUrl {
+  _SessionResponseWithUrl(super.body, super.original, this.url);
+
+  @override
+  final Uri url;
 }
 
 /// How a native transport request failed, for user-facing messages.

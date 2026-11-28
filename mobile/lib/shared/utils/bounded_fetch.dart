@@ -14,11 +14,15 @@ const defaultMaxFetchDuration = Duration(minutes: 5);
 /// A GET response read by [boundedGet]. [bytes] is empty unless the status
 /// was 200: an error body is never read.
 class BoundedResponse {
-  const BoundedResponse(this.statusCode, this.headers, this.bytes);
+  const BoundedResponse(this.statusCode, this.headers, this.bytes, {this.url});
 
   final int statusCode;
   final Map<String, String> headers;
   final Uint8List bytes;
+
+  /// Response URL reported by the client, if available. Some clients supply
+  /// a relative redirect target without its base URL.
+  final Uri? url;
 }
 
 /// The 200 body of a [boundedGet] exceeded its `maxBytes`.
@@ -107,6 +111,10 @@ Future<BoundedResponse> boundedGet(
       streamed.statusCode,
       streamed.headers,
       bytes.takeBytes(),
+      url: switch (streamed) {
+        http.BaseResponseWithUrl(:final url) => url,
+        _ => null,
+      },
     );
   } catch (_) {
     if (cancelled) throw FetchCancelledException(uri);
