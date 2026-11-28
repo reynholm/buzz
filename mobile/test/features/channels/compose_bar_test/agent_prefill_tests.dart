@@ -240,24 +240,32 @@ void agentPrefillTests() {
   });
 
   testWidgets(
-    'untouched prefill follows archive changes for a channel member',
+    'untouched prefill follows archive changes during a roster reload',
     (tester) async {
       final viewer = 'f' * 64;
       final agent = 'a' * 64;
+      final activeAgent = 'b' * 64;
+      final roster = [
+        for (final (key, name) in [(agent, 'Retired'), (activeAgent, 'Scout')])
+          ChannelMember(
+            pubkey: key,
+            displayName: name,
+            role: 'bot',
+            joinedAt: DateTime(2025),
+          ),
+      ];
+      final reload = Completer<List<ChannelMember>>();
+      var revision = 0;
+      final memberVersion = Provider((_) => revision);
+      var loading = false;
       var archived = {agent};
       await tester.pumpWidget(
         _buildComposeBar(
           uploadService: _testUploadService(nostr.Keys.generate().nsec),
           currentPubkey: viewer,
           channels: [_makeCurrentChannel()],
-          loadMembers: () async => [
-            ChannelMember(
-              pubkey: agent,
-              displayName: 'Retired',
-              role: 'bot',
-              joinedAt: DateTime(2025),
-            ),
-          ],
+          loadMembers: () => loading ? reload.future : Future.value(roster),
+          memberVersion: memberVersion,
           prefillScopeMessages: [
             TimelineMessage(
               id: '1',
@@ -267,6 +275,7 @@ void agentPrefillTests() {
               tags: [
                 const ['h', 'channel-1'],
                 ['p', agent],
+                ['p', activeAgent],
               ],
             ),
           ],
@@ -275,8 +284,9 @@ void agentPrefillTests() {
         ),
       );
       await tester.pumpAndSettle();
-      final mention = find.text('@Retired');
-      expect(mention, findsNothing);
+      final bothAgents = find.text('@Retired @Scout');
+      expect(bothAgents, findsNothing);
+      expect(find.text('@Scout'), findsOneWidget);
 
       final container = ProviderScope.containerOf(
         tester.element(find.byType(ComposeBar)),
@@ -284,13 +294,25 @@ void agentPrefillTests() {
       archived = {};
       container.invalidate(hiddenArchivedIdentitiesProvider);
       await tester.pumpAndSettle();
-      expect(mention, findsOneWidget);
+      expect(bothAgents, findsOneWidget);
 
+      loading = true;
+      revision++;
+      container.invalidate(memberVersion);
+      await tester.pumpAndSettle();
+      expect(
+        container.read(channelMembersProvider('channel-1')).asData,
+        isNull,
+      );
+      expect(bothAgents, findsOneWidget);
       archived = {agent};
       container.invalidate(hiddenArchivedIdentitiesProvider);
       await tester.pumpAndSettle();
-      expect(mention, findsNothing);
-      expect(find.text('Message…'), findsOneWidget);
+      expect(bothAgents, findsNothing);
+
+      reload.complete(roster);
+      await tester.pumpAndSettle();
+      expect(find.text('@Scout'), findsOneWidget);
     },
   );
 

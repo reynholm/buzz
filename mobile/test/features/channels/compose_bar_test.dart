@@ -223,6 +223,7 @@ Widget _buildComposeBar({
   bool ownedAgentsUnknown = false,
   List<TimelineMessage>? prefillScopeMessages,
   Set<String> Function()? archivedIdentities,
+  Provider<int>? memberVersion,
 }) {
   return ProviderScope(
     overrides: [
@@ -257,9 +258,10 @@ Widget _buildComposeBar({
         ),
       photoLibraryProvider.overrideWithValue(photoLibrary),
       currentPubkeyProvider.overrideWith((ref) => currentPubkey),
-      channelMembersProvider('channel-1').overrideWith(
-        (ref) => loadMembers?.call() ?? membersFuture ?? Future.value(members),
-      ),
+      channelMembersProvider('channel-1').overrideWith((ref) {
+        if (memberVersion != null) ref.watch(memberVersion);
+        return loadMembers?.call() ?? membersFuture ?? Future.value(members);
+      }),
       agentDirectoryProvider.overrideWith((ref) async => relayAgents),
       agentOwnersProvider.overrideWith((ref) async => const <String, String>{}),
       relayClientProvider.overrideWithValue(

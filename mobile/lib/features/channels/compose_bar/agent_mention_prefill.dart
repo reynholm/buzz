@@ -66,7 +66,12 @@ void _useAgentMentionPrefill({
   final members = activePubkeys.isEmpty
       ? null
       : ref.watch(channelMembersProvider(channelId)).asData?.value;
-  final membersPending = activePubkeys.isNotEmpty && members == null;
+  // During a roster refresh, take back a prefill that still binds a newly
+  // archived agent. The remaining agents can be prefilled once the list loads.
+  final keepPrefill =
+      activePubkeys.isNotEmpty &&
+      members == null &&
+      !mentionMap.value.values.any((agent) => archived.contains(agent.pubkey));
   final memberCandidates = members == null
       ? const <MentionCandidate>[]
       : buildMentionCandidates(
@@ -102,9 +107,7 @@ void _useAgentMentionPrefill({
 
   useEffect(() {
     final prefill = prefillText.value;
-    // Take back untouched prefill when there are no eligible agents. While
-    // members are still loading, keep the prefill until membership is known.
-    final noAgents = source == null || (!membersPending && agents.isEmpty);
+    final noAgents = source == null || (!keepPrefill && agents.isEmpty);
     if (noAgents) {
       if (prefill != null && controller.text == prefill) {
         prefillText.value = null;
@@ -155,5 +158,5 @@ void _useAgentMentionPrefill({
       isModifyingText.value = false;
     }
     return null;
-  }, [source?.messageId, agentsKey, membersPending, draftKey, hasAttachments]);
+  }, [source?.messageId, agentsKey, keepPrefill, draftKey, hasAttachments]);
 }
