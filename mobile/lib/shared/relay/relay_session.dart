@@ -1029,9 +1029,8 @@ class RelaySessionNotifier extends Notifier<SessionState> {
         _rateLimitGate.activate(parseRateLimitRetrySeconds(message));
       }
       if (!pending.completer.isCompleted) {
-        pending.completer.completeError(
-          Exception(message.isNotEmpty ? message : 'Event rejected'),
-        );
+        final reason = message.isNotEmpty ? message : 'Event rejected';
+        pending.completer.completeError(RelayEventRejectedException(reason));
       }
     }
   }
