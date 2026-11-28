@@ -9102,6 +9102,16 @@
       ]
     },
     {
+      "path": "crates/buzz-db/src/store/thread.rs",
+      "responsibility": "Apply the timestamp range bound to deep channel-window pages alongside composite event pagination",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db"
+      ]
+    },
+    {
       "path": "crates/buzz-db/src/store/managed_delivery.rs",
       "responsibility": "Elect once per community/author/UUID under a transaction advisory lock; adopt accepted or soft-deleted originals, otherwise commit candidate, thread counters, callback mentions and durable binding together.",
       "is_new": true,
@@ -16756,6 +16766,86 @@
       "invocation_seams": [],
       "verification_commands": [
         "just ci"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/admission_postgres_tests.rs",
+      "responsibility": "Check tenant and parent references in admitted transactions before the foreign-key retirement phase",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db -p buzz-relay"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/product_feedback.rs",
+      "responsibility": "Check tenant and parent references in admitted transactions before the foreign-key retirement phase",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db -p buzz-relay"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/reference_check.rs",
+      "responsibility": "Check tenant and parent references in admitted transactions before the foreign-key retirement phase",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db -p buzz-relay"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/reference_check_postgres_tests.rs",
+      "responsibility": "Check tenant and parent references in admitted transactions before the foreign-key retirement phase",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db -p buzz-relay"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/relay_invite.rs",
+      "responsibility": "Check tenant and parent references in admitted transactions before the foreign-key retirement phase",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db -p buzz-relay"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/relay_invite/claim_owner.rs",
+      "responsibility": "Check tenant and parent references in admitted transactions before the foreign-key retirement phase",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db -p buzz-relay"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/workflow/deletion_tests.rs",
+      "responsibility": "Check tenant and parent references in admitted transactions before the foreign-key retirement phase",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db -p buzz-relay"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/workflow/reference_tests.rs",
+      "responsibility": "Check tenant and parent references in admitted transactions before the foreign-key retirement phase",
+      "is_new": true,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db -p buzz-relay"
       ]
     },
     {
