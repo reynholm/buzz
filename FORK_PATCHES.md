@@ -10791,6 +10791,46 @@ New module: `false`.
 - Invocation: `crates/buzz-cli/src/commands/messages/edit.rs` → `read_or_stdin`; exact call `let content = read_or_stdin(content)?;`; behavior test `message_commands_preserve_stdin_bytes_in_signed_events`; verify `cargo test -p buzz-cli`
 - Verify: `cargo test -p buzz-cli`
 
+## `crates/buzz-cli/src/commands/emoji.rs`
+
+Port upstream CLI behavior while keeping the fork's desktop pairing, attached-media handling and compatible output
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-cli -p buzz-sdk`
+
+## `crates/buzz-cli/src/commands/messages/edit/tests.rs`
+
+Port upstream CLI behavior while keeping the fork's desktop pairing, attached-media handling and compatible output
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-cli -p buzz-sdk`
+
+## `crates/buzz-cli/src/commands/raw.rs`
+
+Port upstream CLI behavior while keeping the fork's desktop pairing, attached-media handling and compatible output
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-cli -p buzz-sdk`
+
+## `crates/buzz-cli/tests/raw_publish_exit.rs`
+
+Port upstream CLI behavior while keeping the fork's desktop pairing, attached-media handling and compatible output
+
+New module: `true`.
+
+- Verify: `cargo test -p buzz-cli -p buzz-sdk`
+
+## `docs/local-credential-provider.md`
+
+Port upstream CLI behavior while keeping the fork's desktop pairing, attached-media handling and compatible output
+
+New module: `false`.
+
+- Verify: `cargo test -p buzz-cli -p buzz-sdk`
+
 ## `mobile/lib/features/channels/channel_detail_page/message_bubble.dart`
 
 Keep Solo stream reply and media branching writable under the ordinary membership, archive and system-message guards; preserve canonical root, draft and native bridge behavior.
