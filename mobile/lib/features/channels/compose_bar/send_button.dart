@@ -44,6 +44,4 @@ class _SendButton extends StatelessWidget {
   }
 }
 
-String _formatUploadError(Object error) {
-  return error.toString().replaceFirst('Exception: ', '');
-}
+String _formatUploadError(Object error) => relayErrorText(error);
