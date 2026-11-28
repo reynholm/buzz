@@ -349,10 +349,11 @@ class _InboxRow extends HookConsumerWidget {
 
   /// Thread root that Follow acts on: the conversation's root for thread
   /// rows, the message itself for top-level rows (matching the message
-  /// actions sheet). Solo chats have no threads, and grouped DM conversations
-  /// have no single thread, so neither offers Follow.
+  /// actions sheet). Private Solo chats and grouped DM conversations omit
+  /// Follow from their inbox menus.
   String? get _followRootId {
-    if (channel?.isSolo ?? false) return null;
+    final channel = this.channel;
+    if (channel != null && channel.isSolo && channel.isPrivate) return null;
     if (item.conversationId.startsWith('dm:')) return null;
     return item.conversationId;
   }

@@ -1224,6 +1224,13 @@ void main() {
     final remindersNotifier = _FakeRemindersNotifier(const []);
     await tester.pumpWidget(
       await buildTestable(
+        channels: [
+          testChannels.first,
+          Channel.fromJson({
+            ...testChannels.last.toJson(),
+            'labels': ['buzz.solo'],
+          }),
+        ],
         remindersNotifier: () => remindersNotifier,
         overrides: [
           reminder.reminderServiceProvider.overrideWithValue(reminders),
