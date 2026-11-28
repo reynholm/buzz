@@ -13147,6 +13147,96 @@
       ]
     },
     {
+      "path": "NOSTR.md",
+      "responsibility": "Exercise channel visibility and event target scoping on the fork's PostgreSQL and relay paths",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db -p buzz-relay"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/channel_name_postgres_tests.rs",
+      "responsibility": "Exercise channel visibility and event target scoping on the fork's PostgreSQL and relay paths",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db -p buzz-relay"
+      ]
+    },
+    {
+      "path": "crates/buzz-db/src/store/unlisted_channels_postgres_tests.rs",
+      "responsibility": "Exercise channel visibility and event target scoping on the fork's PostgreSQL and relay paths",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db -p buzz-relay"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/api/artifact_postgres_tests/sync_access_postgres_tests.rs",
+      "responsibility": "Exercise channel visibility and event target scoping on the fork's PostgreSQL and relay paths",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db -p buzz-relay"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/api/artifact_postgres_tests/sync_cursor_postgres_tests.rs",
+      "responsibility": "Exercise channel visibility and event target scoping on the fork's PostgreSQL and relay paths",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db -p buzz-relay"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/api/artifact_postgres_tests/sync_policy_postgres_tests.rs",
+      "responsibility": "Exercise channel visibility and event target scoping on the fork's PostgreSQL and relay paths",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db -p buzz-relay"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/api/artifact_postgres_tests/sync_postgres_tests.rs",
+      "responsibility": "Exercise channel visibility and event target scoping on the fork's PostgreSQL and relay paths",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db -p buzz-relay"
+      ]
+    },
+    {
+      "path": "crates/buzz-relay/src/handlers/edit_metadata_postgres_tests.rs",
+      "responsibility": "Exercise channel visibility and event target scoping on the fork's PostgreSQL and relay paths",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db -p buzz-relay"
+      ]
+    },
+    {
+      "path": "docs/operator-user-deletion-executor.md",
+      "responsibility": "Exercise channel visibility and event target scoping on the fork's PostgreSQL and relay paths",
+      "is_new": false,
+      "required_symbols": [],
+      "invocation_seams": [],
+      "verification_commands": [
+        "cargo test -p buzz-db -p buzz-relay"
+      ]
+    },
+    {
       "path": "crates/buzz-db/src/store/channel_members.rs",
       "responsibility": "Keep member/channel writer regressions aligned with direct durable enqueue.",
       "is_new": false,
