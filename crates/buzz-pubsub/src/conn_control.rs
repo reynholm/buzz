@@ -124,7 +124,9 @@ pub enum ConnControl {
     /// Revoke a member's live access under the roster committed by its removal.
     /// A relay applies this only while that roster is still current.
     DisconnectRemovedMember {
+        /// Raw bytes of the public key whose sockets must close.
         pubkey: Vec<u8>,
+        /// Event ID of the committed replacement membership list.
         roster_id: nostr::EventId,
     },
     /// Disconnect every live connection authenticated as `pubkey` in the
